@@ -1,0 +1,94 @@
+AGENTS.md
+  h_72decab43bbb75 9-13,92-95
+Cargo.lock
+  h_72decab43bbb75 5-133,144-159
+Cargo.toml
+  h_72decab43bbb75 13-14
+README.md
+  h_72decab43bbb75 7-9,15,31-32,47-53,57-66,76-82
+catalog/README.md
+  h_72decab43bbb75 15-20
+catalog/labels/terrain-v1.toml
+  h_72decab43bbb75 1-60
+configs/README.md
+  h_72decab43bbb75 3-9,17-72,74-76,78-85,89-91
+configs/runtime.example.toml
+  h_72decab43bbb75 5
+crates/topography-cli/src/main.rs
+  h_72decab43bbb75 1-3,8,14-15,27-40,42,48-156
+crates/topography-core/Cargo.toml
+  h_72decab43bbb75 8-11
+crates/topography-core/src/catalog/legend.rs
+  h_72decab43bbb75 1-106
+crates/topography-core/src/catalog/mod.rs
+  h_72decab43bbb75 1-7
+crates/topography-core/src/catalog/source.rs
+  h_72decab43bbb75 1-201
+crates/topography-core/src/config/mod.rs
+  h_72decab43bbb75 2-16
+crates/topography-core/src/config/runtime.rs
+  h_72decab43bbb75 1-95
+crates/topography-core/src/config/world.rs
+  h_72decab43bbb75 1-233
+crates/topography-core/src/contracts.rs
+  h_72decab43bbb75 1-96
+crates/topography-core/src/lib.rs
+  h_72decab43bbb75 1,5
+docs/best-practices/architecture-and-contracts.md
+  h_72decab43bbb75 4-5
+docs/best-practices/rust.md
+  h_72decab43bbb75 17-19,56-57
+docs/best-practices/validation-and-review.md
+  h_72decab43bbb75 16-17
+docs/design/design-overview.md
+  h_72decab43bbb75 10-13,23-25,33
+docs/design/pilot-acceptance-v1.md
+  h_72decab43bbb75 1-72
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 3,259-265
+examples/README.md
+  h_72decab43bbb75 3-6,8-11
+examples/manifests/source-v1.toml
+  h_72decab43bbb75 1-18
+schemas/README.md
+  h_72decab43bbb75 3-5,7-16
+schemas/legend-v1.md
+  h_72decab43bbb75 1-39
+schemas/source-v1.md
+  h_72decab43bbb75 1-75
+scripts/README.md
+  h_72decab43bbb75 3,6-16
+scripts/check.sh
+  h_72decab43bbb75 12-65
+tests/README.md
+  h_72decab43bbb75 8-11
+tests/fixtures/contracts/duplicate-class.toml
+  h_72decab43bbb75 1-16
+tests/fixtures/contracts/invalid-stride.toml
+  h_72decab43bbb75 1-9
+tests/fixtures/contracts/missing-license-evidence.toml
+  h_72decab43bbb75 1-18
+tests/fixtures/contracts/nonfinite-spacing.toml
+  h_72decab43bbb75 1-9
+tests/fixtures/contracts/over-budget.toml
+  h_72decab43bbb75 1-16
+tests/fixtures/contracts/overflow-grid.toml
+  h_72decab43bbb75 1-9
+"tests/fixtures/contracts/rectangular world.toml"
+  h_72decab43bbb75 1-9
+tests/fixtures/contracts/unknown-field.toml
+  h_72decab43bbb75 1-9
+tests/fixtures/contracts/unsupported-version.toml
+  h_72decab43bbb75 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "88242d44eabfc0eea639d31855f1b618d2630d69",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
