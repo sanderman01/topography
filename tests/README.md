@@ -5,8 +5,10 @@
 - `fixtures/` holds small synthetic inputs shared across components, such as
   elevation ramps, masks, and manifest examples. Keep real survey data in `data/`.
 
-No formal tests are included in the scaffold. Current verification builds and
-runs the CLI through `bash scripts/check.sh`.
+No formal test suite is configured. Current verification builds and runs the CLI
+through `bash scripts/check.sh`, including valid and invalid contract fixtures in
+`fixtures/contracts/`. These tiny inputs do not represent real terrain or verify
+source admission. See [the script documentation](../scripts/README.md).
 
 As functionality is implemented, verify complete user workflows and the master
 plan's physical invariants: preserved metres and masks, consistent coordinates,

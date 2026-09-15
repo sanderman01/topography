@@ -1,0 +1,16 @@
+schema_version = 1
+status = "draft"
+hardware = { gpu_vram_budget_gb = 17 }
+
+[paths]
+base_dir = "."
+catalog_db = "catalog.sqlite3"
+raw = "raw"
+prepared = "prepared"
+review = "review"
+datasets = "datasets"
+models = "models"
+worlds = "worlds"
+exports = "exports"
+cache = "cache"
+staging = "staging"

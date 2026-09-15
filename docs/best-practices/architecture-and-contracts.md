@@ -1,8 +1,8 @@
 # Architecture and contracts
 
 Use this guide when adding components, configuration, schemas, or Rust/Python
-interfaces. The boundaries exist as a scaffold; their runtime contracts are
-still to be implemented.
+interfaces. Preset, candidate-legend and source-description validators exist;
+processing and cross-language batch contracts remain to be implemented.
 
 ## Keep responsibilities explicit
 

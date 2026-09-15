@@ -1,9 +1,19 @@
 # Shared data contracts
 
-Place versioned machine-readable schemas here as their first consumers are
-implemented. No manifest schema or validator is implemented by this scaffold.
+The initial contracts use strict typed TOML decoders in Rust, with semantic
+checks, instead of a second schema engine. Their first consumer is
+`topography validate <world|runtime|legend|source> <path>`.
 
-The Rust tools and Python jobs will share contracts covering:
+- [World/runtime v1](../configs/README.md): dimensions, paths and review settings.
+- [Candidate legend v1](legend-v1.md): stable IDs, colors and optional precedence.
+- [Source metadata v1](source-v1.md): declarations and explicit unknowns.
+
+These validators read metadata only. They do not inspect raster files, verify
+license evidence, create acceptance records or implement batch jobs. Share a
+machine-readable schema with Python when the first cross-language consumer exists;
+do not infer a processing contract from the discovery/source record.
+
+Future Rust tools and Python jobs will share artifact contracts covering:
 
 - Source identity, original metadata, checksums, CRS, vertical datum, units,
   measured resolution, surface type, license evidence, and review decisions.

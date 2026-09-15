@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: proposed design; no implementation. Sources checked 13 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: implementation started with preset and metadata validation; terrain processing remains planned. Sources checked 13 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -255,6 +255,13 @@ Tune numerical terrain tolerances against accepted real-source examples and the 
 Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit height tiles, biome/water/validity masks, encoding and coordinate metadata, review overviews, and the world manifest. Export tiles are packaging units; they must not determine how the world was trained or generated.
 
 ## 11. Proposed implementation sequence
+
+The first item is underway: [loadable presets](../../configs/README.md), a
+[candidate legend](../../schemas/legend-v1.md), a
+[source-description contract](../../schemas/source-v1.md), and
+[initial acceptance criteria](../design/pilot-acceptance-v1.md) are implemented
+or documented. Vehicle values and measured pilot tolerances remain explicitly
+unset. These metadata checks do not complete the real-terrain milestone.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

@@ -13,8 +13,8 @@ bash scripts/check.sh
 ```
 
 It runs rustfmt, a locked offline workspace build, Clippy with warnings denied,
-and the CLI's help/version entry points. It does not run formal tests, Python
-jobs, raster processing, training, or world validation. No formal tests or Python
+and the CLI's help/version and contract-validation workflows. It does not run
+formal tests, Python jobs, raster processing, training, or world validation. No formal tests or Python
 test tooling are currently configured.
 
 - For a bug, first reproduce the failure through the user's actual workflow as

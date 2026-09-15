@@ -1,0 +1,16 @@
+schema_version = 1
+legend_version = 1
+status = "candidate"
+retired_ids = []
+
+[[classes]]
+id = 1
+name = "First candidate"
+color_rgb = [128, 0, 128]
+flight_experience = "Hidden exits"
+
+[[classes]]
+id = 1
+name = "Second candidate"
+color_rgb = [255, 165, 0]
+flight_experience = "Blind bends"

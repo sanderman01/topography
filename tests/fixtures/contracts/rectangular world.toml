@@ -1,0 +1,9 @@
+schema_version = 1
+status = "draft"
+name = "fractional-rectangle"
+grid = { cells = [32768, 16384], spacing_m = 0.9765625 }
+training = { tile_cells = 512 }
+generation = { scales_m = [15.625, 3.90625, 0.9765625], window_cells = 1024, stride_cells = 512 }
+layout = { sketch_cells = [512, 256] }
+review = { clearances_m = [32.0, 64.0, 128.0] }
+export = { tile_cells = 1024, sampling = "shared_edge_vertices" }

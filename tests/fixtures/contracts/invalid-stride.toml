@@ -1,0 +1,9 @@
+schema_version = 1
+status = "draft"
+name = "invalid-stride"
+grid = { cells = [4096, 4096], spacing_m = 1.0 }
+training = { tile_cells = 512 }
+generation = { scales_m = [16.0, 4.0, 1.0], window_cells = 1024, stride_cells = 1025 }
+layout = { sketch_cells = [512, 512] }
+review = { clearances_m = [32.0] }
+export = { tile_cells = 1024, sampling = "shared_edge_vertices" }

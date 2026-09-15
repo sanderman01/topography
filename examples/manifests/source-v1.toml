@@ -1,0 +1,18 @@
+# Synthetic discovery record: no asset, survey, or license is verified.
+schema_version = 1
+record_id = "synthetic-source-example"
+synthetic = true
+provider = "example-provider"
+collection_id = "example-collection"
+asset_id = "example-asset"
+source_urls = ["https://example.invalid/terrain/example-asset.tif"]
+original_metadata_path = "original/example-asset.json"
+acquisition_dates = []
+processing_history = []
+# Omitted optional values mean unknown, never zero or an implicit default.
+
+[spatial]
+surface_type = "unknown"
+
+[license]
+training_permission = "unknown"

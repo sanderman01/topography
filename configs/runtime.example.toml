@@ -2,6 +2,7 @@ schema_version = 1
 status = "draft"
 
 [paths]
+base_dir = ".."
 catalog_db = "data/catalog/topography.sqlite3"
 raw = "data/raw"
 prepared = "data/prepared"

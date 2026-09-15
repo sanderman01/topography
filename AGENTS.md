@@ -6,10 +6,11 @@ Topography is a human-directed terrain workshop for a dirigible game. It will
 acquire and curate Earth elevation, compose editable worlds, evaluate optional
 diffusion models, and export terrain with reproducible provenance.
 
-The repository currently implements only a Rust CLI scaffold (`--help` and
-`--version`) and an importable Python package scaffold. Core modules are reserved
-boundaries; acquisition, raster processing, training, generation, and export are
-not implemented. Configuration examples are drafts and are not loaded by the CLI.
+The Rust CLI implements `--help`, `--version`, and read-only `validate` commands
+for world/runtime presets, candidate legends and source metadata. The Python
+package remains a scaffold. Acquisition, raster processing, training, generation
+and export are not implemented. Preset values remain draft pilot choices even
+when configuration is valid; validation does not create human acceptance.
 
 Read [README.md](README.md) for setup and the
 [master plan](docs/plans/terrain-design-master-plan.md) for scope, physical
@@ -88,9 +89,10 @@ bash scripts/check.sh
 ```
 
 It checks formatting, builds the workspace, runs Clippy with warnings denied,
-and exercises CLI help/version, using locked offline Cargo resolution. It does
-not run a terrain workflow or a formal test suite. No external Rust dependencies,
-ML dependencies, or geospatial tools are required for the current scaffold.
+and exercises CLI help/version and valid/invalid contract inputs using locked
+offline Cargo resolution. Fetch locked Rust dependencies once with
+`cargo fetch --locked`. It does not run a terrain workflow or formal test suite.
+No ML dependencies or geospatial tools are required for contract validation.
 See [training setup](training/README.md) when implementing Python functionality.
 
 Reproduce bugs through the user's workflow before fixing them. Run the relevant

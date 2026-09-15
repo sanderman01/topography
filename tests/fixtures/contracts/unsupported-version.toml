@@ -1,0 +1,5 @@
+schema_version = 2
+legend_version = 1
+status = "candidate"
+retired_ids = []
+classes = [{ id = 1, name = "Future class", color_rgb = [128, 0, 128], flight_experience = "Unknown future contract" }]

@@ -14,9 +14,9 @@ declares Rust 1.85 as its minimum version, and forbids unsafe code.
   as an explicit compatibility change. See
   [Cargo's Rust version reference](https://doc.rust-lang.org/cargo/reference/rust-version.html).
 - Add a dependency for a concrete need and inspect its features, native build
-  requirements, and compatibility. The current scaffold needs no external
-  crates. Do not relax `unsafe_code = "forbid"` to implement raster algorithms;
-  use the established tool boundary.
+  requirements, and compatibility. Contract validation uses Serde and TOML with
+  locked compatible dependencies. Do not relax `unsafe_code = "forbid"` for
+  raster algorithms; use the established tool boundary.
 
 ## Types, ownership, and errors
 
@@ -53,7 +53,8 @@ declares Rust 1.85 as its minimum version, and forbids unsafe code.
 ## Verify
 
 Run `bash scripts/check.sh` from the repository root. It checks rustfmt, builds
-the workspace, runs Clippy with warnings denied, and exercises CLI help/version.
+the workspace, runs Clippy with warnings denied, and exercises CLI help/version
+and valid/invalid contract inputs.
 It uses `--locked --offline`; dependencies must already be available locally.
 When adding dependencies, document any required fetch/setup step instead of
 silently dropping reproducibility flags.

@@ -1,8 +1,11 @@
 # Examples
 
-`manifests/` is reserved for small, synthetic examples of the future source,
-dataset, model-job, world-revision, and export contracts. Add examples alongside
-their versioned schemas and consumers. Do not use real credentials or imply
-that placeholder sources have passed acquisition or licensing review.
+`manifests/source-v1.toml` is a synthetic source-description example consumed by
+`topography validate source`. Its permission and physical metadata are deliberately
+unknown. See the [source contract](../schemas/source-v1.md). It does not represent
+an imported or accepted asset.
 
-Draft world and runtime settings already live in `../configs/`.
+Dataset, model-job, world-revision and export examples will follow their consumers.
+Do not use real credentials or imply that placeholders passed source review.
+
+Loadable draft world/runtime presets live in [configs](../configs/README.md).

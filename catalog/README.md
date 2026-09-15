@@ -12,6 +12,12 @@ Keep small, reviewed descriptions here. The local catalog database belongs in
   Start from the master plan's nine provisional classes. Never reuse retired IDs;
   keep water and validity separate from terrain classes.
 
+The initial [candidate legend](labels/terrain-v1.toml) is now loadable with
+`topography validate legend`; see the [v1 contract](../schemas/legend-v1.md).
+Class precedence remains unset. Source descriptions have a
+[v1 contract](../schemas/source-v1.md) and read-only validator. Catalog persistence,
+coverage discovery and source admission are not implemented yet.
+
 Candidate locations in `docs/locations.md` and the master plan remain research
 leads until their exact source footprints and quality have been checked. Do not
 mark a provider or dataset as verified simply by adding a description here.
