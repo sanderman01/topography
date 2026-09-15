@@ -1,0 +1,22 @@
+docs/biomes.md
+  h_72decab43bbb75 1-26
+docs/design/initial-design-spec.md
+  h_72decab43bbb75 1-21
+docs/elevation-data-sources.md
+  h_72decab43bbb75 1-28
+docs/locations.md
+  h_72decab43bbb75 1-22
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 1-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1787983ff6f8374c8727f82e11589d214dc174b5",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
