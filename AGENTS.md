@@ -79,6 +79,8 @@ confirm they are ready before launching, unless they have already explicitly
 confirmed readiness for that run. This applies to training, inference, large
 raster jobs, builds, benchmarks, and any other resource-heavy work.
 
+(Rust builds and file downloads are fine. Do not pause for these)
+
 ## Development and verification
 
 Use Rust 1.85 or newer (edition 2024), Cargo, rustfmt, and Clippy. Python work
