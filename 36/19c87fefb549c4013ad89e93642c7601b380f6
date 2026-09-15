@@ -1,0 +1,66 @@
+Cargo.lock
+  h_72decab43bbb75 20-35,87-98,105-116,139-147,153-164,173,182-191,198-208,227-232,257-281,295-300,328,364-387,399-409,423-442,493,513-518,534-578
+Cargo.toml
+  h_72decab43bbb75 18
+README.md
+  h_72decab43bbb75 11-12,67-68,74,80-81,93-96
+catalog/README.md
+  h_72decab43bbb75 22-25
+crates/topography-cli/src/main.rs
+  h_72decab43bbb75 14-18,26-28,103-140
+crates/topography-core/Cargo.toml
+  h_72decab43bbb75 14
+crates/topography-core/src/acquisition/mod.rs
+  h_72decab43bbb75 28,39,51,66-70,133,136,143,153,157
+crates/topography-core/src/catalog/curation/journal.rs
+  h_72decab43bbb75 1-391
+crates/topography-core/src/catalog/curation/mod.rs
+  h_72decab43bbb75 1-499
+crates/topography-core/src/catalog/mod.rs
+  h_72decab43bbb75 1,3
+crates/topography-core/src/review/bundle.rs
+  h_72decab43bbb75 1-140
+crates/topography-core/src/review/mod.rs
+  h_72decab43bbb75 3-4,102
+data/README.md
+  h_72decab43bbb75 26-28
+docs/best-practices/data-management.md
+  h_72decab43bbb75 5
+docs/best-practices/geospatial.md
+  h_72decab43bbb75 5
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 274-277
+docs/progress.md
+  h_72decab43bbb75 3-4,14-15,21-23,43-44,55-56
+docs/reports/rio-abajo-ground-support.md
+  h_72decab43bbb75 1-113
+docs/reports/rio-abajo-karst-trial.md
+  h_72decab43bbb75 166-171
+docs/workflows/dem-acquisition.md
+  h_72decab43bbb75 6-7,28,140
+docs/workflows/source-curation.md
+  h_72decab43bbb75 1-101
+schemas/README.md
+  h_72decab43bbb75 12,16-18
+schemas/curation-v1.md
+  h_72decab43bbb75 1-66
+scripts/README.md
+  h_72decab43bbb75 15,54-87
+scripts/check.sh
+  h_72decab43bbb75 70-75
+scripts/check_curation.py
+  h_72decab43bbb75 1-151
+scripts/check_ground_support.py
+  h_72decab43bbb75 1-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3619c87fefb549c4013ad89e93642c7601b380f6",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
