@@ -1,0 +1,84 @@
+.editorconfig
+  h_72decab43bbb75 1-12
+.gitattributes
+  h_72decab43bbb75 1-14
+.gitignore
+  h_72decab43bbb75 1-31
+Cargo.lock
+  h_72decab43bbb75 1-14
+Cargo.toml
+  h_72decab43bbb75 1-15
+README.md
+  h_72decab43bbb75 1-64
+catalog/README.md
+  h_72decab43bbb75 1-22
+configs/README.md
+  h_72decab43bbb75 1-29
+configs/runtime.example.toml
+  h_72decab43bbb75 1-17
+configs/worlds/exact-32km.toml
+  h_72decab43bbb75 1-25
+configs/worlds/pilot.toml
+  h_72decab43bbb75 1-25
+configs/worlds/standard.toml
+  h_72decab43bbb75 1-25
+crates/topography-cli/Cargo.toml
+  h_72decab43bbb75 1-16
+crates/topography-cli/src/main.rs
+  h_72decab43bbb75 1-30
+crates/topography-core/Cargo.toml
+  h_72decab43bbb75 1-9
+crates/topography-core/src/catalog/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/config/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/datasets/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/export/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/generation/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/lib.rs
+  h_72decab43bbb75 1-11
+crates/topography-core/src/preparation/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/providers/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/review/mod.rs
+  h_72decab43bbb75 1
+crates/topography-core/src/world/mod.rs
+  h_72decab43bbb75 1
+data/README.md
+  h_72decab43bbb75 1-37
+docs/design-record/design-record.md
+  h_72decab43bbb75 1-19
+docs/design/design-overview.md
+  h_72decab43bbb75 1-33
+examples/README.md
+  h_72decab43bbb75 1-8
+schemas/README.md
+  h_72decab43bbb75 1-22
+scripts/README.md
+  h_72decab43bbb75 1-13
+scripts/check.sh
+  h_72decab43bbb75 1-11
+tests/README.md
+  h_72decab43bbb75 1-14
+training/README.md
+  h_72decab43bbb75 1-37
+training/pyproject.toml
+  h_72decab43bbb75 1-14
+training/src/topography_training/__init__.py
+  h_72decab43bbb75 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a36d1431e4dd46d7927187b950dfd848fb4287bb",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
