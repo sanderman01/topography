@@ -1,0 +1,46 @@
+README.md
+  h_72decab43bbb75 11-12,89-92
+catalog/README.md
+  h_72decab43bbb75 14-15,29-33
+catalog/areas/rio-abajo-crops.geojson
+  h_72decab43bbb75 1-137
+catalog/candidates/rio-abajo-source.toml
+  h_72decab43bbb75 1-30
+crates/topography-core/src/acquisition/mod.rs
+  h_72decab43bbb75 4,63,112,118,165
+crates/topography-core/src/acquisition/raster.rs
+  h_72decab43bbb75 11,22,27-28,168-172,183-184
+crates/topography-core/src/review/mod.rs
+  h_72decab43bbb75 2-226
+crates/topography-core/src/review/preview.html
+  h_72decab43bbb75 1-182
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 269-273,277
+docs/reports/rio-abajo-karst-trial.md
+  h_72decab43bbb75 1-165
+docs/workflows/dem-acquisition.md
+  h_72decab43bbb75 159-161,169-171,176-178
+schemas/README.md
+  h_72decab43bbb75 11
+schemas/native-review-v1.md
+  h_72decab43bbb75 1-62
+schemas/raw-receipt-v1.md
+  h_72decab43bbb75 59-62
+scripts/README.md
+  h_72decab43bbb75 34-36,40-53
+scripts/check_acquisition.py
+  h_72decab43bbb75 5,13,51-56,82-112,124,129-138
+scripts/check_review.py
+  h_72decab43bbb75 1-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a80482b88f69a8d35886b24be4ee88df14ced34b",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
