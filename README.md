@@ -4,6 +4,8 @@ A terrain workshop for a dirigible game: collect detailed Earth elevation,
 curate terrain, and compose an editable world with human review throughout.
 
 The [master plan](docs/plans/terrain-design-master-plan.md) defines the project.
+See the [progress summary](docs/progress.md) for completed work, verification and
+the remaining implementation order.
 The Rust CLI validates presets and metadata, discovers USGS DEM candidates,
 acquires/imports raw Float32 GeoTIFFs, verifies stored bytes, and creates small
 native-grid review crops through GDAL. Preparation, dataset admission, training,
