@@ -53,6 +53,9 @@ The Rust scaffold has no external dependencies. The check script builds the
 workspace, checks formatting, runs Clippy, and exercises the CLI entry points.
 See [training](training/README.md) for the separate Python package.
 
+See [AGENTS.md](AGENTS.md) for repository working instructions and the topic
+guides in [docs/best-practices](docs/best-practices/).
+
 Later processing stages will use GDAL/PROJ, PDAL where point clouds are involved,
 and QGIS for human review. They are not required to build this scaffold. Training
 dependencies and GPU settings will be selected during the feasibility pilot,
