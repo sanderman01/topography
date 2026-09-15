@@ -1,0 +1,14 @@
+* text=auto
+*.rs text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.geojson text eol=lf
+*.md text eol=lf
+*.tif binary
+*.tiff binary
+*.las binary
+*.laz binary
+*.png binary
+*.pt binary
+*.safetensors binary

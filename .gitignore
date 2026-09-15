@@ -1,0 +1,31 @@
+# Build and Python environment artifacts.
+/target/
+**/__pycache__/
+*.py[cod]
+**/.venv/
+**/*.egg-info/
+/training/build/
+/training/dist/
+**/.pytest_cache/
+**/.ruff_cache/
+
+# Terrain artifacts stay local; retain the directory scaffold.
+/data/**
+!/data/README.md
+!/data/*/
+!/data/*/.gitkeep
+
+# Machine-specific configuration and credentials.
+/configs/local/**
+!/configs/local/.gitkeep
+.env
+.env.*
+!.env.example
+
+# Local planning notes are not part of commits.
+/PLAN.md
+/TASKS.md
+
+.DS_Store
+*.swp
+*~

@@ -1,0 +1,17 @@
+schema_version = 1
+status = "draft"
+
+[paths]
+catalog_db = "data/catalog/topography.sqlite3"
+raw = "data/raw"
+prepared = "data/prepared"
+review = "data/review"
+datasets = "data/datasets"
+models = "data/models"
+worlds = "data/worlds"
+exports = "data/exports"
+cache = "data/cache"
+staging = "data/staging"
+
+[hardware]
+gpu_vram_budget_gb = 16
