@@ -1,0 +1,36 @@
+AGENTS.md
+  h_72decab43bbb75 1-108
+README.md
+  h_72decab43bbb75 56-58
+docs/best-practices/architecture-and-contracts.md
+  h_72decab43bbb75 1-68
+docs/best-practices/data-management.md
+  h_72decab43bbb75 1-72
+docs/best-practices/geospatial.md
+  h_72decab43bbb75 1-71
+docs/best-practices/machine-learning.md
+  h_72decab43bbb75 1-76
+docs/best-practices/python.md
+  h_72decab43bbb75 1-64
+docs/best-practices/rust.md
+  h_72decab43bbb75 1-63
+docs/best-practices/shell-scripting.md
+  h_72decab43bbb75 1-53
+docs/best-practices/terrain-export.md
+  h_72decab43bbb75 1-70
+docs/best-practices/validation-and-review.md
+  h_72decab43bbb75 1-77
+docs/best-practices/world-generation-and-editing.md
+  h_72decab43bbb75 1-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "896d92efd49170d8fd56d7a9f5666d7778b64b19",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
