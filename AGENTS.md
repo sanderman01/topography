@@ -68,6 +68,16 @@ exists. Consult upstream documentation for the versions actually selected.
 - Leave Bevy integration, QuadTrees, vegetation, weather, a full flight model,
   and underwater terrain outside the current plan.
 
+## Before heavy workloads
+
+Before starting any task or process expected to require substantial CPU/GPU
+compute, RAM, or VRAM, pause and warn the user so they can close other
+applications. Describe the workload and expected resource use and duration when
+known; state uncertainty rather than inventing estimates. Wait for the user to
+confirm they are ready before launching, unless they have already explicitly
+confirmed readiness for that run. This applies to training, inference, large
+raster jobs, builds, benchmarks, and any other resource-heavy work.
+
 ## Development and verification
 
 Use Rust 1.85 or newer (edition 2024), Cargo, rustfmt, and Clippy. Python work
