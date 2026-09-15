@@ -31,8 +31,25 @@ It checks exact Float32 crop values and masks, pixel coordinates, raw checksums,
 repeat import, corrupt objects, recovery before receipt publication,
 non-Float32 rejection, unknown-permission isolation, archived discovery mapping,
 interrupted transfers, corrupt cached chunks, changed ETags, bad ranges and limits.
+Local checks also verify browser Float32/mask bytes, extrema excluding nodata,
+nonfinite/all-invalid crops, one-cell ENVI output, unknown-unit view gating,
+and safe embedding of retained metadata in HTML.
 These are CLI workflow checks; live provider availability and source fidelity
 require the separate [real-data workflow](../docs/workflows/dem-acquisition.md).
+
+For an acquired source and one or more newly generated review crops:
+
+```sh
+python3 scripts/check_review.py target/debug/topography data/raw/records/RECEIPT_SHA256.json data/review/candidate-1/review.json --output data/review/candidate-1-comparison.json
+```
+
+This compares every decoded Float32 bit and provider-mask cell with the original
+window, checks coordinate metadata and artifact hashes, and verifies the embedded
+browser samples and extrema. It runs sequential small GDAL conversions, uses
+temporary files, and refuses to replace an existing comparison report. It uses
+Python 3.11+ and the already-required GDAL tools; no Python numeric dependencies.
+It is a developer verification script (run without Python's `-O` assertion bypass).
+See the [karst trial](../docs/reports/rio-abajo-karst-trial.md) for a real example.
 
 Keep Bash scripts focused on small orchestration tasks around established tools.
 Persistent catalog logic, provider adapters, validation, and build dependencies

@@ -1,7 +1,7 @@
 //! Bounded raw DEM acquisition, integrity verification, and GDAL review crops.
 
 mod http;
-mod raster;
+pub(crate) mod raster;
 mod store;
 mod usgs;
 
@@ -60,7 +60,7 @@ impl From<serde_json::Error> for AcquisitionError {
         Self::Json(e)
     }
 }
-type Result<T> = std::result::Result<T, AcquisitionError>;
+pub(crate) type Result<T> = std::result::Result<T, AcquisitionError>;
 
 fn bounded_output(command: &mut std::process::Command) -> Result<std::process::Output> {
     use std::{io::Read, process::Stdio};
@@ -109,13 +109,13 @@ fn bounded_output(command: &mut std::process::Command) -> Result<std::process::O
     })
 }
 
-fn io_context<T>(context: impl Into<String>, result: io::Result<T>) -> Result<T> {
+pub(crate) fn io_context<T>(context: impl Into<String>, result: io::Result<T>) -> Result<T> {
     result.map_err(|source| AcquisitionError::Io {
         context: context.into(),
         source,
     })
 }
-fn ensure(condition: bool, message: impl Into<String>) -> Result<()> {
+pub(crate) fn ensure(condition: bool, message: impl Into<String>) -> Result<()> {
     if condition {
         Ok(())
     } else {
@@ -162,7 +162,7 @@ fn hash_file(path: &Path) -> Result<(String, u64)> {
     Ok((format!("{:x}", hasher.finalize()), total))
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     let parent = path
         .parent()

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Topography · terrain review</title>
+<style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui,sans-serif; background:#101c22; color:#e5ecea }
+    [hidden] { display:none !important }
+    body { max-width:1320px; margin:auto; padding:24px }
+    h1 { margin:0; font-size:1.9rem } h2 { font-size:1.15rem } p { max-width:85ch }
+    .muted { color:#afc1c5 } .tag { color:#f2c97e; font-size:.85rem; letter-spacing:.12em }
+    .grid { display:grid; grid-template-columns:minmax(280px,1fr) minmax(340px,1.3fr); gap:24px }
+    canvas { display:block; width:100%; background:#20323b; border:1px solid #48616b }
+    #map { height:auto; cursor:crosshair } #scene { aspect-ratio:1.6 }
+    label { display:inline-block; margin:6px 12px 6px 0 } select,input,button { font:inherit; color:inherit; background:#263c45; border:1px solid #56727a; padding:4px }
+    input[type=number] { width:6em } input[type=range] { width:140px } button { cursor:pointer }
+    #facts { white-space:pre-line } .note { padding:12px 16px; border-left:3px solid #e3b567; background:#233239 }
+    @media(max-width:800px) { .grid { grid-template-columns:1fr } body { padding:16px } }
+</style>
+<div class="tag">TOPOGRAPHY / RAW TERRAIN REVIEW</div>
+<h1>Hills, hollows &amp; routes</h1>
+<p id="identity" class="muted"></p>
+<p class="note">Unreviewed. Vehicle dimensions and movement limits are unset. Provider validity does not establish terrestrial quality or support beneath vegetation. This heightfield cannot show caves or overhangs.</p>
+<div class="grid">
+<section>
+    <h2>Overhead &amp; cross-sections</h2>
+    <label>Light from <select id="light"><option value="0">Northwest · 315°</option><option value="1">Northeast · 45°</option><option value="2">Southwest · 225°</option></select></label>
+    <canvas id="map" width="600" height="600" aria-label="Native-grid terrain hillshade; click to move the observer and cross-sections"></canvas>
+    <p class="muted">Click the map to position the observer and cross-sections. The arrow shows the viewing direction. Dark cells are invalid or nonfinite. Image top is raster row zero.</p>
+    <canvas id="profile" width="750" height="300" aria-label="Row and column elevation cross-sections"></canvas>
+</section>
+<section>
+    <h2>Low-altitude view</h2>
+    <div id="controls">
+        <label>Heading <input id="heading" type="range" min="0" max="359" value="0"></label>
+        <label>Height mode <select id="mode"><option value="terrain">Above local terrain</option><option value="fixed">Fixed datum height</option></select></label>
+        <label id="clearanceLabel">Clearance <select id="clearance"><option>32</option><option selected>64</option><option>128</option></select> m</label>
+        <label id="fixedLabel" hidden>Datum height <input id="fixed" type="number" step="1"> m</label>
+        <button id="forward">Move 10 m forward</button>
+        <button id="save">Keep view in address</button>
+    </div>
+    <canvas id="scene" width="640" height="400" aria-label="Perspective heightfield preview"></canvas>
+    <p id="camera" class="muted"></p>
+    <p class="muted">Display only: CPU column rendering uses bounded nearest-cell ray samples. Vertical scale is 1:1; field of view is 60°. Rays stop at unknown cells and crop edges. Use the rasters and profiles for fine-feature measurements.</p>
+    <h2>Numeric inspection</h2><p id="facts"></p>
+    <p class="muted">Cross-sections use every native sample along the selected row and column, with gaps for invalid or nonfinite cells. Their height and distance scales differ. No resampling, terrain repair, model evaluation or acceptance is performed by this page.</p>
+</section>
+</div>
+<script id="terrain-data" type="application/json">__TERRAIN_DATA__</script>
+<script>
+    "use strict";
+    const data = JSON.parse(document.getElementById("terrain-data").textContent);
+    const byId = id => document.getElementById(id);
+    const unpack = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    const bytes = unpack(data.elevation_le_f32), raw = new DataView(bytes.buffer);
+    const mask = unpack(data.mask), shades = data.shades.map(unpack);
+    const W = data.width, H = data.height, heights = new Float32Array(W * H);
+    for (let i = 0; i < heights.length; i++) heights[i] = raw.getFloat32(i * 4, true);
+    const good = i => mask[i] !== 0 && Number.isFinite(heights[i]);
+    const metric = data.metrics.metric_north_up_preview;
+    const dx = data.transform[1], dy = -data.transform[5];
+    let px = Math.floor(W / 2), py = Math.floor(H * .8);
+    if (!good(py * W + px)) {
+        const first = heights.findIndex((_, i) => good(i));
+        if (first >= 0) { px = first % W; py = Math.floor(first / W); }
+    }
+    const m = data.metrics, unit = m.vertical_units_declared || "unknown native units";
+    byId("identity").textContent = `${data.record_id} · ${W} × ${H} native cells`;
+    byId("facts").textContent = `Finite provider-valid cells: ${m.finite_valid_cells.toLocaleString()} / ${m.cells.toLocaleString()}
+Provider-invalid: ${m.provider_invalid_cells.toLocaleString()} · Nonfinite provider-valid: ${m.nonfinite_valid_cells.toLocaleString()}
+Elevation: ${m.minimum_native === null ? "no finite valid samples" : m.minimum_native.toFixed(3) + " to " + m.maximum_native.toFixed(3) + " " + unit}
+Vertical reference: ${m.vertical_datum_declared || "unset"}
+Grid steps: (${data.transform[1]}, ${data.transform[4]}) and (${data.transform[2]}, ${data.transform[5]}) CRS units
+Terrestrial coverage, training admission and human acceptance: unresolved`;
+    byId("fixed").value = Math.ceil((m.minimum_native || 0) + 64);
+    byId("controls").hidden = !metric;
+    const saved = new URLSearchParams(location.hash.slice(1));
+    const number = (key, fallback, min, max) => {
+        const text = saved.get(key), n = text === null || text.trim() === "" ? NaN : Number(text);
+        return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+    };
+    px = Math.round(number("x", px, 0, W - 1)); py = Math.round(number("y", py, 0, H - 1));
+    byId("heading").value = number("heading", 0, 0, 359);
+    byId("light").value = Math.round(number("light", 0, 0, 2));
+    if (["32", "64", "128"].includes(saved.get("clearance"))) byId("clearance").value = saved.get("clearance");
+    if (saved.get("mode") === "fixed") byId("mode").value = "fixed";
+    byId("fixed").value = number("height", Number(byId("fixed").value), -1e6, 1e6);
+    const angle = () => Number(byId("heading").value) * Math.PI / 180;
+    const source = document.createElement("canvas"); source.width = W; source.height = H;
+    const sourceContext = source.getContext("2d"), image = sourceContext.createImageData(W, H);
+    function paintMap() {
+        const shade = shades[Number(byId("light").value)];
+        for (let i = 0; i < heights.length; i++) {
+            const b = good(i) ? Math.max(28, shade[i]) : 18;
+            image.data.set([b, b, b, 255], i * 4);
+        }
+        sourceContext.putImageData(image, 0, 0);
+        const canvas = byId("map"), ctx = canvas.getContext("2d");
+        canvas.height = Math.max(1, Math.min(900, Math.round(canvas.width * H / W)));
+        ctx.imageSmoothingEnabled = false; ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+        const x = (px + .5) / W * canvas.width, y = (py + .5) / H * canvas.height;
+        ctx.strokeStyle = "#ffc66b"; ctx.lineWidth = 1; ctx.beginPath();
+        ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+        ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.sin(angle()) * 28, y - Math.cos(angle()) * 28); ctx.stroke();
+    }
+    function profiles() {
+        const canvas = byId("profile"), ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#182b34"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (m.minimum_native === null) return;
+        const lo = m.minimum_native, span = Math.max(.01, m.maximum_native - lo);
+        const draw = (count, index, top, color, caption, spacing) => {
+            ctx.fillStyle = "#c6d4d7"; ctx.font = "13px system-ui";
+            ctx.fillText(`${caption} · ${lo.toFixed(1)}–${m.maximum_native.toFixed(1)} ${unit}`, 12, top + 14);
+            const distance = metric ? `${((count - 1) * spacing).toFixed(1)} m` : `${count - 1} cell intervals`;
+            ctx.fillText(`0 → ${distance}`, 12, top + 132);
+            ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath(); let pen = false;
+            for (let n = 0; n < count; n++) {
+                const i = index(n), x = 12 + n / Math.max(1, count - 1) * (canvas.width - 24);
+                if (!good(i)) { pen = false; continue; }
+                const y = top + 115 - (heights[i] - lo) / span * 88;
+                if (pen) ctx.lineTo(x, y); else ctx.moveTo(x, y); pen = true;
+            }
+            ctx.stroke();
+        };
+        draw(W, x => py * W + x, 0, "#ffc66b", `Row ${py}: left → right`, dx);
+        draw(H, y => y * W + px, 150, "#79d7d1", `Column ${px}: top → bottom`, dy);
+    }
+    function scene() {
+        const canvas = byId("scene"), ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#20323b"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (!metric || !good(py * W + px)) {
+            byId("camera").textContent = metric ? "Select a finite, valid observer cell." : "Metric view unavailable: requires declared metre heights and a north-up projected metre grid with east/north axes. Native samples remain inspectable above.";
+            return;
+        }
+        const fixed = byId("mode").value === "fixed", input = byId("fixed").value;
+        const z = fixed ? (input.trim() ? Number(input) : NaN) : heights[py * W + px] + Number(byId("clearance").value);
+        if (!Number.isFinite(z)) { byId("camera").textContent = "Enter a finite datum height."; return; }
+        const ground = heights[py * W + px], heading = angle(), fov = Math.PI / 3;
+        byId("camera").textContent = `Cell ${px}, ${py} · heading ${byId("heading").value}° · camera ${z.toFixed(2)} m · ${ (z - ground).toFixed(2)} m above local terrain`;
+        if (z <= ground) { byId("camera").textContent += " — observer is at or below the surface"; return; }
+        const focal = canvas.width / (2 * Math.tan(fov / 2)), range = Math.hypot(W * dx, H * dy);
+        const step = Math.max(Math.min(dx, dy), range / 4096), shade = shades[Number(byId("light").value)];
+        for (let column = 0; column < canvas.width; column += 2) {
+            const offset = Math.atan((column + 1 - canvas.width / 2) / focal), ray = heading + offset;
+            let bottom = canvas.height;
+            for (let d = step; d < range && bottom > 0; d += step) {
+                const x = Math.floor(px + .5 + Math.sin(ray) * d / dx);
+                const y = Math.floor(py + .5 - Math.cos(ray) * d / dy);
+                if (x < 0 || y < 0 || x >= W || y >= H) break;
+                const i = y * W + x; if (!good(i)) break;
+                const top = Math.max(0, Math.floor(canvas.height / 2 - (heights[i] - z) * focal / (d * Math.cos(offset))));
+                if (top < bottom) {
+                    const b = Math.max(28, shade[i]); ctx.fillStyle = `rgb(${Math.round(b * .84)},${Math.round(b * .94)},${Math.round(b * .86)})`;
+                    ctx.fillRect(column, top, 2, bottom - top); bottom = top;
+                }
+            }
+        }
+    }
+    function render() {
+        byId("fixedLabel").hidden = byId("mode").value !== "fixed";
+        byId("clearanceLabel").hidden = byId("mode").value === "fixed";
+        paintMap(); profiles(); scene();
+    }
+    byId("map").addEventListener("click", e => {
+        const box = e.currentTarget.getBoundingClientRect();
+        px = Math.max(0, Math.min(W - 1, Math.floor((e.clientX - box.left) / box.width * W)));
+        py = Math.max(0, Math.min(H - 1, Math.floor((e.clientY - box.top) / box.height * H))); render();
+    });
+    for (const id of ["heading", "light", "mode", "clearance", "fixed"]) byId(id).addEventListener("input", render);
+    byId("forward").addEventListener("click", () => {
+        px = Math.max(0, Math.min(W - 1, Math.round(px + Math.sin(angle()) * 10 / dx)));
+        py = Math.max(0, Math.min(H - 1, Math.round(py - Math.cos(angle()) * 10 / dy))); render();
+    });
+    byId("save").addEventListener("click", () => {
+        location.hash = new URLSearchParams({x:px, y:py, heading:byId("heading").value,
+            mode:byId("mode").value, height:byId("fixed").value,
+            clearance:byId("clearance").value, light:byId("light").value}).toString();
+    });
+    render();
+</script>
+</html>

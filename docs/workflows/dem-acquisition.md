@@ -156,6 +156,9 @@ then creates:
 - `hillshade.tif`: a display product, never elevation ground truth.
 - `inspection.json` and `review.json`: coordinates, parent receipt checksum,
   crop window, tool versions and artifact checksums.
+- `metrics.json` and `preview.html`: finite/masked sample counts, native extrema,
+  three light directions, row/column profiles and an interactive perspective view
+  when metric metadata supports it. See the [inspection contract](../../schemas/native-review-v1.md).
 
 GDAL uses a 64 MiB cache setting and one worker. Sidecar/PAM writes are disabled
 so inspection cannot alter raw assets. Crop extraction does not interpolate or
@@ -163,8 +166,13 @@ quantize heights. Source nodata is retained; zero can still be a valid elevation
 Provider validity is not a terrestrial quality or water mask. Underwater fill,
 water surface authoring and coverage admission await explicit preparation rules.
 
-Open elevation, validity and hillshade in QGIS for numeric and oblique review.
+Open `preview.html` directly in a browser for overhead, cross-section and
+low-altitude inspection. **Keep view in address** preserves a repeatable camera
+view in the URL fragment. Open the GeoTIFFs in QGIS for detailed numeric review.
 This does not establish vehicle fit, numerical model precision, fine-feature
 fidelity or source acceptance. The [pilot criteria](../design/pilot-acceptance-v1.md)
 and dataset-specific training-permission gate still apply; the vehicle envelope
 remains unset.
+
+The [Río Abajo trial](../reports/rio-abajo-karst-trial.md) traces a native 0.5 m
+survey tile to three inspectable crops using this same acquisition command.

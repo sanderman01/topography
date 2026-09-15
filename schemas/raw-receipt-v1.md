@@ -56,3 +56,7 @@ window in native cells, `resampling = none`, tool versions and checksums/lengths
 of all review artifacts. It explicitly describes the provider validity mask and
 the lack of prepared/training admission. This is a completion/provenance record,
 not a human acceptance record or a general raster processing schema.
+
+New reviews also include [native inspection metrics and a browser preview](native-review-v1.md).
+Consumers should enumerate the artifact list; older v1 reviews without those
+additional artifacts retain their original interpretation.

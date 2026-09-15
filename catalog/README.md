@@ -11,6 +11,8 @@ Keep small, reviewed descriptions here. The local catalog database belongs in
 - `labels/`: versioned integer class legends, colors, and precedence rules.
   Start from the master plan's nine provisional classes. Never reuse retired IDs;
   keep water and validity separate from terrain classes.
+- `candidates/`: source descriptions used for bounded acquisition trials, with
+  explicit unknowns. Copy them beside the retained metadata before acquisition.
 
 The initial [candidate legend](labels/terrain-v1.toml) is now loadable with
 `topography validate legend`; see the [v1 contract](../schemas/legend-v1.md).
@@ -23,6 +25,11 @@ are not implemented yet; discovery bounds do not establish valid-ground coverage
 Candidate locations in `docs/locations.md` and the master plan remain research
 leads until their exact source footprints and quality have been checked. Do not
 mark a provider or dataset as verified simply by adding a description here.
+
+[Río Abajo crop envelopes](areas/rio-abajo-crops.geojson) record the three
+native-grid windows from the [karst trial](../docs/reports/rio-abajo-karst-trial.md).
+They are longitude/latitude GeoJSON raster footprints, not accepted crop labels
+or measured terrestrial coverage. Their terrain class is a candidate annotation.
 
 Dataset admission must record confirmed training permission and its supporting
 clause or confirmation, as required by the master plan. Credentials never belong

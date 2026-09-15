@@ -8,6 +8,7 @@ checks, instead of a second schema engine. Their first consumer is
 - [Candidate legend v1](legend-v1.md): stable IDs, colors and optional precedence.
 - [Source metadata v1](source-v1.md): declarations and explicit unknowns.
 - [Raw receipt/review v1](raw-receipt-v1.md): byte integrity and native review provenance.
+- [Native crop inspection v1](native-review-v1.md): sample counts and browser previews.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.

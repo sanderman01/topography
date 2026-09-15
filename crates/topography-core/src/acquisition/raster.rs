@@ -8,7 +8,7 @@ use std::{
     process::Command,
 };
 
-fn command(program: &str) -> Command {
+pub(crate) fn command(program: &str) -> Command {
     let mut command = Command::new(program);
     command
         .env("GDAL_PAM_ENABLED", "NO")
@@ -19,12 +19,13 @@ fn command(program: &str) -> Command {
     command
 }
 
-fn run(command: &mut Command) -> Result<Vec<u8>> {
+pub(crate) fn run(command: &mut Command) -> Result<Vec<u8>> {
     let output = super::bounded_output(command)?;
     ensure(
         output.status.success(),
         format!(
-            "GDAL failed ({}): {}",
+            "GDAL {} failed ({}): {}",
+            command.get_program().to_string_lossy(),
             output.status,
             String::from_utf8_lossy(&output.stderr)
         ),
@@ -164,6 +165,11 @@ pub fn create_review(receipt_path: &Path, output: &Path, window: [u32; 4]) -> Re
         .arg(&elevation)
         .arg(&hillshade))?;
     let (crop_info, _) = inspect(&elevation)?;
+    let source_path = asset.with_file_name(&receipt.source_sha256);
+    let source: crate::catalog::source::SourceRecord =
+        toml::from_str(&String::from_utf8_lossy(&read_small(&source_path)?))
+            .map_err(|e| AcquisitionError::Invalid(format!("invalid retained source: {e}")))?;
+    crate::review::write_preview(stage.path(), &crop_info, &source)?;
     write_new(
         &stage.path().join("inspection.json"),
         &serde_json::to_vec_pretty(&crop_info)?,
@@ -174,6 +180,8 @@ pub fn create_review(receipt_path: &Path, output: &Path, window: [u32; 4]) -> Re
         "validity.tif",
         "hillshade.tif",
         "inspection.json",
+        "metrics.json",
+        "preview.html",
     ] {
         let path = stage.path().join(name);
         let (sha256, bytes) = hash_file(&path)?;

@@ -8,6 +8,8 @@ The Rust CLI validates presets and metadata, discovers USGS DEM candidates,
 acquires/imports raw Float32 GeoTIFFs, verifies stored bytes, and creates small
 native-grid review crops through GDAL. Preparation, dataset admission, training,
 generation and export remain planned. Processing success never approves terrain.
+Review crops include a self-contained browser preview with multiple hillshades,
+cross-sections and metric low-altitude views where the source metadata supports them.
 
 ## Directory layout
 
@@ -84,6 +86,8 @@ first plan item. Vehicle dimensions remain explicitly unset for the pilot.
 Follow the [acquisition and import workflow](docs/workflows/dem-acquisition.md)
 for discovery, bounded downloads, integrity checks and review crops. A real USGS
 coastal DEM has been imported locally and the native-grid crop path is verified;
-the live TNM search API returned HTTP 504 during development. Next are the karst
-trial, source quality/admission and regional preparation. The broader milestone
+the live TNM search API returned HTTP 504 during development. The
+[early karst trial](docs/reports/rio-abajo-karst-trial.md) now provides three
+native 0.5 m crops from the Río Abajo area. Next are source quality/admission
+and regional preparation. The broader milestone
 still requires curated terrain and the numeric model/loader precision evaluation.

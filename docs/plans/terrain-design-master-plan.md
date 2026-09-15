@@ -266,11 +266,15 @@ unset. These metadata checks do not complete the real-terrain milestone.
 The second item has an initial [acquisition/import implementation](../workflows/dem-acquisition.md)
 with raw integrity, resumable HTTPS staging and small native-grid review crops.
 A real coastal USGS tile was imported; regional preparation, quality admission,
-karst suitability and numeric model/loader evaluation remain open.
+and numeric model/loader evaluation remain open. The
+[early Río Abajo karst trial](../reports/rio-abajo-karst-trial.md) traced a native
+0.5 m survey tile to three crops with overhead/profiles/low-altitude previews.
+Broad karst morphology is inspectable; effective fine-feature resolution,
+ground-return support, training permission and human acceptance remain open.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.
-- [ ] Run an early karst acquisition trial, tracing source data through to several inspectable high-detail crops. Keep a failed candidate report if the geometry is not supported.
+- [x] Run an early karst acquisition trial, tracing source data through to several inspectable high-detail crops. Keep a failed candidate report if the geometry is not supported.
 - [ ] Add the highest-value agency adapters, regional quality checks, human crop selection, and label editing.
 - [ ] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
 - [ ] Compare LoRA plus a trained control branch against a terrain-specific representation if needed; benchmark quality, memory, and runtime.

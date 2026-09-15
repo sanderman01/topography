@@ -1,0 +1,137 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "candidate_id": "north-hollows",
+        "terrain_class_id": 1,
+        "source_record_id": "noaa-9101-prvi-d-19qga68505700",
+        "review_state": "unreviewed",
+        "window_cells": [
+          80,
+          80,
+          1024,
+          1024
+        ],
+        "asset_sha256": "7c4c85bd143c970d45330e2904f20d96ae0b8bd3b7065b43db43797054b77211",
+        "footprint_kind": "raster envelope; no terrestrial classification"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -66.7310053,
+              18.3612844
+            ],
+            [
+              -66.7309975,
+              18.3566586
+            ],
+            [
+              -66.7261531,
+              18.356666
+            ],
+            [
+              -66.7261608,
+              18.3612918
+            ],
+            [
+              -66.7310053,
+              18.3612844
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "candidate_id": "east-ridges",
+        "terrain_class_id": 1,
+        "source_record_id": "noaa-9101-prvi-d-19qga68505700",
+        "review_state": "unreviewed",
+        "window_cells": [
+          1800,
+          800,
+          1024,
+          1024
+        ],
+        "asset_sha256": "7c4c85bd143c970d45330e2904f20d96ae0b8bd3b7065b43db43797054b77211",
+        "footprint_kind": "raster envelope; no terrestrial classification"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -66.7228627,
+              18.3580443
+            ],
+            [
+              -66.722855,
+              18.3534185
+            ],
+            [
+              -66.7180108,
+              18.3534258
+            ],
+            [
+              -66.7180183,
+              18.3580516
+            ],
+            [
+              -66.7228627,
+              18.3580443
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "candidate_id": "south-saddles",
+        "terrain_class_id": 1,
+        "source_record_id": "noaa-9101-prvi-d-19qga68505700",
+        "review_state": "unreviewed",
+        "window_cells": [
+          900,
+          1850,
+          1024,
+          1024
+        ],
+        "asset_sha256": "7c4c85bd143c970d45330e2904f20d96ae0b8bd3b7065b43db43797054b77211",
+        "footprint_kind": "raster envelope; no terrestrial classification"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              -66.7271125,
+              18.3532946
+            ],
+            [
+              -66.7271047,
+              18.3486688
+            ],
+            [
+              -66.7222606,
+              18.3486762
+            ],
+            [
+              -66.7222682,
+              18.353302
+            ],
+            [
+              -66.7271125,
+              18.3532946
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 """Exercise raw import, native-grid review and resumable HTTPS through the CLI."""
 
 import argparse
+import base64
 import hashlib
 import http.server
 import json
@@ -9,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import ssl
+import struct
 import subprocess
 import tempfile
 import threading
@@ -46,6 +48,12 @@ def values(path):
     return [float(line.split()[2]) for line in run("gdal_translate", "-q", "-of", "XYZ", path, "/vsistdout/").splitlines()]
 
 
+def preview_data(directory):
+    html = (directory / "preview.html").read_text()
+    encoded = html.split('<script id="terrain-data" type="application/json">', 1)[1].split('</script>', 1)[0]
+    return json.loads(encoded)
+
+
 def local_checks(directory, runtime, source, asset):
     original_sha = sha(asset)
     receipt_path = Path(run(CLI, "import", source, asset, runtime, 1048576))
@@ -71,6 +79,37 @@ def local_checks(directory, runtime, source, asset):
     info = json.loads((review / "inspection.json").read_text())
     assert info["geoTransform"] == [700001, 1, 0, 2000004, 0, -1]
     assert info["size"] == [2, 3]
+    preview = preview_data(review)
+    samples = base64.b64decode(preview["elevation_le_f32"], validate=True)
+    assert list(struct.unpack("<6f", samples)) == values(review / "elevation.tif")
+    assert list(base64.b64decode(preview["mask"], validate=True)) == values(review / "validity.tif")
+    assert all(len(base64.b64decode(s, validate=True)) == 6 for s in preview["shades"])
+    metrics = json.loads((review / "metrics.json").read_text())
+    assert metrics == preview["metrics"]
+    assert metrics["finite_valid_cells"] == 5 and metrics["provider_invalid_cells"] == 1
+    assert metrics["minimum_native"] == 101.25 and metrics["maximum_native"] == 122.25
+    assert metrics["metric_north_up_preview"] is True
+    assert metrics["vehicle_envelope"] is None and metrics["terrestrial_coverage"] is None
+    for artifact in data["artifacts"]:
+        assert sha(review / artifact["path"]) == artifact["sha256"]
+
+    # Unknown units disable metre-based perspective without changing native review data.
+    unknown = directory / "unknown-units.toml"
+    unknown.write_text(source.read_text().replace('vertical_units = "metre"\n', '')
+                       .replace('record_id = "synthetic-ramp"', 'record_id = "</script><p>metadata</p>"'))
+    unknown_receipt = Path(run(CLI, "import", unknown, asset, runtime, 1048576))
+    unknown_review = directory / "unknown-units-review"
+    run(CLI, "review", unknown_receipt, unknown_review, "0,0,1,1")
+    unknown_payload = preview_data(unknown_review)
+    assert unknown_payload["metrics"]["metric_north_up_preview"] is False
+    assert unknown_payload["record_id"] == "</script><p>metadata</p>"
+    assert '</script><p>metadata</p>' not in (unknown_review / "preview.html").read_text()
+    assert struct.unpack('<f', base64.b64decode(unknown_payload["elevation_le_f32"])) == (100.25,)
+    empty_review = directory / "all-invalid"
+    run(CLI, "review", receipt_path, empty_review, "1,1,1,1")
+    empty_metrics = preview_data(empty_review)["metrics"]
+    assert empty_metrics["finite_valid_cells"] == 0 and empty_metrics["provider_invalid_cells"] == 1
+    assert empty_metrics["minimum_native"] is None and empty_metrics["maximum_native"] is None
     before = sha(manifest)
     run(CLI, "review", receipt_path, review, "1,0,2,3", expected=1, message="already exists")
     assert sha(manifest) == before
@@ -82,10 +121,20 @@ def local_checks(directory, runtime, source, asset):
     byte_asset = directory / "byte.tif"
     run("gdal_translate", "-q", "-ot", "Byte", asset, byte_asset)
     run(CLI, "import", source, byte_asset, runtime, 1048576, expected=1, message="Float32")
-    assert len(list((directory / "raw/records").glob("*.json"))) == 1
+    assert len(list((directory / "raw/records").glob("*.json"))) == 2
     assert sha(asset) == original_sha
     assert not (directory / "prepared").exists()
     assert not (directory / "datasets").exists()
+
+    nonfinite_ascii, nonfinite_asset = directory / "nonfinite.asc", directory / "nonfinite.tif"
+    nonfinite_ascii.write_text((FIXTURES / "ramp.asc").read_text().replace("100.25", "nan"))
+    run("gdal_translate", "-q", "-ot", "Float32", "-a_srs", "EPSG:32619", nonfinite_ascii, nonfinite_asset)
+    nonfinite_receipt = Path(run(CLI, "import", source, nonfinite_asset, runtime, 1048576))
+    nonfinite_review = directory / "nonfinite-review"
+    run(CLI, "review", nonfinite_receipt, nonfinite_review, "0,0,4,4")
+    nonfinite_metrics = preview_data(nonfinite_review)["metrics"]
+    assert nonfinite_metrics["nonfinite_valid_cells"] == 1
+    assert nonfinite_metrics["finite_valid_cells"] == 14
 
     # A crash after object publication but before receipt publication is recoverable.
     saved_receipt = receipt_path.read_bytes()
