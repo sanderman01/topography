@@ -67,6 +67,12 @@ printf 'Contract workflows passed.\n'
 if command -v python3 >/dev/null && command -v gdalinfo >/dev/null && command -v gdal_translate >/dev/null && command -v gdaldem >/dev/null; then
   cli_binary="$(cargo metadata --no-deps --locked --offline --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"] + "/debug/topography")')"
   python3 scripts/check_acquisition.py "$cli_binary" --local-only
+  python3 scripts/check_curation.py "$cli_binary"
+  if command -v pdal >/dev/null; then
+    python3 scripts/check_ground_support.py --self-check
+  else
+    printf 'PDAL ground-support probe check skipped: PDAL is not installed.\n'
+  fi
 else
   printf 'GDAL acquisition workflow skipped: Python 3.11+ and GDAL command-line tools are required.\n'
 fi

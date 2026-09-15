@@ -23,7 +23,9 @@ their inputs, checksums, configuration, tool/model versions, and approval state.
 Keep large rasters in files, not in database blobs.
 
 The first raw store now uses `raw/objects/<sha256>` plus immutable receipts in
-`raw/records/<sha256>.json`. The SQLite catalog remains planned. HTTPS staging
+`raw/records/<sha256>.json`. The SQLite crop-curation catalog now has a sibling
+`<catalog_db>.curation/` directory of immutable records and captured documents; see
+[curation](../docs/workflows/source-curation.md). HTTPS staging
 retains verified chunks under `staging/http/`, and small GDAL review runs contain
 elevation, validity, hillshade and a review manifest. See the
 [workflow](../docs/workflows/dem-acquisition.md) and

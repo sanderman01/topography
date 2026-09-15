@@ -163,3 +163,9 @@ support and small-scale artifacts, distinguish water/terrestrial quality, and
 record the human crop decision. Then implement explicit regional preparation
 and admission. These geographically adjacent review windows are not a dataset
 split. The numeric model/loader round-trip milestone remains a separate task.
+
+## Ground-support follow-up
+
+The [classified-ground trial](rio-abajo-ground-support.md) now measures one 64 m
+centre sample in each crop and captures the reports in the SQLite curation journal.
+These observations do not establish whole-crop quality or human acceptance.

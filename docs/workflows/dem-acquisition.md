@@ -3,7 +3,8 @@
 Implemented: bounded USGS project-based 1 m GeoTIFF discovery, selected HTTPS
 acquisition, local Float32 GeoTIFF import, raw integrity verification and small
 native-grid review crops. These commands do not admit data to prepared/training
-pools or record human acceptance. Regional mosaicking, repairs, water
+pools or record human acceptance. Use the separate [curation workflow](source-curation.md)
+for evidence, crop labels and explicit decisions. Regional mosaicking, repairs, water
 classification and numeric model evaluation remain future work.
 
 ## Tools and setup
@@ -24,7 +25,7 @@ by the optional verification script. See [development checks](../../scripts/READ
 Use a local copy of [the runtime preset](../../configs/runtime.example.toml) to
 select storage roots. Set `paths.base_dir` relative to that copy's parent. The
 examples below run from the repository root. Close other applications before
-substantial builds or raster work, following [AGENTS.md](../../AGENTS.md).
+substantial raster or point-cloud work, following [AGENTS.md](../../AGENTS.md).
 
 ## Discover candidates
 
@@ -136,7 +137,7 @@ new record while retaining shared unchanged objects.
 Publication stages files on the raw destination filesystem, syncs them, publishes
 objects, then publishes the receipt last. An interrupted run can leave temporary
 files or unreferenced objects; neither is a completed import. Retry verifies and
-reuses complete objects, then publishes the missing receipt. There is no SQLite
+reuses complete objects, then publishes the missing receipt. Acquisition has no SQLite
 registration yet. Verification rehashes the receipt and every referenced object;
 missing or corrupt bytes fail without deletion or repair.
 

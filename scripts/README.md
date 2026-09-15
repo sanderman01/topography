@@ -12,7 +12,7 @@ evidence, the VRAM ceiling, paths with spaces and runtime paths from another
 working directory. Expected failures check exit codes and diagnostics.
 
 When Python 3.11+ and GDAL are installed, the main check also runs local synthetic
-DEM import/review checks. Otherwise it explicitly reports that stage as skipped.
+DEM import/review and SQLite curation checks. Otherwise it explicitly reports that stage as skipped.
 It does not download real terrain or run model evaluation.
 
 For the complete acquisition workflow check:
@@ -50,6 +50,40 @@ temporary files, and refuses to replace an existing comparison report. It uses
 Python 3.11+ and the already-required GDAL tools; no Python numeric dependencies.
 It is a developer verification script (run without Python's `-O` assertion bypass).
 See the [karst trial](../docs/reports/rio-abajo-karst-trial.md) for a real example.
+
+`python3 scripts/check_curation.py target/debug/topography` exercises explicit
+actor decisions, pinned inputs, evidence copies, labels, invalid records, stale
+heads, idempotent replay, preserved acceptance/rejection history, publication
+recovery, corrupt/missing objects and portable metadata exports. It uses synthetic
+terrain and human declarations clearly marked as fixtures; no real human acceptance.
+
+With PDAL installed, the main check also runs
+`python3 scripts/check_ground_support.py --self-check`: a tiny local point fixture
+checks classified-ground selection, withheld/synthetic flag exclusion and every
+count bin. It includes overlap returns. There is no network or model work.
+
+The optional `check_ground_support.py` developer probe reads one 64 × 64 m sample
+at the centre of a native 0.5 m review crop, with a 2 m buffer, one COPC reader
+worker and two active chunks. It requires a matching source URL, strong ETag,
+captured PDAL COPC-reader metadata and the exact review CRS. See
+`python3 scripts/check_ground_support.py --help` and the
+[ground-support report](../docs/reports/rio-abajo-ground-support.md) for the trial.
+Full-detail range reads use `If-Match`; selected chunks may extend outside the
+requested area. The probe does not implement acquisition's chunk cache or a hard
+network-byte cap. No full source-cloud SHA-256 is claimed.
+
+Retained XY/classification CSV, pipelines, PDAL metadata, a 0.5 m count GeoTIFF
+and a final `report.json` allow numeric inspection. GDAL/PDAL perform coordinate
+transforms and count rasterization; each bin is independently checked against the
+CSV. Counts include overlapping returns and are not independent-pulse density,
+terrain validity or effective feature resolution. No elevation/Z comparison occurs.
+Each subprocess has a 15-minute timeout; samples exceeding one million retained
+points or a 128 MiB CSV fail verification. These are result limits, not hard peak
+memory limits. Check workload readiness before a substantial point-cloud run.
+Partial outputs remain identifiable; a missing final report means incomplete.
+`--reuse-sample` rechecks retained outputs only when both saved pipelines match;
+it records unknown original runtime/RAM and never replaces a report. Run without
+Python's `-O` assertion bypass, as with the other developer verification scripts.
 
 Keep Bash scripts focused on small orchestration tasks around established tools.
 Persistent catalog logic, provider adapters, validation, and build dependencies

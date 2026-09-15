@@ -9,10 +9,13 @@ checks, instead of a second schema engine. Their first consumer is
 - [Source metadata v1](source-v1.md): declarations and explicit unknowns.
 - [Raw receipt/review v1](raw-receipt-v1.md): byte integrity and native review provenance.
 - [Native crop inspection v1](native-review-v1.md): sample counts and browser previews.
+- [Crop curation v1](curation-v1.md): evidence, explicit decisions, labels and portable history.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.
-None verifies license evidence or creates acceptance records. Share a
+Those commands do not verify license evidence or create acceptance records.
+Curation captures evidence bytes and explicit actor declarations; it does not
+establish the truth of claims or admit prepared/training data. Share a
 machine-readable schema with Python when the first cross-language consumer exists;
 do not infer a processing contract from the discovery/source record.
 

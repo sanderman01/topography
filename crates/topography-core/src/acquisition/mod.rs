@@ -25,6 +25,7 @@ pub enum AcquisitionError {
     Contract(ContractError),
     Io { context: String, source: io::Error },
     Json(serde_json::Error),
+    Catalog(rusqlite::Error),
     Transfer { message: String, transient: bool },
     Invalid(String),
 }
@@ -35,6 +36,7 @@ impl fmt::Display for AcquisitionError {
             Self::Contract(e) => e.fmt(f),
             Self::Io { context, source } => write!(f, "{context}: {source}"),
             Self::Json(e) => write!(f, "invalid JSON: {e}"),
+            Self::Catalog(e) => write!(f, "catalog: {e}"),
             Self::Transfer { message, .. } => f.write_str(message),
             Self::Invalid(message) => f.write_str(message),
         }
@@ -46,6 +48,7 @@ impl Error for AcquisitionError {
             Self::Contract(e) => Some(e),
             Self::Io { source, .. } => Some(source),
             Self::Json(e) => Some(e),
+            Self::Catalog(e) => Some(e),
             Self::Invalid(_) | Self::Transfer { .. } => None,
         }
     }
@@ -58,6 +61,11 @@ impl From<ContractError> for AcquisitionError {
 impl From<serde_json::Error> for AcquisitionError {
     fn from(e: serde_json::Error) -> Self {
         Self::Json(e)
+    }
+}
+impl From<rusqlite::Error> for AcquisitionError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Catalog(e)
     }
 }
 pub(crate) type Result<T> = std::result::Result<T, AcquisitionError>;
@@ -122,17 +130,17 @@ pub(crate) fn ensure(condition: bool, message: impl Into<String>) -> Result<()> 
         Err(AcquisitionError::Invalid(message.into()))
     }
 }
-fn digest(bytes: &[u8]) -> String {
+pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn valid_digest(value: &str) -> bool {
+pub(crate) fn valid_digest(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-fn read_small(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_small(path: &Path) -> Result<Vec<u8>> {
     let file = io_context(format!("open {}", path.display()), fs::File::open(path))?;
     let mut bytes = Vec::new();
     io_context(
@@ -142,11 +150,11 @@ fn read_small(path: &Path) -> Result<Vec<u8>> {
     ensure(bytes.len() <= 1024 * 1024, "metadata exceeds 1 MiB")?;
     Ok(bytes)
 }
-fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
+pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     Ok(serde_json::from_slice(&read_small(path)?)?)
 }
 
-fn hash_file(path: &Path) -> Result<(String, u64)> {
+pub(crate) fn hash_file(path: &Path) -> Result<(String, u64)> {
     let mut file = io_context(format!("open {}", path.display()), fs::File::open(path))?;
     let mut hasher = Sha256::new();
     let mut total = 0u64;

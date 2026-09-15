@@ -271,6 +271,10 @@ and numeric model/loader evaluation remain open. The
 0.5 m survey tile to three crops with overhead/profiles/low-altitude previews.
 Broad karst morphology is inspectable; effective fine-feature resolution,
 ground-return support, training permission and human acceptance remain open.
+The [curation workflow](../workflows/source-curation.md) now captures evidence,
+crop-wide labels and explicit decisions in SQLite, with immutable history and
+portable metadata exports. Regional quality/admission and per-cell label editing
+remain pending.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

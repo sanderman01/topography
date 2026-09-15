@@ -1,5 +1,7 @@
 //! Terrain quality metrics, preview assets, and human review checkpoints.
 
+pub(crate) mod bundle;
+
 use crate::{
     acquisition::{
         Result, ensure, io_context,
@@ -97,7 +99,7 @@ fn metre_unit(value: &str) -> bool {
     matches!(value, "m" | "metre" | "metres" | "meter" | "meters")
 }
 
-fn metric_grid(info: &Value, source: &SourceRecord, transform: &[f64]) -> bool {
+pub(crate) fn metric_grid(info: &Value, source: &SourceRecord, transform: &[f64]) -> bool {
     let proj = &info["stac"]["proj:projjson"];
     let horizontal = if proj["type"] == "CompoundCRS" {
         &proj["components"][0]

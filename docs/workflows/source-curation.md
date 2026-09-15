@@ -1,0 +1,101 @@
+# Crop curation and evidence
+
+The CLI now records crop-wide labels, annotations and explicit human accept/reject
+decisions in SQLite. Each decision pins the exact raw receipt, native review and
+legend, and captures small supporting documents by SHA-256. It does not prepare
+rasters, paint per-cell labels, verify the truth of evidence, or admit training data.
+
+## Create and record a decision
+
+Start with a verified [native review](dem-acquisition.md). Paths below are examples;
+substitute the receipt and crop you actually inspected.
+
+```sh
+topography curate draft configs/runtime.example.toml data/raw/records/RECEIPT_SHA256.json data/review/candidate/review.json catalog/labels/terrain-v1.toml data/review/candidate/decision.json
+```
+
+Edit the generated JSON. The default actor is `unassigned`, the decision is
+`annotate`, and the label, coverage and quality findings are unresolved. Publication
+requires an actor kind/name and a reason. Only an explicit `human` actor may record
+`accept` or `reject`; acceptance also requires an active primary class ID. This is
+a local declaration of authorship, not login authentication or a digital signature.
+An assistant must use `assistant` and must not manufacture human decisions.
+
+Each evidence entry has a local `path` and an `evidence` object containing `id`,
+`description`, optional HTTPS `source_url`, and the SHA-256 of the reviewed bytes.
+Use `sha256sum path/to/report.json` to obtain the hash. Evidence documents are
+limited to 1 MiB each, at most 16 per record. Reference large rasters and point
+clouds through reports containing their checksums; retain those artifacts separately.
+
+```sh
+topography curate record data/review/candidate/decision.json configs/runtime.example.toml
+topography curate status configs/runtime.example.toml REVIEW_SHA256
+topography curate check configs/runtime.example.toml
+topography curate export configs/runtime.example.toml REVIEW_SHA256 data/exports/candidate-curation
+```
+
+`record` prints the immutable decision SHA-256. `status` returns the current
+portable JSON after checking the crop's complete decision history. Use the review
+file's SHA-256 for `REVIEW_SHA256`, also present in the draft's `target` object.
+`check` verifies all indexed records, objects, raw parents and review artifacts.
+It reports published but unregistered records and unreferenced evidence objects.
+It never accepts, repairs or deletes data.
+
+## Findings and limits
+
+The six evidence categories are coordinates, classified ground support,
+artifacts/repairs, feature fidelity, water classification and unsupported gaps
+through defining features. `pass` and `fail` require a note and captured evidence
+IDs. `unknown` can carry observations without claiming that the gate is satisfied.
+Terrestrial coverage needs explicit counts and evidence establishing its denominator;
+provider-valid cells and bins containing LiDAR returns are different measurements.
+
+The stored preparation precheck reports unresolved findings, missing acceptance,
+unconfirmed/excluded ML permission, missing source metadata, synthetic sources,
+unsupported metric grids and failure to establish the initial 99.5% terrestrial
+coverage threshold. This consumer supports native 0.5–1 m grids; it does not
+implement the plan's possible lower-fidelity exceptions. A permanent blocker also
+states that regional preparation and independent admission checks are pending.
+Even a human-accepted record therefore remains `not admitted`.
+
+Permission reviews are separate declarations, leaving the original source metadata
+unchanged. `confirmed` requires dataset-specific permission evidence, captured
+documents and explicit attribution, edited-map reuse and redistribution obligations.
+The CLI verifies document identity and required fields; it cannot establish legal
+permission from the wording. Follow the [source-admission policy](../best-practices/data-management.md).
+
+## Revisions, recovery and backup
+
+Create a fresh draft for each change. It pins the current head in
+`previous_record_sha256`. New drafts deliberately reset review claims to unresolved;
+carry forward findings only after reviewing their evidence. Recording a new decision
+appends history; it does not overwrite previous acceptance or delete raw assets.
+The latest decision controls current status, so a later annotation or rejection
+supersedes acceptance. Identical draft replay is idempotent, including older records.
+A different submission against a stale head fails.
+
+The database is the configured `catalog_db`; its sibling directory with `.curation`
+appended contains `records/<sha256>.json` and `objects/<sha256>`. Unrelated SQLite
+databases and unknown schema versions are rejected. Files publish before a short
+SQLite transaction registers the record and updates the head. After a crash, retry
+the original draft to register intact published files if its previous head still
+matches. Orphaned files remain available for explicit review/housekeeping. Missing
+or corrupt registered objects fail verification and require restoring intact bytes
+from backup; there is no silent repair or promotion. Abandoned temporary files or
+an incomplete export directory remain identifiable and are not completion records.
+
+Version 1 limits a catalog to 4,096 decisions. Export writes a new directory with
+the selected crop's full history, captured documents and an `export.json` completion
+manifest. Local raw/review locator paths stay in SQLite. The export does **not**
+include raw or crop rasters, nor provide an automated restore command. Back up those
+files and their original directory relationships separately. Back up a quiescent
+database or use SQLite's backup API; copying an active database alone is insufficient.
+
+The locked `rusqlite` dependency builds bundled SQLite using a C compiler; a system
+SQLite development package is not required. Development ran on Rust 1.98.1. The
+declared minimum Rust 1.85 was not directly tested, and rusqlite does not promise
+that minimum. Use the installed toolchain for this pilot; minimum-version assurance
+remains a compatibility check to complete before release.
+
+See the [curation contract](../../schemas/curation-v1.md) and
+[workflow checks](../../scripts/README.md).

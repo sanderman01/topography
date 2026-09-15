@@ -19,8 +19,10 @@ The initial [candidate legend](labels/terrain-v1.toml) is now loadable with
 Class precedence remains unset. Source descriptions have a
 [v1 contract](../schemas/source-v1.md) and read-only validator. The
 [acquisition workflow](../docs/workflows/dem-acquisition.md) writes discovery
-candidates and immutable raw receipts. SQLite persistence and source admission
-are not implemented yet; discovery bounds do not establish valid-ground coverage.
+candidates and immutable raw receipts. The
+[curation workflow](../docs/workflows/source-curation.md) persists crop decisions,
+labels and evidence in SQLite. Regional preparation and source admission remain
+pending; discovery bounds do not establish valid-ground coverage.
 
 Candidate locations in `docs/locations.md` and the master plan remain research
 leads until their exact source footprints and quality have been checked. Do not

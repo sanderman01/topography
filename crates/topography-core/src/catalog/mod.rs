@@ -1,5 +1,6 @@
-//! Versioned candidate legends and source metadata; persistent storage is pending.
+//! Versioned source inputs, legends, and a persistent crop-curation journal.
 
+pub mod curation;
 mod legend;
 pub(crate) mod source;
 

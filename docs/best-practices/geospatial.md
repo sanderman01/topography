@@ -2,7 +2,7 @@
 
 Applies to numeric digital elevation models (DEMs), classified LiDAR, prepared
 rasters, and terrain quality metrics. Raw import/review now invokes GDAL tools;
-PDAL and regional preparation remain planned. Geospatial tools are not required
+a developer PDAL ground-support probe is available, while regional preparation remains planned. Geospatial tools are not required
 for Rust builds or metadata-only validation.
 
 ## Preserve physical meaning

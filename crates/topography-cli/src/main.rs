@@ -11,6 +11,11 @@ Usage: topography [--help | --version]
        topography import <source.toml> <asset.tif> <runtime.toml> <max-bytes>
        topography verify <raw-receipt.json>
        topography review <raw-receipt.json> <output-dir> <x,y,width,height>
+       topography curate draft <runtime.toml> <raw-receipt.json> <review.json> <legend.toml> <draft.json>
+       topography curate record <draft.json> <runtime.toml>
+       topography curate status <runtime.toml> <review-sha256>
+       topography curate check <runtime.toml>
+       topography curate export <runtime.toml> <review-sha256> <new-output-dir>
 
 Options:
   -h, --help     Show this help
@@ -18,8 +23,9 @@ Options:
 
 Validation reads metadata only. Success does not mean terrain is accepted.
 Acquisition/import preserve raw Float32 DEMs; review creates unscaled native crops.
-Import, acquire and review print their resulting manifest path. No command admits
-data to prepared/training pools or records human acceptance.
+Import, acquire and review print their resulting manifest path. Curation records
+explicit actor declarations, evidence and crop decisions. No command admits data
+to prepared/training pools. Processing never creates a human decision.
 See docs/plans/terrain-design-master-plan.md for the implementation plan.";
 
 fn main() -> ExitCode {
@@ -91,6 +97,44 @@ fn main() -> ExitCode {
             };
             return workflow_result(
                 acquisition::create_review(Path::new(receipt), Path::new(output), window)
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, runtime, raw, review, legend, output]
+            if command == "curate" && action == "draft" =>
+        {
+            return workflow_result(
+                catalog::curation::draft(
+                    Path::new(runtime),
+                    Path::new(raw),
+                    Path::new(review),
+                    Path::new(legend),
+                    Path::new(output),
+                )
+                .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, draft, runtime] if command == "curate" && action == "record" => {
+            return workflow_result(catalog::curation::record(
+                Path::new(draft),
+                Path::new(runtime),
+            ));
+        }
+        [command, action, runtime, review] if command == "curate" && action == "status" => {
+            let Some(review) = review.to_str() else {
+                return usage_error();
+            };
+            return workflow_result(catalog::curation::status(Path::new(runtime), review));
+        }
+        [command, action, runtime] if command == "curate" && action == "check" => {
+            return workflow_result(catalog::curation::check(Path::new(runtime)));
+        }
+        [command, action, runtime, review, output] if command == "curate" && action == "export" => {
+            let Some(review) = review.to_str() else {
+                return usage_error();
+            };
+            return workflow_result(
+                catalog::curation::export(Path::new(runtime), review, Path::new(output))
                     .map(|p| p.display().to_string()),
             );
         }
