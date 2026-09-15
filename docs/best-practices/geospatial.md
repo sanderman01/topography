@@ -1,8 +1,9 @@
 # Geospatial processing
 
 Applies to numeric digital elevation models (DEMs), classified LiDAR, prepared
-rasters, and terrain quality metrics. GDAL/PROJ and PDAL are planned tools; they
-are not required for the existing scaffold.
+rasters, and terrain quality metrics. Raw import/review now invokes GDAL tools;
+PDAL and regional preparation remain planned. Geospatial tools are not required
+for Rust builds or metadata-only validation.
 
 ## Preserve physical meaning
 

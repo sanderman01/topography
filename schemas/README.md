@@ -7,9 +7,11 @@ checks, instead of a second schema engine. Their first consumer is
 - [World/runtime v1](../configs/README.md): dimensions, paths and review settings.
 - [Candidate legend v1](legend-v1.md): stable IDs, colors and optional precedence.
 - [Source metadata v1](source-v1.md): declarations and explicit unknowns.
+- [Raw receipt/review v1](raw-receipt-v1.md): byte integrity and native review provenance.
 
-These validators read metadata only. They do not inspect raster files, verify
-license evidence, create acceptance records or implement batch jobs. Share a
+The `validate` commands read metadata only. Acquisition/import additionally inspect
+GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.
+None verifies license evidence or creates acceptance records. Share a
 machine-readable schema with Python when the first cross-language consumer exists;
 do not infer a processing contract from the discovery/source record.
 

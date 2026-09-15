@@ -8,9 +8,10 @@ original request; the master plan refines its model assumptions and defaults.
 
 `crates/topography-cli` owns the command-line interface.
 `crates/topography-core` implements strict preset, candidate-legend and source-metadata
-validation. Catalog persistence, provider access/manual import, preparation,
-review, datasets, generation, world composition/editing and export remain reserved
-boundaries.
+validation. Its acquisition module supplies bounded USGS discovery, raw
+acquisition/manual import, integrity verification and native-grid review crops.
+SQLite catalog persistence, regional preparation, human review records, datasets,
+generation, world composition/editing and export remain reserved boundaries.
 GDAL/PROJ and PDAL will supply established geospatial operations.
 
 `training/` is a separate Python package for future numeric evaluation and model
@@ -30,6 +31,6 @@ releases, model runs, world revisions, and exports carry lineage and review
 state. World composition retains the real-terrain blending baseline alongside
 the planned diffusion experiments.
 
-The validators do not implement processing or settle the remaining pilot
-decisions. The next milestone remains inspectable real terrain and verified
-numeric precision, following the master plan's implementation sequence.
+Raw import and review crops start the real-terrain path without settling pilot
+decisions. The next milestone still requires curated real terrain and verified
+numeric model/loader precision, following the master plan's implementation sequence.

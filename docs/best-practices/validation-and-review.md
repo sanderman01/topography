@@ -14,8 +14,10 @@ bash scripts/check.sh
 
 It runs rustfmt, a locked offline workspace build, Clippy with warnings denied,
 and the CLI's help/version and contract-validation workflows. It does not run
-formal tests, Python jobs, raster processing, training, or world validation. No formal tests or Python
-test tooling are currently configured.
+formal tests, Python model jobs, training or world validation. When Python 3.11+
+and GDAL tools are installed, it also runs small synthetic raw import/review
+checks. The separate HTTPS workflow check is documented in
+[scripts](../../scripts/README.md). No formal test runner is configured.
 
 - For a bug, first reproduce the failure through the user's actual workflow as
   closely as practical. Verify the same path after the fix, including relevant

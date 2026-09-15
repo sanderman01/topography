@@ -8,7 +8,9 @@
 No formal test suite is configured. Current verification builds and runs the CLI
 through `bash scripts/check.sh`, including valid and invalid contract fixtures in
 `fixtures/contracts/`. These tiny inputs do not represent real terrain or verify
-source admission. See [the script documentation](../scripts/README.md).
+source admission. `fixtures/acquisition/` adds a synthetic ramp with a missing
+cell, source metadata and a simulated TNM response for local/HTTPS workflow
+verification. See [the script documentation](../scripts/README.md).
 
 As functionality is implemented, verify complete user workflows and the master
 plan's physical invariants: preserved metres and masks, consistent coordinates,

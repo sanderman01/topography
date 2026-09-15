@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: implementation started with preset and metadata validation; terrain processing remains planned. Sources checked 13 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import and native-grid review crops are implemented; regional preparation and model work remain planned. Sources checked 13 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -262,6 +262,11 @@ The first item is underway: [loadable presets](../../configs/README.md), a
 [initial acceptance criteria](../design/pilot-acceptance-v1.md) are implemented
 or documented. Vehicle values and measured pilot tolerances remain explicitly
 unset. These metadata checks do not complete the real-terrain milestone.
+
+The second item has an initial [acquisition/import implementation](../workflows/dem-acquisition.md)
+with raw integrity, resumable HTTPS staging and small native-grid review crops.
+A real coastal USGS tile was imported; regional preparation, quality admission,
+karst suitability and numeric model/loader evaluation remain open.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

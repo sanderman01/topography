@@ -1,0 +1,6 @@
+{
+  "synthetic": true,
+  "description": "4 by 4 Float32 ramp, quarter-metre fractions, one invalid cell",
+  "survey": null,
+  "training_permission": "unknown"
+}

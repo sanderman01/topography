@@ -1,7 +1,8 @@
 # Data management
 
 Applies to provider adapters, manual import, the catalog, dataset releases, and
-artifact storage. These are planned capabilities; use the
+artifact storage. Raw acquisition/import and integrity checks exist; SQLite
+catalog persistence and prepared/training admission remain planned. Use the
 [master plan](../plans/terrain-design-master-plan.md), sections 2–4 and 9, for
 the project's source-admission and provenance requirements.
 

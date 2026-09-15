@@ -22,6 +22,15 @@ subdirectory and manifest when implemented. Derived artifacts must identify
 their inputs, checksums, configuration, tool/model versions, and approval state.
 Keep large rasters in files, not in database blobs.
 
+The first raw store now uses `raw/objects/<sha256>` plus immutable receipts in
+`raw/records/<sha256>.json`. The SQLite catalog remains planned. HTTPS staging
+retains verified chunks under `staging/http/`, and small GDAL review runs contain
+elevation, validity, hillshade and a review manifest. See the
+[workflow](../docs/workflows/dem-acquisition.md) and
+[raw receipt contract](../schemas/raw-receipt-v1.md). Temporary publication files
+and unreferenced objects do not establish a completed import; the receipt is
+published last. Retrying verifies/reuses complete objects without overwriting them.
+
 Rejection records an exclusion; it does not delete raw assets. Cache housekeeping
 is separate from curation. Preserve accepted world output and source provenance;
 ignored files are not backed up by Git, and accepted artifacts need separate

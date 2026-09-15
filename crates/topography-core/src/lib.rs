@@ -10,3 +10,5 @@ pub mod preparation;
 pub mod providers;
 pub mod review;
 pub mod world;
+
+pub mod acquisition;

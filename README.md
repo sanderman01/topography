@@ -4,9 +4,10 @@ A terrain workshop for a dirigible game: collect detailed Earth elevation,
 curate terrain, and compose an editable world with human review throughout.
 
 The [master plan](docs/plans/terrain-design-master-plan.md) defines the project.
-The Rust CLI validates world/runtime presets, candidate class legends and source
-metadata. Acquisition, raster processing, training, generation and export are
-still to be implemented. Validation reads metadata only; it does not approve terrain.
+The Rust CLI validates presets and metadata, discovers USGS DEM candidates,
+acquires/imports raw Float32 GeoTIFFs, verifies stored bytes, and creates small
+native-grid review crops through GDAL. Preparation, dataset admission, training,
+generation and export remain planned. Processing success never approves terrain.
 
 ## Directory layout
 
@@ -57,19 +58,22 @@ bash scripts/check.sh
 Fetch locked dependencies once with network access; checks retain locked offline
 resolution. Serde and TOML provide strict typed decoding. The check script builds
 the workspace, checks formatting, runs Clippy, and exercises valid/invalid CLI
-inputs. Set `CARGO_BUILD_JOBS=1` to limit build concurrency. See
+inputs. When Python 3.11+ and GDAL tools are available it also runs small local
+import/review checks. Set `CARGO_BUILD_JOBS=1` to limit build concurrency. See
 [training](training/README.md) for the separate Python package.
 
 CLI exit codes: 0 for successful metadata validation, 1 for invalid/unreadable
 inputs, and 2 for unsupported arguments. An excluded source record can be valid
 metadata; success does not establish training permission, data quality or human
-acceptance. No files or directories are created by validation commands.
+acceptance. No files or directories are created by validation commands; acquisition,
+import and review commands publish local artifacts.
 
 See [AGENTS.md](AGENTS.md) for repository working instructions and the topic
 guides in [docs/best-practices](docs/best-practices/).
 
-Later processing stages will use GDAL/PROJ, PDAL where point clouds are involved,
-and QGIS for human review. They are not required to build this scaffold. Training
+Acquisition/review requires curl and GDAL command-line tools; they are not needed
+to build Rust or validate contracts. Use QGIS to inspect review rasters. Future
+point-cloud work will use PDAL. Training
 dependencies and GPU settings will be selected during the feasibility pilot,
 within the plan's 16 GB VRAM limit.
 
@@ -77,6 +81,9 @@ The [configuration contract](configs/README.md),
 [candidate legend](schemas/legend-v1.md), [source record](schemas/source-v1.md)
 and [initial acceptance criteria](docs/design/pilot-acceptance-v1.md) start the
 first plan item. Vehicle dimensions remain explicitly unset for the pilot.
-The next implementation step is one numeric DEM acquisition path and manual
-import. The first terrain milestone remains reviewable real terrain and a
-numeric precision check; see the master plan's implementation sequence.
+Follow the [acquisition and import workflow](docs/workflows/dem-acquisition.md)
+for discovery, bounded downloads, integrity checks and review crops. A real USGS
+coastal DEM has been imported locally and the native-grid crop path is verified;
+the live TNM search API returned HTTP 504 during development. Next are the karst
+trial, source quality/admission and regional preparation. The broader milestone
+still requires curated terrain and the numeric model/loader precision evaluation.

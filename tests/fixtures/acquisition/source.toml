@@ -1,0 +1,22 @@
+schema_version = 1
+record_id = "synthetic-ramp"
+synthetic = true
+provider = "synthetic-fixture"
+collection_id = "synthetic-ramps-v1"
+asset_id = "ramp"
+survey_id = "synthetic-no-survey"
+acquisition_dates = []
+source_urls = ["https://example.invalid/ramp.tif"]
+original_metadata_path = "metadata.json"
+processing_history = ["Synthetic quarter-metre ramp with one invalid cell"]
+
+[spatial]
+surface_type = "bare_earth_dem"
+horizontal_crs = "EPSG:32619"
+vertical_datum = "synthetic zero, not a real-world height datum"
+horizontal_units = "metre"
+vertical_units = "metre"
+native_spacing_m = [1.0, 1.0]
+
+[license]
+training_permission = "unknown"

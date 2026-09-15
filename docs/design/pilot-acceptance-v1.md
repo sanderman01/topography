@@ -1,8 +1,9 @@
 # Pilot acceptance criteria, version 1
 
 These are initial requirements from the [master plan](../plans/terrain-design-master-plan.md),
-sections 1, 2, 4–7 and 10. Only configuration and metadata validation are
-implemented. Terrain measurements, acceptance records and review tools are pending.
+sections 1, 2, 4–7 and 10. Configuration validation, raw import/integrity checks
+and native-grid review crops are implemented. Automated source-quality admission,
+human acceptance records and model evaluation remain pending.
 
 ## Exact contracts
 

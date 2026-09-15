@@ -63,3 +63,10 @@ check_failure 1 'cannot read' validate world tests/fixtures/contracts/does-not-e
 check_failure 2 'Unsupported arguments' validate world
 check_failure 2 'Unsupported arguments' validate unknown configs/worlds/pilot.toml
 printf 'Contract workflows passed.\n'
+
+if command -v python3 >/dev/null && command -v gdalinfo >/dev/null && command -v gdal_translate >/dev/null && command -v gdaldem >/dev/null; then
+  cli_binary="$(cargo metadata --no-deps --locked --offline --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"] + "/debug/topography")')"
+  python3 scripts/check_acquisition.py "$cli_binary" --local-only
+else
+  printf 'GDAL acquisition workflow skipped: Python 3.11+ and GDAL command-line tools are required.\n'
+fi

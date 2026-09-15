@@ -8,10 +8,11 @@ The [synthetic example](../examples/manifests/source-v1.toml) leaves permission 
 physical metadata unknown. No external schema validator is needed.
 
 This is a discovery/source-description contract, not a completed-import manifest.
-It cannot represent preparation completion or acceptance. Future provider and
-manual-import consumers must verify raw bytes, preserve original metadata and
-record exact footprints, masks, coordinate conventions and decisions when their
-artifact contracts are implemented. Never use this validation exit code to admit data.
+It cannot represent preparation completion or acceptance. The
+[raw import consumer](raw-receipt-v1.md) now verifies/stores raw bytes and preserves
+original metadata plus GDAL raster inspection. Exact valid-ground coverage,
+terrestrial masks and admission decisions remain future work. Never use a metadata
+validation exit code to admit data.
 
 ## Top-level fields
 

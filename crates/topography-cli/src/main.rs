@@ -1,18 +1,25 @@
 use std::{env, path::Path, process::ExitCode};
 
-use topography_core::{catalog, config, contracts::ContractError};
+use topography_core::{acquisition, catalog, config, contracts::ContractError};
 
 const HELP: &str = "Topography — terrain workshop
 
 Usage: topography [--help | --version]
        topography validate <world|runtime|legend|source> <path>
+       topography discover usgs <west,south,east,north> <max-items> <output-dir> [saved-response.json]
+       topography acquire <source.toml> <runtime.toml> <max-bytes>
+       topography import <source.toml> <asset.tif> <runtime.toml> <max-bytes>
+       topography verify <raw-receipt.json>
+       topography review <raw-receipt.json> <output-dir> <x,y,width,height>
 
 Options:
   -h, --help     Show this help
   -V, --version  Show the version
 
 Validation reads metadata only. Success does not mean terrain is accepted.
-Acquisition, processing, training, generation, and export are not implemented.
+Acquisition/import preserve raw Float32 DEMs; review creates unscaled native crops.
+Import, acquire and review print their resulting manifest path. No command admits
+data to prepared/training pools or records human acceptance.
 See docs/plans/terrain-design-master-plan.md for the implementation plan.";
 
 fn main() -> ExitCode {
@@ -38,6 +45,55 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        [command, provider, bbox, limit, output, saved @ ..]
+            if command == "discover" && provider == "usgs" && saved.len() <= 1 =>
+        {
+            let (Some(bounds), Some(limit)) = (csv::<f64>(bbox), number::<u32>(limit)) else {
+                return usage_error();
+            };
+            return workflow_result(acquisition::discover_usgs(bounds, limit, Path::new(output), saved.first().map(Path::new)).map(|summary| {
+                format!("Discovered {} of {} matches{}; known download size {} bytes, {} unknown sizes.\nSources: {}",
+                    summary.returned, summary.total_matches, if summary.truncated { " (truncated; narrow the area)" } else { "" },
+                    summary.known_download_bytes, summary.unknown_size_assets, Path::new(output).display())
+            }));
+        }
+        [command, source, runtime, limit] if command == "acquire" => {
+            let Some(limit) = number::<u64>(limit) else {
+                return usage_error();
+            };
+            return workflow_result(
+                acquisition::acquire(Path::new(source), Path::new(runtime), limit)
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, source, asset, runtime, limit] if command == "import" => {
+            let Some(limit) = number::<u64>(limit) else {
+                return usage_error();
+            };
+            return workflow_result(
+                acquisition::import(
+                    Path::new(source),
+                    Path::new(asset),
+                    Path::new(runtime),
+                    limit,
+                )
+                .map(|p| p.display().to_string()),
+            );
+        }
+        [command, receipt] if command == "verify" => {
+            return workflow_result(acquisition::verify(Path::new(receipt)).map(|record| format!(
+                "Verified raw receipt: {}\nAsset: {} bytes, SHA-256 {}\nState: raw/unreviewed; no prepared or training admission.",
+                record.record_id, record.asset_bytes, record.asset_sha256)));
+        }
+        [command, receipt, output, window] if command == "review" => {
+            let Some(window) = csv::<u32>(window) else {
+                return usage_error();
+            };
+            return workflow_result(
+                acquisition::create_review(Path::new(receipt), Path::new(output), window)
+                    .map(|p| p.display().to_string()),
+            );
+        }
         _ => {
             return usage_error();
         }
@@ -49,6 +105,34 @@ fn main() -> ExitCode {
 fn usage_error() -> ExitCode {
     eprintln!("Unsupported arguments. Run topography --help for usage.");
     ExitCode::from(2)
+}
+
+fn number<T: std::str::FromStr>(value: &std::ffi::OsStr) -> Option<T> {
+    value.to_str()?.parse().ok()
+}
+
+fn csv<T: std::str::FromStr>(value: &std::ffi::OsStr) -> Option<[T; 4]> {
+    value
+        .to_str()?
+        .split(',')
+        .map(str::parse)
+        .collect::<Result<Vec<T>, _>>()
+        .ok()?
+        .try_into()
+        .ok()
+}
+
+fn workflow_result(result: Result<String, acquisition::AcquisitionError>) -> ExitCode {
+    match result {
+        Ok(message) => {
+            println!("{message}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("Operation failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn validate_world(path: &Path) -> Result<(), ContractError> {

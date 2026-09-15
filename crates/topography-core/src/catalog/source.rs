@@ -1,45 +1,45 @@
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::contracts::{ContractError, nonempty, positive, read_toml, require, version};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct SourceRecord {
-    schema_version: u32,
-    record_id: String,
-    synthetic: bool,
-    provider: String,
-    collection_id: String,
-    asset_id: String,
-    survey_id: Option<String>,
-    acquisition_dates: Vec<String>,
-    source_urls: Vec<String>,
-    original_metadata_path: PathBuf,
-    asset_sha256: Option<String>,
-    spatial: Spatial,
-    processing_history: Vec<String>,
-    license: License,
+pub(crate) struct SourceRecord {
+    pub(crate) schema_version: u32,
+    pub(crate) record_id: String,
+    pub(crate) synthetic: bool,
+    pub(crate) provider: String,
+    pub(crate) collection_id: String,
+    pub(crate) asset_id: String,
+    pub(crate) survey_id: Option<String>,
+    pub(crate) acquisition_dates: Vec<String>,
+    pub(crate) source_urls: Vec<String>,
+    pub(crate) original_metadata_path: PathBuf,
+    pub(crate) asset_sha256: Option<String>,
+    pub(crate) spatial: Spatial,
+    pub(crate) processing_history: Vec<String>,
+    pub(crate) license: License,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Spatial {
+pub(crate) struct Spatial {
     /// Discovery bounds never establish an exact coverage polygon.
-    bounds_wgs84: Option<[f64; 4]>,
-    horizontal_crs: Option<String>,
-    vertical_datum: Option<String>,
-    horizontal_units: Option<String>,
-    vertical_units: Option<String>,
-    native_spacing_m: Option<[f64; 2]>,
-    ground_points_per_m2: Option<f64>,
-    surface_type: SurfaceType,
+    pub(crate) bounds_wgs84: Option<[f64; 4]>,
+    pub(crate) horizontal_crs: Option<String>,
+    pub(crate) vertical_datum: Option<String>,
+    pub(crate) horizontal_units: Option<String>,
+    pub(crate) vertical_units: Option<String>,
+    pub(crate) native_spacing_m: Option<[f64; 2]>,
+    pub(crate) ground_points_per_m2: Option<f64>,
+    pub(crate) surface_type: SurfaceType,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum SurfaceType {
+pub(crate) enum SurfaceType {
     BareEarthDem,
     ClassifiedPointCloud,
     SurfaceModel,
@@ -48,21 +48,21 @@ enum SurfaceType {
     Unknown,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct License {
-    training_permission: TrainingPermission,
-    license_name: Option<String>,
-    license_url: Option<String>,
-    evidence: Option<String>,
-    attribution: Option<String>,
-    edited_map_reuse: Option<String>,
-    redistribution: Option<String>,
+pub(crate) struct License {
+    pub(crate) training_permission: TrainingPermission,
+    pub(crate) license_name: Option<String>,
+    pub(crate) license_url: Option<String>,
+    pub(crate) evidence: Option<String>,
+    pub(crate) attribution: Option<String>,
+    pub(crate) edited_map_reuse: Option<String>,
+    pub(crate) redistribution: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum TrainingPermission {
+pub(crate) enum TrainingPermission {
     Confirmed,
     Prohibited,
     Restricted,
@@ -80,9 +80,13 @@ pub struct SourceSummary {
 }
 
 /// A well-formed exclusion record is valid. Decoding never authorizes preparation,
-/// training, or human acceptance; the future importer must enforce admission gates.
+/// training, or human acceptance; future preparation must enforce admission gates.
 pub fn inspect_source(path: &Path) -> Result<SourceSummary, ContractError> {
     let source: SourceRecord = read_toml(path)?;
+    validate_source(&source)
+}
+
+pub(crate) fn validate_source(source: &SourceRecord) -> Result<SourceSummary, ContractError> {
     version(source.schema_version)?;
     for (field, value) in [
         ("record_id", &source.record_id),
@@ -193,7 +197,7 @@ pub fn inspect_source(path: &Path) -> Result<SourceSummary, ContractError> {
         )?;
     }
     Ok(SourceSummary {
-        record_id: source.record_id,
+        record_id: source.record_id.clone(),
         synthetic: source.synthetic,
         training_permission_recorded,
         unresolved_fields,

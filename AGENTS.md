@@ -6,11 +6,11 @@ Topography is a human-directed terrain workshop for a dirigible game. It will
 acquire and curate Earth elevation, compose editable worlds, evaluate optional
 diffusion models, and export terrain with reproducible provenance.
 
-The Rust CLI implements `--help`, `--version`, and read-only `validate` commands
-for world/runtime presets, candidate legends and source metadata. The Python
-package remains a scaffold. Acquisition, raster processing, training, generation
-and export are not implemented. Preset values remain draft pilot choices even
-when configuration is valid; validation does not create human acceptance.
+The Rust CLI validates presets/metadata, discovers USGS DEM candidates, acquires
+and imports raw Float32 GeoTIFFs, verifies raw storage and creates small native-grid
+review crops through GDAL. The Python package remains a scaffold. Regional
+preparation, source admission, training, generation and export are not implemented.
+Preset values remain draft pilot choices; processing does not create human acceptance.
 
 Read [README.md](README.md) for setup and the
 [master plan](docs/plans/terrain-design-master-plan.md) for scope, physical
@@ -90,9 +90,11 @@ bash scripts/check.sh
 
 It checks formatting, builds the workspace, runs Clippy with warnings denied,
 and exercises CLI help/version and valid/invalid contract inputs using locked
-offline Cargo resolution. Fetch locked Rust dependencies once with
-`cargo fetch --locked`. It does not run a terrain workflow or formal test suite.
-No ML dependencies or geospatial tools are required for contract validation.
+offline Cargo resolution. With GDAL and Python 3.11+ installed it also exercises
+small local import/review workflows. Fetch Rust dependencies with `cargo fetch --locked`.
+Full acquisition checks (including a loopback HTTPS server) are documented in
+[scripts/README.md](scripts/README.md). No formal test runner or ML environment is
+configured; geospatial tools are not required for contract validation.
 See [training setup](training/README.md) when implementing Python functionality.
 
 Reproduce bugs through the user's workflow before fixing them. Run the relevant

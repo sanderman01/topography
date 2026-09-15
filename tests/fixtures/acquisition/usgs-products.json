@@ -1,0 +1,15 @@
+{
+  "total": 2,
+  "items": [
+    {
+      "sourceId": "synthetic-usgs-product",
+      "title": "Synthetic 1 metre DEM response for workflow checks",
+      "downloadURL": "https://example.invalid/synthetic.tif",
+      "format": "GeoTIFF",
+      "sizeInBytes": 1000,
+      "boundingBox": {"minX": -67.0, "minY": 18.0, "maxX": -66.0, "maxY": 19.0},
+      "publicationDate": "2026-09-01",
+      "unmappedProviderField": "Original response must preserve this field"
+    }
+  ]
+}

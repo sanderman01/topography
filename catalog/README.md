@@ -15,8 +15,10 @@ Keep small, reviewed descriptions here. The local catalog database belongs in
 The initial [candidate legend](labels/terrain-v1.toml) is now loadable with
 `topography validate legend`; see the [v1 contract](../schemas/legend-v1.md).
 Class precedence remains unset. Source descriptions have a
-[v1 contract](../schemas/source-v1.md) and read-only validator. Catalog persistence,
-coverage discovery and source admission are not implemented yet.
+[v1 contract](../schemas/source-v1.md) and read-only validator. The
+[acquisition workflow](../docs/workflows/dem-acquisition.md) writes discovery
+candidates and immutable raw receipts. SQLite persistence and source admission
+are not implemented yet; discovery bounds do not establish valid-ground coverage.
 
 Candidate locations in `docs/locations.md` and the master plan remain research
 leads until their exact source footprints and quality have been checked. Do not
