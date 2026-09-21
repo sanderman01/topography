@@ -5,12 +5,30 @@ Updated 2026-09-21. The project owner opened the
 “I've opened it. It looks fine. Now what?” This is recorded as positive overall
 visual suitability. East-ridges remains the first candidate for qualification.
 Individual grid-square selection is not required to continue. No protected
-landmarks, flight envelope, quality radius or water classification were supplied.
+landmarks, flight envelope or quality radius were supplied.
 
 The new assistant annotation captures that exact response against the viewed
 map's hash and the original crop identity. It preserves the confirmed permission
 decision and unresolved technical findings. The catalog now has seven historical
 records, three current annotations and zero prepared regions.
+
+## Water observation and acquisition scope correction
+
+The owner subsequently wrote: “I do not think there is any water bodies present
+in the terrain segment” and identified
+`data/review/rio-abajo-ground-support/east-ridges-full-review-v1/review.html`.
+Record this as no apparent water in the reviewed crop. The red boxes in that
+map mark empty ground-return bins, not detected water. There is no identified
+water body in the evidence inspected so far. A water mask may legitimately be
+entirely terrestrial; requiring the mask does not require finding a water body.
+
+The owner also explicitly limited acquisition to publicly downloadable data and
+prohibited sending or drafting emails. The earlier email-request draft has been
+removed. No email was sent. Treating unpublished survey vectors as a required
+next input was an unnecessary dependency and is superseded by this correction.
+The visual water observation is recorded here; the existing catalog annotation
+and immutable evidence remain unchanged. It does not by itself establish a
+verified per-cell classification or terrain-quality acceptance.
 
 ## Additional sampling evidence
 
@@ -41,24 +59,29 @@ so edge distances can be overstated; 3,283 cells are potentially affected by tha
 boundary. No quality cutoff, repair radius or elevation accuracy follows from
 these statistics. No new point-cloud run was needed.
 
-## Source evidence and next action
+## Public source evidence and next action
 
 The official [survey report](https://noaa-nos-coastal-lidar-pds.s3.amazonaws.com/laz/geoid18/9102/supplemental/PR_USVI_Lidar_2018_Project_Report.pdf)
 lists the exact tile on page 90. It describes delivered hydro breaklines,
 ground-void polygons and low-confidence polygons on pages 5, 34 and 36–37.
-These are useful leads for explicit water and quality masks.
+These are optional evidence sources if publicly downloadable and relevant to
+this crop, not mandatory inputs.
 
 The inspected NOAA collection/supplemental listings and USGS OPR/LPC project
 roots provide no corresponding vector download. This is a scoped search, not
 proof that the files are unavailable elsewhere. The LPC delivery lives beneath
 `PR_PuertoRico_VirginIslands_2018_D18/PR_PRVI_D_2018/`, unlike the shorter OPR path.
 
-A [specific request](rio-abajo-source-files-request.md) is ready for the published
-dataset contact. No message was sent. Obtain those files or another documented
-source of equivalent classifications, inspect the actual crop intersections,
-then construct water/quality/repair/feature masks with explicit provenance.
-Technical source acceptance and preparation remain gated on that evidence.
-Do not request the same visual approval again or substitute occupancy for quality.
+Continue source qualification from the existing public DEM, survey report,
+verified ground-return measurements and recorded visual review. Use the owner's
+no-apparent-water observation as the working interpretation for a proposed
+all-terrestrial water mask, with its visual basis and limitations recorded.
+Finish the quality, repair and feature assessment from available evidence before
+presenting the complete classification for source acceptance. Do not invent a
+quality-distance cutoff or substitute occupancy for quality. Additional public
+downloads should answer a concrete remaining question; correspondence and
+unavailable supplementary files are not prerequisites. Do not request the same
+overall visual approval again.
 
 ## Retained artifacts and verification
 
@@ -67,6 +90,8 @@ It contains the visual-response evidence, annotation and record ID, pre-change
 SQLite backup, distance raster/report, source listings, the 4,790,079-byte project
 PDF and `source-evidence.json` with URLs and checksums. Preserve it separately
 from Git. Existing source data, reviewed maps and prior records remain unchanged.
+The `next_action` in the retained `source-evidence.json` describes the earlier
+contact proposal and is superseded by the public-only continuation above.
 
 Verification checked the distance raster's hash, CRS, dimensions, inherited grid,
 zero-bin count and maximum; catalog integrity and the current annotation were

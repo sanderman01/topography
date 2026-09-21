@@ -30,6 +30,13 @@ occupied LiDAR bins do not establish supported terrain. Keep unknown water as 0;
 classifying uncertain ground as water conceals it from the terrestrial denominator.
 Mark the full defining features and passages, rather than a representative point.
 
+A crop with no identified water can have an entirely terrestrial water mask;
+record the evidence and review supporting that classification. The presence of
+a required water mask does not imply that the crop contains water or requires
+hydrographic vector downloads. Source QA polygons are optional evidence when
+publicly downloadable and relevant to the crop. Empty ground-return bins alone
+identify neither water nor invalid DEM elevations.
+
 Author masks in a GIS using the review's exact dimensions, transform and CRS.
 Use nearest-neighbour operations for categorical data. Remove nodata and hidden
 validity masks: every cell must carry an explicit category, including zero. The

@@ -57,6 +57,13 @@ Use relief, ridge density, channel branching, passage width, line-of-sight occlu
 
 ## 2. Source acquisition strategy
 
+Use only source data publicly available for download. Never send emails or
+prepare email drafts, and do not ask the owner to contact people or institutions
+for data. Unpublished deliveries and commissioned measurements are outside this
+project's acquisition scope. If a needed asset has no public download, use
+adequate existing public evidence, select another public source, or record the
+limitation without making correspondence a dependency.
+
 Search national mapping agencies first for numeric bare-earth DEMs, often called DTM, MNT, or MDT. Use classified LiDAR point clouds when delivered DEMs are missing or inadequately processed. Keep DSMs, rendered hillshades, imagery, and bathymetry distinct from ground elevation.
 
 | Agency / source | Confirmed product or access route | Proposed role and remaining checks |
@@ -74,7 +81,7 @@ Search national mapping agencies first for numeric bare-earth DEMs, often called
 
 Puerto Rico deserves an early karst trial. USGS documents a 1 m working DEM used to study its karst, but the linked release is hillshade/TPI imagery. Follow its provenance to numerical elevation rather than ingesting the visualization as heights. It is an acquisition lead and morphological reference, not proof that its hills reproduce Yangshuo or Tsingy's particular geometry. [USGS karst release](https://www.usgs.gov/data/2015-2017-lidar-derived-imagery-karst-areas-puerto-rico-1-meter-resolution).
 
-Retain Yangshuo, Ha Long Bay, Tsingy, Raja Ampat, Ngorongoro, and other desired locations in a research backlog when suitable data has not been verified. Record the best known resolution and why it failed. Search regional agencies, geological surveys, and documented research surveys before changing the target. If detailed data remains unavailable, explicitly select a morphological substitute or commission/acquire better measurements later; do not disguise upsampling as a successful acquisition.
+Retain Yangshuo, Ha Long Bay, Tsingy, Raja Ampat, Ngorongoro, and other desired locations in a research backlog when suitable data has not been verified. Record the best known resolution and why it failed. Search public downloads from regional agencies, geological surveys, and documented research surveys before changing the target. If detailed data remains unavailable, explicitly select a publicly downloadable morphological substitute or leave the location in the backlog; do not disguise upsampling as a successful acquisition.
 
 Correct two assumptions in the existing source notes when implementing the catalog: USGS 1 m products are not universally available or universally seamless, and global satellite products are not replacements for detailed ground LiDAR. Copernicus DEM is a surface model, while ArcticDEM is also derived from optical surface reconstruction. Keep them in a reference tier unless specifically accepted for an appropriate coarse-scale use. [USGS products](https://www.usgs.gov/3d-elevation-program/about-3dep-products-services), [Copernicus DEM description](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM), [ArcticDEM description](https://www.pgc.umn.edu/data/arcticdem/).
 

@@ -53,6 +53,9 @@ exists. Consult upstream documentation for the versions actually selected.
 
 ## Essential constraints
 
+- Use only source data publicly available for download. Do not request private
+  deliveries or commission measurements. Never send emails or prepare email
+  drafts, and do not ask the user to contact people or institutions for data.
 - Preserve authoritative elevation as Float32 metres with explicit masks and
   coordinate metadata. Image appearance and nominal grid spacing do not establish
   numeric accuracy or measured feature resolution.

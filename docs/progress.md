@@ -1,6 +1,6 @@
 # Implementation progress
 
-Updated 2026-09-21, after the east-ridges visual response and source-qualification follow-up. This
+Updated 2026-09-21, after the east-ridges water observation and public-download-only correction. This
 summarizes implemented behavior and observed evidence; the [master plan](plans/terrain-design-master-plan.md)
 remains the implementation plan.
 
@@ -27,7 +27,7 @@ checkpoint below rather than repeating acquisition or completed trials.
 | Regional preparation | [Native preparation](workflows/aligned-preparation.md) composes 1–16 eligible adjacent reviews from one survey, with exact Float32 land values and separate masks. Immutable publication, registration, recovery and revocation pass synthetic workflows. Outputs remain unreviewed and excluded from training. No real source is eligible yet. |
 | Whole-crop probe | [Bounded full-review tooling](workflows/whole-crop-ground-support.md) now passes a readiness-approved live run. East-ridges acquisition took 268.05 s, counts 30.29 s, with 79.33 MiB maximum child RSS; verification adds unreported time. No GPU. |
 | Permission evidence | The human approved the [dataset-specific permission basis](reports/rio-abajo-permission-review.md). Exact report/response evidence is captured; all three current crop annotations now confirm permission. Terrain acceptance is still absent. |
-| Visual suitability | The owner opened the map and said it looks fine. [Qualification follow-up](reports/rio-abajo-source-qualification.md) records positive overall suitability, measures distance to occupied ground bins, and identifies original survey QA/water vectors as the next useful evidence. |
+| Visual suitability | The owner opened the map and said it looks fine, then reported no apparent water bodies. [Qualification follow-up](reports/rio-abajo-source-qualification.md) records these observations and the sampling-distance diagnostic. Only publicly downloadable source data may be used; no emails or email drafts. |
 | Real terrain | A USGS coastal tile and a native 0.5 m USGS/NOAA tile near Río Abajo are stored locally. The [karst trial](reports/rio-abajo-karst-trial.md) provides three 512 × 512 m crops and optional display contours. |
 | Verification | Single-job Rust build, Clippy with warnings denied, contract workflows, synthetic GDAL workflows and acquisition recovery checks passed. All 3,145,728 karst crop samples and mask cells match their source windows and browser payloads. Headless Firefox rendered repeatable camera views. |
 
@@ -125,7 +125,7 @@ blocked with 17 findings, and the permission blocker is gone. Earlier records,
 reports and exports were preserved. No quality masks or prepared rasters were
 created from the ground-return measurements.
 
-Next required input:
+Continuation scope and next work:
 
 The user answered “1. Ready. 2. Looks good.” to the specific workload and permission
 questions. Both are handled. The user subsequently opened the review and said
@@ -134,16 +134,27 @@ do not ask for the same approval again or require grid-square selection just to
 continue. East-ridges remains the first candidate. Other substantial point-cloud
 runs need their own readiness confirmation; none is currently launched.
 
-The next technical step is explicit water/quality classification. The official
-survey report documents delivered hydro breaklines, ground-void shapes and
-low-confidence polygons, but no download was found in the inspected NOAA and
-USGS project-root indexes. The [source-file request](reports/rio-abajo-source-files-request.md)
-is ready for the published NOAA dataset contact; no message has been sent.
-Obtain those vectors or equivalent documented classifications, verify their
-coverage and applicability to this exact crop, and use them with the measured
-support and visual review to construct masks. A source-wide QA report alone does
-not establish each cell's quality. See the [qualification report](reports/rio-abajo-source-qualification.md)
-for the search scope and retained evidence.
+The owner subsequently reported no apparent water bodies in the reviewed crop.
+The red boxes mark empty ground-return bins, not water. Use no apparent water as
+the working interpretation for a proposed all-terrestrial water mask, recording
+its visual basis and limitations; no verified water classification has yet been
+published. This observation is recorded in the
+[qualification report](reports/rio-abajo-source-qualification.md), without changing
+the seven existing catalog records.
+
+**Use only publicly downloadable source data. Never send emails or prepare email
+drafts, and do not ask the owner to contact people or institutions for data.**
+The earlier contact-request draft was removed; no email was sent. The retained
+`source-evidence.json` contact proposal is historical and superseded. Original
+survey QA/water vectors are optional supporting evidence, not mandatory inputs.
+No owner action to obtain them is needed.
+
+The next technical work is to finish a concrete water/quality/repair/feature
+classification proposal from the existing public DEM, survey report, measured
+ground returns and visual review. Additional public downloads should address a
+specific remaining uncertainty. Document unsupported conclusions instead of
+inventing thresholds or making unavailable survey files a prerequisite.
+A source-wide QA report alone does not establish each cell's quality.
 
 The new small-raster diagnostic measures crop-limited distance to occupied
 ground-bin centres: median 0.5 m, p95 1.118 m, p99 1.803 m, maximum 5.5 m in E6.

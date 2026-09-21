@@ -107,12 +107,11 @@ the exact reviewed report, raw receipt, source asset and all three existing crop
 identities. Assistant-authored catalog annotations carry this captured human
 decision without impersonating a human terrain reviewer.
 
-If clarification is chosen, a focused request can identify both the original
-tile and NOAA copy, reference the 3DEP statement, and ask whether it covers
-training terrain-generation models and distributing edited terrain and trained
-weights, including any contractor or geographic limitations. The published
-contacts are `3DEP@usgs.gov` on the program page and
-`coastal.info@noaa.gov` on the collection record. No message was sent.
+The owner subsequently restricted acquisition to publicly downloadable data
+and prohibited sending or drafting emails. No message was sent. The recorded
+permission decision stands; correspondence is not a remaining task. For future
+sources, use published permission evidence or exclude the source if its permitted
+use remains ambiguous.
 
 Permission confirmation still leaves whole-crop quality, terrain acceptance
 and the other independent admission gates open; see the
