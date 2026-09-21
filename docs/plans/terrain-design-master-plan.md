@@ -298,12 +298,16 @@ now measures whole-crop masks and checks preparation eligibility against pinned
 current decisions. [Native regional preparation](../workflows/aligned-preparation.md)
 composes eligible adjacent reviews from the same survey without resampling,
 preserves valid Float32 values and distinct masks, and registers immutable outputs.
-This path is verified with synthetic fixtures and eight real prepared regions
-whose samples remain bit-identical to accepted native terrain. The owner selected
+This path is verified with synthetic fixtures and twelve real prepared regions
+whose valid ground samples remain bit-identical to accepted native terrain;
+water uses deterministic masked fill. The owner selected
 five of six tiles in [batch 2](../reports/pilot-tile-batch-2.md); rejection preserves
-the sixth tile's data. A [four-tile batch](../reports/pilot-tile-batch-3.md) from two
-further areas is ready for whole-tile yes/no selection. Prepared outputs retain their separate unreviewed
-state and remain excluded from training release. Cross-survey alignment,
+the sixth tile's data. All four tiles in [batch 3](../reports/pilot-tile-batch-3.md) from two further
+areas are now selected and prepared. A [numeric pilot proposal](../reports/numeric-pilot-proposal-v1.md)
+groups the six areas for calibration/validation and awaits the dataset checkpoint.
+A small CPU arithmetic probe preserves Float32 samples and measures Float16 loss;
+the production loader/autoencoder consumer is still pending. Prepared outputs
+retain their separate unreviewed state and remain excluded from training release. Cross-survey alignment,
 repairs, output acceptance, dataset releases and per-cell label editing remain pending.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.

@@ -40,7 +40,10 @@ See the [batch report](../docs/reports/pilot-tile-batch-2.md) for previews and
 reproduction. Tiles 1–5 are now selected and prepared; tile 6 is excluded without
 deletion. [Batch 3](../docs/reports/pilot-tile-batch-3.md) adds four new candidates
 under `candidates/pilot-batch-3/` with [crop envelopes](areas/pilot-batch-3-crops.geojson)
-and unset human decisions.
+and four human acceptances, all qualified and prepared. The
+[numeric pilot proposal](../docs/reports/numeric-pilot-proposal-v1.md) keeps the
+six source areas separate before any training-window extraction; it is not an
+approved training release.
 
 Dataset admission must record confirmed training permission and its supporting
 clause or confirmation, as required by the master plan. Credentials never belong

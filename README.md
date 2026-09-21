@@ -98,8 +98,11 @@ native 0.5 m crops from the Río Abajo area. The
 and evidence. The [regional quality workflow](docs/workflows/regional-quality.md)
 measures whole-crop masks and checks current preparation eligibility.
 [Aligned native preparation](docs/workflows/aligned-preparation.md) now preserves
-eligible regions without resampling or cross-survey joins. Eight accepted terrain
+eligible regions without resampling or cross-survey joins. Twelve accepted terrain
 regions are prepared under the [simple supplier-QA pilot policy](docs/design/source-quality-pilot-v1.md),
-with exact native elevation preserved. The [next four-tile batch](docs/reports/pilot-tile-batch-3.md)
-is ready for whole-tile yes/no review. No training dataset has been released. The broader
-milestone still requires curated terrain and the numeric model/loader precision evaluation.
+with exact native ground elevation preserved and water masked separately.
+[Batch 3](docs/reports/pilot-tile-batch-3.md) is accepted and prepared. A
+[numeric pilot proposal](docs/reports/numeric-pilot-proposal-v1.md) groups the six
+source areas for evaluation; the dataset checkpoint is awaiting approval.
+A small arithmetic probe preserved Float32 values and measured Float16 losses.
+Dataset release tooling and the production loader/autoencoder evaluation remain pending.

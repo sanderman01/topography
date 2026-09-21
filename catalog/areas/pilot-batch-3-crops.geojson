@@ -44,7 +44,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "decision_evidence_sha256": "c7bf9f4b243a3618f83db00f73ab112067af4455179d3310a56d8ce09f1ed186",
+        "curation_record_sha256": "2b7fb5da728ac6fead53109f421da6c0454517663fa70180bd5423121b1c57e1"
       }
     },
     {
@@ -90,7 +92,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "decision_evidence_sha256": "c7bf9f4b243a3618f83db00f73ab112067af4455179d3310a56d8ce09f1ed186",
+        "curation_record_sha256": "0ae4b56f3205c28737413c0df9c82f200100edde4b21d85e2e29e1141c36bac4"
       }
     },
     {
@@ -136,7 +140,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "decision_evidence_sha256": "c7bf9f4b243a3618f83db00f73ab112067af4455179d3310a56d8ce09f1ed186",
+        "curation_record_sha256": "cc18d132002b584ca783d2b66511c09c157d33ad84ebf649eb1b3b9f83ea2b6a"
       }
     },
     {
@@ -182,7 +188,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "decision_evidence_sha256": "c7bf9f4b243a3618f83db00f73ab112067af4455179d3310a56d8ce09f1ed186",
+        "curation_record_sha256": "0879684fe9c121ca8b6b85884c71d66850be6da3d2674618568c1f8aa2edd63c"
       }
     }
   ]

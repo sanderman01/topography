@@ -1,6 +1,6 @@
 # Implementation progress
 
-Updated 2026-09-21. Eight real terrain regions are qualified and prepared; one reviewed tile is excluded.
+Updated 2026-09-21. Twelve real terrain regions are qualified and prepared; one reviewed tile is excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
@@ -16,14 +16,20 @@ The owner answered “all yes, except 6, that one is no” for batch 2. Tiles 1�
 are selected and prepared; tile 6 is excluded, with all its data preserved. The
 three original Río Abajo selections remain current. No repeat vote is needed.
 
-The next actual input is **yes/no for four new tiles** in
-[batch 3](reports/pilot-tile-batch-3.md), available locally at
-`data/review/pilot-batch-3-2026-09-21/review-batch.html`. These add a second gorge
-area and a second river area. Decisions are unset; preserve the presented page
-and pinned JSON when recording the response.
+The owner answered **“all yes”** for batch 3 numbers 1–4. All four are selected,
+qualified and prepared, with river water masked separately and native ground
+preserved. The original batch page/JSON remain unchanged; exact response and
+identities are in `data/review/pilot-batch-3-2026-09-21/decisions-v1/`.
+
+The next actual input is the **numeric pilot dataset checkpoint**, not another
+source-tile review. The [proposal report](reports/numeric-pilot-proposal-v1.md) and
+local `data/review/pilot-dataset-proposal-v1/review.html` describe 12 selected tiles
+from six areas, grouped into calibration and validation. The proposal is pinned
+and **not yet approved**. It authorizes no training/model promotion; release
+commands and the production Python loader are still unimplemented.
 
 Continue in the existing checkout on `feat/east-ridges-qualification`; no worktree.
-This continuation builds on `d625f98` and uses existing production tools without
+This continuation builds on `ea512aa` and uses existing production tools without
 code changes. Merging remains with the owner.
 
 ## Implemented and verified
@@ -35,14 +41,14 @@ code changes. Merging remains with the owner.
 | Native review | Float32/native-mask crops with metric browser previews, multiple hillshades, profiles and low-altitude views. Display products remain separate from elevation. |
 | Curation | Immutable SQLite history, captured evidence, explicit whole-tile decisions, stale-write protection, integrity checks and portable exports. Technical judgments belong to the implementer. |
 | Quality | `native_quality_v2` checks exact grids, categorical masks, at least 99.5% usable terrestrial coverage and optional annotated-feature support. `supplier_qa_pilot_v1` supplies the declared evidence basis; no validator threshold changed. |
-| Preparation | Same-survey native regions preserve valid Float32 bits and separate masks; immutable publication, current-parent checks and catalog registration. Eight real regions now prepared. |
+| Preparation | Same-survey native regions preserve valid Float32 bits and separate masks; immutable publication, current-parent checks and catalog registration. Twelve real regions now prepared; water receives deterministic masked fill. |
 | Ground sampling | Three early 64 m samples and three completed full-crop count checks. All native count bins verified against retained XY points. Counts remain diagnostics, not measured feature accuracy. |
-| Next review batch | Four native 512 m candidates from Guajataca and Arecibo. Two public DEM assets acquired; decisions unset. Batch 2 is complete. |
+| Numeric pilot proposal | Twelve selected native regions from six geographic areas; calibration/validation grouping and a small Float32/Float16 arithmetic probe are ready for the dataset checkpoint. |
 | Future work | Geographic dataset releases, Python numeric/model evaluation, label editing, generation, world editing and terrain export remain unimplemented. |
 
 ## Current Río Abajo state
 
-The catalog has **27 immutable curation records and 8 registered prepared regions**.
+The catalog has **35 immutable curation records and 12 registered prepared regions**.
 Its integrity check reports no unregistered records or unreferenced objects.
 The first preparation migrated the database to schema 2; the check report itself
 still has JSON schema version 1.
@@ -74,7 +80,8 @@ been invented.
 
 ## Batch 2 completed
 
-The catalog has eight current human acceptances and one rejection. The exact
+Batch 2 contributed five acceptances and one rejection; the current catalog now
+has twelve human acceptances and one rejection. The exact
 batch response and all six decisions are captured in
 `data/review/pilot-batch-2-2026-09-21/decisions-v1/`; the original page/JSON remain
 unchanged. Tile 6 (`river-south-terrace`) is rejected. Its current record is
@@ -95,6 +102,41 @@ reports intact, registered and current. Current curation/prepared IDs are in
 [batch report](reports/pilot-tile-batch-2.md). Technical evidence updates preserve
 the original owner votes. No training dataset is released.
 
+## Batch 3 completed and numeric proposal
+
+[Batch 3](reports/pilot-tile-batch-3.md) is complete. Four current qualified
+records preserve the exact owner “all yes”; technical findings belong to Codex.
+Both source tiles have retained original USGS XML, NOAA collection lineage and
+source-specific published permission review. Codex interpreted river polygons
+from public imagery and native DEMs. Their display-resolution, date and canopy
+limits remain documented; no surveyed per-cell water-boundary accuracy is claimed.
+
+All four quality assessments and native preparations passed. Independent decoding
+checked 3,834,334 valid land values bit for bit, 359,970 water cells as exact
+positive-zero fill and all seven raster layers. The catalog check has no orphans.
+Current IDs are `data/review/pilot-batch-3-qualification-v1/records.json`.
+The original eight prepared regions and batch-2 rejection remain unchanged.
+
+The proposed numeric pilot contains 12 regions / 3.146 km² of source footprint,
+with six geographic groups across three broad families. Keep each area's crops
+in one role: Río Abajo, central gorge and southern floodplain for calibration;
+Camuy, Guajataca and Arecibo for validation. Minimum opposing edge separation is
+8,042.645 m, exceeding the declared 512 m context/buffer. This grouping is for
+small native numeric evaluation only. There is no untouched test set, independent
+provider-project sample or full coarse-scale training context. Larger context
+requires a fresh geographic check; do not silently reuse this split for 8,192 m
+windows, whose buffer it would fail.
+
+A temporary CPU arithmetic probe ran on all 12 prepared regions plus ramps,
+flats and sharp/narrow synthetic ridges. Fixed experimental normalization is
+height / 2,048 with inverse × 2,048, in Float32. All 12,222,942 valid real samples
+round-trip bit-identically; water is excluded from height/slope/terracing metrics.
+Float16 storage introduces up to 0.25 m error on real ground and removes the
+0.125 m synthetic ridge at 1,800 m. The 9.1-second run used about 146 MiB peak
+Python-process RSS, no GPU; this is not a total process-tree memory measurement.
+This is preliminary evidence, not a production loader, autoencoder result or
+accepted model/gameplay tolerance. No new production code or ML dependencies.
+
 ## Retained local artifacts
 
 These are ignored by Git; preserve and back them up separately.
@@ -112,10 +154,12 @@ These are ignored by Git; preserve and back them up separately.
 | Earlier blocked measurement checkpoint and mask evidence | `data/review/rio-abajo-full-crop-completion-2026-09-21/`, `data/review/rio-abajo-quality-v2-2026-09-21/` |
 | Completed batch 2, captured decisions and comparisons | `data/review/pilot-batch-2-2026-09-21/` |
 | Batch 2 qualification, backup, masks, exports, prepared results and native comparison | `data/review/pilot-batch-2-qualification-v1/` |
-| New four-tile batch, previews and comparisons | `data/review/pilot-batch-3-2026-09-21/` |
+| Completed batch 3, captured votes, previews and comparisons | `data/review/pilot-batch-3-2026-09-21/` |
 | Batch 3 source inputs and display overviews | `data/staging/pilot-batch-3-2026-09-21/` |
 | New batch discovery/source inputs and display overviews | `data/staging/pilot-batch-2-2026-09-21/` |
 | Catalog and captured evidence | `data/catalog/topography.sqlite3` and sibling `.curation/` |
+| Batch 3 source qualification, masks, exports, prepared results and native comparison | `data/review/pilot-batch-3-qualification-v1/` |
+| Pinned numeric pilot proposal, review page, separation calculations and reproducible arithmetic probe | `data/review/pilot-dataset-proposal-v1/` |
 
 Earlier incomplete assessments, source evidence and catalog snapshots remain
 historical. Do not use their blocker lists as current status. Current original-region IDs are in
@@ -131,45 +175,47 @@ measurement evidence, not ground-quality masks.
 
 ## Verification for this continuation
 
-- All six batch-2 decisions match the exact response; original presented artifacts
-  and rejected tile data remain intact. Current status and portable exports pass.
-- Existing quality assessment, eligibility, native preparation and verification
-  passed for all five selected crops. Catalog integrity reports 27 records,
-  eight registered regions and no orphans.
-- Independent GDAL decoding checked 5,242,880 new prepared Float32 samples and all
-  seven raster layers, with captured evidence hashes. Original three-region
-  comparisons remain retained from the previous continuation.
-- `scripts/check_review.py` verifies all 4,194,304 batch-3 samples against source
-  windows, provider masks and browser payloads, including grids and metrics.
-- Batch identities, local links, geographic envelopes, metadata, decision scope
-  and documentation are checked before commit. No production code changed;
-  the previously passing full `scripts/check.sh` suite was not repeated.
+- Four new votes match exact “all yes”, original batch/page/review identities and
+  portable exports. Source selections are separate from Codex technical findings.
+- Existing quality/eligibility/preparation/verification workflows passed for all
+  four new regions. Catalog integrity reports 35 records and 12 prepared regions;
+  13 current heads contain 12 accepts and one preserved rejection, with no orphans.
+- Independent GDAL decoding checked all 4,194,304 new prepared samples and masks.
+  Existing raw/native/browser comparison reports remain pinned in the records.
+- OGR reports all five interpreted water polygons valid. A nodata marker emitted
+  by rasterization was caught by quality assessment and explicitly removed from
+  draft masks; the same workflow then passed without code changes.
+- Twelve-region arithmetic metrics, geographic separation, proposal/page hashes,
+  source selection/evidence identities and local documentation links are checked.
+  No production code changed; the full `scripts/check.sh` suite was not repeated.
 
 Earlier full checks covered rustfmt, locked offline build, Clippy, valid/invalid
 contracts, local GDAL workflows, SQLite recovery, mask eligibility and native
 preparation failures. Development uses Rust 1.98.1, GDAL 3.13.3 and PDAL 2.10.1;
 Rust 1.85 itself was not tested. No Python ML environment or additional system tool
-was installed. The model-loader/autoencoder precision milestone is still open.
+was installed. The production model-loader/autoencoder milestone remains open despite the successful
+preliminary Float32 arithmetic probe.
 
-## Continue after batch selection
+## Continue after the numeric dataset checkpoint
 
-1. Record yes/no for batch 3 numbers 1–4 against the pinned batch identities. Do not ask
-   for ridges, hollows, mask drawings or detailed reasons. A no records exclusion,
-   without deleting raw data.
-2. Qualify selected crops with supplier QA, known metadata, documented water
-   classification and dataset-specific permission evidence. Use the existing
-   masks/curation/preparation workflow. Further point measurements are optional
-   only when they answer a concrete observed problem.
-3. With selected batch-3 terrain, evaluate a small geographically grouped pilot
-   using the two available areas per family. Keep crops from each area together;
-   decide geographic splits before overlapping training windows. Do not keep
-   expanding source review indefinitely before attempting the numeric baseline.
-   No split assignment or class-diversity gate is complete yet.
-4. Implement the pilot dataset release boundary and numeric loader/representation
-   checks before choosing or training a model. Keep the 16 GB VRAM ceiling and
-   curated-patch/blending fallback.
-5. Continue toward the 4,096 m world pilot, then regional editing and export as
-   ordered in the master plan. Vehicle dimensions remain explicitly unset.
+1. Capture the owner's decision against `review-identity.json` and the exact
+   proposal/page hashes in `data/review/pilot-dataset-proposal-v1/`. The pending
+   approval is for this small numeric evaluation collection and grouping, not
+   source re-selection, model training or acceptance of an accuracy tolerance.
+2. Implement the versioned dataset release boundary and reusable Python numeric
+   evaluation job. Validate current prepared parents, geographic grouping, all
+   paired layers, fixed normalization and masks before publication/use. Reuse the
+   documented local probe as measured reference, not as production code.
+3. Keep numeric-pilot and future model-training releases distinct. This collection
+   has no untouched test split or large coarse-context coverage; expand/repartition
+   only when the next concrete experiment requires it. Do not restart broad tile
+   review before implementing the numeric consumer.
+4. Evaluate candidate loaders/codecs in metres before choosing or training a
+   model. Establish actual tolerances and a bounded experiment budget from the
+   pilot; obtain readiness for substantial new workloads. Keep 16 GB VRAM ceiling
+   and curated-patch/blending fallback.
+5. Continue toward the 4,096 m world pilot, regional editing and export as ordered
+   in the master plan. Vehicle dimensions remain explicitly unset.
 
 **Standing constraints:** public downloads only; never send or draft email, or
 ask the owner to contact institutions. Whole-tile yes/no review in batches.
