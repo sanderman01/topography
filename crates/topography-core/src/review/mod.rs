@@ -14,7 +14,13 @@ use serde_json::{Value, json};
 use std::{fs, io::Read, path::Path};
 
 // GDAL handles raster decoding. Only a bounded, single-band native crop is read here.
-fn band(path: &Path, scratch: &Path, name: &str, cells: usize, float: bool) -> Result<Vec<u8>> {
+pub(crate) fn band(
+    path: &Path,
+    scratch: &Path,
+    name: &str,
+    cells: usize,
+    float: bool,
+) -> Result<Vec<u8>> {
     let output = scratch.join(format!("{name}.bin"));
     run(command("gdal_translate")
         // ENVI creation reopens its own header. Inputs here are owned review crops.

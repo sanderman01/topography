@@ -12,7 +12,7 @@ evidence, the VRAM ceiling, paths with spaces and runtime paths from another
 working directory. Expected failures check exit codes and diagnostics.
 
 When Python 3.11+ and GDAL are installed, the main check also runs local synthetic
-DEM import/review and SQLite curation checks. Otherwise it explicitly reports that stage as skipped.
+DEM import/review, SQLite curation and regional quality checks. Otherwise it explicitly reports that stage as skipped.
 It does not download real terrain or run model evaluation.
 
 For the complete acquisition workflow check:
@@ -56,6 +56,16 @@ actor decisions, pinned inputs, evidence copies, labels, invalid records, stale
 heads, idempotent replay, preserved acceptance/rejection history, publication
 recovery, corrupt/missing objects and portable metadata exports. It uses synthetic
 terrain and human declarations clearly marked as fixtures; no real human acceptance.
+
+`python3 scripts/check_quality.py target/debug/topography` checks whole-crop
+categorical masks, exact grid/type/hash requirements, unknown classifications,
+the 99.5% coverage boundary, defining-feature gaps, repairs, water exclusion,
+nonfinite water, CRS declaration mismatches, pinned assessment evidence,
+coverage disagreements and stale/superseded decisions. It exercises both eligible
+and excluded outcomes in temporary synthetic catalogs. The eligibility fixture
+declares a non-synthetic source to reach that branch; its terrain, permission and
+human declarations remain artificial. No actual prepared data is published.
+Run without Python's `-O` assertion bypass.
 
 With PDAL installed, the main check also runs
 `python3 scripts/check_ground_support.py --self-check`: a tiny local point fixture

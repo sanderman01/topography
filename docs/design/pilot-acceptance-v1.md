@@ -2,8 +2,9 @@
 
 These are initial requirements from the [master plan](../plans/terrain-design-master-plan.md),
 sections 1, 2, 4–7 and 10. Configuration validation, raw import/integrity checks
-and native-grid review crops are implemented. Automated source-quality admission,
-human acceptance records and model evaluation remain pending.
+and native-grid review crops are implemented. Curation records explicit human
+decisions; regional mask checks and preparation eligibility are implemented.
+Prepared-data publication and model evaluation remain pending.
 
 ## Exact contracts
 
@@ -33,7 +34,9 @@ human acceptance records and model evaluation remain pending.
 | Repairs/artifacts | Small reviewed repairs only; exclude unsupported large gaps and unresolved artifacts | Repair mask, before/after inspection, survey alignment and artifact findings |
 | Feature fidelity | Features survive the heightfield and survey sampling | Cross-sections, multiple hillshades, point-cloud/reference comparison and oblique review |
 
-A future preparation/admission consumer must enforce these gates. A source record
+The [preparation eligibility check](../workflows/regional-quality.md) enforces the
+initial native-resolution gates against measured masks and current decisions.
+Actual preparation must recheck eligibility when implemented. A source record
 can be well-formed while excluded; `validate source` reports permission declarations
 and unknown metadata without inspecting evidence or admitting data. Discovery
 bounds do not prove exact coverage. Metadata strings do not prove accuracy.

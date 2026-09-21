@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "raw_receipt": {
+    "path": "../../data/raw/records/RECEIPT_SHA256.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "review": {
+    "path": "../../data/review/candidate/review.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "masks": {
+    "water": null,
+    "quality": null,
+    "repairs": null,
+    "features": null
+  }
+}

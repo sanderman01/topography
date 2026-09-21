@@ -10,6 +10,7 @@ checks, instead of a second schema engine. Their first consumer is
 - [Raw receipt/review v1](raw-receipt-v1.md): byte integrity and native review provenance.
 - [Native crop inspection v1](native-review-v1.md): sample counts and browser previews.
 - [Crop curation v1](curation-v1.md): evidence, explicit decisions, labels and portable history.
+- [Regional quality v1](regional-quality-v1.md): whole-crop mask measurements and current preparation eligibility.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.

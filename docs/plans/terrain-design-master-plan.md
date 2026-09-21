@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import and native-grid review crops are implemented; regional preparation and model work remain planned. Sources checked 13 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation and regional quality/preparation eligibility checks are implemented; aligned regional preparation and model work remain planned. Sources checked 13 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -273,8 +273,10 @@ Broad karst morphology is inspectable; effective fine-feature resolution,
 ground-return support, training permission and human acceptance remain open.
 The [curation workflow](../workflows/source-curation.md) now captures evidence,
 crop-wide labels and explicit decisions in SQLite, with immutable history and
-portable metadata exports. Regional quality/admission and per-cell label editing
-remain pending.
+portable metadata exports. The [regional quality workflow](../workflows/regional-quality.md)
+now measures whole-crop masks and checks preparation eligibility against pinned
+current decisions. Aligned regional processing, actual prepared/training admission
+and per-cell label editing remain pending.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

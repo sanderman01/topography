@@ -347,7 +347,7 @@ fn validate_claims(
     Ok(())
 }
 
-fn blockers(claims: &Claims, bundle: &bundle::Bundle) -> Vec<String> {
+fn claim_blockers(claims: &Claims, bundle: &bundle::Bundle) -> Vec<String> {
     let mut out = Vec::new();
     if claims.decision != Decision::Accept {
         out.push("human acceptance absent or superseded".into());
@@ -395,14 +395,111 @@ fn blockers(claims: &Claims, bundle: &bundle::Bundle) -> Vec<String> {
                 .into(),
         );
     }
+    out
+}
+
+fn blockers(claims: &Claims, bundle: &bundle::Bundle) -> Vec<String> {
+    let mut out = claim_blockers(claims, bundle);
+    // The historical precheck has no water classification. The new assessment
+    // decodes samples independently and evaluates terrestrial cells only.
     if !bundle.metrics.as_ref().is_some_and(|m| {
         m["nonfinite_valid_cells"] == 0 && m["finite_valid_cells"].as_u64().is_some_and(|n| n > 0)
     }) {
         out.push("finite provider-valid samples not established".into());
     }
-    // These recorded claims are a precheck, never a prepared-raster admission.
+    // Preserve the historical v1 policy; eligibility is checked separately.
     out.push("regional preparation and independent admission checks not implemented".into());
     out
+}
+
+pub(crate) fn preparation_check(
+    runtime: &Path,
+    review: &str,
+    expected_record: &str,
+    assessment: &str,
+    counts: Option<&crate::preparation::Counts>,
+    bundle: &bundle::Bundle,
+) -> Result<Vec<String>> {
+    let store = journal::Store::locate(runtime)?;
+    let history = store.history(review)?;
+    let (id, bytes) = history
+        .last()
+        .ok_or_else(|| AcquisitionError::Invalid("crop has no curation records".into()))?;
+    ensure(
+        id == expected_record,
+        "stale curation record; use the current decision head",
+    )?;
+    let record: Record = serde_json::from_slice(bytes)?;
+    ensure(
+        record.target.raw_receipt_sha256 == bundle.manifest.raw_receipt_sha256
+            && record.asset_sha256 == bundle.manifest.asset_sha256,
+        "assessment and curation parents differ",
+    )?;
+    let mut out = claim_blockers(&record.claims, bundle);
+    let source = &bundle.source;
+    if !matches!(
+        source.spatial.surface_type,
+        crate::catalog::source::SurfaceType::BareEarthDem
+    ) {
+        out.push("bare-earth DEM surface type required".into());
+    }
+    if source.spatial.horizontal_crs.is_none() || source.processing_history.is_empty() {
+        out.push("horizontal CRS declaration or processing history unresolved".into());
+    }
+    let proj = &bundle.inspection["stac"]["proj:projjson"];
+    let horizontal = if proj["type"] == "CompoundCRS" {
+        &proj["components"][0]
+    } else {
+        proj
+    };
+    let epsg = horizontal["id"]["code"].as_u64().filter(|code| *code > 0);
+    if horizontal["type"] != "ProjectedCRS"
+        || horizontal["id"]["authority"] != "EPSG"
+        || !epsg.is_some_and(|code| {
+            source.spatial.horizontal_crs.as_deref() == Some(format!("EPSG:{code}").as_str())
+        })
+    {
+        out.push("declared horizontal CRS must match the raster's horizontal EPSG code; other declarations unsupported in v1".into());
+    }
+    let transform: [f64; 6] = serde_json::from_value(bundle.inspection["geoTransform"].clone())?;
+    if source.spatial.native_spacing_m != Some([transform[1], -transform[5]]) {
+        out.push("declared native spacing differs from the reviewed grid or is unresolved".into());
+    }
+    let evidence: BTreeSet<&str> = record
+        .evidence
+        .iter()
+        .filter(|e| e.sha256 == assessment)
+        .map(|e| e.id.as_str())
+        .collect();
+    let captured = |ids: &[String]| ids.iter().any(|id| evidence.contains(id.as_str()));
+    for name in [
+        "ground_support",
+        "artifacts_and_repairs",
+        "water_classification",
+        "unsupported_feature_gaps",
+    ] {
+        if !captured(&record.claims.findings[name].evidence_ids) {
+            out.push(format!("{name}: exact assessment evidence not referenced"));
+        }
+    }
+    match (&record.claims.coverage, counts) {
+        (Some(claim), Some(measured)) => {
+            if claim.terrestrial_cells != measured.terrestrial_cells
+                || claim.valid_terrestrial_cells != measured.valid_terrestrial_cells
+            {
+                out.push("declared coverage differs from measured assessment".into());
+            }
+            if !captured(&claim.evidence_ids) {
+                out.push("coverage: exact assessment evidence not referenced".into());
+            }
+        }
+        _ => out.push("measured and reviewed terrestrial coverage required".into()),
+    }
+    ensure(
+        store.head(review)?.as_deref() == Some(expected_record),
+        "stale curation record; head changed during assessment",
+    )?;
+    Ok(out)
 }
 
 /// Capture evidence and append a decision. Replaying identical input is idempotent.

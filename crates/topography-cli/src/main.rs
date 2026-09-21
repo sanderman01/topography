@@ -1,6 +1,6 @@
 use std::{env, path::Path, process::ExitCode};
 
-use topography_core::{acquisition, catalog, config, contracts::ContractError};
+use topography_core::{acquisition, catalog, config, contracts::ContractError, preparation};
 
 const HELP: &str = "Topography — terrain workshop
 
@@ -16,6 +16,9 @@ Usage: topography [--help | --version]
        topography curate status <runtime.toml> <review-sha256>
        topography curate check <runtime.toml>
        topography curate export <runtime.toml> <review-sha256> <new-output-dir>
+       topography quality draft <raw-receipt.json> <review.json> <quality.json>
+       topography quality assess <quality.json> <new-report.json>
+       topography prepare check <runtime.toml> <quality.json> <curation-record-sha256>
 
 Options:
   -h, --help     Show this help
@@ -24,7 +27,8 @@ Options:
 Validation reads metadata only. Success does not mean terrain is accepted.
 Acquisition/import preserve raw Float32 DEMs; review creates unscaled native crops.
 Import, acquire and review print their resulting manifest path. Curation records
-explicit actor declarations, evidence and crop decisions. No command admits data
+explicit actor declarations, evidence and crop decisions. Quality measures masks;
+prepare check reports current eligibility (exit 1 if blocked). No command admits data
 to prepared/training pools. Processing never creates a human decision.
 See docs/plans/terrain-design-master-plan.md for the implementation plan.";
 
@@ -99,6 +103,31 @@ fn main() -> ExitCode {
                 acquisition::create_review(Path::new(receipt), Path::new(output), window)
                     .map(|p| p.display().to_string()),
             );
+        }
+        [command, action, raw, review, output] if command == "quality" && action == "draft" => {
+            return workflow_result(
+                preparation::draft(Path::new(raw), Path::new(review), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, input, output] if command == "quality" && action == "assess" => {
+            return workflow_result(
+                preparation::assess(Path::new(input), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, runtime, input, record] if command == "prepare" && action == "check" => {
+            let Some(record) = record.to_str() else {
+                return usage_error();
+            };
+            match preparation::check(Path::new(runtime), Path::new(input), record) {
+                Ok(result) => {
+                    let eligible = result.eligible;
+                    let status = workflow_result(result.json());
+                    return if eligible { status } else { ExitCode::FAILURE };
+                }
+                Err(error) => return workflow_result(Err(error)),
+            }
         }
         [command, action, runtime, raw, review, legend, output]
             if command == "curate" && action == "draft" =>

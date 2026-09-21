@@ -1,1 +1,6 @@
-//! GDAL/PROJ and PDAL orchestration for physical elevation rasters and quality masks.
+//! Regional quality assessment and preparation eligibility.
+
+mod quality;
+
+pub(crate) use quality::Counts;
+pub use quality::{assess, check, draft};

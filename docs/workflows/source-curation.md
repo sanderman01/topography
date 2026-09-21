@@ -50,13 +50,17 @@ IDs. `unknown` can carry observations without claiming that the gate is satisfie
 Terrestrial coverage needs explicit counts and evidence establishing its denominator;
 provider-valid cells and bins containing LiDAR returns are different measurements.
 
-The stored preparation precheck reports unresolved findings, missing acceptance,
+The historical v1 preparation precheck reports unresolved findings, missing acceptance,
 unconfirmed/excluded ML permission, missing source metadata, synthetic sources,
 unsupported metric grids and failure to establish the initial 99.5% terrestrial
 coverage threshold. This consumer supports native 0.5–1 m grids; it does not
 implement the plan's possible lower-fidelity exceptions. A permanent blocker also
 states that regional preparation and independent admission checks are pending.
-Even a human-accepted record therefore remains `not admitted`.
+Even a human-accepted record therefore remains `not admitted`. Those immutable
+prechecks retain their original interpretation. The separate
+[regional quality and eligibility check](regional-quality.md) now recomputes
+whole-crop mask measurements against the current decision and captured evidence.
+It reports eligibility without admitting or preparing data.
 
 Permission reviews are separate declarations, leaving the original source metadata
 unchanged. `confirmed` requires dataset-specific permission evidence, captured

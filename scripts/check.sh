@@ -68,6 +68,7 @@ if command -v python3 >/dev/null && command -v gdalinfo >/dev/null && command -v
   cli_binary="$(cargo metadata --no-deps --locked --offline --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"] + "/debug/topography")')"
   python3 scripts/check_acquisition.py "$cli_binary" --local-only
   python3 scripts/check_curation.py "$cli_binary"
+  python3 scripts/check_quality.py "$cli_binary"
   if command -v pdal >/dev/null; then
     python3 scripts/check_ground_support.py --self-check
   else

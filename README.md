@@ -9,7 +9,8 @@ the remaining implementation order.
 The Rust CLI validates presets and metadata, discovers USGS DEM candidates,
 acquires/imports raw Float32 GeoTIFFs, verifies stored bytes, and creates small
 native-grid review crops through GDAL. SQLite curation records crop labels, evidence
-and explicit human decisions. Preparation, dataset admission, training,
+and explicit human decisions. Regional mask assessment and preparation eligibility
+checks compare measured coverage with pinned decisions. Preparation, dataset admission, training,
 generation and export remain planned. Processing success never approves terrain.
 Review crops include a self-contained browser preview with multiple hillshades,
 cross-sections and metric low-altitude views where the source metadata supports them.
@@ -92,5 +93,7 @@ the live TNM search API returned HTTP 504 during development. The
 [early karst trial](docs/reports/rio-abajo-karst-trial.md) now provides three
 native 0.5 m crops from the Río Abajo area. The
 [curation workflow](docs/workflows/source-curation.md) now preserves crop decisions
-and evidence. Regional quality/admission and preparation remain open. The broader
+and evidence. The [regional quality workflow](docs/workflows/regional-quality.md)
+measures whole-crop masks and checks current preparation eligibility. Actual
+aligned preparation and dataset admission remain open. The broader
 milestone still requires curated terrain and the numeric model/loader precision evaluation.
