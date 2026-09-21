@@ -69,7 +69,34 @@ def check(cli, directory, browser=None, local_only=False):
     annotation['claims'].update(actor={'kind':'assistant','name':'synthetic checker'},reason='Retain technical evidence',primary_class_id=1)
     annotation['evidence']=[{'path':str(evidence),'evidence':{'id':'fixture','description':'Synthetic evidence','source_url':None,'sha256':sha(evidence)}}]
     annotation['claims']['findings']['coordinates']={'state':'pass','note':'Synthetic coordinates checked','evidence_ids':['fixture']}
+    annotation['claims']['license'].update(training_permission='confirmed', license_name='Synthetic fixture',
+        license_url='https://example.invalid/license', evidence='Synthetic fixture declaration',
+        attribution='Synthetic fixture', edited_map_reuse='Permitted for this fixture',
+        redistribution='Permitted for this fixture')
+    annotation['claims']['permission_evidence_ids']=['fixture']
     draft.write_text(json.dumps(annotation)); run(cli,'curate','record',draft,runtime)
+    # First gallery choices must also work for source declarations that carry a
+    # permission conclusion but do not yet have captured curation evidence.
+    declared_tiles = []
+    declared_bytes = {}
+    base_source = source.read_text()
+    for index, (permission, decision) in enumerate([('confirmed', 'accept'), ('prohibited', 'reject')], start=2):
+        declared_source = directory/f'{permission}-source.toml'
+        license_fields = ('\nlicense_name = "Synthetic fixture"\nlicense_url = "https://example.invalid/license"'
+                          '\nevidence = "Synthetic fixture declaration"\nattribution = "Synthetic fixture"'
+                          '\nedited_map_reuse = "Fixture only"\nredistribution = "Fixture only"')
+        declared_source.write_text(base_source.replace('record_id = "synthetic-ramp"', f'record_id = "synthetic-{permission}"')
+                                   .replace('training_permission = "unknown"',
+                                            f'training_permission = "{permission}"{license_fields}'))
+        declared_receipt = Path(run(cli, 'import', declared_source, asset, runtime, 1048576))
+        declared_review = Path(run(cli, 'review', declared_receipt, directory/f'{permission}-review', '0,0,3,3'))
+        declared_tiles.append({'id': permission, 'title': f'{permission.title()} permission',
+                               'raw': str(declared_receipt), 'review': str(declared_review),
+                               'primary_class_id': index, 'expected_decision': decision})
+        declared_bytes[permission] = (declared_source.read_bytes(), declared_receipt.read_bytes())
+    gallery_input = json.loads((output/'gallery-input.json').read_text())
+    gallery_input['tiles'].extend([{k: v for k, v in tile.items() if k != 'expected_decision'} for tile in declared_tiles])
+    (output/'gallery-input.json').write_text(json.dumps(gallery_input))
     gallery = directory / 'gallery'
     manifest = Path(run(cli, 'gallery', 'build', output / 'gallery-input.json', ROOT / 'catalog/labels/terrain-v1.toml', gallery))
     gallery_id = sha(manifest)
@@ -80,7 +107,7 @@ def check(cli, directory, browser=None, local_only=False):
     thumbnail_size = json.loads(run('gdalinfo','-json',directory/'thin-gallery/thumb-0.png'))['size']
     if local_only:
         assert max(thumbnail_size)<=192
-        assert len(json.loads(manifest.read_text())['tiles']) == 2
+        assert len(json.loads(manifest.read_text())['tiles']) == 4
         return runtime, output / 'gallery-input.json'
     process = subprocess.Popen([str(cli), 'gallery', 'serve', str(runtime), str(manifest), '0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     raw_asset = directory/'raw/objects'/json.loads(receipt.read_text())['asset_sha256']
@@ -98,7 +125,7 @@ def check(cli, directory, browser=None, local_only=False):
         code, html = request('GET', '/'); assert code == 200
         token = re.search(r'"token":"([a-f0-9]+)"', html.decode())[1]
         code, data = request('GET', '/api/tiles'); assert code == 200
-        state = json.loads(data); assert len(state['tiles']) == 2
+        state = json.loads(data); assert len(state['tiles']) == 4
         tile = state['tiles'][0]; assert tile['decision'] == 'pending'
         # The session verified this source already. Browsing/voting must use its
         # captured preview and journal, not reopen a potentially enormous raw raster.
@@ -121,11 +148,40 @@ def check(cli, directory, browser=None, local_only=False):
         stale['previous_record_sha256'] = saved['head']
         code, data = request('POST','/api/decision',json.dumps(stale),headers); assert code == 200, data
         assert json.loads(data)['decision'] == 'reject'
+        saved_declared_tiles = []
+        for index, declared in enumerate(declared_tiles, start=2):
+            fresh = state['tiles'][index]
+            assert fresh['decision'] == 'pending' and fresh['head'] is None
+            first_vote = {'index': index, 'gallery_sha256': gallery_id,
+                          'review_sha256': fresh['review_sha256'], 'previous_record_sha256': None,
+                          'decision': declared['expected_decision']}
+            code, data = request('POST', '/api/decision', json.dumps(first_vote), headers)
+            assert code == 200, (declared['id'], code, data)
+            saved_declared = json.loads(data)
+            assert saved_declared['decision'] == declared['expected_decision']
+            saved_declared_tiles.append((fresh, declared))
         run(cli,'verify',receipt,expected=1)  # Numeric integrity still requires raw bytes.
         retained_asset.rename(raw_asset)
+        for fresh, declared in saved_declared_tiles:
+            status = json.loads(run(cli, 'curate', 'status', runtime, fresh['review_sha256']))
+            expected_permission = 'unknown' if declared['id'] == 'confirmed' else 'prohibited'
+            saved_license = status['claims']['license']
+            assert saved_license['training_permission'] == expected_permission
+            assert {key: saved_license[key] for key in ['license_name', 'license_url', 'evidence', 'attribution',
+                                                        'edited_map_reuse', 'redistribution']} == {
+                'license_name': 'Synthetic fixture', 'license_url': 'https://example.invalid/license',
+                'evidence': 'Synthetic fixture declaration', 'attribution': 'Synthetic fixture',
+                'edited_map_reuse': 'Fixture only', 'redistribution': 'Fixture only'}
+            assert status['claims']['permission_evidence_ids'] == [] and status['evidence'] == []
+            assert status['admission'] == 'not admitted'
+            declared_source = directory/f"{declared['id']}-source.toml"
+            declared_receipt = Path(declared['raw'])
+            assert (declared_source.read_bytes(), declared_receipt.read_bytes()) == declared_bytes[declared['id']]
         current = json.loads(run(cli,'curate','status',runtime,tile['review_sha256']))
         assert current['claims']['decision'] == 'reject'
         assert current['claims']['findings'] == annotation['claims']['findings']
+        assert current['claims']['license'] == annotation['claims']['license']
+        assert current['claims']['permission_evidence_ids'] == ['fixture']
         assert current['evidence'][0]['sha256'] == sha(evidence)
         assert current['admission'] == 'not admitted'
         if browser:

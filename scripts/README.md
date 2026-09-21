@@ -150,7 +150,8 @@ the separately authorized job and optional completion-contract fixtures.
 checks local queue validation/resume, partial failure, gallery publication and
 source integrity without opening a port. The regular `check.sh` includes it.
 Omit `--local-only` to exercise direct gallery votes, stale heads, preserved
-technical evidence, HTTP restrictions and damaged-preview refusal through a
+technical evidence, first votes on confirmed/prohibited source declarations,
+HTTP restrictions and damaged-preview refusal through a
 temporary loopback service. Full `check_acquisition.py` also exercises queued
 HTTPS downloads, metadata retrieval, independent failures and verified resume.
 

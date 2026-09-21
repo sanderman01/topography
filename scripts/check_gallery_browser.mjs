@@ -24,9 +24,9 @@ try{
  if(mode!=='inspect'){
   assert.equal(await evaluate("document.querySelector('#filter').value"),'pending');
   await evaluate("document.querySelector('#yes').click()");await wait("document.querySelector('#message').textContent.startsWith('Saved Yes')");
-  await c('Page.reload');await wait("document.querySelectorAll('.tile').length===2");
+  await c('Page.reload');await wait("document.querySelectorAll('.tile').length===4");
   assert.equal(await evaluate("document.querySelector('#filter').value"),'all');
-  assert.equal(await evaluate("document.querySelectorAll('.tile[data-decision=accept]').length"),1);
+  assert.equal(await evaluate("document.querySelectorAll('.tile[data-decision=accept]').length"),2);
   await evaluate("document.querySelectorAll('.tile')[1].click()");
   assert.equal(await evaluate("document.querySelector('#yes').disabled"),true,'votes disabled until the selected preview is ready');
   // Exercise the actual keyboard bridge from the sandboxed terrain inspector.
@@ -40,7 +40,7 @@ try{
   assert.ok(context,'terrain iframe context');
   await evaluate("document.body.focus();dispatchEvent(new KeyboardEvent('keydown',{key:'n',bubbles:true}));",context);
   await wait("document.querySelector('#message').textContent.startsWith('Saved No')");
-  await c('Page.reload');await wait("document.querySelectorAll('.tile[data-decision=reject]').length===2");
+  await c('Page.reload');await wait("document.querySelectorAll('.tile[data-decision=reject]').length===3");
   assert.equal(await evaluate("document.querySelector('#tile-title').textContent"),'First <terrain>');
  }
 

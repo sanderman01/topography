@@ -41,6 +41,11 @@ The local server currently reads session entropy from `/dev/urandom` (Unix).
 Source discovery, dataset-specific permission/QA interpretation and geographic
 split planning still require technical judgment. They feed the target list;
 visual approval does not skip those gates or create prepared/training admission.
+For a first gallery choice, a source's declared confirmed permission remains
+unconfirmed in curation until its supporting evidence is attached. The raw
+declaration and license details remain intact, as do any declared restrictions
+or prohibitions. Later visual choices retain existing curation evidence and
+permission findings.
 When published evidence is already available, complete survey/date scope, actual
 CRS, units, datum and processing declarations before publishing review crops.
 This avoids unnecessary metadata-only successors after selection. Preserve

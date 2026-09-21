@@ -670,6 +670,13 @@ pub(crate) fn select(
         let prior: Record = serde_json::from_slice(bytes)?;
         (prior.claims, prior.evidence)
     } else {
+        let mut license: License =
+            serde_json::from_value(serde_json::to_value(&snapshot.source.license)?)?;
+        // A first visual choice has no captured permission evidence yet. Keep
+        // declared restrictions, but do not certify permission from metadata alone.
+        if matches!(license.training_permission, TrainingPermission::Confirmed) {
+            license.training_permission = TrainingPermission::Unknown;
+        }
         (
             Claims {
                 actor: Actor {
@@ -693,7 +700,7 @@ pub(crate) fn select(
                     })
                     .collect(),
                 coverage: None,
-                license: serde_json::from_value(serde_json::to_value(&snapshot.source.license)?)?,
+                license,
                 permission_evidence_ids: vec![],
             },
             vec![],
