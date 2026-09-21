@@ -37,7 +37,10 @@ or measured terrestrial coverage. Their terrain class is a candidate annotation.
 [Batch 2 crop envelopes](areas/pilot-batch-2-crops.geojson) and the source examples
 under `candidates/pilot-batch-2/` describe six additional whole-tile candidates.
 See the [batch report](../docs/reports/pilot-tile-batch-2.md) for previews and
-reproduction. Their human decisions remain unset.
+reproduction. Tiles 1–5 are now selected and prepared; tile 6 is excluded without
+deletion. [Batch 3](../docs/reports/pilot-tile-batch-3.md) adds four new candidates
+under `candidates/pilot-batch-3/` with [crop envelopes](areas/pilot-batch-3-crops.geojson)
+and unset human decisions.
 
 Dataset admission must record confirmed training permission and its supporting
 clause or confirmation, as required by the master plan. Credentials never belong

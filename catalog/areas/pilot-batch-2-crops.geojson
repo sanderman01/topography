@@ -44,7 +44,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "curation_record_sha256": "d02af6ee29fa15927939d4294cb665a475e27a72c629c45362f7a810293e1af7",
+        "decision_evidence_sha256": "b5e14c806f6e33ee57297c4d7213ae7149b5869d7d6ae2f4afcb982cd87c864a"
       }
     },
     {
@@ -90,7 +92,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "curation_record_sha256": "343161c6b0c1abb628616f832ca71a6a88bdf15db405e6c1382d5e733d6f119e",
+        "decision_evidence_sha256": "b5e14c806f6e33ee57297c4d7213ae7149b5869d7d6ae2f4afcb982cd87c864a"
       }
     },
     {
@@ -136,7 +140,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "curation_record_sha256": "ef1e156eea82f64384a197daf8c26cb46f74c2e4bde9a03982b22f5788753e43",
+        "decision_evidence_sha256": "b5e14c806f6e33ee57297c4d7213ae7149b5869d7d6ae2f4afcb982cd87c864a"
       }
     },
     {
@@ -182,7 +188,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "curation_record_sha256": "6be9e5605516db3dbc03c03a2617e9638cd97fe5d62df966dbadd787403c3b27",
+        "decision_evidence_sha256": "b5e14c806f6e33ee57297c4d7213ae7149b5869d7d6ae2f4afcb982cd87c864a"
       }
     },
     {
@@ -228,7 +236,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "accept",
+        "curation_record_sha256": "ba7c5d999540c2ba6baf7e87ea2461915d7f9f0bb9a139766776999222279105",
+        "decision_evidence_sha256": "b5e14c806f6e33ee57297c4d7213ae7149b5869d7d6ae2f4afcb982cd87c864a"
       }
     },
     {
@@ -274,7 +284,9 @@
           1024,
           1024
         ],
-        "decision": null
+        "decision": "reject",
+        "curation_record_sha256": "310b3d541c8b4d7a8c6e69450bf1847034ba11611a82916aae859e3f8a163bc5",
+        "decision_evidence_sha256": "b5e14c806f6e33ee57297c4d7213ae7149b5869d7d6ae2f4afcb982cd87c864a"
       }
     }
   ]

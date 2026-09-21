@@ -1,0 +1,189 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.955993986255,
+              18.482454970374
+            ],
+            [
+              -66.951146145293,
+              18.4824681118139
+            ],
+            [
+              -66.9511324371892,
+              18.4778424441125
+            ],
+            [
+              -66.9559801498153,
+              18.4778293030096
+            ],
+            [
+              -66.955993986255,
+              18.482454970374
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 1,
+        "tile": "guajataca-corridor",
+        "title": "Guajataca \u00b7 canyon corridor",
+        "area_group": "guajataca-gorge",
+        "candidate_class_id": 2,
+        "raw_receipt_sha256": "83ce2f62d24ac95076e2a79392cdcf22ebf61e725a09579366cd3e4c91c63cd6",
+        "review_sha256": "ecc8d1d56fb9a377e8a6c4b3934ac926777168ce80731bbe03e30055df126921",
+        "window_cells": [
+          600,
+          150,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.9578700446222,
+              18.4765773739769
+            ],
+            [
+              -66.9530223668709,
+              18.4765905628228
+            ],
+            [
+              -66.9530086095606,
+              18.4719648903805
+            ],
+            [
+              -66.9578561589847,
+              18.4719517018729
+            ],
+            [
+              -66.9578700446222,
+              18.4765773739769
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 2,
+        "tile": "guajataca-bend",
+        "title": "Guajataca \u00b7 bend and walls",
+        "area_group": "guajataca-gorge",
+        "candidate_class_id": 2,
+        "raw_receipt_sha256": "83ce2f62d24ac95076e2a79392cdcf22ebf61e725a09579366cd3e4c91c63cd6",
+        "review_sha256": "82f87a2148a6eb25c1035e1ec6f22f46c022c98da610cdd1b1d37569036f68b0",
+        "window_cells": [
+          200,
+          1450,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.7031209714716,
+              18.4409662422528
+            ],
+            [
+              -66.6982742670436,
+              18.4409729960639
+            ],
+            [
+              -66.6982672548975,
+              18.436347281345
+            ],
+            [
+              -66.7031138310489,
+              18.4363405277075
+            ],
+            [
+              -66.7031209714716,
+              18.4409662422528
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 3,
+        "tile": "arecibo-upper-meander",
+        "title": "Arecibo \u00b7 upper meander",
+        "area_group": "arecibo-river",
+        "candidate_class_id": 9,
+        "raw_receipt_sha256": "40b811386854ecf9573fce48a0e5fca29f0be279f9920073782f60a0ac2acfa6",
+        "review_sha256": "d9446d75572d1a90606fb8e07a0a534813694a0839e11b255d465809e7fdceec",
+        "window_cells": [
+          0,
+          450,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.7028752590173,
+              18.4350940850805
+            ],
+            [
+              -66.6980287174209,
+              18.4351008326933
+            ],
+            [
+              -66.6980217120091,
+              18.430475113442
+            ],
+            [
+              -66.7028681253375,
+              18.4304683660025
+            ],
+            [
+              -66.7028752590173,
+              18.4350940850805
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 4,
+        "tile": "arecibo-lower-meander",
+        "title": "Arecibo \u00b7 lower meander",
+        "area_group": "arecibo-river",
+        "candidate_class_id": 9,
+        "raw_receipt_sha256": "40b811386854ecf9573fce48a0e5fca29f0be279f9920073782f60a0ac2acfa6",
+        "review_sha256": "7c657c63591e141309ddde8cf71ed00de978c607e681e9de3ad3682c43f74cc1",
+        "window_cells": [
+          50,
+          1750,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    }
+  ]
+}

@@ -1,14 +1,14 @@
 # Pilot tile batch 2
 
-Prepared for whole-tile selection on 2026-09-21. The three original Río Abajo
-tiles are already selected and prepared. This batch adds six candidates from
-three other areas using the same publicly downloadable NOAA DEM collection.
-No decision has been recorded for these new tiles.
+Reviewed on 2026-09-21. The owner answered **“all yes, except 6, that one is no”**.
+Tiles 1–5 are accepted and prepared; tile 6 is excluded with its raw data and
+review artifacts preserved. Together with the three original Río Abajo regions,
+there are now eight verified prepared regions.
 
 Open the local [six-tile review page](../../data/review/pilot-batch-2-2026-09-21/review-batch.html).
-Reply with yes or no for numbers 1–6, or “all yes”. No feature annotations or
-explanations are required. Each tile is 512 × 512 m at native 0.5 m spacing;
-the page links to the existing interactive terrain viewer.
+The original presentation remains unchanged as evidence of what was reviewed;
+no further vote is needed for this batch. Each tile is 512 × 512 m at native
+0.5 m spacing. The page links to the existing interactive terrain viewer.
 
 | Number | Tile | Source window: x, y, width, height | Elevation range (m) | Candidate family |
 | --- | --- | --- | --- | --- |
@@ -49,7 +49,7 @@ per-asset cap. No point-cloud run or new tool installation was needed.
 Portable source descriptions are in
 [`catalog/candidates/pilot-batch-2/`](../../catalog/candidates/pilot-batch-2/).
 [Crop envelopes](../../catalog/areas/pilot-batch-2-crops.geojson) retain geographic
-footprints, windows, review identities and unset decisions. The two crops from
+footprints, windows, review identities and current recorded decisions. The two crops from
 each area belong to one future geographic split group; do not randomly split
 nearby crops. No training/validation partition or dataset release exists yet.
 
@@ -62,7 +62,8 @@ Ignored local artifacts:
 - `data/raw/`: immutable acquired assets, metadata and receipts.
 
 `review-batch.json` pins the presented page, each review, interactive preview and
-thumbnail. Preserve that presentation when later capturing the human response.
+thumbnail. Its original unset decisions describe the presentation snapshot;
+the captured response and all six decisions are under `decisions-v1/`.
 Thumbnails and 600-pixel source overviews are display products only; elevation
 and viewer samples retain the native grid.
 
@@ -80,3 +81,47 @@ and [supplier_qa_pilot_v1](../design/source-quality-pilot-v1.md) before preparat
 provider-mask cells with their source windows and browser payloads. All six have
 1,048,576 finite provider-valid samples. These checks establish extraction and
 display fidelity, not terrestrial/water classification or training admission.
+
+
+## Recorded decisions and preparation
+
+`decisions-v1/human-decision.json` pins the exact response, reviewed page and crop
+identities. Six human decisions were appended through the curation CLI, followed
+by technical evidence updates for the five accepted crops. Tile 6 has only its
+rejection; no rejection reason beyond the owner's no is inferred.
+
+Codex reviewed the three exact original USGS OPR tile XML files, their 3DEP
+connection and the NOAA collection lineage. The published
+[3DEP use statement](https://www.usgs.gov/3d-elevation-program) provides the
+unrestricted-use basis applied to intended training, with tile conditions,
+credits, metadata and modification history retained. This is a documented
+implementer interpretation, not a fresh human legal decision or agency ML letter.
+Source-specific evidence is captured in
+`data/review/pilot-batch-2-qualification-v1/source-qualification.json`.
+
+Under the adopted supplier-QA rule, all five crops have 1,048,576 usable terrestrial
+cells, no identified local defect exclusions, zero project repairs and no optional
+feature annotations. Small public USGS context images show no identified open
+water surface; all-terrestrial masks retain visibility limitations. A drainage
+line or pale road does not itself imply water. Broad terrain-family labels remain
+candidate descriptions, not a claim of narrow slot geometry or braided channels.
+
+The five disjoint footprints were prepared separately without resampling or
+terrain changes. `prepare verify` reports intact, registered, current outputs.
+Independent decoding verified all 5,242,880 Float32 samples and all output masks.
+Tile 6's raw source, review, preview and thumbnail hashes remain unchanged; no
+prepared product was created for it.
+
+| Tile | Prepared manifest SHA-256 |
+| --- | --- |
+| 1 | `79b836e500977a09cf8413b788b1930fbc4e54af2330bd9ae4672ef756f60f6d` |
+| 2 | `18b884b0f1c5e105cf46511b7f6340ae1cd2b4bfd277919ce33681a1f8b26438` |
+| 3 | `7088544e65200babfe4996677946fba0127f386e7efc46d2c0ea32ec509611a4` |
+| 4 | `f04aeb8534beb4bf9873955dc1333e7ff79f59727de0362c0c92b5f1a32bd4aa` |
+| 5 | `09803bc60dad4cb6732a5ef45f97f8f05953e8a1653680fee56b29dbd867818d` |
+
+Each manifest is `data/prepared/<sha256>/manifest.json`. Current curation IDs,
+complete masks, captured evidence, portable exports and verification reports are
+in `data/review/pilot-batch-2-qualification-v1/`. No training dataset has been
+released. The next selection is [batch 3](pilot-tile-batch-3.md), which adds two
+other geographic areas for the gorge and river families.

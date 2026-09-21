@@ -1,6 +1,6 @@
 # Implementation progress
 
-Updated 2026-09-21. The first three real terrain regions are qualified and prepared.
+Updated 2026-09-21. Eight real terrain regions are qualified and prepared; one reviewed tile is excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
@@ -12,15 +12,18 @@ and exclude identified defects. Routine supplier interpolation beneath forest is
 acceptable. Do not reopen the confidence question, invent a density cutoff, or
 launch more LiDAR checks for the existing candidates.
 
-The three original Río Abajo crops keep their whole-tile yes and now have verified
-prepared outputs. The next actual input is **yes/no for the six new tiles** in
-[batch 2](reports/pilot-tile-batch-2.md), available locally at
-`data/review/pilot-batch-2-2026-09-21/review-batch.html`.
-No decisions have been recorded for that batch. Preserve the exact presented
-page and its pinned JSON when recording the owner's response.
+The owner answered “all yes, except 6, that one is no” for batch 2. Tiles 1–5
+are selected and prepared; tile 6 is excluded, with all its data preserved. The
+three original Río Abajo selections remain current. No repeat vote is needed.
+
+The next actual input is **yes/no for four new tiles** in
+[batch 3](reports/pilot-tile-batch-3.md), available locally at
+`data/review/pilot-batch-3-2026-09-21/review-batch.html`. These add a second gorge
+area and a second river area. Decisions are unset; preserve the presented page
+and pinned JSON when recording the response.
 
 Continue in the existing checkout on `feat/east-ridges-qualification`; no worktree.
-This continuation builds on `6aa6f4f` and uses existing production tools without
+This continuation builds on `d625f98` and uses existing production tools without
 code changes. Merging remains with the owner.
 
 ## Implemented and verified
@@ -32,19 +35,19 @@ code changes. Merging remains with the owner.
 | Native review | Float32/native-mask crops with metric browser previews, multiple hillshades, profiles and low-altitude views. Display products remain separate from elevation. |
 | Curation | Immutable SQLite history, captured evidence, explicit whole-tile decisions, stale-write protection, integrity checks and portable exports. Technical judgments belong to the implementer. |
 | Quality | `native_quality_v2` checks exact grids, categorical masks, at least 99.5% usable terrestrial coverage and optional annotated-feature support. `supplier_qa_pilot_v1` supplies the declared evidence basis; no validator threshold changed. |
-| Preparation | Same-survey native regions preserve valid Float32 bits and separate masks; immutable publication, current-parent checks and catalog registration. Three real regions now prepared. |
+| Preparation | Same-survey native regions preserve valid Float32 bits and separate masks; immutable publication, current-parent checks and catalog registration. Eight real regions now prepared. |
 | Ground sampling | Three early 64 m samples and three completed full-crop count checks. All native count bins verified against retained XY points. Counts remain diagnostics, not measured feature accuracy. |
-| Next review batch | Six native 512 m candidates from three further areas: Camuy, central gorge, southern river/floodplain. Three public DEM assets acquired; decisions unset. |
+| Next review batch | Four native 512 m candidates from Guajataca and Arecibo. Two public DEM assets acquired; decisions unset. Batch 2 is complete. |
 | Future work | Geographic dataset releases, Python numeric/model evaluation, label editing, generation, world editing and terrain export remain unimplemented. |
 
 ## Current Río Abajo state
 
-The catalog has **16 immutable curation records and 3 registered prepared regions**.
+The catalog has **27 immutable curation records and 8 registered prepared regions**.
 Its integrity check reports no unregistered records or unreferenced objects.
 The first preparation migrated the database to schema 2; the check report itself
 still has JSON schema version 1.
 
-All three current records preserve the owner's existing human acceptance,
+The three original Río Abajo records preserve the owner's existing human acceptance,
 candidate class 1 and confirmed dataset permission. Codex's six technical findings
 pass under the delegated supplier-QA rule. Each crop has 1,048,576 usable
 terrestrial cells, zero water cells, zero project repairs and zero optional
@@ -69,6 +72,29 @@ all three. Their schema retains `review_state: unreviewed` and
 of unchanged source tiles; no dataset release or new human output decision has
 been invented.
 
+## Batch 2 completed
+
+The catalog has eight current human acceptances and one rejection. The exact
+batch response and all six decisions are captured in
+`data/review/pilot-batch-2-2026-09-21/decisions-v1/`; the original page/JSON remain
+unchanged. Tile 6 (`river-south-terrace`) is rejected. Its current record is
+`310b3d541c8b4d7a8c6e69450bf1847034ba11611a82916aae859e3f8a163bc5`.
+Do not delete its data, prepare it, or infer a rejection reason.
+
+Five accepted crops passed the supplier-QA, coordinate, permission and complete
+mask gates. Codex reviewed the exact USGS tile XML and 3DEP permission basis for
+all three sources; no new human legal approval is claimed. Public imagery context
+identified no open water surface, with visibility limits retained in evidence.
+The crops are all-terrestrial, with zero project repairs/optional annotations.
+Their broad candidate labels do not assert narrow slots or braided channels.
+
+All five native regions are prepared separately. Independent decoding verified
+5,242,880 elevation values bit for bit and every output mask; prepared verification
+reports intact, registered and current. Current curation/prepared IDs are in
+`data/review/pilot-batch-2-qualification-v1/records.json` and the
+[batch report](reports/pilot-tile-batch-2.md). Technical evidence updates preserve
+the original owner votes. No training dataset is released.
+
 ## Retained local artifacts
 
 These are ignored by Git; preserve and back them up separately.
@@ -84,13 +110,16 @@ These are ignored by Git; preserve and back them up separately.
 | Earlier tile votes and exact batch response “both yes” | `data/review/rio-abajo-tile-decisions-2026-09-21/` and its `accepted-batch-v1/` |
 | Completed whole-crop LiDAR evidence | `data/review/rio-abajo-ground-support/{north-hollows,east-ridges,south-saddles}-full-v1/` |
 | Earlier blocked measurement checkpoint and mask evidence | `data/review/rio-abajo-full-crop-completion-2026-09-21/`, `data/review/rio-abajo-quality-v2-2026-09-21/` |
-| New six-tile batch and comparisons | `data/review/pilot-batch-2-2026-09-21/` |
+| Completed batch 2, captured decisions and comparisons | `data/review/pilot-batch-2-2026-09-21/` |
+| Batch 2 qualification, backup, masks, exports, prepared results and native comparison | `data/review/pilot-batch-2-qualification-v1/` |
+| New four-tile batch, previews and comparisons | `data/review/pilot-batch-3-2026-09-21/` |
+| Batch 3 source inputs and display overviews | `data/staging/pilot-batch-3-2026-09-21/` |
 | New batch discovery/source inputs and display overviews | `data/staging/pilot-batch-2-2026-09-21/` |
 | Catalog and captured evidence | `data/catalog/topography.sqlite3` and sibling `.curation/` |
 
 Earlier incomplete assessments, source evidence and catalog snapshots remain
-historical. Do not use their blocker lists as current status. Current IDs are in
-the table above. Original reviewed pages, raw assets and completed evidence were
+historical. Do not use their blocker lists as current status. Current original-region IDs are in
+the table above; batch-2 IDs are in its qualification directory. Original reviewed pages, raw assets and completed evidence were
 not overwritten.
 
 The [source qualification report](reports/rio-abajo-source-qualification.md)
@@ -102,18 +131,19 @@ measurement evidence, not ground-quality masks.
 
 ## Verification for this continuation
 
-- Existing `quality assess` and `prepare check` pass for all three real inputs.
-- `prepare build`, `prepare verify`, curation status/export and `curate check`
-  completed; all three outputs are registered, intact and current.
-- Independent GDAL decoding compared every prepared elevation bit with its source
-  review and checked all seven raster layers, including the original provider mask.
-  Captured policy/evidence hashes and input identities were checked.
-- `scripts/check_review.py` verifies all 6,291,456 samples in batch 2 against raw
-  windows, provider masks and embedded browser payloads, including grid/CRS and
-  metrics. Each new crop has 1,048,576 finite provider-valid samples.
-- Documentation links, batch links, hashes, candidate metadata and footprint
-  consistency are checked before committing. No production code changed, so the
-  previously passing `CARGO_BUILD_JOBS=1 bash scripts/check.sh` was not rerun.
+- All six batch-2 decisions match the exact response; original presented artifacts
+  and rejected tile data remain intact. Current status and portable exports pass.
+- Existing quality assessment, eligibility, native preparation and verification
+  passed for all five selected crops. Catalog integrity reports 27 records,
+  eight registered regions and no orphans.
+- Independent GDAL decoding checked 5,242,880 new prepared Float32 samples and all
+  seven raster layers, with captured evidence hashes. Original three-region
+  comparisons remain retained from the previous continuation.
+- `scripts/check_review.py` verifies all 4,194,304 batch-3 samples against source
+  windows, provider masks and browser payloads, including grids and metrics.
+- Batch identities, local links, geographic envelopes, metadata, decision scope
+  and documentation are checked before commit. No production code changed;
+  the previously passing full `scripts/check.sh` suite was not repeated.
 
 Earlier full checks covered rustfmt, locked offline build, Clippy, valid/invalid
 contracts, local GDAL workflows, SQLite recovery, mask eligibility and native
@@ -123,17 +153,18 @@ was installed. The model-loader/autoencoder precision milestone is still open.
 
 ## Continue after batch selection
 
-1. Record yes/no for numbers 1–6 against the pinned batch identities. Do not ask
+1. Record yes/no for batch 3 numbers 1–4 against the pinned batch identities. Do not ask
    for ridges, hollows, mask drawings or detailed reasons. A no records exclusion,
    without deleting raw data.
 2. Qualify selected crops with supplier QA, known metadata, documented water
    classification and dataset-specific permission evidence. Use the existing
    masks/curation/preparation workflow. Further point measurements are optional
    only when they answer a concrete observed problem.
-3. Add independent areas as needed. Keep the two nearby crops from each batch-2
-   source in one future geographic split group; geographic separation must precede
-   overlapping training crops. No split assignment or class-diversity gate is
-   complete yet.
+3. With selected batch-3 terrain, evaluate a small geographically grouped pilot
+   using the two available areas per family. Keep crops from each area together;
+   decide geographic splits before overlapping training windows. Do not keep
+   expanding source review indefinitely before attempting the numeric baseline.
+   No split assignment or class-diversity gate is complete yet.
 4. Implement the pilot dataset release boundary and numeric loader/representation
    checks before choosing or training a model. Keep the 16 GB VRAM ceiling and
    curated-patch/blending fallback.

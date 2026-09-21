@@ -298,10 +298,11 @@ now measures whole-crop masks and checks preparation eligibility against pinned
 current decisions. [Native regional preparation](../workflows/aligned-preparation.md)
 composes eligible adjacent reviews from the same survey without resampling,
 preserves valid Float32 values and distinct masks, and registers immutable outputs.
-This path is verified with synthetic fixtures and three real prepared Río Abajo
-regions whose samples remain bit-identical to the accepted native terrain.
-A [six-tile batch](../reports/pilot-tile-batch-2.md) from three further areas is ready
-for whole-tile yes/no selection. Prepared outputs retain their separate unreviewed
+This path is verified with synthetic fixtures and eight real prepared regions
+whose samples remain bit-identical to accepted native terrain. The owner selected
+five of six tiles in [batch 2](../reports/pilot-tile-batch-2.md); rejection preserves
+the sixth tile's data. A [four-tile batch](../reports/pilot-tile-batch-3.md) from two
+further areas is ready for whole-tile yes/no selection. Prepared outputs retain their separate unreviewed
 state and remain excluded from training release. Cross-survey alignment,
 repairs, output acceptance, dataset releases and per-cell label editing remain pending.
 
