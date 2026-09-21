@@ -13,12 +13,14 @@ without selecting individual ridges, hollows or other features. The earlier
 `data/review/rio-abajo-tile-decisions-2026-09-21/`, with the exact responses and
 assistant recorder identified. No technical findings were promoted to pass.
 The later batch response “both yes” also selects north-hollows and south-saddles.
-The catalog has thirteen historical records and three current human acceptances.
-No prepared region or training admission exists. The batch response, pinned
+The catalog now has sixteen historical records, three current human acceptances
+and three verified prepared regions. No training dataset has been released. The batch response, pinned
 identities, exports and new record IDs are under
 `data/review/rio-abajo-tile-decisions-2026-09-21/accepted-batch-v1/`.
-The subsequent measurement and mask updates preserve those selections in
-`data/review/rio-abajo-full-crop-completion-2026-09-21/`.
+The earlier measurement/mask checkpoint is preserved in
+`data/review/rio-abajo-full-crop-completion-2026-09-21/`. Current qualified decisions,
+complete masks, preparation requests and verification are in
+`data/review/rio-abajo-supplier-qa-pilot-v1/`.
 
 The earlier assistant annotation captured that exact response against the viewed
 map's hash and the original crop identity. It preserves the confirmed permission
@@ -52,11 +54,10 @@ concealed water exists. It excludes no land from the quality denominator.
 
 The masks under `data/review/rio-abajo-quality-v2-2026-09-21/` also contain zero
 optional feature annotations and zero project repairs. The latter does not deny
-supplier interpolation. Latest drafts and assessments are in each crop's
-`water-classified-v1/` directory; earlier incomplete drafts remain preserved.
-The quality mask is still unset. Each assessment has one missing-mask blocker
-and null coverage counts. Current curation records identify Codex's water
-classification judgment separately from the owner's existing whole-tile yes.
+supplier interpolation. That intermediate checkpoint left quality unset in each crop's
+`water-classified-v1/` directory. Those incomplete assessments remain preserved.
+The current supplier-QA qualification below completes the quality layer. Curation
+identifies Codex's technical judgments separately from the owner's whole-tile yes.
 
 ## Completed sequential measurements
 
@@ -138,35 +139,43 @@ sampling measurements. No further point-count run or feature-marking exercise
 is needed. Additional public downloads should answer a concrete technical
 question; correspondence and unavailable supplementary files are not prerequisites.
 
-## Decision needed before source admission
+## Adopted pilot policy and prepared regions
 
-The remaining issue is the evidence rule for **supported ground**. The current
-99.5% gate says how much land must meet that rule, but does not define how to
-qualify supplier-interpolated cells beneath forest. The survey report describes
-linear interpolation and ground voids; regional accuracy checkpoints and its
-1:5000 artifact review do not measure fine-feature fidelity in these crops.
-More occupancy diagnostics cannot supply the missing criterion.
+The owner delegated the decision: “Do whatever you judge appropriate. Try to
+keep it simple.” The implementer adopted
+[supplier_qa_pilot_v1](../design/source-quality-pilot-v1.md). Published supplier
+product QA is the evidence basis for finite provider-valid native ground, with
+concrete local defects excluded. Routine supplier interpolation beneath forest
+is acceptable. No further confidence threshold or LiDAR measurement is required.
+The existing 99.5% mask-coverage gate and all source/permission checks remain.
 
-Proposed pilot policy, **not yet approved or implemented**:
+All three crops have 1,048,576 usable terrestrial cells under that rule, with no
+identified local defect exclusions, zero project repairs and no optional feature
+annotations. All six technical findings now pass under Codex's documented
+judgment. This does not claim independently measured fine-feature accuracy.
+Original human selections and permission evidence are retained unchanged.
 
-- Use the released native bare-earth DEM and its documented supplier QA as the
-  evidence basis for usable ground, retaining original units, datum, source
-  identity and processing history. Apply the existing 99.5% threshold to finite,
-  provider-valid terrestrial cells after excluding documented local defects.
-- Preserve whole-crop sampling diagnostics and all known uncertainty. Exclude
-  demonstrated large voids or artifacts; do not assume empty count bins are
-  defects, or claim that a 0.5 m grid establishes measured 0.5 m feature accuracy.
-  Missing supplier QA polygons remain an explicit limitation.
-- Identify this evidence basis in a versioned policy and carry it into prepared
-  and eventual dataset provenance. Keep source selection, preparation and later
-  training release distinct. Existing human yes decisions remain valid.
+Each crop is prepared as its own 512 × 512 m region because the selected
+footprints are disjoint. The native 0.5 m grid and PRVD02 metre values are retained;
+no resampling, smoothing, repair, mosaic across gaps or vertical transformation ran.
 
-This is the recommended practical route for the pilot, accepting uncertainty
-in supplier interpolation. It changes the admission evidence basis and therefore
-requires the owner's agreement before changing the plan or policy. The alternative
-is to declare a required feature scale/error and design one bounded validation
-experiment against it; an unplanned height comparison alone would not settle
-acceptability. No numeric tolerance or all-supported quality mask has been invented.
+| Crop | Prepared manifest SHA-256 |
+| --- | --- |
+| North-hollows | `0bea5dd7cc7fb507b9d32472ec32805bc542d1805b79eec943cda473871819c2` |
+| East-ridges | `e70cda3efae445259d83394c2cec2d969eae135c133287ade735a7a6727d6373` |
+| South-saddles | `f366ddbc9f7ee3c65ea3dee522c0c3ccd81843bd1f25a8d439b2ff869c7aebd1` |
+
+Each manifest is `data/prepared/<sha256>/manifest.json`. `prepare verify` reports
+integrity verified, registered and current for all three. Independent decoded
+comparison checked all 3,145,728 Float32 samples bit for bit against the accepted
+native crops, plus every output mask. The policy's exact bytes, owner delegation,
+source-report identity and per-crop qualification are captured in the pinned
+curation records and portable exports. `native-comparison.json` retains the result.
+
+The prepared schema still records `review_state: unreviewed` and
+`training_admission: not admitted`; preparation is not a dataset release.
+Do not request another visual approval of these unchanged source tiles. The next
+selection is the [new six-tile batch](pilot-tile-batch-2.md).
 
 ## Retained artifacts and verification
 

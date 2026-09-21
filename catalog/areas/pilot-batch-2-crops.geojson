@@ -1,0 +1,281 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.8302573136225,
+              18.3596590529067
+            ],
+            [
+              -66.825412868975,
+              18.3596690184222
+            ],
+            [
+              -66.8254024967027,
+              18.3550432512019
+            ],
+            [
+              -66.8302468131936,
+              18.3550332859435
+            ],
+            [
+              -66.8302573136225,
+              18.3596590529067
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 1,
+        "tile": "camuy-west-hollows",
+        "title": "Camuy \u00b7 western hollows",
+        "area_group": "camuy-karst",
+        "candidate_class_id": 1,
+        "raw_receipt_sha256": "bde601ec88fd893aa449cdf404a37fb1324dbbddf23b7866c01e1648d5fd8d81",
+        "review_sha256": "ea010b9f8f3d55745688546418a94b692a5217d5c0969f9c97cf7fe512e956f6",
+        "window_cells": [
+          100,
+          400,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.8219797391933,
+              18.3603536120694
+            ],
+            [
+              -66.8171352748384,
+              18.360363368484
+            ],
+            [
+              -66.8171251215052,
+              18.3557376012785
+            ],
+            [
+              -66.8219694577024,
+              18.3557278451155
+            ],
+            [
+              -66.8219797391933,
+              18.3603536120694
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 2,
+        "tile": "camuy-east-slopes",
+        "title": "Camuy \u00b7 eastern slopes",
+        "area_group": "camuy-karst",
+        "candidate_class_id": 1,
+        "raw_receipt_sha256": "bde601ec88fd893aa449cdf404a37fb1324dbbddf23b7866c01e1648d5fd8d81",
+        "review_sha256": "7e042d29ea8ae02c37ec7091f30458b442767f75ebb26830dddbdfce985cbaa9",
+        "window_cells": [
+          1850,
+          250,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.2745525334283,
+              18.1637223715654
+            ],
+            [
+              -66.2697135020639,
+              18.1637182993888
+            ],
+            [
+              -66.2697178257041,
+              18.1590924216735
+            ],
+            [
+              -66.2745567291976,
+              18.1590964937441
+            ],
+            [
+              -66.2745525334283,
+              18.1637223715654
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 3,
+        "tile": "gorge-west-bend",
+        "title": "Central gorge \u00b7 western bend",
+        "area_group": "central-gorge",
+        "candidate_class_id": 2,
+        "raw_receipt_sha256": "e1b50b473aacdd8d04da38ddfd5436264c7e109c8c3918967340594a4d0b6872",
+        "review_sha256": "9f4cc4e286d8276a3263d1c7bbd4fc22d6e50c8f5b828928052be74cb1a7969b",
+        "window_cells": [
+          600,
+          1850,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.2691168030477,
+              18.1650730271478
+            ],
+            [
+              -66.264277734477,
+              18.165068817656
+            ],
+            [
+              -66.2642822017912,
+              18.1604429405797
+            ],
+            [
+              -66.2691211424891,
+              18.1604471499618
+            ],
+            [
+              -66.2691168030477,
+              18.1650730271478
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 4,
+        "tile": "gorge-east-ravines",
+        "title": "Central gorge \u00b7 eastern ravines",
+        "area_group": "central-gorge",
+        "candidate_class_id": 2,
+        "raw_receipt_sha256": "e1b50b473aacdd8d04da38ddfd5436264c7e109c8c3918967340594a4d0b6872",
+        "review_sha256": "9792f450d89c08c841f21c7722a00e47e3322642b85489b191c222eca8ecfb17",
+        "window_cells": [
+          1750,
+          1550,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.2888457193778,
+              18.0227882221149
+            ],
+            [
+              -66.2840105804181,
+              18.022784511024
+            ],
+            [
+              -66.2840145230852,
+              18.0181585936069
+            ],
+            [
+              -66.2888495343796,
+              18.0181623046004
+            ],
+            [
+              -66.2888457193778,
+              18.0227882221149
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 5,
+        "tile": "river-north-channel",
+        "title": "Southern river \u00b7 northern channel",
+        "area_group": "south-floodplain",
+        "candidate_class_id": 9,
+        "raw_receipt_sha256": "52c42480ed92bb5cb1dde6bc9096a066a71caaeec6f7929a8a16a3ec4a99a0f5",
+        "review_sha256": "81c163d2585c80017255dbff99cf5b111b87b975dd5d94ff35781174e4e9abbb",
+        "window_cells": [
+          600,
+          50,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -66.2883798919158,
+              18.0151081187791
+            ],
+            [
+              -66.2835449649167,
+              18.0151043959221
+            ],
+            [
+              -66.2835489197044,
+              18.0104784771794
+            ],
+            [
+              -66.2883837190493,
+              18.0104821999387
+            ],
+            [
+              -66.2883798919158,
+              18.0151081187791
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "number": 6,
+        "tile": "river-south-terrace",
+        "title": "Southern river \u00b7 southern terrace",
+        "area_group": "south-floodplain",
+        "candidate_class_id": 9,
+        "raw_receipt_sha256": "52c42480ed92bb5cb1dde6bc9096a066a71caaeec6f7929a8a16a3ec4a99a0f5",
+        "review_sha256": "725301ccd30c989d4db5cbd4f521ef122ed098fb45210c4f1a87f4353895cbae",
+        "window_cells": [
+          700,
+          1750,
+          1024,
+          1024
+        ],
+        "decision": null
+      }
+    }
+  ]
+}

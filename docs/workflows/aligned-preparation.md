@@ -4,7 +4,10 @@
 that pass the [quality and eligibility workflow](regional-quality.md). Every input
 must already have a current human acceptance with captured quality and permission
 evidence. Processing produces an **unreviewed prepared region**, not human output
-acceptance or a training release. All current Río Abajo inputs remain ineligible.
+acceptance or a training release. The three accepted Río Abajo inputs have now
+been qualified and prepared under [supplier_qa_pilot_v1](../design/source-quality-pilot-v1.md).
+Their decoded Float32 samples match the reviewed native terrain exactly; the
+existing source selections need no repeat visual review.
 
 This first path preserves an existing aligned survey grid. It accepts 1–16
 nonoverlapping review footprints sharing provider, collection, survey, CRS,

@@ -25,8 +25,11 @@ single-band Byte GeoTIFF per mask, covering the entire review grid:
 | `repairs` | 0 / 1 | Unrepaired / repaired |
 | `features` | 0 / 1 | Outside / inside a defining landmark or passage |
 
-These classifications require evidence and review. Provider-valid pixels and
-occupied LiDAR bins do not establish supported terrain. Keep unknown water as 0;
+These classifications require an explicit evidence basis. The pilot uses
+[supplier_qa_pilot_v1](../design/source-quality-pilot-v1.md): published product QA
+supports finite provider-valid ground unless a concrete defect is identified.
+Provider validity or occupied LiDAR bins alone are not that evidence basis.
+Keep unknown water as 0;
 classifying uncertain ground as water conceals it from the terrestrial denominator.
 Feature annotations are optional. Use an all-zero feature layer when none were
 requested; do not ask the owner to select individual ridges or passages. If the
@@ -114,15 +117,16 @@ Historical curation v1 blockers remain unchanged in old records.
 ## Río Abajo and workload bounds
 
 All three current Río Abajo decisions retain the owner's whole-tile yes and
-confirmed dataset permission. Full-crop count measurements are complete for all
-three; see the [qualification checkpoint](../reports/rio-abajo-source-qualification.md).
-Latest drafts under
-`data/review/rio-abajo-quality-v2-2026-09-21/{north-hollows,east-ridges,south-saddles}/water-classified-v1/`
-contain all-terrestrial water masks and reference zero feature/project-repair
-layers. The water classification is a documented implementer judgment with
-canopy limitations. Ground quality remains unset; no source has been admitted.
-The missing decision is an operational evidence rule for supplier-interpolated
-ground, not another visual approval or count measurement.
+confirmed dataset permission. They now pass all preparation gates under the
+adopted supplier-QA pilot rule; see the
+[qualification checkpoint](../reports/rio-abajo-source-qualification.md).
+Latest complete drafts and assessments are under
+`data/review/rio-abajo-supplier-qa-pilot-v1/{north-hollows,east-ridges,south-saddles}/`.
+Each has 1,048,576 usable terrestrial cells, all-terrestrial water classification,
+zero optional feature annotations and zero project repairs. All three regions
+are prepared; no training dataset is released. The underlying supplier
+interpolation uncertainty is retained in captured provenance and does not require
+another measurement or confidence decision from the owner.
 
 Before whole-crop LiDAR processing, specify the actual footprint, source identity,
 buffer, concurrency and memory/storage bounds, then obtain workload readiness

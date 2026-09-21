@@ -21,8 +21,9 @@ Class precedence remains unset. Source descriptions have a
 [acquisition workflow](../docs/workflows/dem-acquisition.md) writes discovery
 candidates and immutable raw receipts. The
 [curation workflow](../docs/workflows/source-curation.md) persists crop decisions,
-labels and evidence in SQLite. Regional preparation and source admission remain
-pending; discovery bounds do not establish valid-ground coverage.
+labels and evidence in SQLite. Native regional preparation is implemented;
+training releases remain pending. Discovery bounds do not establish valid-ground
+coverage.
 
 Candidate locations in `docs/locations.md` and the master plan remain research
 leads until their exact source footprints and quality have been checked. Do not
@@ -32,6 +33,11 @@ mark a provider or dataset as verified simply by adding a description here.
 native-grid windows from the [karst trial](../docs/reports/rio-abajo-karst-trial.md).
 They are longitude/latitude GeoJSON raster footprints, not accepted crop labels
 or measured terrestrial coverage. Their terrain class is a candidate annotation.
+
+[Batch 2 crop envelopes](areas/pilot-batch-2-crops.geojson) and the source examples
+under `candidates/pilot-batch-2/` describe six additional whole-tile candidates.
+See the [batch report](../docs/reports/pilot-tile-batch-2.md) for previews and
+reproduction. Their human decisions remain unset.
 
 Dataset admission must record confirmed training permission and its supporting
 clause or confirmation, as required by the master plan. Credentials never belong

@@ -1,0 +1,30 @@
+# Copy beside the original NOAA metadata as described in the karst trial report.
+schema_version = 1
+record_id = "noaa-9101-pr-prvi-h-2018-19qga16503600"
+synthetic = false
+provider = "noaa-ocm (USGS / Dewberry survey)"
+collection_id = "gov.noaa.nmfs.inport:60105"
+asset_id = "USGS_OPR_PR_PRVI_H_2018_19QGA16503600.tif"
+survey_id = "PR_PRVI_H_2018"
+acquisition_dates = ["2018-04-17/2019-04-18 (collection range; tile date unresolved)"]
+source_urls = ["https://noaa-nos-coastal-lidar-pds.s3.amazonaws.com/dem/USGS_PostMaria_PuertoRico_DEM_2018_9101/prvi_h/USGS_OPR_PR_PRVI_H_2018_19QGA16503600.tif"]
+original_metadata_path = "original.xml"
+processing_history = [
+  "USGS/Dewberry: classified ground returns and hydro breaklines produced a 0.5 m hydro-flattened bare-earth DEM.",
+  "NOAA OCM: assigned EPSG:6566 horizontal and EPSG:6641 vertical codes and converted to cloud-optimized GeoTIFF, per collection metadata.",
+  "Candidate located through the official NOAA EPSG:6566 VRT index at longitude -66.266, latitude 18.167; discovery bounds are rounded, not a valid-ground footprint.",
+]
+
+[spatial]
+surface_type = "bare_earth_dem"
+bounds_wgs84 = [-66.2773925313589, 18.1585175574394, -66.2632029317341, 18.1720819952037]
+horizontal_crs = "EPSG:6566"
+vertical_datum = "PRVD02 (EPSG:6641), GEOID12B per original DEM collection metadata"
+horizontal_units = "metre"
+vertical_units = "metre"
+native_spacing_m = [0.5, 0.5]
+
+[license]
+training_permission = "unknown"
+license_url = "https://www.fisheries.noaa.gov/inport/item/60105/full-list"
+attribution = "OCM Partners: 2018 USGS Lidar DEM: Post Hurricane Maria - Puerto Rico; USGS, Dewberry; source metadata retained 2026-09-15; candidate accessed 2026-09-21."

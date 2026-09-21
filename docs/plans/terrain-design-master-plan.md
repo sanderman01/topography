@@ -136,6 +136,15 @@ Initial quality policy, adjustable per terrain family:
 | Traceability | Missing units, ambiguous surface type, or unresolved source provenance blocks admission until clarified. |
 | Licensing | Confirmed ML-training permission required for admission. A dataset that blocks or does not clearly permit training use is excluded outright, not deferred. |
 
+For the pilot, apply [supplier_qa_pilot_v1](../design/source-quality-pilot-v1.md)
+as the evidence basis for released native bare-earth DEMs. Trust documented
+supplier QA for finite, provider-valid ground except identified local defects;
+retain the 99.5% coverage requirement and source limitations. Routine supplier
+interpolation beneath forest is acceptable and does not require a separate
+confidence target or repeated human review. This is an explicit pilot choice,
+not a claim of measured fine-feature accuracy. The implementer makes routine
+qualification decisions; human source review remains whole-tile yes/no.
+
 Do not automatically fill all depressions. Karst sinkholes and volcanic craters are desired features. Hydrological corrections should be masked, optional operations tied to intended rivers and lakes, with before/after review.
 
 Present batches of tile previews for a whole-tile yes/no decision. Keep multiple hillshade directions, contours, cross-sections and oblique 3D views available for inspection without making them a mandatory checklist. Technical assessment and mask construction belong to the tools and implementer, not to the human reviewer. Preserve the human decision for an unchanged tile while technical work continues; a yes does not invent passing technical findings. Recropping, repair and feature annotations are optional follow-up actions only when the owner requests them. Clean examples, exceptional landmarks, ordinary connecting terrain, and real biome transitions all belong in the library.
@@ -276,8 +285,9 @@ A real coastal USGS tile was imported; real-source quality admission
 and numeric model/loader evaluation remain open. The
 [early Río Abajo karst trial](../reports/rio-abajo-karst-trial.md) traced a native
 0.5 m survey tile to three crops with overhead/profiles/low-altitude previews.
-Broad karst morphology is inspectable; effective fine-feature resolution,
-terrain-quality support and human acceptance remain open. The later
+Broad karst morphology is inspectable; measured fine-feature accuracy remains
+unclaimed. All three crops now have human selection and technical qualification
+under the delegated supplier-QA pilot rule. The later
 [east-ridges whole-crop review](../reports/rio-abajo-whole-crop-review.md) measures
 direct ground returns across one crop and records the owner's approval of the
 dataset-specific permission basis. Counts do not establish terrestrial quality.
@@ -288,8 +298,11 @@ now measures whole-crop masks and checks preparation eligibility against pinned
 current decisions. [Native regional preparation](../workflows/aligned-preparation.md)
 composes eligible adjacent reviews from the same survey without resampling,
 preserves valid Float32 values and distinct masks, and registers immutable outputs.
-This path is verified with synthetic fixtures; real inputs remain blocked. Prepared
-outputs remain unreviewed and excluded from training. Cross-survey alignment,
+This path is verified with synthetic fixtures and three real prepared Río Abajo
+regions whose samples remain bit-identical to the accepted native terrain.
+A [six-tile batch](../reports/pilot-tile-batch-2.md) from three further areas is ready
+for whole-tile yes/no selection. Prepared outputs retain their separate unreviewed
+state and remain excluded from training release. Cross-survey alignment,
 repairs, output acceptance, dataset releases and per-cell label editing remain pending.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
