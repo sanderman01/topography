@@ -18,28 +18,49 @@ of repeated agent-driven downloads and one gallery for rapid review. The
 and `batch review`, then `gallery build` and `gallery serve`. Do not return to
 per-file curl orchestration or conversational transcription of gallery votes.
 
-The existing library is at `data/review/library-gallery-v1/gallery.json`, served
-on `http://127.0.0.1:8765/` while the local process runs. It contains thirteen
-tiles with twelve accepted and one rejected; no new vote is required for them.
+**Next input: two whole-tile votes in the gallery.** The current library is at
+`data/review/library-gallery-v3/gallery.json`, served on
+`http://127.0.0.1:8765/` while the local process runs. It contains fifteen tiles:
+twelve accepted, one rejected and two pending wider-context crops. Existing
+tiles need no repeat vote. Choose Yes/No in the gallery; inspect the catalog for
+those decisions rather than ask for a chat transcript.
 Restart with:
 
 ```sh
-target/debug/topography gallery serve configs/runtime.example.toml data/review/library-gallery-v1/gallery.json 8765
+target/debug/topography gallery serve configs/runtime.example.toml data/review/library-gallery-v3/gallery.json 8765
 ```
 
 The first new queue is `data/staging/source-expansion-v1/targets.json`, with run
 directory `data/review/source-expansion-batch-v1/`. It selects one public USGS
 Mount St. Helens DEM and three proposed 1,536-cell native crops. The TNM listing
 estimated 370,233,340 bytes; the actual strong-ETag HEAD identity is 315,921,778
-bytes. Download is resumable under a 400,000,000-byte source cap. Inspect its
-completion/status before running the separate crop command. Permission/QA
-qualification and human selection remain pending; these are not prepared data.
+bytes. It **failed after bounded HTTP timeout retries**, retaining 201,326,592
+verified bytes (63.7%) under its 400,000,000-byte asset cap. No raw receipt or
+Mount St. Helens preview was published. Resume with the same `batch download`
+command when transfer conditions improve; do not loop unbounded retries.
+Permission/QA qualification and human selection remain pending.
 
-After successful download and review, combine its generated gallery input with
-the existing library input, publish a new gallery snapshot and serve it on the
-same local port. Preserve the existing thirteen catalog heads and show only the
-new pending tiles by default. Continue independent geography/source coverage;
-three crops of this one new landscape do not establish broad diversity.
+Meanwhile, the tool reused two retained surveys to generate 1,024 × 1,024 m
+connected-context crops: central gorge and Río Abajo. Each has 2,048² finite,
+provider-valid cells at native 0.5 m spacing. They are larger review windows,
+not new independent geographic areas or prepared regions. The numeric dataset's
+512 m context split must not be silently extended to them.
+
+`connected-context-batch-v1` completed the gorge crop and rejected an out-of-bounds
+Río Abajo window. The corrected Río Abajo target is in
+`data/staging/connected-context-batch-v2/targets.json`, with its successful run in
+`data/review/connected-context-batch-v2/`. The first run's successful crop and
+failure record remain intact. Both pending tiles and the thirteen earlier tiles
+are in the current gallery. On acceptance, apply delegated technical qualification
+and preparation; continue broader public geographic coverage afterward.
+
+Gallery manifest SHA-256:
+`a02f78c1db4b82e6f02ed6ca19f2e46a9a7375cdc390f713d48a6402fb72e88b`.
+New review identities are
+`bb626a66a825d70c7e9b451352e175d4b22b4dae9dd339dc296b1f9788d99b90`
+(gorge) and `b8e80a0b3cb511cc1b2848adf746230727fced1aac2a9e8d95555b0dcecef93f`
+(Río Abajo). Verification is retained in
+`data/review/library-gallery-v3-verification.json`; no automated human votes.
 
 The owner delegated interpolation-quality decisions to the implementer and asked
 for simplicity. We adopted [supplier_qa_pilot_v1](design/source-quality-pilot-v1.md):
