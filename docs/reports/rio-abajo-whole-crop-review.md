@@ -10,6 +10,10 @@ The owner also approved the [dataset permission basis](rio-abajo-permission-revi
 That separate decision is captured for the exact source tile and all three
 existing crops. It does not accept their terrain or admit them to training.
 
+The subsequent [qualification follow-up](rio-abajo-source-qualification.md)
+records the owner's positive overall visual review and the next technical work.
+The measured results and catalog snapshot below describe this earlier run.
+
 ## Whole crop compared with its centre sample
 
 The full footprint is 512 × 512 m in EPSG:6566, with a 2 m acquisition buffer.
