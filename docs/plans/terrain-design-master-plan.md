@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twenty-five real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twenty-eight real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -307,7 +307,7 @@ now measures whole-crop masks and checks preparation eligibility against pinned
 current decisions. [Native regional preparation](../workflows/aligned-preparation.md)
 composes eligible adjacent reviews from the same survey without resampling,
 preserves valid Float32 values and distinct masks, and registers immutable outputs.
-This path is verified with synthetic fixtures and twenty-five real prepared regions
+This path is verified with synthetic fixtures and twenty-eight real prepared regions
 whose valid ground samples remain bit-identical to accepted native terrain;
 water uses deterministic masked fill. The owner selected
 five of six tiles in [batch 2](../reports/pilot-tile-batch-2.md); rejection preserves
@@ -349,10 +349,12 @@ The owner specifically liked the Grand Canyon side-canyon crop. Three additional
 [Zion crops](../reports/zion-qualification-v1.md) are now accepted, qualified and
 prepared. Retain the preference for varied canyon contexts in later expansion;
 additional Grand Canyon crops remain one survey project. Continue broadening the
-other families. Three [Milford Sound crops](../reports/milford-review-v1.md) are
-ready for whole-tile review in gallery v8, including an adjacent fjord-head and
-valley pair. Their native samples and provider masks are verified; owner
-selection and technical qualification remain pending.
+other families. Three [Milford Sound crops](../reports/milford-qualification-v1.md) are
+now accepted, qualified and prepared, including an adjacent fjord-head and valley
+pair. Four verified native crops from Great Sand Dunes and Badlands are now
+[pending whole-tile review](../reports/family-expansion-review-v1.md) in gallery v9.
+They broaden the candidate terrain families; preparation follows owner selection
+and technical qualification.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

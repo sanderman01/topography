@@ -107,7 +107,7 @@ native 0.5 m crops from the Río Abajo area. The
 and evidence. The [regional quality workflow](docs/workflows/regional-quality.md)
 measures whole-crop masks and checks current preparation eligibility.
 [Aligned native preparation](docs/workflows/aligned-preparation.md) now preserves
-eligible regions without resampling or cross-survey joins. Twenty-five accepted terrain
+eligible regions without resampling or cross-survey joins. Twenty-eight accepted terrain
 regions are prepared under the [simple supplier-QA pilot policy](docs/design/source-quality-pilot-v1.md),
 with exact native ground elevation preserved and water masked separately.
 [Batch 3](docs/reports/pilot-tile-batch-3.md) is accepted and prepared. A

@@ -1,9 +1,9 @@
 # Milford Sound review batch
 
-2026-09-21. Three native 2,048 × 2,048 m crops are ready for whole-tile review.
-They add fjord walls and glacial-valley terrain from the Milford Sound example in
-[locations](../locations.md). They have no owner acceptance, technical
-qualification or training admission yet.
+2026-09-21 publication snapshot. Three native 2,048 × 2,048 m crops were ready
+for whole-tile review. They added fjord walls and glacial-valley terrain from the
+Milford Sound example in [locations](../locations.md). At publication they had
+no owner acceptance, technical qualification or training admission.
 
 The queued batch downloaded two public LINZ Southland 1 m DEM assets, totaling
 64,225,962 bytes. Both match their published SHA-256 values. The files contain
@@ -56,3 +56,8 @@ and 3 pending. Chromium inspection passed without voting, and all 65 curation
 records, 31 heads and 25 prepared entries were unchanged by inspection.
 Publication and preservation evidence is retained under
 `data/review/canyon-fjord-continuation-v1/`.
+
+Follow-up: all three owner Yes votes are now saved. The crops are qualified and
+prepared with native ground samples preserved; see the
+[qualification report](milford-qualification-v1.md). The publication counts above
+remain the original gallery snapshot.

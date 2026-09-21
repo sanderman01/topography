@@ -13,6 +13,10 @@ target/debug/topography gallery build data/review/source-batch/gallery-input.jso
 target/debug/topography gallery serve configs/runtime.example.toml data/review/source-gallery/gallery.json 8765
 ```
 
+For real source batches, build the optimized CLI once with
+`cargo build --release --locked --offline` and use `target/release/topography`
+in these commands. This substantially reduces repeated source hashing time.
+
 Open the printed local URL. Select a thumbnail to inspect overhead, profile or
 perspective views. **Yes / Y** and **No / N** save directly, then advance. Arrow
 keys browse without voting. Filtering shows pending, accepted, rejected or all
