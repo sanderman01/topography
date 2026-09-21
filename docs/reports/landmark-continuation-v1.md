@@ -1,5 +1,9 @@
 # Grand Canyon preference and landmark continuation
 
+Follow-up: all five new tiles are accepted. See the
+[gallery fix and vote recovery](gallery-vote-recovery-v1.md). Counts below retain
+the original publication checkpoint.
+
 2026-09-21. The owner liked the Grand Canyon side-canyon tile and asked for more.
 Three additional Grand Canyon crops and two Zion crops were prepared for the
 next whole-tile gallery. The preference is also retained in the master plan for

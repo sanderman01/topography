@@ -1,5 +1,9 @@
 # Grand Canyon expansion review candidates
 
+Follow-up: the owner accepted all three crops. A gallery save bug required
+[recovering those explicit Yes choices](gallery-vote-recovery-v1.md); technical
+qualification remains pending. The following describes their publication state.
+
 2026-09-21. Three additional Grand Canyon native-grid crops await whole-tile
 Yes/No gallery review. No selection vote, technical qualification, curation or
 dataset admission was created. The previously accepted crop from the adjacent

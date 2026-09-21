@@ -11,14 +11,22 @@ The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
 
-**Next input: five new whole-tile gallery votes.** Refresh
-`http://127.0.0.1:8765/` and use Pending: three additional Grand Canyon crops
-and two Zion crops. Previous choices remain saved; no repeat review is needed.
-Gallery v7 has 28 tiles: 21 accepted, two rejected and five pending.
+**All five new tiles are Yes; no owner input is pending.** Gallery v7 now has
+28 tiles: 26 accepted, two rejected and none pending. The two Zion clicks saved
+normally. Three Grand Canyon clicks failed because a first visual choice inherited
+confirmed permission metadata without captured curation evidence. The
+[gallery fix and recovery](reports/gallery-vote-recovery-v1.md) preserve the two
+saved votes and transcribe only the three missing Yes choices from the owner's
+explicit message. No repeat review is needed.
+
+Continue technical qualification of these five accepted crops, including river
+masks and captured permission/QA evidence, then the queued Milford Sound sources.
+The existing twenty prepared regions and original numeric release are unchanged.
 
 Current snapshot: `data/review/library-gallery-v7/gallery.json`, SHA-256
 `5f52f7528e2ee89583741df98efc7e4a0caa1b2ad62be0df3c79ad177e37fe7d`.
-Integration and preservation evidence: `data/review/landmark-continuation-v1/`.
+Integration and preservation evidence: `data/review/landmark-continuation-v1/`;
+latest vote recovery: `data/review/gallery-vote-recovery-v1/`.
 Restart with:
 
 ```sh
@@ -28,10 +36,10 @@ target/debug/topography gallery serve configs/runtime.example.toml data/review/l
 **The owner liked Grand Canyon and requested more.** Three varied crops from the
 adjacent source now join the [gallery batch](reports/grand-canyon-expansion-v1.md).
 Keep that preference for future expansion. Zion's download also finished and
-[two canyon contexts](reports/zion-review-v1.md) are ready. Together the new five
+[two canyon contexts](reports/zion-review-v1.md) are selected. Together the new five
 preserve all 17,301,504 native Float32 samples and provider masks exactly. Read
-actual gallery decisions from the catalog before qualification; no automated Yes
-was recorded for these candidates.
+actual gallery decisions from the catalog before qualification. The owner has
+explicitly accepted all five; visual selection does not establish qualification.
 
 The four previous gallery choices were all Yes. The original Grand Canyon crop
 and two St. Helens flanks are qualified and prepared. The glacier-covered crater
@@ -41,8 +49,10 @@ that the three selected successor crops have identical native terrain, validity
 and physical coordinates. Original vote bytes, receipts, reviews and histories
 remain preserved. See the [continuation report](reports/landmark-continuation-v1.md)
 and its pinned equivalence evidence. No repeated owner vote or new technical
-certification was inferred. The catalog now has 55 records, 26 review heads and
-20 prepared regions. Extra historical heads retain the metadata-only predecessors;
+certification was inferred. At that checkpoint, the catalog had 55 records,
+26 review heads and 20 prepared regions. After the five new owner votes it has
+60 records, 31 review heads and the same 20 prepared regions.
+Extra historical heads retain the metadata-only predecessors;
 they are not extra terrain patches. All 50 earlier records and 17 prepared entries
 are byte-preserved.
 

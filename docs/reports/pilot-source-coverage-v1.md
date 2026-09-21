@@ -6,7 +6,9 @@ plus three Banks Peninsula and one Grand Canyon crop at 1,536 × 1,536 m,
 and two Mount St. Helens crops at 2,048 × 2,048 m, all native 1 m.
 Two rejected tiles remain preserved and excluded. The selected St. Helens crater
 rim is separately blocked from ground preparation because it contains glacier
-surface. Five newly published Grand Canyon/Zion candidates remain unselected.
+surface. Five additional Grand Canyon/Zion crops now have owner Yes decisions;
+their technical qualification remains pending. See the
+[vote recovery checkpoint](gallery-vote-recovery-v1.md).
 
 Nine named areas now span Puerto Rico, Banks Peninsula, Grand Canyon and Mount
 St. Helens. The two US mainland survey projects supplement the Puerto Rico

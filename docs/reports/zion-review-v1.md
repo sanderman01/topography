@@ -1,5 +1,9 @@
 # Zion canyon review batch
 
+Follow-up: both gallery Yes choices are saved. See the
+[vote recovery checkpoint](gallery-vote-recovery-v1.md); technical qualification
+remains pending. The following describes their publication state.
+
 2026-09-21. The queued Zion source finished downloading. Two disjoint native
 2,048 × 2,048 m crops now show winding canyon walls and branching passages for
 whole-tile gallery review. They have no human selection or preparation admission.
