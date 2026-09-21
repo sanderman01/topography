@@ -9,8 +9,10 @@ diffusion models, and export terrain with reproducible provenance.
 The Rust CLI validates presets/metadata, discovers USGS DEM candidates, acquires
 and imports raw Float32 GeoTIFFs, verifies raw storage and creates small native-grid
 review crops through GDAL. Eligible sources now support aligned native regional
-preparation with immutable outputs. The Python package remains a scaffold;
-dataset releases, training, generation and export are not implemented.
+preparation with immutable outputs, scoped dataset releases, and bounded CPU
+numeric/model experiments. Batch acquisition and a persistent review gallery are
+implemented. Production training, reusable world generation and export remain
+planned.
 Preset values remain draft pilot choices; processing does not create human acceptance.
 
 Read [README.md](README.md) for setup and the
@@ -115,6 +117,10 @@ commands, and consistency with implementation and the master plan.
 
 ## Change discipline
 
+- Delegate suitable independent tasks to Sol subagents (`gpt-5.6-sol`) by default.
+  Give each agent a bounded scope and distinct file ownership; keep dependent
+  work and integration coordinated by the primary agent. Verify returned work
+  before relying on it. Do not use Git worktrees.
 - Prefer simple, robust, maintainable implementations. Keep domain logic in the
   core library; use GDAL/PROJ and PDAL for established geospatial algorithms.
 - Add dependencies and abstractions for concrete consumers. Do not preselect an
