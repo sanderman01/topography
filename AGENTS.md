@@ -56,6 +56,10 @@ exists. Consult upstream documentation for the versions actually selected.
 - Use only source data publicly available for download. Do not request private
   deliveries or commission measurements. Never send emails or prepare email
   drafts, and do not ask the user to contact people or institutions for data.
+- Human source review is a yes/no decision for each whole terrain tile, presented
+  in batches. Do not require feature selection, mask authoring or repeated visual
+  approval of an unchanged tile. Handle technical checks separately; individual
+  feature annotations are optional and only requested by the user.
 - Preserve authoritative elevation as Float32 metres with explicit masks and
   coordinate metadata. Image appearance and nominal grid spacing do not establish
   numeric accuracy or measured feature resolution.

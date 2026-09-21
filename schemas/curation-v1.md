@@ -26,8 +26,11 @@ is limited to 1 MiB. Draft generation creates no database and makes no decision.
 ## Claims
 
 - `actor`: `{kind, name}`; kind is `unassigned`, `human` or `assistant`.
+  When an assistant transcribes an actual human decision, identify the human
+  decision actor and capture the exact response and assistant recorder in evidence.
 - `decision`: `annotate`, `accept` or `reject`. Accept/reject requires a named
   human declaration; identity is not authenticated.
+  Whole-tile yes/no selection can be recorded with unresolved technical findings.
 - `reason`: nonempty explanation required for every recorded decision.
 - `primary_class_id`: an active ID in the exact captured legend, or `null`.
   Required for acceptance. This labels the entire crop, without assigning per-cell

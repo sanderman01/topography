@@ -7,10 +7,17 @@ visual suitability. East-ridges remains the first candidate for qualification.
 Individual grid-square selection is not required to continue. No protected
 landmarks, flight envelope or quality radius were supplied.
 
-The new assistant annotation captures that exact response against the viewed
+The owner has now explicitly clarified that source review is whole-tile yes/no,
+without selecting individual ridges, hollows or other features. The earlier
+“looks fine” is recorded as east-ridges acceptance for candidate selection in
+`data/review/rio-abajo-tile-decisions-2026-09-21/`, with the exact responses and
+assistant recorder identified. No technical findings were promoted to pass.
+The catalog has eight historical records, one current human acceptance and two
+current assistant annotations. No prepared region or training admission exists.
+
+The earlier assistant annotation captured that exact response against the viewed
 map's hash and the original crop identity. It preserves the confirmed permission
-decision and unresolved technical findings. The catalog now has seven historical
-records, three current annotations and zero prepared regions.
+decision and unresolved technical findings in its historical seven-record snapshot.
 
 ## Water observation and acquisition scope correction
 
@@ -26,8 +33,8 @@ The owner also explicitly limited acquisition to publicly downloadable data and
 prohibited sending or drafting emails. The earlier email-request draft has been
 removed. No email was sent. Treating unpublished survey vectors as a required
 next input was an unnecessary dependency and is superseded by this correction.
-The visual water observation is recorded here; the existing catalog annotation
-and immutable evidence remain unchanged. It does not by itself establish a
+The visual water observation is captured with the latest whole-tile decision;
+previous catalog records and immutable evidence remain unchanged. It does not by itself establish a
 verified per-cell classification or terrain-quality acceptance.
 
 ## Additional sampling evidence
@@ -72,16 +79,14 @@ roots provide no corresponding vector download. This is a scoped search, not
 proof that the files are unavailable elsewhere. The LPC delivery lives beneath
 `PR_PuertoRico_VirginIslands_2018_D18/PR_PRVI_D_2018/`, unlike the shorter OPR path.
 
-Continue source qualification from the existing public DEM, survey report,
-verified ground-return measurements and recorded visual review. Use the owner's
-no-apparent-water observation as the working interpretation for a proposed
-all-terrestrial water mask, with its visual basis and limitations recorded.
-Finish the quality, repair and feature assessment from available evidence before
-presenting the complete classification for source acceptance. Do not invent a
-quality-distance cutoff or substitute occupancy for quality. Additional public
-downloads should answer a concrete remaining question; correspondence and
-unavailable supplementary files are not prerequisites. Do not request the same
-overall visual approval again.
+Present north-hollows and south-saddles next for whole-tile yes/no. East-ridges
+already has its yes. Handle source qualification separately from the existing
+public DEM, survey report and ground-return evidence. The implementer supplies
+justified masks; no individual feature selection or mask approval is required
+from the owner. Use an all-zero feature layer when annotations are absent.
+Do not invent a quality-distance cutoff or substitute occupancy for quality.
+Additional public downloads should answer a concrete technical question;
+correspondence and unavailable supplementary files are not prerequisites.
 
 ## Retained artifacts and verification
 

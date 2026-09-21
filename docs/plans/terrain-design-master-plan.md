@@ -129,16 +129,16 @@ Initial quality policy, adjustable per terrain family:
 | Gate | Proposed decision |
 | --- | --- |
 | Effective resolution | Prefer native 0.5–1 m ground data. Admit other nominal products only after checking actual spacing and feature preservation. Keep 2 m data in an explicitly approved secondary tier; exclude 5–30 m originals from fine-detail training. |
-| Missing ground | Require at least 99.5% valid terrestrial cells for the initial training pool, with no unsupported gaps through defining landmarks or passages. Water is evaluated separately. |
+| Missing ground | Require at least 99.5% valid terrestrial cells for the initial training pool. Evaluate whole-tile support automatically; any optional annotated landmarks or passages must also have no unsupported gaps. Water is evaluated separately. Do not require manual feature annotations for source selection. |
 | Interpolation | Permit small, reviewed repairs with a repair mask. Large voids, invisible canyon floors, or interpolated pillar fields trigger exclusion or another source search. |
 | Artifacts | Flag stripes, terraces, spikes, pits, duplicate edges, vegetation remnants, buildings, and implausible survey-boundary steps. Compare against context before rejecting natural steepness. |
-| Feature fidelity | Human inspects passage widths, pillar separations, and ridge continuity against available point clouds and reference imagery. |
+| Feature fidelity | Human reviews the entire tile and chooses yes or no. The technical workflow assesses sampling and feature fidelity from available evidence, reporting concrete limitations without asking the human to label individual features. |
 | Traceability | Missing units, ambiguous surface type, or unresolved source provenance blocks admission until clarified. |
 | Licensing | Confirmed ML-training permission required for admission. A dataset that blocks or does not clearly permit training use is excluded outright, not deferred. |
 
 Do not automatically fill all depressions. Karst sinkholes and volcanic craters are desired features. Hydrological corrections should be masked, optional operations tied to intended rivers and lakes, with before/after review.
 
-Use multiple hillshade directions, slope and curvature maps, contours, cross-sections, and oblique 3D previews. Have the reviewer accept, reject, recrop, repair, or annotate an area. Allow accepted subregions inside otherwise rejected surveys. Clean examples, exceptional landmarks, ordinary connecting terrain, and real biome transitions all belong in the library.
+Present batches of tile previews for a whole-tile yes/no decision. Keep multiple hillshade directions, contours, cross-sections and oblique 3D views available for inspection without making them a mandatory checklist. Technical assessment and mask construction belong to the tools and implementer, not to the human reviewer. Preserve the human decision for an unchanged tile while technical work continues; a yes does not invent passing technical findings. Recropping, repair and feature annotations are optional follow-up actions only when the owner requests them. Clean examples, exceptional landmarks, ordinary connecting terrain, and real biome transitions all belong in the library.
 
 ## 5. Physical scale, tiling, and elevation encoding
 
@@ -229,7 +229,7 @@ Exact placement is achieved operationally: retain the ownership map, enforce exp
 
 Use QGIS for initial selection, annotation, and numeric inspection, alongside a lightweight terrain preview capable of oblique views and repeatable camera paths. A custom editor can follow if these tools prove cumbersome. Image editors may paint categorical controls, but elevation editing must preserve physical values and export metadata.
 
-Provide human checkpoints after candidate discovery, source quality review, crop/label selection, dataset release, model evaluation, coarse-world composition, regional generation, and export review. Batch operations should remain runnable between checkpoints. Reviewers can accept, reject, annotate, compare variants, or lock a region without restarting the workflow.
+For source curation, combine visual selection into a batch review: show each whole tile and record yes or no. Do not turn source quality or crop selection into repeated manual reviews of individual terrain features. Technical failures remain separate and should be reported in plain language. Keep later checkpoints for dataset release, model evaluation, coarse-world composition, regional generation and export review. Annotation, variant comparison and region locking are optional editing capabilities, not source-admission chores.
 
 Store edits as ordered, reversible layers: additive height changes, masked replacements, landmark placements, water constraints, control-mask edits, and protected regions. Preserve both the original generated proposal and the edited revision. An exported raster from another tool becomes an explicit imported edit with a known extent and encoding.
 

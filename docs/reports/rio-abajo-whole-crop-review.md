@@ -65,11 +65,12 @@ hashes and the local `compose-review.py` reproduction script in
 the script refuses to replace its completed diagnostic. It uses Python's standard
 library and GDAL on the small count/hillshade rasters, without reacquiring points.
 
-Next, the human should identify the ridges, hollows or passages that define this
-candidate, using the reference grid and terrain preview. That allows a meaningful
-feature-support review and explicit feature mask. Full water/quality/repair masks
-still require justified classifications. Do not turn occupied bins into a quality
-mask, mark the whole crop terrestrial by default, or infer a safe flight envelope.
+The subsequent owner clarification supersedes the request to identify individual
+ridges, hollows or passages. Human source review is whole-tile yes/no, and
+east-ridges has its yes. The reference grid remains a diagnostic aid. Technical
+water/quality/repair classifications are implementation work; optional feature
+annotations are not required. Do not turn occupied bins into a quality mask or
+infer a safe flight envelope.
 
 The retained NOAA collection metadata describes hydro-flattening with ground
 points and hydro breaklines, and lists TIN interpolation. Those source methods

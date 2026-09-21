@@ -28,7 +28,10 @@ single-band Byte GeoTIFF per mask, covering the entire review grid:
 These classifications require evidence and review. Provider-valid pixels and
 occupied LiDAR bins do not establish supported terrain. Keep unknown water as 0;
 classifying uncertain ground as water conceals it from the terrestrial denominator.
-Mark the full defining features and passages, rather than a representative point.
+Feature annotations are optional. Use an all-zero feature layer when none were
+requested; do not ask the owner to select individual ridges or passages. If the
+owner requests annotations, cover each full feature rather than a representative
+point. The implementer supplies masks and evidence; human tile review stays yes/no.
 
 A crop with no identified water can have an entirely terrestrial water mask;
 record the evidence and review supporting that classification. The presence of
@@ -63,8 +66,8 @@ A completed assessment can report blockers. Missing masks yield `counts: null`.
 When all four masks exist, a valid terrestrial cell must be land, supported by
 the quality classification, provider-valid and finite. At least 99.5% of land
 must meet those conditions. All water must be classified, and every marked
-feature cell must be valid terrestrial ground. At least one defining feature
-must be marked. Nonfinite provider-valid land blocks eligibility; water heights
+feature cell must be valid terrestrial ground. Zero marked features is valid
+under `native_quality_v2`. Nonfinite provider-valid land blocks eligibility; water heights
 are excluded. No elevation bytes are changed.
 
 Any marked repairs block this first version. Repaired elevation needs before/after

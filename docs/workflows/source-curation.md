@@ -5,6 +5,19 @@ decisions in SQLite. Each decision pins the exact raw receipt, native review and
 legend, and captures small supporting documents by SHA-256. It does not prepare
 rasters, paint per-cell labels, verify the truth of evidence, or admit training data.
 
+## Whole-tile yes/no review
+
+Present candidate previews in batches. The owner's task is to say yes or no for
+each whole tile. No ridge selection, passage marking, mask authoring or detailed
+justification is required. A yes selects that tile; technical checks and training
+admission remain separate. Do not ask for another visual approval of unchanged
+terrain when technical evidence is updated.
+
+The implementer handles the commands below and retains the response against the
+review identity. The current CLI can record whole-tile decisions with unknown
+technical findings. The previews do not yet provide a persistent batch-voting UI;
+the owner can give the decisions in conversation and the implementer records them.
+
 ## Create and record a decision
 
 Start with a verified [native review](dem-acquisition.md). Paths below are examples;
@@ -19,7 +32,10 @@ Edit the generated JSON. The default actor is `unassigned`, the decision is
 requires an actor kind/name and a reason. Only an explicit `human` actor may record
 `accept` or `reject`; acceptance also requires an active primary class ID. This is
 a local declaration of authorship, not login authentication or a digital signature.
-An assistant must use `assistant` and must not manufacture human decisions.
+Use `assistant` for the assistant's own judgments. When transcribing an actual
+human yes/no, identify the human as the decision actor and capture the exact
+response, reviewed artifact and assistant recorder in supporting evidence.
+Never invent a human decision or attribute technical pass findings to a visual yes.
 
 Each evidence entry has a local `path` and an `evidence` object containing `id`,
 `description`, optional HTTPS `source_url`, and the SHA-256 of the reviewed bytes.
@@ -49,6 +65,8 @@ through defining features. `pass` and `fail` require a note and captured evidenc
 IDs. `unknown` can carry observations without claiming that the gate is satisfied.
 Terrestrial coverage needs explicit counts and evidence establishing its denominator;
 provider-valid cells and bins containing LiDAR returns are different measurements.
+These are technical assessment fields, not a questionnaire for the owner. Leave
+unresolved findings unknown without blocking the recording of a whole-tile yes/no.
 
 The historical v1 preparation precheck reports unresolved findings, missing acceptance,
 unconfirmed/excluded ML permission, missing source metadata, synthetic sources,
@@ -80,6 +98,12 @@ appends history; it does not overwrite previous acceptance or delete raw assets.
 The latest decision controls current status, so a later annotation or rejection
 supersedes acceptance. Identical draft replay is idempotent, including older records.
 A different submission against a stale head fails.
+
+When updating technical evidence for an unchanged accepted tile, retain the
+captured original human decision and its scope in the new record. Do not replace
+it with a fresh visual-review request or silently turn an annotation into a human
+decision. Version 1 has one current record containing both selection and technical
+findings; preserving the decision during these updates is the implementer's task.
 
 The database is the configured `catalog_db`; its sibling directory with `.curation`
 appended contains `records/<sha256>.json` and `objects/<sha256>`. Unrelated SQLite

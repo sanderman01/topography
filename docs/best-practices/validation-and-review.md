@@ -61,6 +61,11 @@ implemented or permanently fixed rule.
 
 ## Make human review repeatable
 
+- Source selection is a whole-tile yes/no decision presented in batches. The
+  implementer handles masks, technical evidence and checks. Individual feature
+  marking and detailed justifications are optional; do not ask for them as a
+  condition of selection. Preserve the decision for unchanged terrain while
+  technical work continues, without turning visual approval into technical proof.
 - Provide checkpoints after discovery, source review, crop/label selection,
   dataset release, model evaluation, coarse composition, regional generation,
   and export. Batch processing should remain usable between checkpoints.

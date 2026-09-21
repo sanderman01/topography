@@ -32,7 +32,7 @@ before a report is published. Zero elevation is not a water or invalidity marker
 ## Assessment
 
 `schema_version: 1`, `kind: regional_quality_assessment`,
-`policy: native_quality_v1`; pretty JSON without a trailing newline.
+`policy: native_quality_v2`; pretty JSON without a trailing newline.
 The report pins raw receipt, review and asset SHA-256, `window_cells`, `grid`
 (size, geotransform, coordinate system), mask hashes/byte lengths, GDAL and
 Topography versions, `blockers` and `admission: not admitted`. It has no local
@@ -53,9 +53,17 @@ paths or generated timestamps.
 
 Deficit counts overlap; do not sum them to derive validity. Coverage uses integer
 arithmetic: `valid_terrestrial_cells * 1000 >= terrestrial_cells * 995`, with a
-positive denominator. Unknown water, absent defining features, unsupported feature
+positive denominator. Unknown water, unsupported feature
 cells, nonfinite provider-valid land or any repairs block eligibility independently.
 Unknown ground quality counts as invalid ground, never as implicit support.
+
+The feature layer may be entirely zero: whole-tile review does not require
+individual feature annotations. Marked features still require supported terrain
+at every marked cell. Policy v2 removes only the requirement to mark at least one
+feature; the four-layer contract and all other quality gates remain unchanged.
+Historical `native_quality_v1` reports retain their meaning. Reassessment emits
+v2 and a new hash, so existing captured v1 evidence must be refreshed before
+preparation; this does not require a new visual vote on unchanged terrain.
 
 Assessment completion is independent of eligibility. Invalid file contracts fail
 without a completion report; incomplete or failing classifications produce a
@@ -73,12 +81,12 @@ spacing must match the raster. The declared horizontal `EPSG:code` must match
 the raster's horizontal PROJJSON EPSG identity (including within a compound CRS).
 Unsupported declarations and absent identities block eligibility.
 
-Coordinate and feature-fidelity findings still need human evidence. The tool
+Coordinate and feature-fidelity findings still need supporting evidence. The tool
 checks identities and declarations, not the truth of masks, reviewer identity or
 legal interpretation. A non-synthetic declaration alone does not prove provenance.
 
 Output fields: `schema_version: 1`, `kind: preparation_eligibility`,
-`policy: native_quality_v1`, `curation_record_sha256`, `quality_report_sha256`,
+`policy: native_quality_v2`, `curation_record_sha256`, `quality_report_sha256`,
 `review_sha256`, `eligible`, `blockers`, `admission: not admitted`.
 Exit status is 0 for eligible, 1 for blocked/erroneous input, 2 for unsupported
 arguments. Blocked results are JSON; errors go to stderr.

@@ -292,9 +292,6 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
         if counts.nonfinite_terrestrial_cells > 0 {
             blockers.push("nonfinite provider-valid terrestrial elevation".into());
         }
-        if counts.defining_feature_cells == 0 {
-            blockers.push("defining features have not been marked".into());
-        }
         if counts.unsupported_feature_cells > 0 {
             blockers.push("unsupported cells intersect defining features".into());
         }
@@ -312,7 +309,7 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
     let report = Assessment {
         schema_version: 1,
         kind: "regional_quality_assessment",
-        policy: "native_quality_v1",
+        policy: "native_quality_v2",
         raw_receipt_sha256: input.raw_receipt.sha256,
         review_sha256: input.review.sha256,
         asset_sha256: bundle.manifest.asset_sha256.clone(),

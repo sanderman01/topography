@@ -1,6 +1,6 @@
 # Implementation progress
 
-Updated 2026-09-21, after the east-ridges water observation and public-download-only correction. This
+Updated 2026-09-21, after simplifying human review to whole-tile yes/no. This
 summarizes implemented behavior and observed evidence; the [master plan](plans/terrain-design-master-plan.md)
 remains the implementation plan.
 
@@ -23,11 +23,11 @@ checkpoint below rather than repeating acquisition or completed trials.
 | Native review | Small GDAL crops retain numeric values, coordinates and provider masks. Browser previews add three light directions, row/column profiles, low-altitude/fixed-height views and saved camera settings. No preview creates acceptance. |
 | Ground support | Three [64 m samples](reports/rio-abajo-ground-support.md) remain verified. The new [east-ridges whole-crop run](reports/rio-abajo-whole-crop-review.md) verifies all 1,048,576 count bins over 512 × 512 m: 700,690 ground returns, 2.673/m², 38 empty 4 m bins. Full-crop terrain quality remains unresolved. |
 | Curation | SQLite journal captures evidence, crop-wide labels and explicit actor decisions against pinned review/legend hashes. History, stale-write rejection, recovery, integrity checks and portable metadata exports pass the synthetic CLI workflow. No data admission. |
-| Regional quality | Whole-crop water/quality/repair/feature masks are checked for grid, categories, terrestrial coverage and feature gaps. Preparation preflight recomputes evidence and verifies the pinned current decision. Eligibility does not publish or admit prepared data. |
+| Regional quality | Whole-crop masks are checked for grid, categories and terrestrial coverage. Policy `native_quality_v2` permits an all-zero feature layer; optional annotated features still require complete support. Preparation preflight recomputes evidence and verifies the pinned current decision. |
 | Regional preparation | [Native preparation](workflows/aligned-preparation.md) composes 1–16 eligible adjacent reviews from one survey, with exact Float32 land values and separate masks. Immutable publication, registration, recovery and revocation pass synthetic workflows. Outputs remain unreviewed and excluded from training. No real source is eligible yet. |
 | Whole-crop probe | [Bounded full-review tooling](workflows/whole-crop-ground-support.md) now passes a readiness-approved live run. East-ridges acquisition took 268.05 s, counts 30.29 s, with 79.33 MiB maximum child RSS; verification adds unreported time. No GPU. |
-| Permission evidence | The human approved the [dataset-specific permission basis](reports/rio-abajo-permission-review.md). Exact report/response evidence is captured; all three current crop annotations now confirm permission. Terrain acceptance is still absent. |
-| Visual suitability | The owner opened the map and said it looks fine, then reported no apparent water bodies. [Qualification follow-up](reports/rio-abajo-source-qualification.md) records these observations and the sampling-distance diagnostic. Only publicly downloadable source data may be used; no emails or email drafts. |
+| Permission evidence | The human approved the [dataset-specific permission basis](reports/rio-abajo-permission-review.md). Exact report/response evidence is captured; all three current crop records confirm permission. Technical admission remains unresolved. |
+| Human tile selection | East-ridges is accepted as a whole tile from the owner's earlier “looks fine” and explicit yes/no review clarification. North-hollows and south-saddles await yes/no. No individual feature selection or mask authoring is required from the owner. |
 | Real terrain | A USGS coastal tile and a native 0.5 m USGS/NOAA tile near Río Abajo are stored locally. The [karst trial](reports/rio-abajo-karst-trial.md) provides three 512 × 512 m crops and optional display contours. |
 | Verification | Single-job Rust build, Clippy with warnings denied, contract workflows, synthetic GDAL workflows and acquisition recovery checks passed. All 3,145,728 karst crop samples and mask cells match their source windows and browser payloads. Headless Firefox rendered repeatable camera views. |
 
@@ -66,6 +66,16 @@ All three real point/count reports were rechecked before these two tooling slice
 The full loopback HTTPS acquisition checks and Firefox camera checks passed in
 earlier implementation slices; they were not rerun for this slice.
 
+After the whole-tile workflow correction,
+`CARGO_BUILD_JOBS=1 bash scripts/check.sh` passed again. The quality workflow now
+exercises an unannotated tile through assessment and eligibility, and still
+rejects insufficient coverage and unsupported annotated features. The changed
+case failed on the old mandatory-feature gate before the fix. Independent review
+found no actionable issues. The real catalog check reports eight records, zero
+prepared regions and no unregistered records or unreferenced objects. The current
+east-ridges eligibility report has 16 technical/evidence blockers; human
+acceptance is no longer a blocker. Batch-page links and artifact hashes were checked.
+
 After the approved live run, the full repository check passed again without
 production code changes. All new measurement and diagnostic artifact hashes were
 verified, the spatial map was rendered and inspected, and current catalog status,
@@ -74,15 +84,14 @@ The measurement independently counted retained XY points and compared every
 native raster bin. The diagnostic only decodes that small completed count raster;
 it does not perform another point-cloud run.
 
-The real catalog contains **seven immutable records and three current assistant
-annotations**, each with candidate class ID 1, confirmed permission, unknown
-whole-crop quality findings and unset terrestrial coverage. New records capture
-the user's actual permission approval without declaring human terrain acceptance.
-East-ridges also captures the full ground-support report, spatial diagnostic,
-the owner's positive visual response and the later ground-bin distance report.
-No prepared/training admission was recorded. The last `curate check` found seven
-indexed records, zero prepared regions, no unregistered records and no unreferenced
-objects. The real catalog remains database schema 1;
+The real catalog contains **eight immutable records**: current east-ridges human
+whole-tile acceptance, transcribed by Codex with the exact responses captured,
+and two current assistant annotations for north-hollows and south-saddles.
+All three retain candidate class ID 1, confirmed permission, unknown technical
+findings and unset terrestrial coverage. The east-ridges yes is selection, not a
+claim that technical checks passed. Its current record is
+`703859a386649c3f333b613b2eb9c3e03cc3255d4140c3936d34acdb168dbc2b`.
+No prepared/training admission was recorded. The real catalog remains database schema 1;
 only a successful prepared registration would migrate it to schema 2.
 
 Retained local inputs and outputs (ignored by Git; preserve and back up separately):
@@ -96,7 +105,8 @@ Retained local inputs and outputs (ignored by Git; preserve and back up separate
 | Whole-crop spatial diagnostic and review map | `data/review/rio-abajo-ground-support/east-ridges-full-review-v1/` — `review.html`, `spatial-review.json`, SVG and local reproduction script |
 | Curation drafts, record IDs, original OPR XML and portable exports | `data/review/rio-abajo-curation/`; record IDs are in `records.json` |
 | Permission annotations, IDs, exports, blocked eligibility results and pre-change SQLite backup | `data/review/rio-abajo-curation-2026-09-21/`; north/south heads remain current, east-ridges is superseded below |
-| Current east-ridges visual annotation, source evidence and sampling-distance diagnostic | `data/review/rio-abajo-east-ridges-qualification-v1/`; `record.json` holds the latest ID |
+| Earlier east-ridges visual annotation, source evidence and sampling-distance diagnostic | `data/review/rio-abajo-east-ridges-qualification-v1/`; its current-head snapshot is superseded |
+| Current whole-tile acceptance, captured human responses, backup, export, eligibility and two-tile review page | `data/review/rio-abajo-tile-decisions-2026-09-21/`; `record.json` holds the current ID, `review-batch.html` presents the next two tiles |
 | Catalog and immutable curation objects | `data/catalog/topography.sqlite3` and `data/catalog/topography.sqlite3.curation/` |
 | Incomplete regional quality drafts, assessments and eligibility reports | `data/review/rio-abajo-quality-preflight-2026-09-21/{north-hollows,east-ridges,south-saddles}/` |
 | Whole-crop workload plan and source HEAD identity | `data/review/rio-abajo-ground-support-plans-2026-09-21/` |
@@ -119,9 +129,9 @@ target/debug/topography curate check configs/runtime.example.toml
 
 The [regional quality workflow](workflows/regional-quality.md) now provides
 `quality draft`, `quality assess` and `prepare check`. The three real crops have
-incomplete assessments with all masks explicitly null. New eligibility checks
-against current records are retained in the continuation directory: each remains
-blocked with 17 findings, and the permission blocker is gone. Earlier records,
+incomplete assessments with all masks explicitly null. Earlier eligibility checks
+retained 17 findings per crop after permission approval; the current east-ridges
+check also removes the human-acceptance blocker. Earlier records,
 reports and exports were preserved. No quality masks or prepared rasters were
 created from the ground-return measurements.
 
@@ -140,7 +150,8 @@ the working interpretation for a proposed all-terrestrial water mask, recording
 its visual basis and limitations; no verified water classification has yet been
 published. This observation is recorded in the
 [qualification report](reports/rio-abajo-source-qualification.md), without changing
-the seven existing catalog records.
+the earlier immutable catalog records. The new whole-tile decision also captures
+that observation without inferring a technical water classification.
 
 **Use only publicly downloadable source data. Never send emails or prepare email
 drafts, and do not ask the owner to contact people or institutions for data.**
@@ -149,31 +160,41 @@ The earlier contact-request draft was removed; no email was sent. The retained
 survey QA/water vectors are optional supporting evidence, not mandatory inputs.
 No owner action to obtain them is needed.
 
-The next technical work is to finish a concrete water/quality/repair/feature
-classification proposal from the existing public DEM, survey report, measured
-ground returns and visual review. Additional public downloads should address a
-specific remaining uncertainty. Document unsupported conclusions instead of
-inventing thresholds or making unavailable survey files a prerequisite.
-A source-wide QA report alone does not establish each cell's quality.
+**Human review is whole-tile yes/no, in batches.** The owner explicitly rejected
+selecting individual ridges, hollows or other features. East-ridges already has
+its yes; do not ask again. The proposed detailed feature review was cancelled
+before any masks or detailed feature-review page were created. The next batch is
+`data/review/rio-abajo-tile-decisions-2026-09-21/review-batch.html`, linking the existing
+`data/review/rio-abajo-pilot/north-hollows/preview.html` and
+`data/review/rio-abajo-pilot/south-saddles/preview.html` for yes/no decisions.
+These crops share a survey and do not establish independent regional diversity.
+
+The implementer handles technical evidence and masks separately. Do not turn
+unresolved technical findings into a questionnaire or automatic pass. Optional
+feature annotations may be absent (an all-zero feature layer); the updated
+policy retains the 99.5% terrestrial-coverage and other technical gates. Refresh
+old assessment evidence under v2 before preparation, preserving the existing
+human decision for unchanged terrain. Additional public downloads must address
+a concrete technical question; unavailable files and correspondence are not prerequisites.
 
 The new small-raster diagnostic measures crop-limited distance to occupied
 ground-bin centres: median 0.5 m, p95 1.118 m, p99 1.803 m, maximum 5.5 m in E6.
 It does not set an acceptance radius or measure terrain height error. It uses
 existing counts, without another point-cloud job. The new east-ridges annotation
-and eligibility report are under `rio-abajo-east-ridges-qualification-v1`; the
-crop still has 17 technical/admission blockers.
+and historical eligibility report are under `rio-abajo-east-ridges-qualification-v1`.
+Current acceptance and eligibility are under `rio-abajo-tile-decisions-2026-09-21`.
 
-Construct explicit water/quality/repair/feature masks from justified evidence,
-then record actual human
-source/crop decisions. Occupancy is not a quality mask. Then assess, capture the
+Construct masks from justified evidence as implementation work, using an empty
+feature layer unless the owner requests annotations. Occupancy is not a quality
+mask. Human tile selection may precede these checks. Then assess, capture the
 exact reports and use the implemented native preparation path. Eligibility is
 recomputed at publication; a saved check is not a permit for a later run. Current
 processing supports unrepaired native 0.5–1 m crops and matching declared horizontal
 EPSG identities. Cross-survey alignment, repair policy, other CRS declarations and
 secondary-resolution exceptions remain unsupported.
 
-Resolve full-crop terrain support, defining-feature gaps, water/repair evidence
-and actual human crop decisions before admitting real sources. Keep the vehicle
+Resolve full-crop terrain support, any optional annotated-feature gaps and
+water/repair evidence before admitting selected sources. Keep the vehicle
 envelope explicitly unset. Use the LiDAR header's
 horizontal CRS; do not compare point-cloud and DEM heights until their differing
 GEOID18/GEOID12B processing is resolved.
@@ -188,15 +209,16 @@ GEOID18/GEOID12B processing is resolved.
   south-saddles still have only 1.5625% samples. Counts include overlap returns
   and do not establish terrestrial quality, feature fidelity or water/repair masks.
 - Dataset-specific permission is confirmed under the owner's recorded decision.
-  Human source/crop acceptance remains unresolved, and these sources have not
+  East-ridges has human whole-tile acceptance; the other two await yes/no. These sources have not
   entered prepared or training pools. No new agency correspondence is claimed.
 - The byte-preserving extraction/browser checks are not the planned numeric
   model-loader/autoencoder round-trip evaluation.
 
 ## Remaining implementation order
 
-1. Resolve whole-crop support, defining features, mask classifications and human
-   decisions for the pilot using the implemented assessment/eligibility workflow.
+1. Collect whole-tile yes/no decisions in batches. Handle technical support and
+   masks separately using the assessment/eligibility workflow; do not require
+   feature selection or repeat approval of unchanged terrain.
 2. Apply the verified native preparation path to eligible real regions and review
    the resulting artifacts. Extend alignment/repair policies only when concrete
    sources require them; preserve accepted revisions and raw sources.

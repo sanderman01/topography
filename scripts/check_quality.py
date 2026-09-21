@@ -48,7 +48,7 @@ def check(cli, directory, synthetic=True, declared_crs="EPSG:32619"):
         "water": [1] * 200,
         "quality": [1] * 200,
         "repairs": [0] * 200,
-        "features": [0] * 199 + [1],
+        "features": [0] * 200,
     }
     for name, samples in masks.items():
         path = raster(directory, name, samples)
@@ -57,16 +57,18 @@ def check(cli, directory, synthetic=True, declared_crs="EPSG:32619"):
     report = directory / "assessment.json"
     run(cli, "quality", "assess", inputs, report)
     assessed = json.loads(report.read_text())
-    assert assessed["blockers"] == []
+    assert assessed["blockers"] == [], assessed["blockers"]
+    assert assessed["policy"] == "native_quality_v2"
     assert assessed["counts"]["terrestrial_cells"] == 200
     assert assessed["counts"]["valid_terrestrial_cells"] == 199
+    assert assessed["counts"]["defining_feature_cells"] == 0
     assert assessed["counts"]["unsupported_feature_cells"] == 0
     run(cli, "quality", "assess", inputs, report, expected=1, message="already exists")
 
     # Numeric regressions change observable counts/blockers, not implementation details.
     for number, (mask, index, value, expected_blocker) in enumerate([
         ("quality", 1, 2, "99.5%"),
-        ("quality", 199, 0, "defining features"),
+        ("quality", 199, 0, "99.5%"),
         ("water", 1, 0, "water classification"),
         ("repairs", 1, 1, "repairs"),
         ("features", 0, 1, "defining features"),
