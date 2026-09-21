@@ -11,6 +11,7 @@ checks, instead of a second schema engine. Their first consumer is
 - [Native crop inspection v1](native-review-v1.md): sample counts and browser previews.
 - [Crop curation v1](curation-v1.md): evidence, explicit decisions, labels and portable history.
 - [Regional quality v1](regional-quality-v1.md): whole-crop mask measurements and current preparation eligibility.
+- [Prepared native region v1](prepared-region-v1.md): aligned rasters, pinned decisions, immutable publication and current status.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.

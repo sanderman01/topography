@@ -4,7 +4,8 @@ These are initial requirements from the [master plan](../plans/terrain-design-ma
 sections 1, 2, 4–7 and 10. Configuration validation, raw import/integrity checks
 and native-grid review crops are implemented. Curation records explicit human
 decisions; regional mask checks and preparation eligibility are implemented.
-Prepared-data publication and model evaluation remain pending.
+Aligned native prepared-data publication is implemented; output acceptance,
+dataset releases and model evaluation remain pending.
 
 ## Exact contracts
 
@@ -36,7 +37,7 @@ Prepared-data publication and model evaluation remain pending.
 
 The [preparation eligibility check](../workflows/regional-quality.md) enforces the
 initial native-resolution gates against measured masks and current decisions.
-Actual preparation must recheck eligibility when implemented. A source record
+Aligned preparation rechecks eligibility when building and registering. A source record
 can be well-formed while excluded; `validate source` reports permission declarations
 and unknown metadata without inspecting evidence or admitting data. Discovery
 bounds do not prove exact coverage. Metadata strings do not prove accuracy.

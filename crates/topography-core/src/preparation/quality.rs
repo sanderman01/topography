@@ -73,11 +73,13 @@ pub struct Check {
     schema_version: u32,
     kind: &'static str,
     policy: &'static str,
-    curation_record_sha256: String,
-    quality_report_sha256: String,
-    review_sha256: String,
+    pub(super) curation_record_sha256: String,
+    pub(super) quality_report_sha256: String,
+    pub(super) review_sha256: String,
     blockers: Vec<String>,
     admission: &'static str,
+    #[serde(skip)]
+    pub(super) primary_class_id: Option<u16>,
 }
 
 impl Check {
@@ -346,14 +348,15 @@ pub fn check(runtime: &Path, input: &Path, record_sha256: &str) -> Result<Check>
     let (report, bundle) = evaluate(input)?;
     let report_sha256 = digest(&serde_json::to_vec_pretty(&report)?);
     let mut blockers = report.blockers.clone();
-    blockers.extend(curation::preparation_check(
+    let (claims, primary_class_id) = curation::preparation_check(
         runtime,
         &report.review_sha256,
         record_sha256,
         &report_sha256,
         report.counts.as_ref(),
         &bundle,
-    )?);
+    )?;
+    blockers.extend(claims);
     Ok(Check {
         eligible: blockers.is_empty(),
         schema_version: 1,
@@ -364,5 +367,82 @@ pub fn check(runtime: &Path, input: &Path, record_sha256: &str) -> Result<Check>
         review_sha256: report.review_sha256,
         blockers,
         admission: "not admitted",
+        primary_class_id,
+    })
+}
+
+pub(super) struct Ready {
+    pub check: Check,
+    pub bundle: bundle::Bundle,
+    pub report: Vec<u8>,
+    pub heights: Vec<u8>,
+    pub provider: Vec<u8>,
+    pub masks: BTreeMap<String, Vec<u8>>,
+}
+
+/// Load bounded samples only after current eligibility is established. Compare
+/// both measurements again after loading to bind the working bytes to evidence.
+pub(super) fn ready(runtime: &Path, path: &Path, record: &str) -> Result<Ready> {
+    let input_bytes = read_small(path)?;
+    let check = check(runtime, path, record)?;
+    ensure(
+        check.eligible,
+        format!("preparation blocked: {}", check.blockers.join("; ")),
+    )?;
+    let (report, bundle) = evaluate(path)?;
+    let report = serde_json::to_vec_pretty(&report)?;
+    ensure(
+        digest(&report) == check.quality_report_sha256,
+        "quality assessment changed during preparation",
+    )?;
+    let input: Input = serde_json::from_slice(&input_bytes)?;
+    let base = path.parent().unwrap_or(Path::new("."));
+    let review = verify_input(base, &input.review, 1024 * 1024)?;
+    let directory = review.parent().unwrap_or(Path::new("."));
+    let [_, _, w, h] = bundle.manifest.window_cells;
+    let cells = w as usize * h as usize;
+    let scratch = io_context("stage preparation samples", tempfile::tempdir())?;
+    let heights = band(
+        &directory.join("elevation.tif"),
+        scratch.path(),
+        "elevation",
+        cells,
+        true,
+    )?;
+    let provider = band(
+        &directory.join("validity.tif"),
+        scratch.path(),
+        "provider",
+        cells,
+        false,
+    )?;
+    let mut masks = BTreeMap::new();
+    for name in MASK_NAMES {
+        let file = input.masks[name].as_ref().ok_or_else(|| {
+            crate::acquisition::AcquisitionError::Invalid("missing preparation mask".into())
+        })?;
+        let mask = verify_input(base, file, 128 * 1024 * 1024)?;
+        masks.insert(
+            name.into(),
+            band(&mask, scratch.path(), name, cells, false)?,
+        );
+        verify_input(base, file, 128 * 1024 * 1024)?;
+    }
+    ensure(
+        read_small(path)? == input_bytes,
+        "quality input changed during preparation",
+    )?;
+    let (after, _) = evaluate(path)?;
+    ensure(
+        serde_json::to_vec_pretty(&after)? == report,
+        "quality assessment changed during preparation",
+    )?;
+    Ok(Ready {
+        check,
+        bundle,
+        report,
+        heights,
+        provider,
+        masks,
     })
 }

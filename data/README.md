@@ -33,6 +33,14 @@ elevation, validity, hillshade and a review manifest. See the
 and unreferenced objects do not establish a completed import; the receipt is
 published last. Retrying verifies/reuses complete objects without overwriting them.
 
+Aligned native regions publish under `prepared/<manifest-sha256>/` with
+`manifest.json`, seven raster layers and captured quality reports. Source decisions
+must pass current eligibility; generated products remain unreviewed and excluded
+from training. The catalog's schema-2 `prepared_regions` table registers completed
+products after file publication. See [preparation and recovery](../docs/workflows/aligned-preparation.md).
+Preserve intact unregistered output for retry and never treat partial directories
+as completed products. Curation exports do not include these raster files.
+
 Rejection records an exclusion; it does not delete raw assets. Cache housekeeping
 is separate from curation. Preserve accepted world output and source provenance;
 ignored files are not backed up by Git, and accepted artifacts need separate

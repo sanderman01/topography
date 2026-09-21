@@ -54,7 +54,10 @@ exact JSON bytes. No timestamp is generated during publication, so identical
 retries retain identity. A new decision's previous-record link distinguishes it.
 
 SQLite stores the record bytes and machine-local input locators, plus the current
-head per review digest. Application ID is `0x544f504f`, schema `user_version=1`.
+head per review digest. Application ID is `0x544f504f`; curation-only catalogs use
+`user_version=1`. [Prepared-region registration](prepared-region-v1.md) migrates to
+database schema 2 without rewriting these v1 decision records. Current tools read
+both database versions; earlier schema-1-only tools reject version 2.
 History is append-only through the CLI. Rejection preserves raw bytes and old
 records. Human acceptance is distinct from preparation admission; blockers record
 the policy result at publication and are not silently recomputed on later reads.

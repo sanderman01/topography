@@ -61,6 +61,9 @@ prechecks retain their original interpretation. The separate
 [regional quality and eligibility check](regional-quality.md) now recomputes
 whole-crop mask measurements against the current decision and captured evidence.
 It reports eligibility without admitting or preparing data.
+The [aligned preparation consumer](aligned-preparation.md) separately repeats
+these checks before publishing eligible native regions. A prepared output remains
+unreviewed and excluded from training; later source decisions can make it stale.
 
 Permission reviews are separate declarations, leaving the original source metadata
 unchanged. `confirmed` requires dataset-specific permission evidence, captured
@@ -88,10 +91,15 @@ or corrupt registered objects fail verification and require restoring intact byt
 from backup; there is no silent repair or promotion. Abandoned temporary files or
 an incomplete export directory remain identifiable and are not completion records.
 
+The first prepared-region registration transactionally migrates database schema
+1 to 2, adding the prepared registry while preserving curation record bytes.
+Current code reads both versions. `curate check` also checks registered prepared
+files; its orphan lists concern curation files only.
+
 Version 1 limits a catalog to 4,096 decisions. Export writes a new directory with
 the selected crop's full history, captured documents and an `export.json` completion
 manifest. Local raw/review locator paths stay in SQLite. The export does **not**
-include raw or crop rasters, nor provide an automated restore command. Back up those
+include raw, crop or prepared rasters, nor provide an automated restore command. Back up those
 files and their original directory relationships separately. Back up a quiescent
 database or use SQLite's backup API; copying an active database alone is insufficient.
 

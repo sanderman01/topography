@@ -10,8 +10,10 @@ The Rust CLI validates presets and metadata, discovers USGS DEM candidates,
 acquires/imports raw Float32 GeoTIFFs, verifies stored bytes, and creates small
 native-grid review crops through GDAL. SQLite curation records crop labels, evidence
 and explicit human decisions. Regional mask assessment and preparation eligibility
-checks compare measured coverage with pinned decisions. Preparation, dataset admission, training,
-generation and export remain planned. Processing success never approves terrain.
+checks compare measured coverage with pinned decisions. Eligible areas from the
+same survey can be composed on an exact native grid into immutable prepared
+regions. Dataset releases, training, generation and export remain planned.
+Processing success never approves terrain.
 Review crops include a self-contained browser preview with multiple hillshades,
 cross-sections and metric low-altitude views where the source metadata supports them.
 
@@ -65,7 +67,7 @@ Fetch locked dependencies once with network access; checks retain locked offline
 resolution. Serde and TOML provide strict typed decoding. The check script builds
 the workspace, checks formatting, runs Clippy, and exercises valid/invalid CLI
 inputs. When Python 3.11+ and GDAL tools are available it also runs small local
-import/review and curation checks. Set `CARGO_BUILD_JOBS=1` to limit build
+import/review, curation, quality and preparation checks. Set `CARGO_BUILD_JOBS=1` to limit build
 concurrency. See [training](training/README.md) for the separate Python package.
 
 CLI exit codes: 0 for successful metadata validation, 1 for invalid/unreadable
@@ -94,6 +96,8 @@ the live TNM search API returned HTTP 504 during development. The
 native 0.5 m crops from the Río Abajo area. The
 [curation workflow](docs/workflows/source-curation.md) now preserves crop decisions
 and evidence. The [regional quality workflow](docs/workflows/regional-quality.md)
-measures whole-crop masks and checks current preparation eligibility. Actual
-aligned preparation and dataset admission remain open. The broader
+measures whole-crop masks and checks current preparation eligibility.
+[Aligned native preparation](docs/workflows/aligned-preparation.md) now preserves
+eligible regions without resampling or cross-survey joins. The real crops remain
+excluded pending whole-crop quality, permission and human acceptance. The broader
 milestone still requires curated terrain and the numeric model/loader precision evaluation.

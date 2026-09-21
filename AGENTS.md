@@ -8,8 +8,9 @@ diffusion models, and export terrain with reproducible provenance.
 
 The Rust CLI validates presets/metadata, discovers USGS DEM candidates, acquires
 and imports raw Float32 GeoTIFFs, verifies raw storage and creates small native-grid
-review crops through GDAL. The Python package remains a scaffold. Regional
-preparation, source admission, training, generation and export are not implemented.
+review crops through GDAL. Eligible sources now support aligned native regional
+preparation with immutable outputs. The Python package remains a scaffold;
+dataset releases, training, generation and export are not implemented.
 Preset values remain draft pilot choices; processing does not create human acceptance.
 
 Read [README.md](README.md) for setup and the

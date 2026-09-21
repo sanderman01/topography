@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation and regional quality/preparation eligibility checks are implemented; aligned regional preparation and model work remain planned. Sources checked 13 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks and bounded same-survey native preparation are implemented. Real-source admission, dataset releases and model work remain open. Sources checked 13 September 2026; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -265,7 +265,7 @@ unset. These metadata checks do not complete the real-terrain milestone.
 
 The second item has an initial [acquisition/import implementation](../workflows/dem-acquisition.md)
 with raw integrity, resumable HTTPS staging and small native-grid review crops.
-A real coastal USGS tile was imported; regional preparation, quality admission,
+A real coastal USGS tile was imported; real-source quality admission
 and numeric model/loader evaluation remain open. The
 [early Río Abajo karst trial](../reports/rio-abajo-karst-trial.md) traced a native
 0.5 m survey tile to three crops with overhead/profiles/low-altitude previews.
@@ -275,8 +275,12 @@ The [curation workflow](../workflows/source-curation.md) now captures evidence,
 crop-wide labels and explicit decisions in SQLite, with immutable history and
 portable metadata exports. The [regional quality workflow](../workflows/regional-quality.md)
 now measures whole-crop masks and checks preparation eligibility against pinned
-current decisions. Aligned regional processing, actual prepared/training admission
-and per-cell label editing remain pending.
+current decisions. [Native regional preparation](../workflows/aligned-preparation.md)
+composes eligible adjacent reviews from the same survey without resampling,
+preserves valid Float32 values and distinct masks, and registers immutable outputs.
+This path is verified with synthetic fixtures; real inputs remain blocked. Prepared
+outputs remain unreviewed and excluded from training. Cross-survey alignment,
+repairs, output acceptance, dataset releases and per-cell label editing remain pending.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

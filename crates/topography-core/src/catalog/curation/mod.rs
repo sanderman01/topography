@@ -419,7 +419,7 @@ pub(crate) fn preparation_check(
     assessment: &str,
     counts: Option<&crate::preparation::Counts>,
     bundle: &bundle::Bundle,
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, Option<u16>)> {
     let store = journal::Store::locate(runtime)?;
     let history = store.history(review)?;
     let (id, bytes) = history
@@ -499,7 +499,7 @@ pub(crate) fn preparation_check(
         store.head(review)?.as_deref() == Some(expected_record),
         "stale curation record; head changed during assessment",
     )?;
-    Ok(out)
+    Ok((out, record.claims.primary_class_id))
 }
 
 /// Capture evidence and append a decision. Replaying identical input is idempotent.
@@ -588,6 +588,32 @@ pub fn status(runtime: &Path, review_sha256: &str) -> Result<String> {
 /// Check indexed history and evidence, and report published records awaiting registration.
 pub fn check(runtime: &Path) -> Result<String> {
     journal::Store::locate(runtime)?.check()
+}
+
+pub(crate) fn register_prepared(
+    runtime: &Path,
+    path: &Path,
+    heads: &[(String, String)],
+) -> Result<()> {
+    let bytes = read_small(path)?;
+    let path = absolute(path)?;
+    journal::Store::locate(runtime)?.register_prepared(&digest(&bytes), &bytes, &path, heads)
+}
+
+pub(crate) fn prepared_status(
+    runtime: &Path,
+    path: &Path,
+    heads: &[(String, String)],
+) -> Result<(bool, bool)> {
+    let store = journal::Store::locate(runtime)?;
+    let bytes = read_small(path)?;
+    let registered = store.prepared_registered(&digest(&bytes), &bytes)?;
+    let mut current = true;
+    for (review, expected) in heads {
+        let records = store.history(review)?;
+        current &= records.last().is_some_and(|(id, _)| id == expected);
+    }
+    Ok((registered, current))
 }
 
 /// Export verified small records/evidence. Raw and crop rasters need separate backup.

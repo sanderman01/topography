@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "inputs": [
+    {
+      "quality_path": "candidate/quality.json",
+      "curation_record_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "grid": {
+    "origin": [700000, 2000010],
+    "size": [20, 10],
+    "spacing_m": [1, 1]
+  },
+  "masked_fill_m": 0.0
+}

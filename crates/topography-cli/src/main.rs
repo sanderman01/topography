@@ -19,6 +19,8 @@ Usage: topography [--help | --version]
        topography quality draft <raw-receipt.json> <review.json> <quality.json>
        topography quality assess <quality.json> <new-report.json>
        topography prepare check <runtime.toml> <quality.json> <curation-record-sha256>
+       topography prepare build <runtime.toml> <region.json>
+       topography prepare verify <runtime.toml> <prepared-manifest.json>
 
 Options:
   -h, --help     Show this help
@@ -28,8 +30,9 @@ Validation reads metadata only. Success does not mean terrain is accepted.
 Acquisition/import preserve raw Float32 DEMs; review creates unscaled native crops.
 Import, acquire and review print their resulting manifest path. Curation records
 explicit actor declarations, evidence and crop decisions. Quality measures masks;
-prepare check reports current eligibility (exit 1 if blocked). No command admits data
-to prepared/training pools. Processing never creates a human decision.
+prepare check reports current eligibility (exit 1 if blocked). Prepare build publishes
+eligible native regions; outputs remain unreviewed and excluded from training.
+Processing never creates a human decision.
 See docs/plans/terrain-design-master-plan.md for the implementation plan.";
 
 fn main() -> ExitCode {
@@ -115,6 +118,25 @@ fn main() -> ExitCode {
                 preparation::assess(Path::new(input), Path::new(output))
                     .map(|p| p.display().to_string()),
             );
+        }
+        [command, action, runtime, input] if command == "prepare" && action == "build" => {
+            return workflow_result(
+                preparation::build(Path::new(runtime), Path::new(input))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, runtime, input] if command == "prepare" && action == "verify" => {
+            match preparation::verify(Path::new(runtime), Path::new(input)) {
+                Ok((current, report)) => {
+                    println!("{report}");
+                    return if current {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    };
+                }
+                Err(error) => return workflow_result(Err(error)),
+            }
         }
         [command, action, runtime, input, record] if command == "prepare" && action == "check" => {
             let Some(record) = record.to_str() else {

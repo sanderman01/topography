@@ -55,7 +55,7 @@ impl Store {
                     PRAGMA application_id=1414484047; PRAGMA user_version=1;")?;
             } else {
                 ensure(
-                    app == APPLICATION_ID && version == 1,
+                    app == APPLICATION_ID && matches!(version, 1 | 2),
                     "unsupported or unrelated catalog database",
                 )?;
             }
@@ -65,7 +65,10 @@ impl Store {
         ensure(
             db.pragma_query_value::<i64, _>(None, "application_id", |r| r.get(0))?
                 == APPLICATION_ID
-                && db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))? == 1,
+                && matches!(
+                    db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))?,
+                    1 | 2
+                ),
             "unsupported or unrelated catalog database",
         )?;
         db.pragma_update(None, "foreign_keys", true)?;
@@ -75,6 +78,73 @@ impl Store {
     pub fn head(&self, review: &str) -> Result<Option<String>> {
         ensure(valid_digest(review), "invalid review digest")?;
         Self::head_in(&self.open(false)?, review)
+    }
+
+    pub fn register_prepared(
+        &self,
+        id: &str,
+        body: &[u8],
+        path: &Path,
+        heads: &[(String, String)],
+    ) -> Result<()> {
+        ensure(
+            valid_digest(id) && digest(body) == id && !heads.is_empty(),
+            "invalid prepared identity",
+        )?;
+        let path = path
+            .to_str()
+            .ok_or_else(|| AcquisitionError::Invalid("prepared locator must be UTF-8".into()))?;
+        let mut db = self.open(true)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version == 1 {
+            tx.execute_batch("CREATE TABLE prepared_regions (id TEXT PRIMARY KEY, body BLOB NOT NULL, manifest_path TEXT NOT NULL); PRAGMA user_version=2;")?;
+        }
+        for (review, expected) in heads {
+            ensure(
+                Self::head_in(&tx, review)?.as_ref() == Some(expected),
+                "stale curation head during prepared registration; output preserved unregistered",
+            )?;
+        }
+        let existing: Option<Vec<u8>> = tx
+            .query_row("SELECT body FROM prepared_regions WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(existing) = existing {
+            ensure(existing == body, "prepared registry integrity mismatch")?;
+        } else {
+            let count: i64 =
+                tx.query_row("SELECT count(*) FROM prepared_regions", [], |r| r.get(0))?;
+            ensure(
+                count < MAX_RECORDS as i64,
+                "prepared catalog limit is 4096 regions",
+            )?;
+            tx.execute(
+                "INSERT INTO prepared_regions (id, body, manifest_path) VALUES (?1, ?2, ?3)",
+                params![id, body, path],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn prepared_registered(&self, id: &str, body: &[u8]) -> Result<bool> {
+        let db = self.open(false)?;
+        if db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))? == 1 {
+            return Ok(false);
+        }
+        let existing: Option<Vec<u8>> = db
+            .query_row("SELECT body FROM prepared_regions WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(existing) = existing {
+            ensure(existing == body, "prepared registry integrity mismatch")?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     fn head_in(db: &Connection, review: &str) -> Result<Option<String>> {
@@ -332,8 +402,32 @@ impl Store {
             }
         }
         unreferenced.sort();
+        let mut prepared_regions = 0;
+        if db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))? == 2 {
+            let mut stmt =
+                db.prepare("SELECT id, body, manifest_path FROM prepared_regions LIMIT 4097")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (id, body, path) = row?;
+                prepared_regions += 1;
+                ensure(
+                    prepared_regions <= MAX_RECORDS
+                        && digest(&body) == id
+                        && read_small(Path::new(&path))? == body,
+                    "prepared registry integrity mismatch",
+                )?;
+                crate::preparation::verify_files(Path::new(&path))?;
+            }
+        }
         Ok(serde_json::to_string_pretty(
             &serde_json::json!({"schema_version":1,"indexed_records":indexed.len(),
+            "prepared_regions": prepared_regions,
             "unregistered_records":unregistered,"unreferenced_objects":unreferenced,
             "recovery":"retry original draft; never auto-promote or delete", "sqlite_version":rusqlite::version()}),
         )?)
