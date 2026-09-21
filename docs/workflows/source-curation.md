@@ -13,10 +13,11 @@ justification is required. A yes selects that tile; technical checks and trainin
 admission remain separate. Do not ask for another visual approval of unchanged
 terrain when technical evidence is updated.
 
-The implementer handles the commands below and retains the response against the
-review identity. The current CLI can record whole-tile decisions with unknown
-technical findings. The previews do not yet provide a persistent batch-voting UI;
-the owner can give the decisions in conversation and the implementer records them.
+Use the [persistent gallery](batch-source-review.md) for normal batch review.
+Its Yes/No buttons save decisions against the exact review identity in the catalog,
+including when technical findings are still unknown. The implementer reads those
+saved votes and handles qualification with the commands below. Conversation-based
+recording remains available when explicitly needed; do not duplicate gallery votes.
 
 ## Create and record a decision
 

@@ -1,20 +1,25 @@
 # Pilot source coverage
 
-As of 2026-09-21, the library has **12 accepted, prepared patches**, each
-1,024² cells at native 0.5 m spacing: 512 × 512 m. One additional rejected tile
-remains preserved and excluded. The accepted patches span six geographic areas
-in the same Puerto Rico Post-Maria 2018 survey collection.
+As of 2026-09-21, the library has **14 accepted, prepared patches**: twelve
+512 × 512 m crops and two wider 1,024 × 1,024 m contexts, all at native 0.5 m
+spacing. One additional rejected tile remains preserved and excluded. The accepted
+patches still span six geographic areas in the same Puerto Rico Post-Maria 2018
+survey collection; the wider contexts overlap existing selections.
 
 | Broad pilot family | Areas | Accepted patches |
 | --- | --- | ---: |
-| Karst | Río Abajo, Camuy | 5 |
-| Gorge | Central gorge, Guajataca | 4 |
+| Karst | Río Abajo, Camuy | 6 |
+| Gorge | Central gorge, Guajataca | 5 |
 | River/floodplain | Southern floodplain, Arecibo | 3 |
 
-The exact inventory and geographic roles are retained in
+The original twelve-crop numeric inventory and geographic roles are retained in
 `data/review/numeric-evaluation-v1/selection.json`. Its evaluation-only release is
 `6b7e2049f45d94bd87216ac07d96c38ece2885e8f22a00fb9d5e0686d6f07411`.
 Different crop files are not necessarily independent landscapes or surveys.
+The two wider contexts are recorded in
+`data/review/connected-context-qualification-v1/records.json` and are excluded from
+that existing release. Their gallery selections, masks and unchanged native
+heights are verified in the [qualification report](connected-context-qualification-v1.md).
 
 ## What this collection establishes
 
@@ -24,8 +29,10 @@ representations and runs; they do not establish broader terrain-model feasibilit
 or adequate geographic generalization.
 
 The library is too small and geographically narrow for a representative
-world-quality pilot. Its combined source footprint is 3.145728 km²; the 4,096 m
-square pilot covers 16.777216 km². At the native patch scale, direct patch assembly
+world-quality pilot. Its unique selected footprint is now 4.406211 km², measured
+by integer crop-window unions within each source; summing overlapping crop areas
+would overstate it as 5.242880 km². The 4,096 m square pilot covers 16.777216 km².
+At the original 512 m patch scale, direct patch assembly
 would require 64 non-overlapping patch-equivalents just to cover that footprint,
 before blending overlaps. That is a geometric comparison, not a one-to-one data
 requirement for learned generation. The rejected world proposal actually repeated
