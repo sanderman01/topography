@@ -2,15 +2,17 @@
 
 2026-09-21. Two public LINZ Banks Peninsula 2023 DEM assets are imported, with
 four native 1,536 × 1,536 m review crops. These are new geographic coverage beyond
-the accepted Puerto Rico collection. They await whole-tile gallery decisions and
-technical qualification; there is no prepared or training admission.
+the accepted Puerto Rico collection. The owner subsequently accepted the three
+inland crops and rejected the coastal crop. The selected crops are now
+[qualified and prepared](banks-peninsula-qualification-v1.md); training admission
+remains separate.
 
 The [LINZ collection](https://nz-elevation.s3.ap-southeast-2.amazonaws.com/canterbury/banks-peninsula_2023/dem_1m/2193/collection.json)
 identifies the 1 m DEM product, capture dates, providers and CC BY 4.0 declaration.
 Its original STAC records and checksums are retained. The provider-linked
 [survey record](https://portal.opentopography.org/datasetMetadata?otCollectionID=OT.022024.2193.2)
 documents NZTM2000 horizontal metres, NZVD2016 vertical metres and source credits.
-Complete permission/quality evidence remains a separate qualification step.
+Dataset-specific permission and quality evidence is retained with qualification.
 
 | Source tile | Bytes | Published and verified asset SHA-256 |
 | --- | ---: | --- |
@@ -54,9 +56,9 @@ The latter reuses verified receipts without downloading the assets again.
 Independent source-window comparisons and retained checks live with the runs.
 All 9,437,184 native Float32 samples and provider masks match exactly in the
 corrected previews, which all have metric 3D enabled. Gallery v5 combines those
-four pending tiles with the fifteen earlier tiles; no automated votes were cast.
+four then-pending tiles with the fifteen earlier tiles; no automated votes were cast.
 
-The Mount St. Helens queue remains incomplete after a bounded resume, preserving
-218,103,808 of 315,921,778 bytes. No new unbounded retry loop was started. Waioweka
-metadata is a retained discovery lead only. Neither source needs correspondence;
-all acquisition remains public-download only.
+At the initial gallery checkpoint, the Mount St. Helens queue had retained
+218,103,808 of 315,921,778 bytes. See the current [progress checkpoint](../progress.md)
+for its later resume. Waioweka metadata remains a discovery lead only.
+All acquisition uses public downloads without correspondence.

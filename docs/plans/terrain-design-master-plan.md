@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twelve real regions are qualified under the supplier-QA pilot rule. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Seventeen real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -307,7 +307,7 @@ now measures whole-crop masks and checks preparation eligibility against pinned
 current decisions. [Native regional preparation](../workflows/aligned-preparation.md)
 composes eligible adjacent reviews from the same survey without resampling,
 preserves valid Float32 values and distinct masks, and registers immutable outputs.
-This path is verified with synthetic fixtures and twelve real prepared regions
+This path is verified with synthetic fixtures and seventeen real prepared regions
 whose valid ground samples remain bit-identical to accepted native terrain;
 water uses deterministic masked fill. The owner selected
 five of six tiles in [batch 2](../reports/pilot-tile-batch-2.md); rejection preserves
@@ -333,6 +333,13 @@ checks, not a representative world-quality pilot. Expand independent geographic
 coverage and connected context under §§6–7 before another world-quality review.
 The later authored experiment remains internal; the reusable world composer and
 fine-resolution pilot are incomplete.
+
+Source expansion added two accepted wider Puerto Rico contexts and three
+[qualified Banks Peninsula crops](../reports/banks-peninsula-qualification-v1.md).
+Use [the example locations](../locations.md) explicitly when selecting subsequent
+discovery targets; record actual footprint and resolution limits, without
+assuming every named landmark has qualifying data. The batch queue and gallery
+remain the acquisition and whole-tile selection interface.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

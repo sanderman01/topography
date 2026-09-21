@@ -1,84 +1,84 @@
 # Implementation progress
 
-Updated 2026-09-21. Fourteen real terrain regions are qualified and prepared;
+Updated 2026-09-21. Seventeen real terrain regions are qualified and prepared;
 the original twelve are released for initial numeric evaluation. Scalar Float32 loading passes. Both bounded
 reconstruction candidates were rejected. The owner rejected the first coarse
 world layout. Batch acquisition and a persistent terrain gallery now support
-source expansion before another world-quality review; one source tile remains
+source expansion before another world-quality review; two source tiles remain
 excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
 
 **Next input: four new whole-tile gallery votes.** Refresh
-`http://127.0.0.1:8765/` and review the four Pending Banks Peninsula crops. Previous
-votes are saved; no repeat review is needed. The current gallery has nineteen
-tiles: fourteen accepted, one rejected and four pending. One new coastal crop
-has a visible provider-invalid edge, retained explicitly for review.
+`http://127.0.0.1:8765/` and use Pending: three Mount St. Helens crops and one
+Grand Canyon crop. Previous votes are saved; no repeat review is needed. Gallery
+v6 has 23 tiles: 17 accepted, two rejected and four pending.
 
-Current snapshot: `data/review/library-gallery-v5/gallery.json`, SHA-256
-`c54599a413fec2f8c9f03b5a55c8f2c86ac76668179879ae7b76ce68c5b69eb2`.
+Current snapshot: `data/review/library-gallery-v6/gallery.json`, SHA-256
+`7cd79e5812514e9d186ab7bfd96dd65776bfa6785eeff4f3ec3be10e375101cf`.
+Pre-vote verification: `data/review/library-gallery-v6-verification.json`.
 Restart with:
 
 ```sh
-target/debug/topography gallery serve configs/runtime.example.toml data/review/library-gallery-v5/gallery.json 8765
+target/debug/topography gallery serve configs/runtime.example.toml data/review/library-gallery-v6/gallery.json 8765
 ```
 
-Read decisions directly from the catalog when the owner finishes; apply delegated
-technical qualification only to selected tiles, then continue geographic expansion.
-The [Banks Peninsula report](reports/banks-peninsula-review-v1.md) records sources,
-compatibility fixes, missing-data limits and retained artifacts. Current previews
-are in `data/review/source-expansion-linz-batch-v2/`, reusing the same verified raw
-receipts. All four have metric 3D enabled. Independent comparison verified
-9,437,184 native Float32 cells and every provider-validity sample. No automated
-votes were cast. Verification is in `data/review/library-gallery-v5-verification.json`.
+Read actual decisions from the catalog. Technical qualification of the four new
+crops remains pending; processing and the public product description do not
+establish source admission. Continue under the existing delegated supplier-QA
+rule only for selected tiles. The [landmark-source report](reports/landmark-source-review-v1.md)
+records crop selection, coverage limits, exact native verification and queues.
+
+**The three Banks Yes votes and coastal No are saved.** The three inland crops
+are [qualified and prepared](reports/banks-peninsula-qualification-v1.md), with
+all 7,077,888 Float32 samples and prepared masks verified independently. Supplier
+interpolation beneath forest remains accepted under the delegated rule. The
+catalog has 46 records, 19 current heads and 17 prepared regions. All 43 earlier
+records and the other 16 heads are unchanged; no chat votes were duplicated.
+Evidence and requests: `data/review/banks-peninsula-qualification-v1/`.
+
+The two previously accepted wider Puerto Rico contexts are also prepared; their
+[qualification](reports/connected-context-qualification-v1.md) and source records
+remain unchanged. The current [source inventory](reports/pilot-source-coverage-v1.md)
+spans six Puerto Rico areas plus Banks Peninsula, two survey collections and
+11.484099 km² of unique selected footprint. The original twelve-region numeric
+release and its 512 m context split remain unchanged. No model job or new training
+release was started.
+
+**Mount St. Helens resumed successfully.** All 315,921,778 bytes were downloaded
+and imported. Receipt:
+`10d39ba242193053284ffc87b89d80f758c1f6b0fce51c6622d96568eb4eda0f`.
+The requested retry reached 98.2% but failed repeatedly on the final block at the
+old two-minute limit. A bounded fix allows five minutes per range attempt while
+preserving 8 MiB chunks, exact URL/ETag/size checks and three attempts. HEAD and
+metadata limits are unchanged. The final block then completed. A scaled real
+HTTPS regression failed before the fix and passes afterward, including verified
+reuse; full `bash scripts/check.sh` passes. One fresh code review found no
+remaining findings. Download run: `data/review/source-expansion-batch-v1/`.
+The inspected crop queue `data/staging/source-expansion-v1/targets-review-v2.json`
+reuses that receipt in `data/review/st-helens-review-v2/`.
+
+**Use `docs/locations.md` explicitly for further discovery.** The preceding Banks
+batch was opportunistic and did not directly rank that list. The new shortlist
+retains all twelve examples and marks unqueried candidates honestly:
+`data/staging/location-shortlist-v1/shortlist.json`. Actual USGS 1 m results exist
+for Grand Canyon and Zion Narrows. The 600 MB bounded queue selects one source
+from each. Grand Canyon is imported; its partially populated footprint required
+choosing a complete northeastern side-canyon crop. Zion continues downloading;
+check `data/review/location-shortlist-download-v1/download-status.json` and the
+active process before restarting. Use the current binary with the corrected range
+timeout for a later resume. Do not assume discovery rectangles prove complete
+landmark coverage. Fjords and island/cliff terrain remain gaps.
 
 **Use the tools for source expansion.** The owner requested target lists instead
 of repeated agent-driven downloads and one gallery for rapid review. The
 [batch/gallery design](design/batch-source-workflow-v1.md),
 [implementation plan](plans/batch-source-workflow-v1.md) and
 [workflow](workflows/batch-source-review.md) are implemented. Use `batch download`
-and `batch review`, then `gallery build` and `gallery serve`. Do not return to
-per-file curl orchestration or conversational transcription of gallery votes.
-
-**The two gallery Yes votes are saved and technically qualified.** Both wider
-contexts are prepared with their original native values. The
-[qualification report](reports/connected-context-qualification-v1.md) records
-actual gallery decision identities, prepared manifests and verification. No chat
-votes were duplicated and the original thirteen decision heads remain unchanged.
-The catalog has 39 records, 15 current heads (14 accepted, one rejected), and 14
-prepared regions. Independent comparison verified all 8,388,608 new Float32
-samples and every prepared mask.
-
-The connected contexts each span 1,024 × 1,024 m at native 0.5 m spacing. They
-reuse the central-gorge and Río Abajo sources and overlap earlier selections;
-there are still six accepted geographic areas and one survey collection. Unique
-selected footprint is 4.406211 km². The original numeric releases and their 512 m
-context split remain unchanged. Retained evidence and requests are under
-`data/review/connected-context-qualification-v1/`.
-
-**Source expansion continues with public LINZ data.** The list
-`data/staging/source-expansion-linz-v1/targets.json` selects two Banks Peninsula
-2023 DEMs and four 1,536-cell native crops. Both assets downloaded and were
-imported with the published STAC SHA-256 values verified: 64,196,499 and
-55,274,229 bytes. Run directory:
-`data/review/source-expansion-linz-batch-v1/`.
-
-The installed GDAL's primary TIFF reader lacked LERC support. Its existing
-read-only LIBERTIFF driver decodes the files; acquisition now falls back to that
-reader and explicitly uses it for raw extraction. Original compressed bytes stay
-unchanged. The source advertises 0.001 m maximum LERC error for full-resolution
-storage (0.1 m for overviews); native crops use full-resolution samples. This is a
-compression setting, not survey accuracy. Dataset-specific qualification and
-human selection remain pending for these new sources.
-
-The USGS Mount St. Helens queue remains at
-`data/staging/source-expansion-v1/targets.json`, run directory
-`data/review/source-expansion-batch-v1/`. One bounded resume again exhausted HTTP
-timeout retries; 218,103,808 of 315,921,778 bytes (69.0%) are retained as verified
-chunks. No raw receipt or preview was published. Avoid endless retries; resume
-when transfer conditions improve. Waioweka collection/item metadata was also
-retained as a discovery lead, without queuing terrain or asserting qualification.
+and `batch review`, then `gallery build` and `gallery serve`. Public downloads
+only; no correspondence. Existing LINZ raw assets, historical galleries and all
+rejections remain preserved. Waioweka is an unused discovery lead.
 
 The owner delegated interpolation-quality decisions to the implementer and asked
 for simplicity. We adopted [supplier_qa_pilot_v1](design/source-quality-pilot-v1.md):
