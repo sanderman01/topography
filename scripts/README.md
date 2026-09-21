@@ -159,3 +159,8 @@ For actual browser interaction, add `--browser /path/to/chromium` to
 temporary browser profile and synthetic catalog only. It checks buttons, filters,
 reload, preview-ready voting, sandboxed-frame shortcuts and escaped labels.
 The optional browser is not installed by this workflow.
+
+Acquisition checks also exercise the alternate TIFF reader when the installed
+GDAL exposes `LIBERTIFF`: a wrapper makes the primary reader unavailable while
+real GDAL verifies native samples, nodata validity, coordinates and Float32
+rejection through import/review. Both-reader failure must leave no new receipt.

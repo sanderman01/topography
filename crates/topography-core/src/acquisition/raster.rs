@@ -39,12 +39,23 @@ pub(crate) fn run(command: &mut Command) -> Result<Vec<u8>> {
 
 pub(super) fn inspect(path: &Path) -> Result<(Value, String)> {
     let absolute = io_context("resolve raster path", fs::canonicalize(path))?;
-    let bytes = run(command("gdalinfo")
-        .args(["-json", "-noct", "-norat", "-nogcp", "-if", "GTiff"])
-        .arg(&absolute))?;
+    let inspect_with = |driver| {
+        run(command("gdalinfo")
+            .args(["-json", "-noct", "-norat", "-nogcp", "-if", driver])
+            .arg(&absolute))
+    };
+    // Some system libtiff builds lack codecs available in GDAL's read-only reader.
+    let bytes = inspect_with("GTiff").or_else(|primary| {
+        inspect_with("LIBERTIFF").map_err(|alternate| {
+            AcquisitionError::Invalid(format!("{primary}; alternate TIFF reader: {alternate}"))
+        })
+    })?;
     let mut info: Value = serde_json::from_slice(&bytes)?;
     ensure(
-        info["driverShortName"] == "GTiff",
+        matches!(
+            info["driverShortName"].as_str(),
+            Some("GTiff" | "LIBERTIFF")
+        ),
         "only self-contained GeoTIFF DEMs are supported",
     )?;
     ensure(
@@ -98,6 +109,9 @@ pub fn create_review(receipt_path: &Path, output: &Path, window: [u32; 4]) -> Re
     let receipt = store::verify(receipt_path)?;
     let asset = store::asset_path(receipt_path, &receipt)?;
     let (info, gdal_version) = inspect(&asset)?;
+    let reader = info["driverShortName"]
+        .as_str()
+        .ok_or_else(|| AcquisitionError::Invalid("missing inspected TIFF reader".into()))?;
     let [x, y, width, height] = window;
     ensure(
         width > 0 && height > 0 && width <= 2048 && height <= 2048,
@@ -124,6 +138,7 @@ pub fn create_review(receipt_path: &Path, output: &Path, window: [u32; 4]) -> Re
     let window = window.map(|v| v.to_string());
     let asset = io_context("resolve raw asset", fs::canonicalize(asset))?;
     run(command("gdal_translate")
+        .args(["-if", reader])
         .args(["-q", "-of", "GTiff", "-ot", "Float32", "-srcwin"])
         .args(&window)
         .args([

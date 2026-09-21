@@ -115,6 +115,7 @@ pub(crate) fn metric_grid(info: &Value, source: &SourceRecord, transform: &[f64]
         proj
     };
     let axes = horizontal["coordinate_system"]["axis"].as_array();
+    let mapping = info["coordinateSystem"]["dataAxisToSRSAxisMapping"].as_array();
     let units = [
         source.spatial.horizontal_units.as_deref(),
         source.spatial.vertical_units.as_deref(),
@@ -122,16 +123,26 @@ pub(crate) fn metric_grid(info: &Value, source: &SourceRecord, transform: &[f64]
     units.iter().all(|u| u.is_some_and(metre_unit))
         && info["bands"][0]["unit"].as_str().is_none_or(metre_unit)
         && horizontal["type"] == "ProjectedCRS"
-        && axes.is_some_and(|a| {
-            a.len() == 2
-                && a[0]["direction"] == "east"
-                && a[1]["direction"] == "north"
-                && a.iter()
+        && axes.is_some_and(|axes| {
+            axes.len() == 2
+                && axes
+                    .iter()
                     .all(|axis| axis["unit"].as_str().is_some_and(metre_unit))
+                && mapping.is_some_and(|map| {
+                    let x = map.first().and_then(Value::as_u64);
+                    let y = map.get(1).and_then(Value::as_u64);
+                    // CRS authority axis order can differ from raster x/y order.
+                    match (x, y) {
+                        (Some(1), Some(2)) => {
+                            axes[0]["direction"] == "east" && axes[1]["direction"] == "north"
+                        }
+                        (Some(2), Some(1)) => {
+                            axes[1]["direction"] == "east" && axes[0]["direction"] == "north"
+                        }
+                        _ => false,
+                    }
+                })
         })
-        && info["coordinateSystem"]["dataAxisToSRSAxisMapping"]
-            .as_array()
-            .is_some_and(|a| a.first() == Some(&json!(1)) && a.get(1) == Some(&json!(2)))
         && transform[1] > 0.0
         && transform[5] < 0.0
         && transform[2] == 0.0

@@ -88,6 +88,17 @@ orientation. There is no conversion, resampling or unit/datum inference at impor
 Integer encodings, RGB/multiband imagery, external sidecar georeferencing, archives
 and point clouds are deliberately unsupported by this first importer.
 
+Inspection first uses GDAL's `GTiff` reader. If it cannot open the file, the CLI
+tries the read-only [LIBERTIFF reader](https://gdal.org/en/stable/drivers/raster/libertiff.html)
+available in GDAL 3.11 and newer. This supports native LERC-compressed sources on
+systems whose libtiff lacks that codec. The inspection retains the actual reader;
+raw crop extraction explicitly uses the reader that passed inspection. Both paths
+enforce the same Float32, internal-coordinate and grid requirements, and failure
+of both readers retains both diagnostics. Raw compressed bytes remain unchanged.
+Metre-based previews follow GDAL's raster-to-CRS axis mapping, including projected
+CRSs such as EPSG:2193 whose authority order is northing/easting. Raster x/y must
+still map to east/north on a north-up metric grid; no values or axes are transposed.
+
 The original source description and its referenced metadata must fit within
 1 MiB each. They are captured byte for byte. GDAL records the file's dimensions,
 geotransform, CRS/axis mapping, raster footprint, band type and nodata/mask metadata

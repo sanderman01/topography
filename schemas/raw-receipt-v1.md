@@ -21,6 +21,8 @@ object directory relative to their parent `records/` directory. Move `objects/`
 and `records/` together for portability. No machine-local paths enter the receipt.
 GDAL's run-local `description`/`files` paths are replaced by `asset` in the saved
 inspection; original source and provider metadata are captured without changes.
+The inspection's `driverShortName` records `GTiff` or the read-only `LIBERTIFF`
+fallback. Both represent self-contained GeoTIFFs under the same import gates.
 
 | Receipt field | Meaning |
 | --- | --- |

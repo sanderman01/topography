@@ -12,6 +12,7 @@ import shutil
 import ssl
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import tomllib
@@ -54,6 +55,69 @@ def preview_data(directory):
     return json.loads(encoded)
 
 
+def alternate_tiff_checks(directory, source, asset):
+    if "LIBERTIFF" not in run("gdalinfo", "--formats"):
+        print("Skipping alternate TIFF reader checks: GDAL has no LIBERTIFF driver.")
+        return
+    alternate = directory / "alternate reader"
+    alternate.mkdir()
+    runtime = runtime_file(alternate)
+    wrappers = alternate / "bin"
+    wrappers.mkdir()
+    for program in ["gdalinfo", "gdal_translate"]:
+        real = shutil.which(program)
+        wrapper = wrappers / program
+        wrapper.write_text(f'''#!{sys.executable}
+import os, sys
+args = sys.argv[1:]
+driver = args[args.index("-if") + 1] if "-if" in args else None
+if {program!r} == "gdalinfo" and driver and (driver == "GTiff" or os.environ.get("TOPOGRAPHY_TEST_NO_TIFF_DRIVER")):
+    sys.stderr.write("forced driver failure: " + driver)
+    sys.exit(1)
+if {program!r} == "gdal_translate" and "-srcwin" in args and driver != "LIBERTIFF":
+    sys.stderr.write("raw extraction did not use the inspected reader")
+    sys.exit(1)
+os.execv({real!r}, [{real!r}] + args)
+''')
+        wrapper.chmod(0o755)
+    env = dict(os.environ, PATH=str(wrappers) + os.pathsep + os.environ["PATH"])
+    receipt_path = Path(run(CLI, "import", source, asset, runtime, 1048576, env=env))
+    receipt = json.loads(receipt_path.read_text())
+    info = json.loads((alternate / "raw/objects" / receipt["inspection_sha256"]).read_text())
+    assert info["driverShortName"] == "LIBERTIFF"
+    assert receipt["asset_sha256"] == sha(asset)
+    review = alternate / "review"
+    run(CLI, "review", receipt_path, review, "1,0,2,3", env=env)
+    assert values(review / "elevation.tif") == [101.25, 102.25, -9999, 112.25, 121.25, 122.25]
+    assert values(review / "validity.tif") == [255, 255, 0, 255, 255, 255]
+    assert json.loads((review / "inspection.json").read_text())["geoTransform"] == [700001, 1, 0, 2000004, 0, -1]
+    run(CLI, "import", source, directory / "byte.tif", runtime, 1048576,
+        expected=1, message="Float32", env=env)
+    env["TOPOGRAPHY_TEST_NO_TIFF_DRIVER"] = "1"
+    run(CLI, "import", source, asset, runtime, 1048576, expected=1,
+        message="forced driver failure: LIBERTIFF", env=env)
+    assert len(list((alternate / "raw/records").glob("*.json"))) == 1
+
+
+def northing_first_checks(directory, source, asset):
+    region = directory / "northing-first"
+    region.mkdir()
+    runtime = runtime_file(region)
+    declaration = region / "source.toml"
+    declaration.write_text(source.read_text().replace("EPSG:32619", "EPSG:2193"))
+    shutil.copyfile(directory / "metadata.json", region / "metadata.json")
+    raster = region / "ramp.tif"
+    run("gdal_translate", "-q", "-a_srs", "EPSG:2193", asset, raster)
+    receipt = Path(run(CLI, "import", declaration, raster, runtime, 1048576))
+    review = region / "review"
+    run(CLI, "review", receipt, review, "1,0,2,3")
+    info = json.loads((review / "inspection.json").read_text())
+    assert info["coordinateSystem"]["dataAxisToSRSAxisMapping"] == [2, 1]
+    assert preview_data(review)["metrics"]["metric_north_up_preview"] is True
+    assert values(review / "elevation.tif") == [101.25, 102.25, -9999, 112.25, 121.25, 122.25]
+    assert info["geoTransform"] == [700001, 1, 0, 2000004, 0, -1]
+
+
 def local_checks(directory, runtime, source, asset):
     original_sha = sha(asset)
     receipt_path = Path(run(CLI, "import", source, asset, runtime, 1048576))
@@ -63,6 +127,7 @@ def local_checks(directory, runtime, source, asset):
     assert receipt["training_permission_recorded"] is False
     assert receipt["synthetic"] is True
     objects = directory / "raw/objects"
+    assert json.loads((objects / receipt["inspection_sha256"]).read_text())["driverShortName"] == "GTiff"
     assert (objects / receipt["source_sha256"]).read_bytes() == source.read_bytes()
     assert (objects / receipt["original_metadata_sha256"]).read_bytes() == (directory / "metadata.json").read_bytes()
     assert Path(run(CLI, "import", source, asset, runtime, 1048576)) == receipt_path
@@ -305,6 +370,8 @@ def main():
         asset = directory / "ramp.tif"
         run("gdal_translate", "-q", "-of", "GTiff", "-ot", "Float32", "-a_srs", "EPSG:32619", FIXTURES / "ramp.asc", asset)
         local_checks(directory, runtime, source, asset)
+        alternate_tiff_checks(directory, source, asset)
+        northing_first_checks(directory, source, asset)
         if not args.local_only:
             https_checks(directory, runtime, source, asset)
     print("Acquisition workflows passed: local import, native crop/mask, integrity and recovery"
