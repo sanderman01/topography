@@ -2,9 +2,10 @@
 
 Use this after [native review](dem-acquisition.md) and alongside
 [crop curation](source-curation.md). The CLI measures classifications over an
-entire native review footprint and checks the current preparation gates. It does
+entire native review footprint and checks the current preparation gates. Assessment does
 not resample, repair, mosaic, publish prepared data or release training data.
-Eligibility is a snapshot; future preparation must repeat the check when it runs.
+Eligibility is a snapshot; [aligned preparation](aligned-preparation.md) repeats
+the check when it runs and before registering its output.
 
 ## Pin and classify the crop
 
@@ -122,6 +123,9 @@ Raster inspection and decoding follow the GDAL
 [ENVI driver](https://gdal.org/en/stable/drivers/raster/envi.html) interfaces.
 
 See the [v1 contract](../../schemas/regional-quality-v1.md) and
-[verification commands](../../scripts/README.md). Aligned regional mosaics,
-repaired revisions, authored water surfaces and preparation publication remain
-the next processing work.
+[verification commands](../../scripts/README.md). The
+[aligned preparation workflow](aligned-preparation.md) now publishes bounded
+same-survey native regions after repeating these checks. The
+[whole-crop ground-support probe](whole-crop-ground-support.md) provides a bounded
+next measurement for Río Abajo, pending workload readiness. Repaired revisions,
+cross-survey alignment and authored water surfaces remain future processing work.

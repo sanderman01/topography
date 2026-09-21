@@ -12,7 +12,8 @@ evidence, the VRAM ceiling, paths with spaces and runtime paths from another
 working directory. Expected failures check exit codes and diagnostics.
 
 When Python 3.11+ and GDAL are installed, the main check also runs local synthetic
-DEM import/review, SQLite curation and regional quality checks. Otherwise it explicitly reports that stage as skipped.
+DEM import/review, SQLite curation, regional quality and native preparation checks.
+Otherwise it explicitly reports that stage as skipped.
 It does not download real terrain or run model evaluation.
 
 For the complete acquisition workflow check:
@@ -67,10 +68,20 @@ declares a non-synthetic source to reach that branch; its terrain, permission an
 human declarations remain artificial. No actual prepared data is published.
 Run without Python's `-O` assertion bypass.
 
+`python3 scripts/check_preparation.py target/debug/topography` builds tiny adjacent
+native regions from artificial eligible reviews, including 0.51 m spacing. It
+checks exact Float32 land bits, signed zero, deterministic masked fill, distinct
+masks, coordinates, holes/overlaps, immutable retries, catalog migration, orphan
+registration, corrupt-file refusal and later source rejection. All declarations
+and prepared products stay in temporary fixture directories. See the
+[preparation workflow](../docs/workflows/aligned-preparation.md).
+
 With PDAL installed, the main check also runs
 `python3 scripts/check_ground_support.py --self-check`: a tiny local point fixture
 checks classified-ground selection, withheld/synthetic flag exclusion and every
-count bin. It includes overlap returns. There is no network or model work.
+count bin. It also checks rectangular footprints and partial aggregation bins,
+streamed point/byte limits, timeout termination, retained-pipeline reuse and a
+public CLI dry plan. It includes overlap returns. There is no network or model work.
 
 The optional `check_ground_support.py` developer probe reads one 64 × 64 m sample
 at the centre of a native 0.5 m review crop, with a 2 m buffer, one COPC reader
@@ -78,6 +89,10 @@ worker and two active chunks. It requires a matching source URL, strong ETag,
 captured PDAL COPC-reader metadata and the exact review CRS. See
 `python3 scripts/check_ground_support.py --help` and the
 [ground-support report](../docs/reports/rio-abajo-ground-support.md) for the trial.
+The [whole-crop workflow](../docs/workflows/whole-crop-ground-support.md) documents
+`--full-review`, its local-only `--plan` command and the concrete readiness bounds
+for east-ridges. That mode accepts rectangular native reviews up to 2,048 cells
+per side; no real whole-crop measurement has run yet.
 Full-detail range reads use `If-Match`; selected chunks may extend outside the
 requested area. The probe does not implement acquisition's chunk cache or a hard
 network-byte cap. No full source-cloud SHA-256 is claimed.
@@ -87,9 +102,13 @@ and a final `report.json` allow numeric inspection. GDAL/PDAL perform coordinate
 transforms and count rasterization; each bin is independently checked against the
 CSV. Counts include overlapping returns and are not independent-pulse density,
 terrain validity or effective feature resolution. No elevation/Z comparison occurs.
-Each subprocess has a 15-minute timeout; samples exceeding one million retained
-points or a 128 MiB CSV fail verification. These are result limits, not hard peak
-memory limits. Check workload readiness before a substantial point-cloud run.
+Default samples retain a 15-minute subprocess timeout and final verification caps
+of one million points and 128 MiB CSV. Full-review runs cap total processing at
+30 minutes, 20 million points and 2 GiB CSV, with streamed limits during production.
+Full-review Linux limits
+also bound each child to 2 GiB virtual address space and Python to 512 MiB;
+these are not measured peak RAM estimates. Check workload readiness before a
+substantial point-cloud run, using the detailed limits in the whole-crop workflow.
 Partial outputs remain identifiable; a missing final report means incomplete.
 `--reuse-sample` rechecks retained outputs only when both saved pipelines match;
 it records unknown original runtime/RAM and never replaces a report. Run without
