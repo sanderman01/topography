@@ -317,9 +317,13 @@ scope; no production training is admitted. Continue the world pilot with curated
 real patches and blending under the fallback above. Prepared outputs retain their
 separate unreviewed state. Cross-survey alignment, repairs, output acceptance,
 production model-training releases and per-cell label editing remain pending.
-A [first coarse world proposal](../reports/world-layout-proposal-v1.md) is ready
-for whole-world review at 16 m. It is an authored layout, not the reusable world
-composer or completed fine-resolution pilot.
+The owner rejected the [first coarse world proposal](../reports/world-layout-proposal-v1.md)
+at 16 m for repetition, visible joins and an uninteresting layout. The current
+[source coverage](../reports/pilot-source-coverage-v1.md) supports initial technical
+checks, not a representative world-quality pilot. Expand independent geographic
+coverage and connected context under §§6–7 before another world-quality review.
+The later authored experiment remains internal; the reusable world composer and
+fine-resolution pilot are incomplete.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

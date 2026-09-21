@@ -2,8 +2,9 @@
 
 Updated 2026-09-21. Twelve real terrain regions are qualified, prepared and released
 for initial numeric evaluation. Scalar Float32 loading passes. Both bounded
-reconstruction candidates were rejected. A first coarse world layout built from
-real patches is ready for whole-world review; one source tile remains excluded.
+reconstruction candidates were rejected. The owner rejected the first coarse
+world layout. Expand source coverage before another world-quality review;
+one source tile remains excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
@@ -50,24 +51,38 @@ Preserve both model runs; do not launch further tuning or request another source
 The original numeric release remains evaluation-only, and production training
 is not admitted.
 
-**Awaiting the next whole-world yes/no:**
-`data/worlds/pilot-layout-proposal-v2/review.html` is the first 4,096 m layout,
-with hills, a winding gorge and a southern floodplain. The
-[proposal report](reports/world-layout-proposal-v1.md) pins its identity and limits.
-It is a small authored 16 m layout, not a production world revision or a completed
-4 m/1 m pilot. Ask only whether the overall landscape works; no individual
-feature selection or technical review is needed. Record the response against
-this exact manifest/page before refining. Source acceptance is unchanged.
+**Next: expand the source library before another world-quality review.**
+The owner rejected `data/worlds/pilot-layout-proposal-v2/review.html`: repetition,
+dull rectangular areas, visible patch joins and a boring river route. Exact
+feedback is pinned to the original manifest/page in
+`data/review/world-layout-decisions-v1/rejection.json`. Preserve the rejected
+proposal and existing source acceptances. The
+[proposal report](reports/world-layout-proposal-v1.md) records the outcome.
 
-If accepted, retain the coarse proposal and implement the reusable Rust
-composition/edit consumer for real patches and blending, then refine according
-to the master plan. Keep water separate and demonstrate protected/local edits.
-The authored recipe is retained as input design, not production domain logic in
-Python. Obtain readiness before genuinely substantial raster work; the completed
-scalar trial's readiness is not authorization for unrelated heavy jobs.
+The owner then questioned whether twelve patches could support a representative
+pilot or final world. They suffice for initial loading/precision checks, not
+world-quality or broad model-generalization conclusions. The
+[coverage report](reports/pilot-source-coverage-v1.md) distinguishes twelve
+512 m crops from six geographic areas, all in one Puerto Rico survey collection,
+from the much broader library still needed. The rejected layout used only six
+patches across 121 placements. More sources alone will not fix poor composition.
+
+Resume public-source discovery and acquisition with larger connected landscapes,
+several independent areas per pilot family and genuine transitions, then broaden
+to the remaining candidate families. Preserve geographic separation before
+overlapping crops; the numeric pilot's existing split is only for 512 m context.
+Use batch whole-tile yes/no reviews, with technical qualification delegated.
+Measure distinct source areas and coverage rather than target a crop count alone.
+
+A subsequent small authored experiment is retained in
+`data/worlds/pilot-layout-proposal-v3/` as **internal only**, with no human
+acceptance. Most terrain is authored and six sources supply localized residuals;
+it does not solve source diversity and is not the next owner review. No reusable
+world composer or 4 m/1 m pilot is complete. Obtain readiness before genuinely
+substantial new workloads; prior scalar-trial readiness has no broader scope.
 
 Continue in the existing checkout on `feat/east-ridges-qualification`; no worktree.
-This continuation builds on `a88cdfd`; `817877c` adds the scalar fitting workflow.
+This checkpoint builds on `942dcf2`; `817877c` adds the scalar fitting workflow.
 Merging remains with the owner.
 
 ## Implemented and verified
@@ -84,7 +99,7 @@ Merging remains with the owner.
 | Numeric evaluation | Scoped immutable release, six geographic groups, current-parent verification, scalar Rust/Python job and full twelve-region Float32/Float16 measurements. |
 | Image-codec evaluation | Pinned public VAE, deterministic CPU reconstruction, retained scalar/channel outputs, physical metrics and bounded supervision. First representation technically rejected. |
 | Scalar fitting | Separate fitting-only child release, fixed CPU trial, initial/final weights and native outputs, checked scope and completion. First candidate technically rejected. |
-| Coarse world proposal | One-off 4,096 m layout at 16 m from real patches, connected authored water and exact local-edit/lock demonstration; awaiting whole-world review. |
+| Coarse world proposal | Owner rejected the first reviewed 4,096 m layout at 16 m. Later authored experiment is internal only; source expansion precedes another world-quality review. |
 | Future work | Production model training, reusable world composition/editing, label editing, refinement and terrain export remain unimplemented. |
 
 ## Current Río Abajo state
@@ -319,6 +334,18 @@ Rust 1.85 itself was not tested.
   review HTML is
   `d35253aaf69f84493b5316b363f48c0c70f2e4dc22593e4e280d097b99da858d`.
   The first draft is preserved separately; neither has human acceptance.
+
+## Layout rejection and source-coverage checkpoint
+
+- The exact v2 rejection matches the preserved manifest and review-page hashes.
+  Its recipe contains six sources and 121 placements; no source vote changed.
+- Prepared manifests confirm twelve 512 m-square patches, six geographic groups,
+  three broad classes and one survey collection, totaling 3.145728 km².
+- The internal v3 manifest and all 64 retained artifact hashes match. It has no
+  human acceptance and is not submitted for another world-quality review.
+- All 55 local Markdown links in the changed documents and `git diff --check`
+  passed. No production code changed; the full repository suite was not rerun
+  for this documentation and local-artifact checkpoint.
 
 **Standing constraints:** public downloads only; never send or draft email, or
 ask the owner to contact institutions. Whole-tile yes/no review in batches.

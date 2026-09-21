@@ -1,11 +1,14 @@
 # First coarse world layout
 
-The next human review is a whole-world **yes or no** on the overall arrangement.
-Open `data/worlds/pilot-layout-proposal-v2/review.html`: hill country surrounds a
-winding gorge, which opens into a southern floodplain. The page includes an
-overhead view, profiles and four preset viewpoints. This follows the master
-plan's coarse-layout review before refinement; no individual feature selections
-or technical arithmetic decisions are requested.
+**Rejected by the owner on 2026-09-21.** The whole-world response identified
+repetition, dull rectangular areas, visible stitched patches and a boring river
+route. The exact response is retained in
+`data/review/world-layout-decisions-v1/rejection.json`, pinned to the manifest and
+page below. This rejects the composed layout; accepted source tiles are unchanged.
+
+The preserved page is `data/worlds/pilot-layout-proposal-v2/review.html`: hill
+country surrounds a winding gorge and southern floodplain. It includes an
+overhead view, profiles and four preset viewpoints. No repeat vote is needed.
 
 This is a small authored proposal, **not an implemented production world
 composer or the completed world milestone**. It covers 4,096 × 4,096 m at 16 m
@@ -58,7 +61,26 @@ fixture; a full browser automation run was not performed.
 
 Fine terrain detail, the reusable Rust world-composition/edit pipeline,
 4 m/1 m refinement, measured joins, vehicle fit and export remain future work.
-Source repetition is intentional and visible in this small library. The current
-question concerns the overall hill/gorge/floodplain arrangement. If accepted,
-retain these exact proposal bytes and continue toward the reusable composition
-and refinement steps; do not count this as approval of unbuilt fine terrain.
+The proposal used only six source patches across 121 placements. Reusing this
+small collection does not establish acceptable world variety, and source
+expansion alone will not fix layout or blending choices.
+
+## Follow-up and next step
+
+The owner questioned the adequacy of the twelve-patch library. The
+[coverage report](pilot-source-coverage-v1.md) records why it supports initial
+technical checks but needs expansion before a representative world-quality pilot.
+Source expansion is the next priority under master-plan §§6–7.
+
+A later experiment in `data/worlds/pilot-layout-proposal-v3/` replaces the patch
+grid with authored ridges, basins and tributaries, using six source patches once
+each as localized residuals. Most of its terrain is authored. It remains
+**internal only**, with no human acceptance or claim to solve source diversity.
+Its manifest is
+`41cd22707f36aa8b267d3003b341e7c8909cc7ab5cb415e8a4f9706d925fb4a1`.
+
+Small-array checks verified source identities/transforms, separate water and
+ground, connected downstream water paths and bit-exact preservation outside a
+local edit and inside locks. Two hillshade images were inspected; no browser
+automation was run for v3. These checks do not establish visual quality. The
+recipe remains an authoring experiment, not production composition tooling.

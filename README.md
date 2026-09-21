@@ -117,7 +117,9 @@ errors and rejected that representation before LoRA training. The subsequent
 terrain detail. The next world pilot uses the plan's curated-patch-and-blending
 fallback; no further model tuning is scheduled.
 
-A [first coarse world proposal](docs/reports/world-layout-proposal-v1.md) is ready
-for whole-world review. It is an authored layout at 16 m, with a connected river
-and retained patch transforms; reusable world composition, finer terrain and
-export remain planned.
+The owner rejected the [first coarse world proposal](docs/reports/world-layout-proposal-v1.md)
+for repetition, visible joins and an uninteresting layout. The
+[source library](docs/reports/pilot-source-coverage-v1.md) needs broader geography
+and larger connected landscapes before another world-quality review. Twelve
+small crops support initial technical checks; reusable world composition, finer
+terrain and export remain planned.
