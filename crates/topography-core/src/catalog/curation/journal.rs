@@ -11,6 +11,9 @@ pub(super) struct Store {
 }
 
 impl Store {
+    pub fn object_path(&self, sha: &str) -> PathBuf {
+        self.root.join("objects").join(sha)
+    }
     pub fn locate(runtime: &Path) -> Result<Self> {
         let config = crate::config::inspect_runtime(runtime)?;
         let db = config
@@ -164,6 +167,28 @@ impl Store {
         raw: &Path,
         review: &Path,
     ) -> Result<String> {
+        self.append_checked(record, objects, raw, review, None)
+    }
+
+    pub fn append_snapshot(
+        &self,
+        record: &Record,
+        objects: &BTreeMap<String, Vec<u8>>,
+        raw: &Path,
+        review: &Path,
+        snapshot: &bundle::Bundle,
+    ) -> Result<String> {
+        self.append_checked(record, objects, raw, review, Some(snapshot))
+    }
+
+    fn append_checked(
+        &self,
+        record: &Record,
+        objects: &BTreeMap<String, Vec<u8>>,
+        raw: &Path,
+        review: &Path,
+        snapshot: Option<&bundle::Bundle>,
+    ) -> Result<String> {
         let bytes = json(record)?;
         let id = digest(&bytes);
         let mut db = self.open(true)?;
@@ -172,7 +197,7 @@ impl Store {
             .optional()?;
         if let Some(existing) = existing {
             ensure(existing == bytes, "indexed record differs")?;
-            self.history(&record.target.review_sha256)?;
+            self.history_checked(&record.target.review_sha256, snapshot)?;
             return Ok(id);
         }
         let head = Self::head_in(&db, &record.target.review_sha256)?;
@@ -181,7 +206,7 @@ impl Store {
             "stale decision: create a fresh draft from the current head",
         )?;
         if head.is_some() {
-            self.history(&record.target.review_sha256)?;
+            self.history_checked(&record.target.review_sha256, snapshot)?;
         }
         for (sha, content) in objects {
             write_new(&self.root.join("objects").join(sha), content)?;
@@ -227,6 +252,7 @@ impl Store {
         db: &Connection,
         id: &str,
         review: &str,
+        snapshot: Option<&bundle::Bundle>,
     ) -> Result<(Record, Vec<u8>)> {
         ensure(valid_digest(id), "invalid indexed record digest")?;
         let (body, raw_path, review_path, previous, subject): (
@@ -268,10 +294,17 @@ impl Store {
                 && digest(&read_small(Path::new(&review_path))?) == record.target.review_sha256,
             "local target digest mismatch",
         )?;
-        let bundle = bundle::verify(Path::new(&raw_path), Path::new(&review_path))?;
+        let verified;
+        let bundle = if let Some(snapshot) = snapshot {
+            snapshot
+        } else {
+            verified = bundle::verify(Path::new(&raw_path), Path::new(&review_path))?;
+            &verified
+        };
         ensure(
             record.window_cells == bundle.manifest.window_cells
-                && record.asset_sha256 == bundle.manifest.asset_sha256,
+                && record.asset_sha256 == bundle.manifest.asset_sha256
+                && record.target.raw_receipt_sha256 == bundle.manifest.raw_receipt_sha256,
             "curation crop identity mismatch",
         )?;
         let temp = io_context("stage captured legend", tempfile::tempdir())?;
@@ -301,6 +334,22 @@ impl Store {
     }
 
     pub fn history(&self, review: &str) -> Result<Vec<(String, Vec<u8>)>> {
+        self.history_checked(review, None)
+    }
+
+    pub fn history_snapshot(
+        &self,
+        review: &str,
+        snapshot: &bundle::Bundle,
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        self.history_checked(review, Some(snapshot))
+    }
+
+    fn history_checked(
+        &self,
+        review: &str,
+        snapshot: Option<&bundle::Bundle>,
+    ) -> Result<Vec<(String, Vec<u8>)>> {
         ensure(valid_digest(review), "invalid review digest")?;
         let mut db = self.open(false)?;
         let tx = db.transaction()?;
@@ -312,7 +361,7 @@ impl Store {
                 records.len() < MAX_RECORDS && visited.insert(id.clone()),
                 "history cycle or record limit exceeded",
             )?;
-            let (record, body) = self.verified_record(&tx, &id, review)?;
+            let (record, body) = self.verified_record(&tx, &id, review, snapshot)?;
             next = record.previous_record_sha256;
             records.push((id, body));
         }

@@ -620,3 +620,153 @@ pub(crate) fn prepared_status(
 pub fn export(runtime: &Path, review_sha256: &str, output: &Path) -> Result<PathBuf> {
     journal::Store::locate(runtime)?.export(review_sha256, output)
 }
+
+/// Current visual selection; journal/evidence integrity is checked against a verified session crop.
+pub(crate) fn selection(
+    runtime: &Path,
+    review: &str,
+    snapshot: &bundle::Bundle,
+) -> Result<serde_json::Value> {
+    let store = journal::Store::locate(runtime)?;
+    if !store.db.exists() {
+        return Ok(serde_json::json!({"head":null,"decision":"pending"}));
+    }
+    let records = store.history_snapshot(review, snapshot)?;
+    if let Some((id, bytes)) = records.last() {
+        let value: Record = serde_json::from_slice(bytes)?;
+        Ok(
+            serde_json::json!({"head":id,"decision":match value.claims.decision { Decision::Accept=>"accept",Decision::Reject=>"reject",Decision::Annotate=>"pending" }}),
+        )
+    } else {
+        Ok(serde_json::json!({"head":null,"decision":"pending"}))
+    }
+}
+
+/// Save a visual choice against the verified preview snapshot, not a new source assessment.
+pub(crate) fn select(
+    runtime: &Path,
+    input: &crate::review::gallery::Tile,
+    legend: &Path,
+    expected: Option<String>,
+    decision: &str,
+    gallery: &str,
+    snapshot: &bundle::Bundle,
+) -> Result<serde_json::Value> {
+    ensure(
+        matches!(decision, "accept" | "reject"),
+        "gallery decision must be accept or reject",
+    )?;
+    let store = journal::Store::locate(runtime)?;
+    let history = if store.db.exists() {
+        store.history_snapshot(&input.review_sha256, snapshot)?
+    } else {
+        vec![]
+    };
+    ensure(
+        history.last().map(|(id, _)| id.as_str()) == expected.as_deref(),
+        "stale decision; reload current gallery state",
+    )?;
+    let (mut claims, evidence) = if let Some((_, bytes)) = history.last() {
+        let prior: Record = serde_json::from_slice(bytes)?;
+        (prior.claims, prior.evidence)
+    } else {
+        (
+            Claims {
+                actor: Actor {
+                    kind: ActorKind::Unassigned,
+                    name: String::new(),
+                },
+                decision: Decision::Annotate,
+                reason: String::new(),
+                primary_class_id: Some(input.primary_class_id),
+                findings: FINDINGS
+                    .iter()
+                    .map(|name| {
+                        (
+                            (*name).into(),
+                            Finding {
+                                state: FindingState::Unknown,
+                                note: String::new(),
+                                evidence_ids: vec![],
+                            },
+                        )
+                    })
+                    .collect(),
+                coverage: None,
+                license: serde_json::from_value(serde_json::to_value(&snapshot.source.license)?)?,
+                permission_evidence_ids: vec![],
+            },
+            vec![],
+        )
+    };
+    let desired = if decision == "accept" {
+        Decision::Accept
+    } else {
+        Decision::Reject
+    };
+    if claims.decision == desired {
+        return Ok(serde_json::json!({"head":expected,"decision":decision}));
+    }
+    let mut objects = BTreeMap::new();
+    let raw_bytes = read_small(&input.raw)?;
+    let review_bytes = read_small(&input.review)?;
+    let legend_bytes = read_small(legend)?;
+    ensure(
+        digest(&raw_bytes) == input.raw_sha256 && digest(&review_bytes) == input.review_sha256,
+        "gallery source identity changed",
+    )?;
+    let target = Target {
+        raw_receipt_sha256: input.raw_sha256.clone(),
+        review_sha256: input.review_sha256.clone(),
+        legend_sha256: digest(&legend_bytes),
+    };
+    for (sha, bytes) in [
+        (&target.raw_receipt_sha256, raw_bytes),
+        (&target.review_sha256, review_bytes),
+        (&target.legend_sha256, legend_bytes),
+    ] {
+        objects.insert(sha.clone(), bytes);
+    }
+    for item in &evidence {
+        let bytes = read_small(&store.object_path(&item.sha256))?;
+        ensure(digest(&bytes) == item.sha256, "evidence digest mismatch")?;
+        objects.insert(item.sha256.clone(), bytes);
+    }
+    claims.actor = Actor {
+        kind: ActorKind::Human,
+        name: "Project owner via local terrain gallery".into(),
+    };
+    claims.decision = desired;
+    claims.reason = format!(
+        "Whole-tile {} clicked in gallery {gallery}; review {}. Verified session snapshot; technical evidence retained, no new technical certification.",
+        if decision == "accept" { "Yes" } else { "No" },
+        input.review_sha256
+    );
+    if claims.primary_class_id.is_none() {
+        claims.primary_class_id = Some(input.primary_class_id);
+    }
+    let legend = inspect_legend(legend)?;
+    let [_, _, w, h] = snapshot.manifest.window_cells;
+    validate_claims(
+        &claims,
+        &evidence,
+        &legend.classes,
+        u64::from(w) * u64::from(h),
+    )?;
+    let record = Record {
+        schema_version: 1,
+        kind: "crop_curation".into(),
+        target,
+        previous_record_sha256: expected,
+        asset_sha256: snapshot.manifest.asset_sha256.clone(),
+        window_cells: snapshot.manifest.window_cells,
+        legend_version: legend.legend_version,
+        preparation_blockers: blockers(&claims, snapshot),
+        claims,
+        evidence,
+        admission: "not admitted".into(),
+        topography_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    let id = store.append_snapshot(&record, &objects, &input.raw, &input.review, snapshot)?;
+    Ok(serde_json::json!({"head":id,"decision":decision}))
+}

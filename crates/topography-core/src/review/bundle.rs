@@ -45,6 +45,15 @@ pub(crate) struct Bundle {
 
 pub(crate) fn verify(raw_path: &Path, review_path: &Path) -> Result<Bundle> {
     let raw = acquisition::verify(raw_path)?;
+    verify_with_raw(raw_path, review_path, &raw)
+}
+
+/// Reuse a raw receipt verified in this operation; still verify the entire crop.
+pub(crate) fn verify_with_raw(
+    raw_path: &Path,
+    review_path: &Path,
+    raw: &acquisition::RawReceipt,
+) -> Result<Bundle> {
     let manifest: Manifest = read_json(review_path)?;
     ensure(
         manifest.schema_version == 1
@@ -66,7 +75,7 @@ pub(crate) fn verify(raw_path: &Path, review_path: &Path) -> Result<Bundle> {
         })?
         .join("objects");
     let source: SourceRecord = toml::from_str(&String::from_utf8_lossy(&read_small(
-        &objects.join(raw.source_sha256),
+        &objects.join(&raw.source_sha256),
     )?))
     .map_err(|e| acquisition::AcquisitionError::Invalid(format!("invalid retained source: {e}")))?;
     validate_source(&source)?;
@@ -103,7 +112,7 @@ pub(crate) fn verify(raw_path: &Path, review_path: &Path) -> Result<Bundle> {
         w > 0 && h > 0 && w <= 2048 && h <= 2048 && inspection["size"] == serde_json::json!([w, h]),
         "review window/dimensions mismatch",
     )?;
-    let original: Value = read_json(&objects.join(raw.inspection_sha256))?;
+    let original: Value = read_json(&objects.join(&raw.inspection_sha256))?;
     ensure(
         u64::from(x) + u64::from(w) <= original["size"][0].as_u64().unwrap_or(0)
             && u64::from(y) + u64::from(h) <= original["size"][1].as_u64().unwrap_or(0),

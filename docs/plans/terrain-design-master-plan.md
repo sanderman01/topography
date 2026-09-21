@@ -116,6 +116,15 @@ Original data remains immutable. “Discard” means exclusion from the approved
 
 ## 4. Clean and curate before slicing
 
+Source expansion must use [batch acquisition and a review gallery](batch-source-workflow-v1.md).
+Maintain versioned target lists and let the tool manage bounded downloads, retries,
+verified resume, crop previews and status summaries. Do not orchestrate each file
+with agent-issued curl calls. Keep download and raster-processing stages separate
+so workload readiness remains explicit. The gallery provides one place to browse
+tiles, inspect terrain and save whole-tile Yes/No decisions directly to the catalog;
+show prior votes and preserve them for unchanged artifacts. Avoid separate review
+links and conversational vote transcription as the normal workflow.
+
 Process each real-world survey region in its appropriate projected metric CRS. Resolve horizontal units, vertical units and datum, axis orientation, nodata, and pixel alignment explicitly. Use an available verified vertical transformation when joining surveys that need one; otherwise isolate the incompatible surveys and flag the uncertainty. Do not silently treat ellipsoidal and sea-level heights as interchangeable.
 
 Create the aligned regional mosaic before extracting training tiles. Prefer the best supported survey in an overlap according to declared criteria. Estimate residual offsets on stable ground, examine difference rasters, and reject incompatible joins. Averaging displaced ridges produces false terrain; broad smoothing is not a substitute for correcting alignment.

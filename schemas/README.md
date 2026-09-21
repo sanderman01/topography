@@ -10,6 +10,7 @@ checks, instead of a second schema engine. Their first consumer is
 - [Raw receipt/review v1](raw-receipt-v1.md): byte integrity and native review provenance.
 - [Native crop inspection v1](native-review-v1.md): sample counts and browser previews.
 - [Crop curation v1](curation-v1.md): evidence, explicit decisions, labels and portable history.
+- [Batch acquisition and gallery v1](batch-gallery-v1.md): target lists, verified resume and direct whole-tile decisions.
 - [Regional quality v1](regional-quality-v1.md): whole-crop mask measurements and current preparation eligibility.
 - [Prepared native region v1](prepared-region-v1.md): aligned rasters, pinned decisions, immutable publication and current status.
 - [Numeric evaluation v1](numeric-evaluation-v1.md): scoped releases, geographic separation and the Rust/Python scalar job boundary.

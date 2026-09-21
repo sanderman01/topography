@@ -3,11 +3,43 @@
 Updated 2026-09-21. Twelve real terrain regions are qualified, prepared and released
 for initial numeric evaluation. Scalar Float32 loading passes. Both bounded
 reconstruction candidates were rejected. The owner rejected the first coarse
-world layout. Expand source coverage before another world-quality review;
-one source tile remains excluded.
+world layout. Batch acquisition and a persistent terrain gallery now support
+source expansion before another world-quality review; one source tile remains
+excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
+
+**Use the tools for source expansion.** The owner requested target lists instead
+of repeated agent-driven downloads and one gallery for rapid review. The
+[batch/gallery design](design/batch-source-workflow-v1.md),
+[implementation plan](plans/batch-source-workflow-v1.md) and
+[workflow](workflows/batch-source-review.md) are implemented. Use `batch download`
+and `batch review`, then `gallery build` and `gallery serve`. Do not return to
+per-file curl orchestration or conversational transcription of gallery votes.
+
+The existing library is at `data/review/library-gallery-v1/gallery.json`, served
+on `http://127.0.0.1:8765/` while the local process runs. It contains thirteen
+tiles with twelve accepted and one rejected; no new vote is required for them.
+Restart with:
+
+```sh
+target/debug/topography gallery serve configs/runtime.example.toml data/review/library-gallery-v1/gallery.json 8765
+```
+
+The first new queue is `data/staging/source-expansion-v1/targets.json`, with run
+directory `data/review/source-expansion-batch-v1/`. It selects one public USGS
+Mount St. Helens DEM and three proposed 1,536-cell native crops. The TNM listing
+estimated 370,233,340 bytes; the actual strong-ETag HEAD identity is 315,921,778
+bytes. Download is resumable under a 400,000,000-byte source cap. Inspect its
+completion/status before running the separate crop command. Permission/QA
+qualification and human selection remain pending; these are not prepared data.
+
+After successful download and review, combine its generated gallery input with
+the existing library input, publish a new gallery snapshot and serve it on the
+same local port. Preserve the existing thirteen catalog heads and show only the
+new pending tiles by default. Continue independent geography/source coverage;
+three crops of this one new landscape do not establish broad diversity.
 
 The owner delegated interpolation-quality decisions to the implementer and asked
 for simplicity. We adopted [supplier_qa_pilot_v1](design/source-quality-pilot-v1.md):
@@ -90,7 +122,8 @@ Merging remains with the owner.
 | Area | Current behavior |
 | --- | --- |
 | Contracts | Rust CLI validates world/runtime presets, nine candidate class IDs and source metadata. Vehicle settings and model tolerances remain unset. |
-| Acquisition | Bounded HTTPS range downloads, strong ETags, resumable chunks, immutable raw assets, original metadata and local import. Live TNM probes previously returned 504; direct NOAA/USGS assets worked. |
+| Acquisition | Bounded HTTPS range downloads, strong ETags, resumable chunks, immutable raw assets, original metadata and local import. List-driven queues pin inputs, resume verified successes and report independent failures. |
+| Review gallery | One loopback browser gallery with thumbnails, native terrain views, filters, Y/N and arrow keys, direct journal votes and stale-write protection. Existing votes/evidence survive. |
 | Native review | Float32/native-mask crops with metric browser previews, multiple hillshades, profiles and low-altitude views. Display products remain separate from elevation. |
 | Curation | Immutable SQLite history, captured evidence, explicit whole-tile decisions, stale-write protection, integrity checks and portable exports. Technical judgments belong to the implementer. |
 | Quality | `native_quality_v2` checks exact grids, categorical masks, at least 99.5% usable terrestrial coverage and optional annotated-feature support. `supplier_qa_pilot_v1` supplies the declared evidence basis; no validator threshold changed. |
@@ -346,6 +379,27 @@ Rust 1.85 itself was not tested.
 - All 55 local Markdown links in the changed documents and `git diff --check`
   passed. No production code changed; the full repository suite was not rerun
   for this documentation and local-artifact checkpoint.
+
+## Batch and gallery verification
+
+- Full `bash scripts/check.sh` passed after core fixes, including the new local
+  batch/gallery fixtures. The separate HTTPS workflow checks queued metadata and
+  asset downloads, independent failure and verified resume without retransfers.
+- Actual Chromium checks cover buttons, filters, reload, escaped metadata,
+  preview-ready voting and keyboard shortcuts inside the sandboxed preview.
+  The real thirteen-tile gallery was inspected without voting. All thirteen
+  catalog heads match the captured pre-gallery state.
+- One independent review found mutable metadata on failed-source resume and
+  repeated raw-raster hashing during votes. Both were reproduced and fixed.
+  Metadata pins precede acquisition attempts; verified startup snapshots support
+  quick visual decisions while journal integrity, evidence and head checks remain.
+  Raw numeric verification still requires intact source bytes.
+- A thin-thumbnail case was also fixed: previews fit within 192 × 192 pixels
+  without upscaling. A real-page browser check caught clipped thumbnail captions;
+  fixed grid rows now retain names and decision labels. Final browser checks,
+  build, formatting and Clippy passed after the presentation adjustment.
+- No new dependencies, model job, GPU work, source decision or training admission.
+  No worktree, merge, push or email. Local rasters and TASKS.md stay outside Git.
 
 **Standing constraints:** public downloads only; never send or draft email, or
 ask the owner to contact institutions. Whole-tile yes/no review in batches.

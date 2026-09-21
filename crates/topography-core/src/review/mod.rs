@@ -1,6 +1,8 @@
 //! Terrain quality metrics, preview assets, and human review checkpoints.
 
 pub(crate) mod bundle;
+pub mod gallery;
+pub mod gallery_server;
 
 use crate::{
     acquisition::{

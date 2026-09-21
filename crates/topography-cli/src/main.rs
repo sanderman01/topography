@@ -1,7 +1,7 @@
 use std::{env, path::Path, process::ExitCode};
 
 use topography_core::{
-    acquisition, catalog, config, contracts::ContractError, datasets, preparation,
+    acquisition, catalog, config, contracts::ContractError, datasets, preparation, review,
 };
 
 const HELP: &str = "Topography — terrain workshop
@@ -10,6 +10,10 @@ Usage: topography [--help | --version]
        topography validate <world|runtime|legend|source> <path>
        topography discover usgs <west,south,east,north> <max-items> <output-dir> [saved-response.json]
        topography acquire <source.toml> <runtime.toml> <max-bytes>
+       topography batch validate <queue.json>
+       topography batch <download|review> <queue.json> <runtime.toml> <run-dir>
+       topography gallery build <tiles.json> <legend.toml> <new-output-dir>
+       topography gallery serve <runtime.toml> <gallery.json> <port>
        topography import <source.toml> <asset.tif> <runtime.toml> <max-bytes>
        topography verify <raw-receipt.json>
        topography review <raw-receipt.json> <output-dir> <x,y,width,height>
@@ -85,6 +89,44 @@ fn main() -> ExitCode {
                 acquisition::acquire(Path::new(source), Path::new(runtime), limit)
                     .map(|p| p.display().to_string()),
             );
+        }
+        [command, action, queue] if command == "batch" && action == "validate" => {
+            return workflow_result(acquisition::batch::validate(Path::new(queue)));
+        }
+        [command, action, input, legend, output] if command == "gallery" && action == "build" => {
+            return workflow_result(
+                review::gallery::build(Path::new(input), Path::new(legend), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, runtime, manifest, port] if command == "gallery" && action == "serve" => {
+            let Some(port) = number::<u16>(port) else {
+                return usage_error();
+            };
+            return match review::gallery_server::serve(
+                Path::new(runtime),
+                Path::new(manifest),
+                port,
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => workflow_result(Err(error)),
+            };
+        }
+        [command, action, queue, runtime, output] if command == "batch" => {
+            let result = match action.to_str() {
+                Some("download") => acquisition::batch::download(
+                    Path::new(queue),
+                    Path::new(runtime),
+                    Path::new(output),
+                ),
+                Some("review") => acquisition::batch::review(
+                    Path::new(queue),
+                    Path::new(runtime),
+                    Path::new(output),
+                ),
+                _ => return usage_error(),
+            };
+            return batch_result(result);
         }
         [command, source, asset, runtime, limit] if command == "import" => {
             let Some(limit) = number::<u64>(limit) else {
@@ -249,6 +291,20 @@ fn main() -> ExitCode {
 fn usage_error() -> ExitCode {
     eprintln!("Unsupported arguments. Run topography --help for usage.");
     ExitCode::from(2)
+}
+
+fn batch_result(result: Result<(bool, String), acquisition::AcquisitionError>) -> ExitCode {
+    match result {
+        Ok((complete, report)) => {
+            println!("{report}");
+            if complete {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => workflow_result(Err(error)),
+    }
 }
 
 fn number<T: std::str::FromStr>(value: &std::ffi::OsStr) -> Option<T> {

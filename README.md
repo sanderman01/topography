@@ -21,6 +21,11 @@ cross-sections and metric low-altitude views where the source metadata supports 
 
 ## Directory layout
 
+For source expansion, use the [batch download and gallery workflow](docs/workflows/batch-source-review.md).
+A target list drives downloads and native crops. One local gallery provides
+thumbnail browsing, terrain inspection, Yes/No shortcuts and saved catalog votes.
+Existing source decisions remain visible; technical qualification is separate.
+
 ```text
 catalog/                 Versioned provider descriptions, areas, and label legends
 configs/                 Loadable draft runtime/world presets; local machine copies

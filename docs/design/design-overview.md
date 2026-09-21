@@ -15,6 +15,12 @@ releases preserve decisions and provenance. Generation, world composition/editin
 and export remain reserved boundaries. GDAL/PROJ and PDAL supply established
 geospatial operations.
 
+The [batch source workflow](batch-source-workflow-v1.md) adds list-driven acquisition
+and one local review gallery. Rust owns queue resume and durable curation decisions;
+the browser supplies quick whole-tile Yes/No review. The
+[implemented workflow](../workflows/batch-source-review.md) replaces per-file
+download orchestration and separate source-review links for library expansion.
+
 `training/` is a separate Python package with a CPU scalar numeric worker and
 future model jobs. Rust drives evaluation through versioned JSON and hashed
 scalar payloads. Bash in

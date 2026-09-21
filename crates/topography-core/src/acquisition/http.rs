@@ -41,6 +41,14 @@ fn curl() -> Command {
     command
 }
 
+/// Fetch a small public metadata document without exposing per-file orchestration.
+pub(super) fn metadata(url: &str, output: &Path) -> Result<()> {
+    validate_url(url)?;
+    let bytes = run(curl().args(["--max-filesize", "1048576", "--retry", "2", "--url", url]))?;
+    ensure(!bytes.is_empty(), "empty original metadata")?;
+    write_new(output, &bytes)
+}
+
 pub(super) fn validate_url(url: &str) -> Result<()> {
     let authority = url
         .strip_prefix("https://")

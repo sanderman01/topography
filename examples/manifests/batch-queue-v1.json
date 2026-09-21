@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "max_total_bytes": 1048576,
+  "sources": [
+    {
+      "id": "synthetic-example",
+      "source": "../../tests/fixtures/acquisition/source.toml",
+      "max_bytes": 1048576,
+      "crops": [
+        {
+          "id": "first",
+          "title": "Synthetic example — replace with real source targets",
+          "window_cells": [0, 0, 3, 3],
+          "primary_class_id": 1
+        }
+      ]
+    }
+  ]
+}

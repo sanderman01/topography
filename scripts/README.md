@@ -144,3 +144,18 @@ check. It checks small scalar-model updates, mask gradients, calibration-only
 window selection, safetensors reload and disk limits; it never launches a full
 terrain fit. See [scalar fitting](../docs/workflows/scalar-codec-fitting.md) for
 the separately authorized job and optional completion-contract fixtures.
+# Batch/gallery checks
+
+`python3 scripts/check_batch_gallery.py target/debug/topography --local-only`
+checks local queue validation/resume, partial failure, gallery publication and
+source integrity without opening a port. The regular `check.sh` includes it.
+Omit `--local-only` to exercise direct gallery votes, stale heads, preserved
+technical evidence, HTTP restrictions and damaged-preview refusal through a
+temporary loopback service. Full `check_acquisition.py` also exercises queued
+HTTPS downloads, metadata retrieval, independent failures and verified resume.
+
+For actual browser interaction, add `--browser /path/to/chromium` to
+`check_batch_gallery.py`. It uses Node and Chromium's DevTools pipe, with a
+temporary browser profile and synthetic catalog only. It checks buttons, filters,
+reload, preview-ready voting, sandboxed-frame shortcuts and escaped labels.
+The optional browser is not installed by this workflow.

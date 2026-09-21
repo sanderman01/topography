@@ -179,6 +179,13 @@ class RangeHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         control = self.server.control
+        if self.path == '/metadata.json':
+            content = b'{"fixture":"public metadata download"}'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+            return
         payload = control["payload"]
         etag = '"' + hashlib.sha256(payload).hexdigest() + '"'
         start, end = map(int, self.headers["Range"].removeprefix("bytes=").split("-"))
@@ -255,6 +262,21 @@ def https_checks(directory, runtime, source, asset):
         acquire("no-etag", expected=1, message="strong HTTP ETag")
         run(CLI, "acquire", candidate("too-large"), runtime, 1, expected=1, message="exceeds limit", env=env)
         assert not any(route == "/too-large.tif" for route, _ in server.control["requests"])
+
+        # One list handles metadata retrieval, independent failure and verified resume.
+        good = candidate('batch-good')
+        good.write_text(good.read_text().replace('original_metadata_path = "metadata.json"',
+                                               'original_metadata_path = "downloaded-metadata.json"'))
+        queue = directory / 'batch.json'
+        queue.write_text(json.dumps({'schema_version':1, 'max_total_bytes':4*CHUNK, 'sources':[
+            {'id':'bad','source':str(candidate('no-etag')),'max_bytes':2*CHUNK,'crops':[]},
+            {'id':'good','source':str(good),'metadata_url':base+'/metadata.json','max_bytes':2*CHUNK,'crops':[]}]}))
+        batch = directory / 'batch-output'
+        for _ in range(2):
+            report = json.loads(run(CLI,'batch','download',queue,runtime,batch,expected=1,env=env))
+            assert report['completed']==1 and report['failed']==1
+        assert server.control['requests'].count(('/batch-good.tif',0))==1
+        assert json.loads((directory/'downloaded-metadata.json').read_text())['fixture']=='public metadata download'
     finally:
         server.shutdown()
         server.server_close()

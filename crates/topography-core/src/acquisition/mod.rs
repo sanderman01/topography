@@ -1,5 +1,6 @@
 //! Bounded raw DEM acquisition, integrity verification, and GDAL review crops.
 
+pub mod batch;
 mod http;
 pub(crate) mod raster;
 mod store;
