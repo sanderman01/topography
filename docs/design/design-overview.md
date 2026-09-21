@@ -10,20 +10,22 @@ original request; the master plan refines its model assumptions and defaults.
 `crates/topography-core` implements strict preset, candidate-legend and source-metadata
 validation. Its acquisition module supplies bounded USGS discovery, raw
 acquisition/manual import, integrity verification and native-grid review crops.
-SQLite catalog persistence, regional preparation, human review records, datasets,
-generation, world composition/editing and export remain reserved boundaries.
-GDAL/PROJ and PDAL will supply established geospatial operations.
+SQLite curation, technical quality assessment, native preparation and evaluation
+releases preserve decisions and provenance. Generation, world composition/editing
+and export remain reserved boundaries. GDAL/PROJ and PDAL supply established
+geospatial operations.
 
-`training/` is a separate Python package for future numeric evaluation and model
-jobs. Rust will drive that work through versioned batch manifests. Bash in
+`training/` is a separate Python package with a CPU scalar numeric worker and
+future model jobs. Rust drives evaluation through versioned JSON and hashed
+scalar payloads. Bash in
 `scripts/` handles small orchestration tasks.
 
 ## Inputs and artifacts
 
 Small reviewed descriptions live in `catalog/`; draft settings live in
 `configs/`. Initial contract documentation lives in `schemas/`, with a synthetic
-source record in `examples/manifests/`. Shared batch schemas will follow their
-consumers. Local databases and large artifacts live in `data/`,
+source record in `examples/manifests/`. The numeric job has its own versioned
+producer/consumer contract. Local databases and large artifacts live in `data/`,
 separated by pipeline stage and excluded from Git.
 
 Physical Float32 elevation and explicit masks remain authoritative. Dataset

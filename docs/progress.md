@@ -1,6 +1,8 @@
 # Implementation progress
 
-Updated 2026-09-21. Twelve real terrain regions are qualified and prepared; one reviewed tile is excluded.
+Updated 2026-09-21. Twelve real terrain regions are qualified, prepared and released
+for initial numeric evaluation. The reusable Float32 check passed; one reviewed
+tile remains excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
@@ -21,16 +23,23 @@ qualified and prepared, with river water masked separately and native ground
 preserved. The original batch page/JSON remain unchanged; exact response and
 identities are in `data/review/pilot-batch-3-2026-09-21/decisions-v1/`.
 
-The next actual input is the **numeric pilot dataset checkpoint**, not another
-source-tile review. The [proposal report](reports/numeric-pilot-proposal-v1.md) and
-local `data/review/pilot-dataset-proposal-v1/review.html` describe 12 selected tiles
-from six areas, grouped into calibration and validation. The proposal is pinned
-and **not yet approved**. It authorizes no training/model promotion; release
-commands and the production Python loader are still unimplemented.
+The owner responded to the numeric proposal, **“I have no idea what I am looking
+at. I suppose its fine.”** Treat this as assent to initial evaluation with
+technical responsibility left to Codex. Do not ask for another technical signoff
+or treat the response as technical certification. The original proposal/page
+remain unchanged, with the exact response captured separately.
+
+The [numeric evaluation result](reports/numeric-evaluation-v1.md) completes the
+reusable scalar loader step on all twelve regions. Every valid ground sample
+round-trips exactly in Float32; Float16 absolute-height storage loses detail.
+The evaluation-only release is published and no model training is admitted.
+Next is the [bounded image-codec experiment](plans/image-codec-pilot-v1.md), requiring
+workload readiness before substantial compute. The owner need not inspect
+geographic grouping, technical masks or arithmetic tables.
 
 Continue in the existing checkout on `feat/east-ridges-qualification`; no worktree.
-This continuation builds on `ea512aa` and uses existing production tools without
-code changes. Merging remains with the owner.
+This continuation builds on `8594d49` and implements the Rust/Python numeric
+boundary. Merging remains with the owner.
 
 ## Implemented and verified
 
@@ -43,8 +52,8 @@ code changes. Merging remains with the owner.
 | Quality | `native_quality_v2` checks exact grids, categorical masks, at least 99.5% usable terrestrial coverage and optional annotated-feature support. `supplier_qa_pilot_v1` supplies the declared evidence basis; no validator threshold changed. |
 | Preparation | Same-survey native regions preserve valid Float32 bits and separate masks; immutable publication, current-parent checks and catalog registration. Twelve real regions now prepared; water receives deterministic masked fill. |
 | Ground sampling | Three early 64 m samples and three completed full-crop count checks. All native count bins verified against retained XY points. Counts remain diagnostics, not measured feature accuracy. |
-| Numeric pilot proposal | Twelve selected native regions from six geographic areas; calibration/validation grouping and a small Float32/Float16 arithmetic probe are ready for the dataset checkpoint. |
-| Future work | Geographic dataset releases, Python numeric/model evaluation, label editing, generation, world editing and terrain export remain unimplemented. |
+| Numeric evaluation | Scoped immutable release, six geographic groups, current-parent verification, scalar Rust/Python job and full twelve-region Float32/Float16 measurements. |
+| Future work | Model-training releases, autoencoder/model evaluation, label editing, generation, world editing and terrain export remain unimplemented. |
 
 ## Current Río Abajo state
 
@@ -117,7 +126,7 @@ positive-zero fill and all seven raster layers. The catalog check has no orphans
 Current IDs are `data/review/pilot-batch-3-qualification-v1/records.json`.
 The original eight prepared regions and batch-2 rejection remain unchanged.
 
-The proposed numeric pilot contains 12 regions / 3.146 km² of source footprint,
+The released numeric pilot contains 12 regions / 3.146 km² of source footprint,
 with six geographic groups across three broad families. Keep each area's crops
 in one role: Río Abajo, central gorge and southern floodplain for calibration;
 Camuy, Guajataca and Arecibo for validation. Minimum opposing edge separation is
@@ -127,7 +136,7 @@ provider-project sample or full coarse-scale training context. Larger context
 requires a fresh geographic check; do not silently reuse this split for 8,192 m
 windows, whose buffer it would fail.
 
-A temporary CPU arithmetic probe ran on all 12 prepared regions plus ramps,
+Before the reusable worker, a temporary CPU arithmetic probe ran on all 12 prepared regions plus ramps,
 flats and sharp/narrow synthetic ridges. Fixed experimental normalization is
 height / 2,048 with inverse × 2,048, in Float32. All 12,222,942 valid real samples
 round-trip bit-identically; water is excluded from height/slope/terracing metrics.
@@ -135,7 +144,9 @@ Float16 storage introduces up to 0.25 m error on real ground and removes the
 0.125 m synthetic ridge at 1,800 m. The 9.1-second run used about 146 MiB peak
 Python-process RSS, no GPU; this is not a total process-tree memory measurement.
 This is preliminary evidence, not a production loader, autoencoder result or
-accepted model/gameplay tolerance. No new production code or ML dependencies.
+accepted model/gameplay tolerance. That earlier probe changed no production code.
+The reusable implementation and measured result now supersede it for execution;
+the original probe remains preserved.
 
 ## Retained local artifacts
 
@@ -160,6 +171,9 @@ These are ignored by Git; preserve and back them up separately.
 | Catalog and captured evidence | `data/catalog/topography.sqlite3` and sibling `.curation/` |
 | Batch 3 source qualification, masks, exports, prepared results and native comparison | `data/review/pilot-batch-3-qualification-v1/` |
 | Pinned numeric pilot proposal, review page, separation calculations and reproducible arithmetic probe | `data/review/pilot-dataset-proposal-v1/` |
+| Exact selection and scoped assent for the reusable consumer | `data/review/numeric-evaluation-v1/` |
+| Immutable evaluation-only release | `data/datasets/6b7e2049f45d94bd87216ac07d96c38ece2885e8f22a00fb9d5e0686d6f07411/manifest.json` |
+| Completed numeric run, all binary inputs, metrics and software provenance | `data/models/numeric-pilot-v1/` |
 
 Earlier incomplete assessments, source evidence and catalog snapshots remain
 historical. Do not use their blocker lists as current status. Current original-region IDs are in
@@ -173,7 +187,7 @@ sequentially under the owner's explicit readiness: acquisition/counts took about
 Do not repeat them. Full-source COPC bytes were not stored; retained CSVs are
 measurement evidence, not ground-quality masks.
 
-## Verification for this continuation
+## Earlier source verification
 
 - Four new votes match exact “all yes”, original batch/page/review identities and
   portable exports. Source selections are separate from Codex technical findings.
@@ -187,34 +201,50 @@ measurement evidence, not ground-quality masks.
   draft masks; the same workflow then passed without code changes.
 - Twelve-region arithmetic metrics, geographic separation, proposal/page hashes,
   source selection/evidence identities and local documentation links are checked.
-  No production code changed; the full `scripts/check.sh` suite was not repeated.
+  No production code changed in that earlier source-only checkpoint.
 
 Earlier full checks covered rustfmt, locked offline build, Clippy, valid/invalid
 contracts, local GDAL workflows, SQLite recovery, mask eligibility and native
 preparation failures. Development uses Rust 1.98.1, GDAL 3.13.3 and PDAL 2.10.1;
-Rust 1.85 itself was not tested. No Python ML environment or additional system tool
-was installed. The production model-loader/autoencoder milestone remains open despite the successful
-preliminary Float32 arithmetic probe.
+Rust 1.85 itself was not tested.
 
-## Continue after the numeric dataset checkpoint
+## Numeric consumer verification
 
-1. Capture the owner's decision against `review-identity.json` and the exact
-   proposal/page hashes in `data/review/pilot-dataset-proposal-v1/`. The pending
-   approval is for this small numeric evaluation collection and grouping, not
-   source re-selection, model training or acceptance of an accuracy tolerance.
-2. Implement the versioned dataset release boundary and reusable Python numeric
-   evaluation job. Validate current prepared parents, geographic grouping, all
-   paired layers, fixed normalization and masks before publication/use. Reuse the
-   documented local probe as measured reference, not as production code.
-3. Keep numeric-pilot and future model-training releases distinct. This collection
+- The installed Python worker ran outside the checkout and through the Rust CLI.
+  Python 3.14.7 and pinned NumPy 2.3.5 are installed in `training/.venv`; no Torch,
+  diffusion framework or GPU runtime was installed. Python 3.11 remains untested.
+- Full `bash scripts/check.sh` covers formatting, locked offline build, Clippy,
+  existing workflows, release geography/currentness and the CPU numeric boundary.
+  Faulty successful workers exercise incomplete metrics, invalid counts,
+  missing provenance/synthetic cases and oversized logs.
+- One fresh review identified incomplete completion validation and an exited-worker
+  log-limit bypass. Both were reproduced and fixed; workflow checks preserve the
+  failures. No further source review or technical approval was requested.
+- All 12,222,942 valid samples preserved their Float32 bits. All 359,970 water
+  cells were excluded. The worker took 2.81 s, about 131 MiB peak self RSS, no GPU;
+  total Rust/GDAL process-tree time and memory were not instrumented.
+- Independent verification checked the release/completion hash chain, all 84
+  binary payload hashes, worker source hashes and complete real-region metrics.
+  Previous source outputs and decisions remain unchanged.
+
+## Continue after numeric loading
+
+1. Follow [image-codec pilot v1](plans/image-codec-pilot-v1.md) before LoRA training:
+   twelve fixed central windows and four synthetic cases, public pinned VAE,
+   two CPU threads, 30-minute model-processing limit, 6 GiB address-space ceiling,
+   no GPU. Peak RAM/runtime are unmeasured. Obtain
+   readiness for its substantial workload under AGENTS.md, with resource bounds
+   and uncertainty stated plainly. Scalar loading already passes; do not redo it
+   or present another technical approval page.
+2. Keep numeric-pilot and future model-training releases distinct. This collection
    has no untouched test split or large coarse-context coverage; expand/repartition
    only when the next concrete experiment requires it. Do not restart broad tile
-   review before implementing the numeric consumer.
-4. Evaluate candidate loaders/codecs in metres before choosing or training a
+   review for this reconstruction test.
+3. Evaluate candidate codecs in metres before choosing or training a
    model. Establish actual tolerances and a bounded experiment budget from the
    pilot; obtain readiness for substantial new workloads. Keep 16 GB VRAM ceiling
    and curated-patch/blending fallback.
-5. Continue toward the 4,096 m world pilot, regional editing and export as ordered
+4. Continue toward the 4,096 m world pilot, regional editing and export as ordered
    in the master plan. Vehicle dimensions remain explicitly unset.
 
 **Standing constraints:** public downloads only; never send or draft email, or

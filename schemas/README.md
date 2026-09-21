@@ -12,16 +12,17 @@ checks, instead of a second schema engine. Their first consumer is
 - [Crop curation v1](curation-v1.md): evidence, explicit decisions, labels and portable history.
 - [Regional quality v1](regional-quality-v1.md): whole-crop mask measurements and current preparation eligibility.
 - [Prepared native region v1](prepared-region-v1.md): aligned rasters, pinned decisions, immutable publication and current status.
+- [Numeric evaluation v1](numeric-evaluation-v1.md): scoped releases, geographic separation and the Rust/Python scalar job boundary.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.
 Those commands do not verify license evidence or create acceptance records.
 Curation captures evidence bytes and explicit actor declarations; it does not
-establish the truth of claims or admit prepared/training data. Share a
-machine-readable schema with Python when the first cross-language consumer exists;
-do not infer a processing contract from the discovery/source record.
+establish the truth of claims or admit prepared/training data. The numeric
+consumer uses versioned JSON with strict decoders in both languages and shared
+workflow fixtures; do not infer its contract from the discovery/source record.
 
-Future Rust tools and Python jobs will share artifact contracts covering:
+The broader contract coverage still planned includes:
 
 - Source identity, original metadata, checksums, CRS, vertical datum, units,
   measured resolution, surface type, license evidence, and review decisions.

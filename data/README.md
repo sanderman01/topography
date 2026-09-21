@@ -41,6 +41,13 @@ products after file publication. See [preparation and recovery](../docs/workflow
 Preserve intact unregistered output for retry and never treat partial directories
 as completed products. Curation exports do not include these raster files.
 
+Evaluation-only releases now publish `datasets/<manifest-sha256>/manifest.json`.
+They pin selection, scoped approval and prepared identities without copying rasters
+or creating model-training admission. Completed numeric runs in `models/<run>/`
+retain the request, decoded binary inputs, metrics, worker result/log and completion
+manifest. Verify the release before reuse: later source rejection preserves output
+but revokes current use. See [numeric evaluation](../docs/workflows/numeric-evaluation.md).
+
 Rejection records an exclusion; it does not delete raw assets. Cache housekeeping
 is separate from curation. Preserve accepted world output and source provenance;
 ignored files are not backed up by Git, and accepted artifacts need separate

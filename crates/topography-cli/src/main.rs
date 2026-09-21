@@ -1,6 +1,8 @@
 use std::{env, path::Path, process::ExitCode};
 
-use topography_core::{acquisition, catalog, config, contracts::ContractError, preparation};
+use topography_core::{
+    acquisition, catalog, config, contracts::ContractError, datasets, preparation,
+};
 
 const HELP: &str = "Topography — terrain workshop
 
@@ -21,6 +23,9 @@ Usage: topography [--help | --version]
        topography prepare check <runtime.toml> <quality.json> <curation-record-sha256>
        topography prepare build <runtime.toml> <region.json>
        topography prepare verify <runtime.toml> <prepared-manifest.json>
+       topography dataset build <runtime.toml> <selection.json> <approval.json>
+       topography dataset verify <runtime.toml> <dataset-manifest.json>
+       topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
 Options:
   -h, --help     Show this help
@@ -137,6 +142,34 @@ fn main() -> ExitCode {
                 }
                 Err(error) => return workflow_result(Err(error)),
             }
+        }
+        [command, action, runtime, selection, approval]
+            if command == "dataset" && action == "build" =>
+        {
+            return workflow_result(
+                datasets::build(
+                    Path::new(runtime),
+                    Path::new(selection),
+                    Path::new(approval),
+                )
+                .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, runtime, manifest] if command == "dataset" && action == "verify" => {
+            return workflow_result(datasets::verify(Path::new(runtime), Path::new(manifest)));
+        }
+        [command, action, runtime, manifest, python, output]
+            if command == "evaluate" && action == "numeric" =>
+        {
+            return workflow_result(
+                datasets::evaluate(
+                    Path::new(runtime),
+                    Path::new(manifest),
+                    Path::new(python),
+                    Path::new(output),
+                )
+                .map(|p| p.display().to_string()),
+            );
         }
         [command, action, runtime, input, record] if command == "prepare" && action == "check" => {
             let Some(record) = record.to_str() else {

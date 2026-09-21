@@ -12,7 +12,8 @@ native-grid review crops through GDAL. SQLite curation records crop labels, evid
 and explicit human decisions. Regional mask assessment and preparation eligibility
 checks compare measured coverage with pinned decisions. Eligible areas from the
 same survey can be composed on an exact native grid into immutable prepared
-regions. Dataset releases, training, generation and export remain planned.
+regions. Evaluation-only dataset releases and a reusable CPU numeric worker now
+check scalar precision. Model training, generation and export remain planned.
 Processing success never approves terrain.
 Review crops include a self-contained browser preview with multiple hillshades,
 cross-sections and metric low-altitude views where the source metadata supports them.
@@ -38,10 +39,10 @@ data/
   staging/               In-progress downloads and temporary processing files
 docs/                    Design, implementation plan, and reference notes
 examples/manifests/      Synthetic source record; future batch examples
-schemas/                 Contract documentation; future shared batch schemas
+schemas/                 Versioned metadata and Rust/Python batch contracts
 scripts/                 Small Bash orchestration and development checks
 tests/fixtures/          Small synthetic fixtures shared across components
-training/                Python package for future training and evaluation jobs
+training/                Python numeric evaluation; future model jobs
 ```
 
 Each directory includes a README or a tracked placeholder so a fresh checkout
@@ -67,7 +68,9 @@ Fetch locked dependencies once with network access; checks retain locked offline
 resolution. Serde and TOML provide strict typed decoding. The check script builds
 the workspace, checks formatting, runs Clippy, and exercises valid/invalid CLI
 inputs. When Python 3.11+ and GDAL tools are available it also runs small local
-import/review, curation, quality and preparation checks. Set `CARGO_BUILD_JOBS=1` to limit build
+import/review, curation, quality, preparation and dataset checks. The installed
+training environment enables small CPU numeric worker checks too.
+Set `CARGO_BUILD_JOBS=1` to limit build
 concurrency. See [training](training/README.md) for the separate Python package.
 
 CLI exit codes: 0 for successful metadata validation, 1 for invalid/unreadable
@@ -103,6 +106,8 @@ regions are prepared under the [simple supplier-QA pilot policy](docs/design/sou
 with exact native ground elevation preserved and water masked separately.
 [Batch 3](docs/reports/pilot-tile-batch-3.md) is accepted and prepared. A
 [numeric pilot proposal](docs/reports/numeric-pilot-proposal-v1.md) groups the six
-source areas for evaluation; the dataset checkpoint is awaiting approval.
-A small arithmetic probe preserved Float32 values and measured Float16 losses.
-Dataset release tooling and the production loader/autoencoder evaluation remain pending.
+source areas for evaluation. The owner assented to initial evaluation and left
+technical decisions to the implementer. The [numeric workflow](docs/workflows/numeric-evaluation.md)
+publishes the selected collection, verifies current sources and measures height
+and slope error while excluding masked water. Autoencoder reconstruction and
+model feasibility remain pending.

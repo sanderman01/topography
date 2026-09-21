@@ -70,6 +70,13 @@ if command -v python3 >/dev/null && command -v gdalinfo >/dev/null && command -v
   python3 scripts/check_curation.py "$cli_binary"
   python3 scripts/check_quality.py "$cli_binary"
   python3 scripts/check_preparation.py "$cli_binary"
+  if [[ -x training/.venv/bin/python ]] && training/.venv/bin/python -c 'import topography_training.numeric' >/dev/null 2>&1; then
+    training/.venv/bin/python scripts/check_numeric.py
+    python3 scripts/check_datasets.py "$cli_binary" --python "$project_root/training/.venv/bin/python"
+  else
+    python3 scripts/check_datasets.py "$cli_binary"
+    printf 'Numeric worker checks skipped: install the training package in training/.venv.\n'
+  fi
   if command -v pdal >/dev/null; then
     python3 scripts/check_ground_support.py --self-check
   else

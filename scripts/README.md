@@ -12,9 +12,18 @@ evidence, the VRAM ceiling, paths with spaces and runtime paths from another
 working directory. Expected failures check exit codes and diagnostics.
 
 When Python 3.11+ and GDAL are installed, the main check also runs local synthetic
-DEM import/review, SQLite curation, regional quality and native preparation checks.
+DEM import/review, SQLite curation, regional quality, native preparation and
+evaluation-release checks. With the isolated [training environment](../training/README.md)
+installed, it also checks the CPU numeric worker and Rust/Python completion path.
 Otherwise it explicitly reports that stage as skipped.
 It does not download real terrain or run model evaluation.
+
+`training/.venv/bin/python scripts/check_numeric.py` checks scalar loading, masks,
+signed zero, physical slopes, precision loss and malformed jobs.
+`python3 scripts/check_datasets.py target/debug/topography --python training/.venv/bin/python`
+checks scoped approval, geography, corruption, later source rejection and worker
+success/failure. Omit `--python` for release checks without NumPy. These checks
+use small artificial terrain, temporary catalogs and no GPU.
 
 For the complete acquisition workflow check:
 

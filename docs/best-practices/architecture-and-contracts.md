@@ -1,8 +1,9 @@
 # Architecture and contracts
 
 Use this guide when adding components, configuration, schemas, or Rust/Python
-interfaces. Preset, candidate-legend and source-description validators exist;
-processing and cross-language batch contracts remain to be implemented.
+interfaces. Metadata validators, native processing contracts and the first
+[Rust/Python numeric batch contract](../../schemas/numeric-evaluation-v1.md) exist.
+Model, world and export batch contracts remain future work.
 
 ## Keep responsibilities explicit
 

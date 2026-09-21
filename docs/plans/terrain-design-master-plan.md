@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks and bounded same-survey native preparation are implemented. Real-source admission, dataset releases and model work remain open. Sources checked 13 September 2026; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twelve real regions are qualified under the supplier-QA pilot rule. Model-training admission, codecs and model work remain open. Sources checked 13 September 2026; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -281,8 +281,8 @@ unset. These metadata checks do not complete the real-terrain milestone.
 
 The second item has an initial [acquisition/import implementation](../workflows/dem-acquisition.md)
 with raw integrity, resumable HTTPS staging and small native-grid review crops.
-A real coastal USGS tile was imported; real-source quality admission
-and numeric model/loader evaluation remain open. The
+A real coastal USGS tile was imported; the later pilot establishes source
+qualification and scalar numeric evaluation as described below. The
 [early Río Abajo karst trial](../reports/rio-abajo-karst-trial.md) traced a native
 0.5 m survey tile to three crops with overhead/profiles/low-altitude previews.
 Broad karst morphology is inspectable; measured fine-feature accuracy remains
@@ -304,11 +304,13 @@ water uses deterministic masked fill. The owner selected
 five of six tiles in [batch 2](../reports/pilot-tile-batch-2.md); rejection preserves
 the sixth tile's data. All four tiles in [batch 3](../reports/pilot-tile-batch-3.md) from two further
 areas are now selected and prepared. A [numeric pilot proposal](../reports/numeric-pilot-proposal-v1.md)
-groups the six areas for calibration/validation and awaits the dataset checkpoint.
-A small CPU arithmetic probe preserves Float32 samples and measures Float16 loss;
-the production loader/autoencoder consumer is still pending. Prepared outputs
-retain their separate unreviewed state and remain excluded from training release. Cross-survey alignment,
-repairs, output acceptance, dataset releases and per-cell label editing remain pending.
+groups the six areas for calibration/validation. The owner's assent to initial
+evaluation is captured with technical responsibility left to the implementer.
+The [numeric workflow](../workflows/numeric-evaluation.md) publishes an evaluation-only
+release and runs a reusable Rust/Python scalar check. Autoencoder reconstruction
+and model feasibility remain pending. Prepared outputs retain their separate
+unreviewed state and remain excluded from training release. Cross-survey alignment,
+repairs, output acceptance, model-training releases and per-cell label editing remain pending.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

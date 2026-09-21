@@ -1,8 +1,8 @@
 # Python
 
-Applies to `training/`. Only the package scaffold exists: Python 3.11+, setuptools,
-and a `src/topography_training/` layout. No trainer, inference command, ML
-dependencies, Python test runner, formatter, or linter is configured yet.
+Applies to `training/`: Python 3.11+, setuptools, a `src/topography_training/`
+layout and a NumPy CPU numeric worker. No trainer, model inference, GPU framework,
+formal Python test runner, formatter or linter is configured yet.
 
 ## Packaging and code
 
@@ -59,6 +59,7 @@ dependencies, Python test runner, formatter, or linter is configured yet.
 For packaging changes, verify installation and import from outside the source
 tree in the selected environment. For implemented jobs, run a tiny manifest
 through the real entry point and inspect outputs and a failure case. The Rust
-check script does not verify Python jobs. Add documented tooling when it becomes
+check script runs small numeric worker checks when `training/.venv` is installed,
+and explicitly reports a skip otherwise. Add documented tooling when it becomes
 necessary; do not prescribe commands for tools the project has not configured.
 Requested formal tests belong in `training/tests/`.

@@ -23,8 +23,8 @@ def raster(directory, name, samples, width, height, west=700000, kind="Byte", no
     return path
 
 
-def check(cli, directory, spacing=1.0):
-    runtime = runtime_file(directory)
+def check(cli, directory, spacing=1.0, *, fixture_only=False, west=700000, runtime=None):
+    runtime = runtime or runtime_file(directory)
     source = directory / "source.toml"
     # Exercise admission using artificial declarations in isolated storage only.
     source.write_text((FIXTURES / "source.toml").read_text().replace("synthetic = true", "synthetic = false")
@@ -35,7 +35,7 @@ def check(cli, directory, spacing=1.0):
     elevations[0] = -9999
     elevations[1] = -0.0
     elevations[20] = "nan"
-    asset = raster(directory, "source", elevations, 40, 10, kind="Float32", nodata=True, spacing=spacing)
+    asset = raster(directory, "source", elevations, 40, 10, west=west, kind="Float32", nodata=True, spacing=spacing)
     raw = Path(run(cli, "import", source, asset, runtime, 1048576))
     inputs, heads, drafts = [], [], []
     for i in range(2):
@@ -48,7 +48,7 @@ def check(cli, directory, spacing=1.0):
             "water": ([2] + [1] * 199) if i == 1 else [1] * 200,
             "quality": [1] * 200, "repairs": [0] * 200, "features": [0] * 199 + [1],
         }.items():
-            path = raster(folder, name, samples, 20, 10, west=700000 + i * 20 * spacing, spacing=spacing)
+            path = raster(folder, name, samples, 20, 10, west=west + i * 20 * spacing, spacing=spacing)
             q["masks"][name] = {"path": path.name, "sha256": sha(path)}
         quality.write_text(json.dumps(q))
         report = folder / "quality-report.json"
@@ -74,7 +74,7 @@ def check(cli, directory, spacing=1.0):
         drafts.append((draft, d))
         inputs.append({"quality_path": str(quality), "curation_record_sha256": head})
     request = {"schema_version": 1, "inputs": inputs,
-               "grid": {"origin": [700000, 2000000 + 10 * spacing], "size": [40, 10], "spacing_m": [spacing, spacing]}, "masked_fill_m": 0.0}
+               "grid": {"origin": [west, 2000000 + 10 * spacing], "size": [40, 10], "spacing_m": [spacing, spacing]}, "masked_fill_m": 0.0}
     path = directory / "region.json"
     path.write_text(json.dumps(request))
     before = {p: sha(p) for p in [asset, raw]}
@@ -96,12 +96,14 @@ def check(cli, directory, spacing=1.0):
     order = "<" if "byte order = 0" in header else ">"
     assert binary.read_bytes() == struct.pack(order + "400f", *expected)
     info = json.loads(run("gdalinfo", "-json", manifest.parent / "elevation.tif"))
-    assert info["geoTransform"] == [700000, spacing, 0, 2000000 + 10 * spacing, 0, -spacing]
+    assert info["geoTransform"] == [west, spacing, 0, 2000000 + 10 * spacing, 0, -spacing]
     assert info["size"] == [40, 10]
     assert info["coordinateSystem"] == json.loads((directory / "crop-0/inspection.json").read_text())["coordinateSystem"]
     assert info["bands"][0]["unit"] == "m" and "noDataValue" not in info["bands"][0]
     status = json.loads(run(cli, "prepare", "verify", runtime, manifest))
     assert status["registered"] and status["current"]
+    if fixture_only:
+        return runtime, manifest, drafts, heads
     if spacing != 1.0:
         return
     assert Path(run(cli, "prepare", "build", runtime, path)) == manifest

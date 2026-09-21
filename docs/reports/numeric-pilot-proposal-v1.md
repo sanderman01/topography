@@ -86,16 +86,18 @@ software versions, settings and exact results are retained in `numeric-probe.jso
 This local probe does not implement or complete the planned production Python
 loader/batch interface. No ML environment or model dependencies were installed.
 
-## Decision and next implementation
+## Decision and implementation
 
 The [master plan, section 9](../plans/terrain-design-master-plan.md#9-human-editing-and-partial-reruns)
-retains a separate dataset-release checkpoint. The requested decision is whether
-to use this exact collection and grouping for the first numeric evaluation pilot.
-An approval will be captured against the pinned proposal/page identities. It will
-not invent approval of training, a model, a gameplay tolerance or generated terrain.
+retains a separate dataset-release checkpoint. The owner responded, “I have no
+idea what I am looking at. I suppose its fine.” This is captured in
+`data/review/pilot-dataset-proposal-v1/owner-response.json` against the original
+proposal/page hashes as assent to initial evaluation. Technical judgments remain
+Codex's responsibility; this is not certification of the grouping or approval of
+training, a model, gameplay tolerances or generated terrain.
 
-Dataset release tooling and the production numeric job remain unimplemented.
-After this checkpoint, add their versioned producer/consumer boundary, rechecking
-current prepared parents, geographic roles, paired layers, masks, fixed
-normalization and complete output publication. Use the local probe as measured
-reference. Source selections remain valid without repeated yes/no questions.
+The [reusable numeric workflow](../workflows/numeric-evaluation.md) now implements
+release publication and a CPU worker. It checks current parents, geographic roles,
+paired layers, masks, normalization and complete outputs. The original proposal,
+page and arithmetic probe remain historical and unchanged. Source selections
+remain valid without repeated yes/no questions.
