@@ -130,6 +130,44 @@ if len(sys.argv) == 3 and sys.argv[1] == '--job':
         result_path = output / 'worker-result.json'
         write_json(result_path, result)
         assert verify_output(job_path, output)['kind'] == 'verified_scalar_codec_fit'
+        # Replace the caller's job after preflight. The real verifier/publisher must stay on A.
+        import shutil
+        from unittest.mock import patch
+        from topography_training.payload import digest
+        for mutation in ['original', 'archived']:
+            with tempfile.TemporaryDirectory(prefix='scalar job replacement ') as race_name:
+                race_root = Path(race_name)
+                original_job = race_root / 'caller-job.json'
+                original_bytes = job_path.read_bytes()
+                original_job.write_bytes(original_bytes)
+                destination = race_root / 'run'
+                def checked_status(job_value, request_value):
+                    if mutation == 'original':
+                        original_job.write_bytes(original_bytes + b'\n')
+                    return status
+                def fixture_worker(command, *args, **kwargs):
+                    consumed_job = Path(command[-2])
+                    if mutation == 'archived':
+                        consumed_job.write_bytes(consumed_job.read_bytes() + b'\n')
+                    for source in output.iterdir():
+                        if source.name not in {'job.json', 'worker-result.json'}:
+                            shutil.copyfile(source, destination / source.name)
+                    completion = copy.deepcopy(result)
+                    completion['job_sha256'] = digest(consumed_job.read_bytes())
+                    write_json(destination / 'worker-result.json', completion)
+                with patch('topography_training.scalar_fit.current_status', side_effect=checked_status), \
+                     patch('topography_training.scalar_fit.supervise', side_effect=fixture_worker):
+                    try:
+                        completed_path = execute(original_job, destination)
+                    except ValueError:
+                        assert mutation == 'archived'
+                        assert not (destination / 'result.json').exists()
+                        assert (destination / 'failure.json').exists()
+                    else:
+                        assert mutation == 'original', 'modified archived job was accepted'
+                        completed = json.loads(completed_path.read_text())
+                        assert completed['job_sha256'] == digest(original_bytes), 'completion drifted from prechecked job'
+                        assert (destination / 'job.json').read_bytes() == original_bytes
         def rejected(call):
             try:
                 call()

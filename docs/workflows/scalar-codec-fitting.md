@@ -38,7 +38,9 @@ The JSON job contains `schema_version: 1`, `kind: scalar_codec_fit_job`, and fou
 absolute, hashes cover exact file bytes. All references are pinned and all scalar
 payloads are validated before use. The supervisor invokes Rust before and after
 fitting, comparing current prepared identities, grids, roles and groups with the
-numeric payload. The worker interface is internal; invoke the supervisor normally.
+numeric payload. Execution and completion verification use an archived copy of
+the exact prechecked job bytes; completion identities must still match the initial
+admission checks. The worker interface is internal; invoke the supervisor normally.
 
 ```sh
 data/models/codec-environment-v1/.venv/bin/python -m topography_training.scalar_fit data/review/scalar-codec-fit-proposal-v1/job.json data/models/scalar-codec-fit-v1

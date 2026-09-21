@@ -28,9 +28,13 @@ def current_status(job: dict, request: dict) -> dict:
 def execute(job_path: Path, output: Path) -> Path:
     from .fitting import DISK_BYTES, check_inputs, verify_output
     from .numeric import write_json
+    from .payload import digest, read_document
     if output.exists():
         raise ValueError('fitting output already exists; choose a new directory')
+    _, job_bytes = read_document(job_path)
     job, request, _, identities = check_inputs(job_path)
+    if digest(job_bytes) != identities['job_sha256']:
+        raise ValueError('fitting job changed during preflight')
     output = output.absolute()
     if any(Path(root) in output.resolve().parents for root in identities['input_roots']):
         raise ValueError('output must be outside immutable input directories')
@@ -38,12 +42,17 @@ def execute(job_path: Path, output: Path) -> Path:
     output.mkdir(parents=True)
     try:
         write_json(output / 'source-before.json', before)
-        with (output / 'job.json').open('xb') as stream:
-            stream.write(job_path.read_bytes())
+        archived_job = output / 'job.json'
+        with archived_job.open('xb') as stream:
+            stream.write(job_bytes)
         supervise([sys.executable, '-m', 'topography_training.scalar_fit', '--worker',
-                   str(job_path.absolute()), str(output)], output / 'worker.log', TIMEOUT_SECONDS, LOG_BYTES,
+                   str(archived_job), str(output)], output / 'worker.log', TIMEOUT_SECONDS, LOG_BYTES,
                   disk_bytes=DISK_BYTES)
-        result = verify_output(job_path, output)
+        result = verify_output(archived_job, output)
+        if (result['job_sha256'] != identities['job_sha256']
+                or result['fitting_release_sha256'] != job['fitting_release']['sha256']
+                or result['numeric_run_sha256'] != job['numeric_run']['sha256']):
+            raise ValueError('fitting completion differs from prechecked job')
         after = current_status(job, request)
         if before != after:
             raise ValueError('fitting source status changed during experiment')
