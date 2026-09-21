@@ -2,13 +2,15 @@
 
 Reviewed 2026-09-21. This is an evidence review for the original USGS OPR DEM
 `PR_PRVI_D_2018`, tile `19QGA68505700`, and NOAA's distributed copy used in the
-[karst trial](rio-abajo-karst-trial.md). **Training permission remains unknown;
-no human decision, catalog change or admission was made.**
+[karst trial](rio-abajo-karst-trial.md). **The project owner approved this
+dataset-specific permission basis on 2026-09-21. Terrain acceptance and admission
+remain unresolved.** The original reviewed version is retained with its hash;
+the approval does not change original source metadata or the agency's wording.
 
 The published evidence supports broad reuse, but the inspected dataset metadata
 and agency policies do not explicitly discuss ML training for this tile. That
 absence is not a published prohibition. Applying the broader permission to
-training is an interpretation requiring a recorded decision under this project's
+training is the interpretation approved by the project owner under this project's
 [licensing gate](../plans/terrain-design-master-plan.md#2-source-acquisition-strategy).
 
 ## Dataset-specific evidence
@@ -83,7 +85,7 @@ expressly obligatory. No royalty, noncommercial-only or share-alike condition
 was found in the inspected tile/collection material. This does not resolve rights
 in model weights or outputs by itself.
 
-## Decision still needed
+## Recorded human decision
 
 The master plan requires a dataset-specific recorded clause or confirmation
 that permits training; it excludes ambiguous permission from prepared and
@@ -92,14 +94,18 @@ does it require the literal words “machine learning” in an otherwise applica
 permission. Requiring correspondence solely because those words are absent would
 add a rule the plan does not contain.
 
-The human decision is whether the documented connection of this exact dataset to
-the 3DEP unrestricted-use statement is sufficient to confirm ML-training
-permission for the intended terrain model and distribution, while retaining the
-recorded source conditions. If so, record that clause, its applicability and the
-actor's actual decision against the immutable source identity. If it remains
-ambiguous, keep the dataset excluded and seek clarification or choose another
-source. This report does not choose for the human or turn uncertainty into a
-permission denial.
+The project owner was asked whether this permission evidence satisfies the
+training-permission gate or whether permission should remain unknown pending
+clarification. The reply was **“2. Looks good.”** The first numbered answer,
+“1. Ready.”, separately authorized the bounded east-ridges point-cloud workload.
+
+This confirms the documented connection of this exact dataset to the 3DEP
+unrestricted-use statement as the project's ML-training permission basis, while
+retaining the source conditions above. It is not a new agency letter, a CC0
+designation, or human acceptance of terrain quality. The evidence record pins
+the exact reviewed report, raw receipt, source asset and all three existing crop
+identities. Assistant-authored catalog annotations carry this captured human
+decision without impersonating a human terrain reviewer.
 
 If clarification is chosen, a focused request can identify both the original
 tile and NOAA copy, reference the 3DEP statement, and ask whether it covers
@@ -108,7 +114,7 @@ weights, including any contractor or geographic limitations. The published
 contacts are `3DEP@usgs.gov` on the program page and
 `coastal.info@noaa.gov` on the collection record. No message was sent.
 
-Permission confirmation would still leave whole-crop quality, terrain acceptance
+Permission confirmation still leaves whole-crop quality, terrain acceptance
 and the other independent admission gates open; see the
 [ground-support report](rio-abajo-ground-support.md).
 
@@ -118,6 +124,13 @@ Only two small metadata documents were downloaded, into
 `data/review/rio-abajo-permission-2026-09-21/`. The directory also contains
 `sources.json` with source URLs, retrieval notes, byte counts and hashes. These
 ignored local files need separate backup.
+
+The same directory now retains `reviewed-report.md`, the exact report before
+approval, and `human-decision.json`, which captures the question, response,
+interpretation and immutable source/report identities. `sources.json` remains
+the original retrieval record and accurately describes the pre-approval state.
+Continuation drafts and catalog IDs are kept separately under
+`data/review/rio-abajo-curation-2026-09-21/`. Original records remain preserved.
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |

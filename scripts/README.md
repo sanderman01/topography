@@ -92,7 +92,8 @@ captured PDAL COPC-reader metadata and the exact review CRS. See
 The [whole-crop workflow](../docs/workflows/whole-crop-ground-support.md) documents
 `--full-review`, its local-only `--plan` command and the concrete readiness bounds
 for east-ridges. That mode accepts rectangular native reviews up to 2,048 cells
-per side; no real whole-crop measurement has run yet.
+per side. The [east-ridges full-crop trial](../docs/reports/rio-abajo-whole-crop-review.md)
+now records a completed live run and its observed resource use.
 Full-detail range reads use `If-Match`; selected chunks may extend outside the
 requested area. The probe does not implement acquisition's chunk cache or a hard
 network-byte cap. No full source-cloud SHA-256 is claimed.

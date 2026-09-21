@@ -99,5 +99,5 @@ and evidence. The [regional quality workflow](docs/workflows/regional-quality.md
 measures whole-crop masks and checks current preparation eligibility.
 [Aligned native preparation](docs/workflows/aligned-preparation.md) now preserves
 eligible regions without resampling or cross-survey joins. The real crops remain
-excluded pending whole-crop quality, permission and human acceptance. The broader
+excluded pending whole-crop quality and human acceptance. The broader
 milestone still requires curated terrain and the numeric model/loader precision evaluation.

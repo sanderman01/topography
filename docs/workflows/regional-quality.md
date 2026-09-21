@@ -103,10 +103,13 @@ Historical curation v1 blockers remain unchanged in old records.
 
 ## Río Abajo and workload bounds
 
-The three existing Río Abajo decisions are assistant annotations. Their ground
-samples cover only 1.5625% of each crop. Current preflight drafts under
+The three current Río Abajo decisions are assistant annotations, now carrying
+the owner's confirmed dataset-permission decision. East-ridges has a verified
+[whole-crop ground-count report](../reports/rio-abajo-whole-crop-review.md);
+north-hollows and south-saddles still have only 1.5625% centre samples.
+Current preflight drafts under
 `data/review/rio-abajo-quality-preflight-2026-09-21/` leave all masks unset and
-report blockers; no acceptance or permission was inferred.
+report blockers; no terrain acceptance or quality classification was inferred.
 
 Before whole-crop LiDAR processing, specify the actual footprint, source identity,
 buffer, concurrency and memory/storage bounds, then obtain workload readiness

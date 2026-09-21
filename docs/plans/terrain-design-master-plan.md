@@ -270,7 +270,10 @@ and numeric model/loader evaluation remain open. The
 [early Río Abajo karst trial](../reports/rio-abajo-karst-trial.md) traced a native
 0.5 m survey tile to three crops with overhead/profiles/low-altitude previews.
 Broad karst morphology is inspectable; effective fine-feature resolution,
-ground-return support, training permission and human acceptance remain open.
+terrain-quality support and human acceptance remain open. The later
+[east-ridges whole-crop review](../reports/rio-abajo-whole-crop-review.md) measures
+direct ground returns across one crop and records the owner's approval of the
+dataset-specific permission basis. Counts do not establish terrestrial quality.
 The [curation workflow](../workflows/source-curation.md) now captures evidence,
 crop-wide labels and explicit decisions in SQLite, with immutable history and
 portable metadata exports. The [regional quality workflow](../workflows/regional-quality.md)

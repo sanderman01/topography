@@ -5,6 +5,10 @@ Run on 2026-09-15 with PDAL 2.10.1 and GDAL 3.13.3. This extends the
 512 × 512 m crop. Each sample covers 1.5625% of its crop. All results are
 assistant observations; human acceptance and training admission remain absent.
 
+The subsequent [whole-crop east-ridges review](rio-abajo-whole-crop-review.md)
+measured the full footprint on 2026-09-21. It also records the later permission
+decision and current catalog state. The sample observations below remain historical.
+
 ## Measured support
 
 Counts select classification 2, exclude withheld and synthetic points, and retain
@@ -107,7 +111,7 @@ remain immutable and unreviewed. Portable curation exports and record IDs are
 under `data/review/rio-abajo-curation/`. `topography curate check` verifies them.
 These ignored files need separate backup; Git contains this report and tooling.
 
-Next: review whole-crop ground support, defining-feature gaps, water and any repairs;
-resolve dataset-specific training permission and record actual human crop decisions.
-Regional preparation and its independent admission checks remain to be implemented.
-Vehicle dimensions and tolerances remain explicitly unset.
+At this sample checkpoint, whole-crop evidence and permission were unresolved.
+The later whole-crop report records progress on both. Native preparation and
+independent admission checks are now implemented, while actual crop acceptance,
+quality masks, vehicle dimensions and tolerances remain unresolved.

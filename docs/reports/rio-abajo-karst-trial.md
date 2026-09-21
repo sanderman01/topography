@@ -8,7 +8,9 @@ fidelity, measured ground support or usable airship passages.
 
 This completes the early acquisition trial in the [master plan](../plans/terrain-design-master-plan.md).
 The source remains raw/unreviewed and excluded from prepared/training admission
-while dataset-specific training permission and quality evidence are unresolved.
+pending quality evidence and human crop acceptance. The subsequent
+[whole-crop review](rio-abajo-whole-crop-review.md) records additional ground
+measurements and the owner's dataset-permission approval on 2026-09-21.
 The vehicle envelope remains explicitly unset.
 
 ## Inspect the results

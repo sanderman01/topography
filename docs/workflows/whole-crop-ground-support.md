@@ -79,10 +79,12 @@ or bound kernel page-cache use. No GPU is used. Allow about 2.25 GiB of local
 disk for the CSV and other artifacts; the CSV cap and child-file limits apply
 during production, rather than relying on a final size check to limit memory.
 
-The east-ridges centre sample retained 259,974 buffered points in 19,758,092 CSV
+The following was the pre-run estimate; the completed
+[east-ridges measurement](../reports/rio-abajo-whole-crop-review.md) now records
+observed timings and child RSS. The centre sample retained 259,974 buffered points in 19,758,092 CSV
 bytes. Scaling only by the buffered-area ratio, 266256 / 4624, suggests roughly
 15 million points and 1.14 GB of CSV. This is a planning extrapolation, not a
-measured crop density. Whole-crop runtime and peak RSS are unknown; the sample's
+measured crop density. Whole-crop runtime and peak RSS were unknown; the sample's
 28-second acquisition and approximately 75 MiB child RSS do not establish them.
 A readiness prompt can therefore describe up to 30 minutes, 2 GiB child virtual
 address space plus 512 MiB Python, roughly 2.25 GiB disk, and uncertain actual
@@ -124,8 +126,10 @@ This uses tiny local point fixtures and checks the original square sample,
 rectangular occupancy and partial edge bins, classification/flag selection,
 streamed point and byte rejection, timeout termination, retained-pipeline reuse,
 maximum footprint bounds and a public-CLI dry plan against an unreachable source
-URL. It does not acquire or decode real COPC points. Whole-crop live execution
-remains unverified until a readiness-approved run completes.
+URL. It does not acquire or decode real COPC points. The approved east-ridges
+[live whole-crop run](../reports/rio-abajo-whole-crop-review.md) completed on
+2026-09-21 and verified all 1,048,576 native count bins. Other crop workloads
+still require their own readiness confirmation.
 
 The implementation was checked with PDAL 2.10.1 and GDAL 3.13.3. Relevant upstream
 interfaces are the [COPC reader](https://pdal.io/en/stable/stages/readers.copc.html),
