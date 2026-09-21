@@ -1,4 +1,4 @@
-# East-ridges source qualification
+# Río Abajo source qualification
 
 Updated 2026-09-21. The project owner opened the
 [whole-crop review](rio-abajo-whole-crop-review.md) and replied:
@@ -12,8 +12,13 @@ without selecting individual ridges, hollows or other features. The earlier
 “looks fine” is recorded as east-ridges acceptance for candidate selection in
 `data/review/rio-abajo-tile-decisions-2026-09-21/`, with the exact responses and
 assistant recorder identified. No technical findings were promoted to pass.
-The catalog has eight historical records, one current human acceptance and two
-current assistant annotations. No prepared region or training admission exists.
+The later batch response “both yes” also selects north-hollows and south-saddles.
+The catalog has thirteen historical records and three current human acceptances.
+No prepared region or training admission exists. The batch response, pinned
+identities, exports and new record IDs are under
+`data/review/rio-abajo-tile-decisions-2026-09-21/accepted-batch-v1/`.
+The subsequent measurement and mask updates preserve those selections in
+`data/review/rio-abajo-full-crop-completion-2026-09-21/`.
 
 The earlier assistant annotation captured that exact response against the viewed
 map's hash and the original crop identity. It preserves the confirmed permission
@@ -36,6 +41,55 @@ next input was an unnecessary dependency and is superseded by this correction.
 The visual water observation is captured with the latest whole-tile decision;
 previous catalog records and immutable evidence remain unchanged. It does not by itself establish a
 verified per-cell classification or terrain-quality acceptance.
+
+The implementer subsequently inspected small public
+[USGS context images](https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer)
+covering all three crops. No open water body was identified. The 200 × 200 images
+sample each 512 m crop at 2.56 m; canopy and shadows limit visibility. Based on
+this context and the native terrain review, all three now have documented
+all-terrestrial masks. This is a classification judgment, not proof that no
+concealed water exists. It excludes no land from the quality denominator.
+
+The masks under `data/review/rio-abajo-quality-v2-2026-09-21/` also contain zero
+optional feature annotations and zero project repairs. The latter does not deny
+supplier interpolation. Latest drafts and assessments are in each crop's
+`water-classified-v1/` directory; earlier incomplete drafts remain preserved.
+The quality mask is still unset. Each assessment has one missing-mask blocker
+and null coverage counts. Current curation records identify Codex's water
+classification judgment separately from the owner's existing whole-tile yes.
+
+## Completed sequential measurements
+
+The owner explicitly approved running north-hollows and south-saddles
+sequentially. Both completed under the saved limits, with no GPU and no terrain
+changes. Each covers 512 × 512 m with a 2 m acquisition buffer, and every native
+count bin was independently verified against the retained XY points.
+
+| Measurement | North-hollows | South-saddles |
+| --- | ---: | ---: |
+| Buffered points | 16,621,724 | 14,671,955 |
+| Selected ground returns inside crop | 742,843 | 601,406 |
+| Ground returns per m² | 2.834 | 2.294 |
+| Occupied 0.5 m bins / 1,048,576 | 467,002 | 374,712 |
+| Empty 4 m bins / 16,384 | 59 | 249 |
+| Acquisition time | 290.62 s | 290.82 s |
+| Count-raster time | 32.67 s | 29.19 s |
+| Maximum child RSS | 71.99 MiB | 73.40 MiB |
+| Retained point CSV bytes | 1,263,251,274 | 1,115,100,350 |
+
+Verification adds unreported time. Child RSS excludes the Python parent and
+cache; total RAM and transferred network bytes were not measured. CSVs total
+about 2.22 GiB, plus small count rasters and metadata. No full source COPC file
+was stored. Counts include overlap returns; empty bins are neither demonstrated
+terrain defects nor water. These measurements do not establish fine-feature
+accuracy or terrestrial quality coverage.
+
+Completed reports are under
+`data/review/rio-abajo-ground-support/{north-hollows,south-saddles}-full-v1/`.
+The completion directory pins both reports, approved plans and readiness
+evidence, and retains the catalog backup, updated decisions and portable exports.
+All artifact sizes and non-CSV hashes were rechecked. The probe already hashed
+each CSV and verified its count bins; those operations were not redundantly rerun.
 
 ## Additional sampling evidence
 
@@ -79,14 +133,40 @@ roots provide no corresponding vector download. This is a scoped search, not
 proof that the files are unavailable elsewhere. The LPC delivery lives beneath
 `PR_PuertoRico_VirginIslands_2018_D18/PR_PRVI_D_2018/`, unlike the shorter OPR path.
 
-Present north-hollows and south-saddles next for whole-tile yes/no. East-ridges
-already has its yes. Handle source qualification separately from the existing
-public DEM, survey report and ground-return evidence. The implementer supplies
-justified masks; no individual feature selection or mask approval is required
-from the owner. Use an all-zero feature layer when annotations are absent.
-Do not invent a quality-distance cutoff or substitute occupancy for quality.
-Additional public downloads should answer a concrete technical question;
-correspondence and unavailable supplementary files are not prerequisites.
+All three existing tiles have their whole-tile yes and completed full-crop
+sampling measurements. No further point-count run or feature-marking exercise
+is needed. Additional public downloads should answer a concrete technical
+question; correspondence and unavailable supplementary files are not prerequisites.
+
+## Decision needed before source admission
+
+The remaining issue is the evidence rule for **supported ground**. The current
+99.5% gate says how much land must meet that rule, but does not define how to
+qualify supplier-interpolated cells beneath forest. The survey report describes
+linear interpolation and ground voids; regional accuracy checkpoints and its
+1:5000 artifact review do not measure fine-feature fidelity in these crops.
+More occupancy diagnostics cannot supply the missing criterion.
+
+Proposed pilot policy, **not yet approved or implemented**:
+
+- Use the released native bare-earth DEM and its documented supplier QA as the
+  evidence basis for usable ground, retaining original units, datum, source
+  identity and processing history. Apply the existing 99.5% threshold to finite,
+  provider-valid terrestrial cells after excluding documented local defects.
+- Preserve whole-crop sampling diagnostics and all known uncertainty. Exclude
+  demonstrated large voids or artifacts; do not assume empty count bins are
+  defects, or claim that a 0.5 m grid establishes measured 0.5 m feature accuracy.
+  Missing supplier QA polygons remain an explicit limitation.
+- Identify this evidence basis in a versioned policy and carry it into prepared
+  and eventual dataset provenance. Keep source selection, preparation and later
+  training release distinct. Existing human yes decisions remain valid.
+
+This is the recommended practical route for the pilot, accepting uncertainty
+in supplier interpolation. It changes the admission evidence basis and therefore
+requires the owner's agreement before changing the plan or policy. The alternative
+is to declare a required feature scale/error and design one bounded validation
+experiment against it; an unplanned height comparison alone would not settle
+acceptability. No numeric tolerance or all-supported quality mask has been invented.
 
 ## Retained artifacts and verification
 

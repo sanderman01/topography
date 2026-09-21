@@ -113,13 +113,16 @@ Historical curation v1 blockers remain unchanged in old records.
 
 ## Río Abajo and workload bounds
 
-The three current Río Abajo decisions are assistant annotations, now carrying
-the owner's confirmed dataset-permission decision. East-ridges has a verified
-[whole-crop ground-count report](../reports/rio-abajo-whole-crop-review.md);
-north-hollows and south-saddles still have only 1.5625% centre samples.
-Current preflight drafts under
-`data/review/rio-abajo-quality-preflight-2026-09-21/` leave all masks unset and
-report blockers; no terrain acceptance or quality classification was inferred.
+All three current Río Abajo decisions retain the owner's whole-tile yes and
+confirmed dataset permission. Full-crop count measurements are complete for all
+three; see the [qualification checkpoint](../reports/rio-abajo-source-qualification.md).
+Latest drafts under
+`data/review/rio-abajo-quality-v2-2026-09-21/{north-hollows,east-ridges,south-saddles}/water-classified-v1/`
+contain all-terrestrial water masks and reference zero feature/project-repair
+layers. The water classification is a documented implementer judgment with
+canopy limitations. Ground quality remains unset; no source has been admitted.
+The missing decision is an operational evidence rule for supplier-interpolated
+ground, not another visual approval or count measurement.
 
 Before whole-crop LiDAR processing, specify the actual footprint, source identity,
 buffer, concurrency and memory/storage bounds, then obtain workload readiness
@@ -139,6 +142,6 @@ See the [v1 contract](../../schemas/regional-quality-v1.md) and
 [verification commands](../../scripts/README.md). The
 [aligned preparation workflow](aligned-preparation.md) now publishes bounded
 same-survey native regions after repeating these checks. The
-[whole-crop ground-support probe](whole-crop-ground-support.md) provides a bounded
-next measurement for Río Abajo, pending workload readiness. Repaired revisions,
+[whole-crop ground-support probe](whole-crop-ground-support.md) completed the
+approved Río Abajo measurements. Repaired revisions,
 cross-survey alignment and authored water surfaces remain future processing work.
