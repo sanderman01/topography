@@ -1,5 +1,10 @@
 # Mount St. Helens and Grand Canyon review batch
 
+Follow-up: the owner selected all four tiles. The
+[continuation](landmark-continuation-v1.md) records qualification, the crater's
+glacier exclusion, completed Zion download and the next gallery. The initial
+publication snapshot below remains as the record of what was presented.
+
 2026-09-21. Four new native crops await whole-tile gallery selection. Three show
 Mount St. Helens in Washington, USA; one shows a Grand Canyon side canyon in
 Arizona, USA. They have no human acceptance or technical preparation admission.

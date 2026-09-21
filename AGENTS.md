@@ -120,7 +120,8 @@ commands, and consistency with implementation and the master plan.
 - Delegate suitable independent tasks to Sol subagents (`gpt-5.6-sol`) by default.
   Give each agent a bounded scope and distinct file ownership; keep dependent
   work and integration coordinated by the primary agent. Verify returned work
-  before relying on it. Do not use Git worktrees.
+  before relying on it. Serialize shared catalog writes and integrity scans.
+  Do not use Git worktrees.
 - Prefer simple, robust, maintainable implementations. Keep domain logic in the
   core library; use GDAL/PROJ and PDAL for established geospatial algorithms.
 - Add dependencies and abstractions for concrete consumers. Do not preselect an

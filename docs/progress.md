@@ -1,48 +1,69 @@
 # Implementation progress
 
-Updated 2026-09-21. Seventeen real terrain regions are qualified and prepared;
+Updated 2026-09-21. Twenty real terrain regions are qualified and prepared;
 the original twelve are released for initial numeric evaluation. Scalar Float32 loading passes. Both bounded
 reconstruction candidates were rejected. The owner rejected the first coarse
 world layout. Batch acquisition and a persistent terrain gallery now support
-source expansion before another world-quality review; two source tiles remain
-excluded.
+source expansion before another world-quality review. Two rejected tiles remain
+excluded; a selected glacier-covered crater crop is separately blocked from
+ground preparation.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
 
-**Next input: four new whole-tile gallery votes.** Refresh
-`http://127.0.0.1:8765/` and use Pending: three Mount St. Helens crops and one
-Grand Canyon crop. Previous votes are saved; no repeat review is needed. Gallery
-v6 has 23 tiles: 17 accepted, two rejected and four pending.
+**Next input: five new whole-tile gallery votes.** Refresh
+`http://127.0.0.1:8765/` and use Pending: three additional Grand Canyon crops
+and two Zion crops. Previous choices remain saved; no repeat review is needed.
+Gallery v7 has 28 tiles: 21 accepted, two rejected and five pending.
 
-Current snapshot: `data/review/library-gallery-v6/gallery.json`, SHA-256
-`7cd79e5812514e9d186ab7bfd96dd65776bfa6785eeff4f3ec3be10e375101cf`.
-Pre-vote verification: `data/review/library-gallery-v6-verification.json`.
+Current snapshot: `data/review/library-gallery-v7/gallery.json`, SHA-256
+`5f52f7528e2ee89583741df98efc7e4a0caa1b2ad62be0df3c79ad177e37fe7d`.
+Integration and preservation evidence: `data/review/landmark-continuation-v1/`.
 Restart with:
 
 ```sh
-target/debug/topography gallery serve configs/runtime.example.toml data/review/library-gallery-v6/gallery.json 8765
+target/debug/topography gallery serve configs/runtime.example.toml data/review/library-gallery-v7/gallery.json 8765
 ```
 
-Read actual decisions from the catalog. Technical qualification of the four new
-crops remains pending; processing and the public product description do not
-establish source admission. Continue under the existing delegated supplier-QA
-rule only for selected tiles. The [landmark-source report](reports/landmark-source-review-v1.md)
-records crop selection, coverage limits, exact native verification and queues.
+**The owner liked Grand Canyon and requested more.** Three varied crops from the
+adjacent source now join the [gallery batch](reports/grand-canyon-expansion-v1.md).
+Keep that preference for future expansion. Zion's download also finished and
+[two canyon contexts](reports/zion-review-v1.md) are ready. Together the new five
+preserve all 17,301,504 native Float32 samples and provider masks exactly. Read
+actual gallery decisions from the catalog before qualification; no automated Yes
+was recorded for these candidates.
+
+The four previous gallery choices were all Yes. The original Grand Canyon crop
+and two St. Helens flanks are qualified and prepared. The glacier-covered crater
+rim retains its Yes but is excluded from ground preparation. Missing source
+metadata was completed through immutable replacements; independent checks prove
+that the three selected successor crops have identical native terrain, validity
+and physical coordinates. Original vote bytes, receipts, reviews and histories
+remain preserved. See the [continuation report](reports/landmark-continuation-v1.md)
+and its pinned equivalence evidence. No repeated owner vote or new technical
+certification was inferred. The catalog now has 55 records, 26 review heads and
+20 prepared regions. Extra historical heads retain the metadata-only predecessors;
+they are not extra terrain patches. All 50 earlier records and 17 prepared entries
+are byte-preserved.
+
+**Delegate suitable independent tasks to Sol (`gpt-5.6-sol`).** The owner requested
+this default and [AGENTS.md](../AGENTS.md) now records it. Give distinct file scopes,
+verify returned work and serialize shared catalog writes/integrity scans. Keep the
+existing checkout; do not use worktrees.
 
 **The three Banks Yes votes and coastal No are saved.** The three inland crops
 are [qualified and prepared](reports/banks-peninsula-qualification-v1.md), with
 all 7,077,888 Float32 samples and prepared masks verified independently. Supplier
-interpolation beneath forest remains accepted under the delegated rule. The
-catalog has 46 records, 19 current heads and 17 prepared regions. All 43 earlier
+interpolation beneath forest remains accepted under the delegated rule. At that checkpoint, the
+catalog had 46 records, 19 current heads and 17 prepared regions. All 43 earlier
 records and the other 16 heads are unchanged; no chat votes were duplicated.
 Evidence and requests: `data/review/banks-peninsula-qualification-v1/`.
 
 The two previously accepted wider Puerto Rico contexts are also prepared; their
 [qualification](reports/connected-context-qualification-v1.md) and source records
 remain unchanged. The current [source inventory](reports/pilot-source-coverage-v1.md)
-spans six Puerto Rico areas plus Banks Peninsula, two survey collections and
-11.484099 km² of unique selected footprint. The original twelve-region numeric
+now spans nine named areas and 22.232003 km² of unique prepared footprint, adding
+Grand Canyon and Mount St. Helens to Puerto Rico and Banks Peninsula. The original twelve-region numeric
 release and its 512 m context split remain unchanged. No model job or new training
 release was started.
 
@@ -65,11 +86,13 @@ retains all twelve examples and marks unqueried candidates honestly:
 `data/staging/location-shortlist-v1/shortlist.json`. Actual USGS 1 m results exist
 for Grand Canyon and Zion Narrows. The 600 MB bounded queue selects one source
 from each. Grand Canyon is imported; its partially populated footprint required
-choosing a complete northeastern side-canyon crop. Zion continues downloading;
-check `data/review/location-shortlist-download-v1/download-status.json` and the
-active process before restarting. Use the current binary with the corrected range
-timeout for a later resume. Do not assume discovery rectangles prove complete
-landmark coverage. Fjords and island/cliff terrain remain gaps.
+choosing a complete northeastern side-canyon crop. Both downloads are complete; the adjacent Grand Canyon source is also imported.
+Use `shortlist-v2.json` in that directory for the updated shortlist. Two LINZ
+Southland assets near Milford Sound are now queued in
+`data/staging/fjord-shortlist-v1/download-targets.json` (400 MB aggregate cap),
+with collection/footprint/item metadata hash-verified. They are not yet downloaded;
+inspect actual raster coverage before claiming connected fjord cliffs. Fjords and
+island/cliff terrain remain gaps.
 
 **Use the tools for source expansion.** The owner requested target lists instead
 of repeated agent-driven downloads and one gallery for rapid review. The

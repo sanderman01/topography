@@ -41,3 +41,7 @@ The local server currently reads session entropy from `/dev/urandom` (Unix).
 Source discovery, dataset-specific permission/QA interpretation and geographic
 split planning still require technical judgment. They feed the target list;
 visual approval does not skip those gates or create prepared/training admission.
+When published evidence is already available, complete survey/date scope, actual
+CRS, units, datum and processing declarations before publishing review crops.
+This avoids unnecessary metadata-only successors after selection. Preserve
+unknowns when evidence is missing; never infer acquisition dates from a title.

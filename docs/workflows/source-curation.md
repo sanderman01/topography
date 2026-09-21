@@ -106,6 +106,18 @@ it with a fresh visual-review request or silently turn an annotation into a huma
 decision. Version 1 has one current record containing both selection and technical
 findings; preserving the decision during these updates is the implementer's task.
 
+Missing source declarations can require a new immutable import before preparation.
+For a metadata-only replacement, retain the original receipt, review, decision and
+gallery. Carry its selection into the replacement's curation record only after
+checking the same raw asset checksum, native window, actual grid/CRS/axis mapping,
+vertical interpretation, decoded Float32 values and provider validity. Capture
+the original decision bytes and the equivalence check as evidence, and state that
+the implementer carried the existing selection; do not describe it as a new vote
+or human technical certification. The new review has a separate curation chain.
+Keep one tile entry in the next gallery while preserving the earlier snapshot.
+This is a manual use of existing commands, not automatic acceptance transfer. A
+changed surface, mask, window or physical interpretation does not qualify for it.
+
 The database is the configured `catalog_db`; its sibling directory with `.curation`
 appended contains `records/<sha256>.json` and `objects/<sha256>`. Unrelated SQLite
 databases and unknown schema versions are rejected. Files publish before a short
