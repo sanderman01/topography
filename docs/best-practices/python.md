@@ -2,7 +2,8 @@
 
 Applies to `training/`: Python 3.11+, setuptools, a `src/topography_training/`
 layout, a NumPy CPU numeric worker and an optional CPU image-codec experiment.
-No trainer, GPU runtime, formal Python test runner, formatter or linter is configured yet.
+One fixed scalar fitting trial is available; no production trainer, GPU runtime,
+formal Python test runner, formatter or linter is configured.
 
 ## Packaging and code
 

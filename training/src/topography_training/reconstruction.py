@@ -41,17 +41,13 @@ def pinned_document(reference: dict) -> tuple[Path, dict, bytes]:
     return path, document, data
 
 
-def check_inputs(job_path: Path) -> tuple[dict, dict, Path, dict]:
-    job, job_bytes = read_document(job_path)
-    fields(job, {"schema_version", "kind", "dataset_sha256", "numeric_run", "model"}, "codec job")
-    if type(job["schema_version"]) is not int or job["schema_version"] != 1 or job["kind"] != "image_codec_evaluation_job":
-        raise ValueError("unsupported codec job")
-    identity(job["dataset_sha256"])
-    run_path, run, _ = pinned_document(job["numeric_run"])
+def check_numeric_run(reference: dict, dataset_sha256: str) -> tuple[dict, Path, str]:
+    """Verify the retained scalar evaluation input chain for a representation consumer."""
+    run_path, run, _ = pinned_document(reference)
     fields(run, {"schema_version", "kind", "dataset_sha256", "request_sha256", "metrics_sha256",
                  "worker_result_sha256", "current_at_completion", "gpu_used", "training_admission", "topography_version"}, "numeric run")
     if (run["schema_version"] != 1 or run["kind"] != "verified_numeric_evaluation"
-            or run["dataset_sha256"] != job["dataset_sha256"]
+            or run["dataset_sha256"] != dataset_sha256
             or run["training_admission"] != "not admitted" or run["gpu_used"] is not False):
         raise ValueError("codec requires a completed evaluation-only numeric run")
     request, request_bytes = read_document(run_path.parent / "request.json")
@@ -62,7 +58,7 @@ def check_inputs(job_path: Path) -> tuple[dict, dict, Path, dict]:
             raise ValueError("numeric run integrity mismatch")
     fields(request, {"schema_version", "kind", "dataset_sha256", "normalization", "regions"}, "numeric request")
     if (request["schema_version"] != 1 or request["kind"] != "numeric_evaluation_job"
-            or request["dataset_sha256"] != job["dataset_sha256"]
+            or request["dataset_sha256"] != dataset_sha256
             or request["normalization"] != {"offset_m": 0.0, "scale_m": 2048.0}
             or not isinstance(request["regions"], list) or not 1 <= len(request["regions"]) <= 32):
         raise ValueError("invalid scalar request for codec")
@@ -77,6 +73,16 @@ def check_inputs(job_path: Path) -> tuple[dict, dict, Path, dict]:
         window = central_window(height.shape)
         if not np.any(valid[window]) or not np.any(valid[window][MARGIN:-MARGIN, MARGIN:-MARGIN]):
             raise ValueError("all-masked codec window/interior")
+    return request, run_path.parent, digest(request_bytes)
+
+
+def check_inputs(job_path: Path) -> tuple[dict, dict, Path, dict]:
+    job, job_bytes = read_document(job_path)
+    fields(job, {"schema_version", "kind", "dataset_sha256", "numeric_run", "model"}, "codec job")
+    if type(job["schema_version"]) is not int or job["schema_version"] != 1 or job["kind"] != "image_codec_evaluation_job":
+        raise ValueError("unsupported codec job")
+    identity(job["dataset_sha256"])
+    request, run_root, request_sha = check_numeric_run(job["numeric_run"], job["dataset_sha256"])
     model_path, model, _ = pinned_document(job["model"])
     fields(model, {"schema_version", "kind", "repository", "revision", "artifacts"}, "model")
     if (model["schema_version"] != 1 or model["kind"] != "local_image_codec"
@@ -93,9 +99,9 @@ def check_inputs(job_path: Path) -> tuple[dict, dict, Path, dict]:
             raise ValueError("model artifact integrity mismatch")
     if model["artifacts"]["diffusion_pytorch_model.safetensors"]["sha256"] != MODEL_WEIGHTS_SHA:
         raise ValueError("model weights differ from pinned public revision")
-    return job, request, run_path.parent, {"job_sha256": digest(job_bytes),
-            "request_sha256": digest(request_bytes), "model_manifest_sha256": job["model"]["sha256"],
-            "input_roots": [str(run_path.parent.resolve()), str(model_path.parent.resolve())]}
+    return job, request, run_root, {"job_sha256": digest(job_bytes),
+            "request_sha256": request_sha, "model_manifest_sha256": job["model"]["sha256"],
+            "input_roots": [str(run_root.resolve()), str(model_path.parent.resolve())]}
 
 
 def central_window(shape: tuple[int, int]) -> tuple[slice, slice]:
@@ -103,23 +109,24 @@ def central_window(shape: tuple[int, int]) -> tuple[slice, slice]:
     return slice(row, row + SIZE), slice(column, column + SIZE)
 
 
-def cases(request: dict, root: Path):
+def cases(request: dict, root: Path, size: int = SIZE):
     """Yield fixed native central windows, followed by four deterministic synthetic cases."""
     for index, region in enumerate(request["regions"]):
         height, valid, water = load_region(region, root)
-        window = central_window(height.shape)
+        row, col = [(n - size) // 2 for n in height.shape]
+        window = (slice(row, row + size), slice(col, col + size))
         row, col = window[0].start, window[1].start
         sx, sy = region["grid"]["spacing_m"]
         yield {"id": f"region-{index:02}", "prepared_sha256": region["prepared_sha256"],
                "group": region["group"], "role": region["role"], "window_offset_cells": [col, row],
                "origin": [region["grid"]["origin"][0] + col * sx, region["grid"]["origin"][1] - row * sy],
                "spacing_m": [sx, sy]}, height[window].copy(), valid[window].copy(), water[window].copy()
-    ramp = np.tile(np.linspace(-2047.75, 2047.75, SIZE, dtype=np.float32), (SIZE, 1))
-    flat = np.full((SIZE, SIZE), 1800.125, dtype=np.float32)
-    sharp = np.full((SIZE, SIZE), 1800, dtype=np.float32)
-    sharp[:, SIZE // 2 - 1:SIZE // 2 + 1] += np.float32(10.125)
-    narrow = np.full((SIZE, SIZE), 1800, dtype=np.float32)
-    narrow[:, SIZE // 2] += np.float32(0.125)
+    ramp = np.tile(np.linspace(-2047.75, 2047.75, size, dtype=np.float32), (size, 1))
+    flat = np.full((size, size), 1800.125, dtype=np.float32)
+    sharp = np.full((size, size), 1800, dtype=np.float32)
+    sharp[:, size // 2 - 1:size // 2 + 1] += np.float32(10.125)
+    narrow = np.full((size, size), 1800, dtype=np.float32)
+    narrow[:, size // 2] += np.float32(0.125)
     for name, height in [("ramp", ramp), ("flat", flat), ("sharp_ridge", sharp), ("narrow_ridge", narrow)]:
         yield {"id": name, "prepared_sha256": None, "group": "synthetic", "role": "synthetic",
                "window_offset_cells": [0, 0], "origin": [0, 0], "spacing_m": [0.5, 0.5]}, height, np.ones(height.shape, bool), np.zeros(height.shape, bool)

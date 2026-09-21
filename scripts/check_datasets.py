@@ -44,6 +44,29 @@ def check(cli, directory, python=None):
     assert status["current"] and status["purpose"] == "numeric_evaluation_only"
     assert Path(run(cli, "dataset", "build", runtime, request, approval_path)) == release
     before = {p: sha(p) for p in [first, second, release]}
+    fit_approval_path = directory / "fit-approval.json"
+    fit_approval = {"schema_version": 1, "kind": "representation_fit_approval",
+                    "scope": "representation_fit_only", "dataset_sha256": sha(release),
+                    "actor_kind": "human", "actor_name": "Synthetic fixture only",
+                    "recorder": "workflow check", "decision": "approve",
+                    "exact_response": "Synthetic fitting approval",
+                    "plan_sha256": "1" * 64, "proposal_sha256": "2" * 64,
+                    "trial": "scalar_codec_fit_v1"}
+    write(fit_approval_path, fit_approval)
+    fit = Path(run(cli, "dataset", "fit-build", runtime, release, fit_approval_path))
+    assert fit != release and fit.parent.name == sha(fit)
+    fit_status = json.loads(run(cli, "dataset", "fit-verify", runtime, fit))
+    assert fit_status["purpose"] == "representation_fit_only" and fit_status["current"]
+    assert fit_status["dataset_sha256"] == sha(release)
+    assert Path(run(cli, "dataset", "fit-build", runtime, release, fit_approval_path)) == fit
+    run(cli, "dataset", "verify", runtime, fit, expected=1)
+    run(cli, "dataset", "fit-verify", runtime, release, expected=1)
+    run(cli, "dataset", "fit-build", runtime, release, approval_path, expected=1)
+    for change in [{"scope": "numeric_evaluation_only"}, {"dataset_sha256": "0" * 64},
+                   {"actor_kind": "assistant"}, {"trial": "unbounded_training"}]:
+        write(fit_approval_path, dict(fit_approval, **change))
+        run(cli, "dataset", "fit-build", runtime, release, fit_approval_path, expected=1)
+    write(fit_approval_path, fit_approval)
     # Two individually prepared pieces of one source may not cross roles.
     pieces = []
     for i, head in enumerate(heads):
@@ -92,6 +115,7 @@ def check(cli, directory, python=None):
     raster = first.parent / "water.tif"
     intact = raster.read_bytes()
     raster.write_bytes(b"corrupt")
+    run(cli, "dataset", "fit-verify", runtime, fit, expected=1, message="integrity")
     run(cli, "dataset", "verify", runtime, release, expected=1, message="integrity")
     raster.write_bytes(intact)
     if python:
@@ -161,6 +185,7 @@ result_path.write_text(json.dumps(result))
     write(draft, decision)
     run(cli, "curate", "record", draft, runtime)
     run(cli, "dataset", "verify", runtime, release, expected=1, message="current")
+    run(cli, "dataset", "fit-verify", runtime, fit, expected=1, message="current")
     assert all(sha(p) == digest for p, digest in before.items())
 
 

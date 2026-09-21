@@ -1,6 +1,8 @@
-//! Immutable, evaluation-only datasets with current prepared-source checks.
+//! Immutable scoped pilot datasets with current prepared-source checks.
 
+mod fitting;
 mod numeric;
+pub use fitting::{build_fit, verify_fit};
 pub use numeric::evaluate;
 
 use crate::{

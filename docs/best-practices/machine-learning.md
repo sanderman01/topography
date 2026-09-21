@@ -2,7 +2,7 @@
 
 Applies to dataset releases, numeric evaluation, training, and inference.
 The scalar worker is implemented; the optional codec experiment uses a separate
-CPU-only Torch/Diffusers environment. Model training is not implemented. Follow sections 6–7 of the
+CPU-only Torch/Diffusers environment. One bounded scalar-codec fit is implemented; production training remains planned. Follow sections 6–7 of the
 [master plan](../plans/terrain-design-master-plan.md): prove numeric fidelity and
 feasibility before committing to a diffusion architecture or a large training run.
 

@@ -17,7 +17,8 @@ ADDRESS_SPACE_BYTES = 6 * 1024**3
 LOG_BYTES = 1024**2
 
 
-def supervise(command: list[str], log: Path, timeout: float, log_bytes: int) -> None:
+def supervise(command: list[str], log: Path, timeout: float, log_bytes: int,
+              *, disk_bytes: int | None = None) -> None:
     """Run one process group with a wall-clock deadline and bounded diagnostic reads."""
     environment = dict(os.environ, OMP_NUM_THREADS="2", OPENBLAS_NUM_THREADS="2",
                        MKL_NUM_THREADS="2", NUMEXPR_NUM_THREADS="2",
@@ -38,6 +39,8 @@ def supervise(command: list[str], log: Path, timeout: float, log_bytes: int) -> 
                 status = child.poll()
                 if log.stat().st_size > log_bytes:
                     raise RuntimeError("codec worker log exceeded its limit")
+                if disk_bytes is not None and sum(p.stat().st_size for p in log.parent.rglob('*') if p.is_file()) > disk_bytes:
+                    raise RuntimeError("codec worker artifact disk limit exceeded")
                 if time.monotonic() - started > timeout:
                     raise RuntimeError("codec worker exceeded its time limit")
                 if status is not None:

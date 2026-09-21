@@ -4,7 +4,8 @@ The Python package now implements a bounded CPU numeric evaluation worker. It
 loads scalar Float32 metre elevations and separate masks from a versioned Rust
 request, then measures Float32/Float16 normalization error on real terrain and
 synthetic features. A separate bounded CPU experiment evaluates a pinned image
-autoencoder; model training and diffusion remain unimplemented.
+autoencoder. One narrowly scoped scalar-autoencoder fitting trial is implemented;
+production training and diffusion remain unimplemented.
 
 ```sh
 python3 -m venv training/.venv
@@ -37,3 +38,8 @@ Torch from the official CPU index first, then that requirements file and the
 `codec.py` supervises the bounded process; `reconstruction.py` validates pinned
 inputs, runs the VAE and verifies retained output arrays. `metrics.py` supplies
 shared physical errors. Imports do not load model weights or start jobs.
+
+The [scalar fitting workflow](../docs/workflows/scalar-codec-fitting.md) reuses that
+CPU environment under a separate `representation_fit_only` release. It retains
+initial/final weights, native scalar outputs and a fixed 200-step loss history.
+Normal checks include tiny fitting checks when the optional environment exists.

@@ -25,6 +25,8 @@ Usage: topography [--help | --version]
        topography prepare verify <runtime.toml> <prepared-manifest.json>
        topography dataset build <runtime.toml> <selection.json> <approval.json>
        topography dataset verify <runtime.toml> <dataset-manifest.json>
+       topography dataset fit-build <runtime.toml> <evaluation-manifest.json> <approval.json>
+       topography dataset fit-verify <runtime.toml> <fitting-manifest.json>
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
 Options:
@@ -142,6 +144,20 @@ fn main() -> ExitCode {
                 }
                 Err(error) => return workflow_result(Err(error)),
             }
+        }
+        [command, action, runtime, dataset, approval]
+            if command == "dataset" && action == "fit-build" =>
+        {
+            return workflow_result(
+                datasets::build_fit(Path::new(runtime), Path::new(dataset), Path::new(approval))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, runtime, manifest] if command == "dataset" && action == "fit-verify" => {
+            return workflow_result(datasets::verify_fit(
+                Path::new(runtime),
+                Path::new(manifest),
+            ));
         }
         [command, action, runtime, selection, approval]
             if command == "dataset" && action == "build" =>

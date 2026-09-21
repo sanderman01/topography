@@ -138,3 +138,9 @@ GDAL/PROJ; point-cloud processing should use PDAL.
 Scripts must receive explicit input/output paths and propagate failures. Source
 deletion or cache cleanup must be an explicit operation, separate from review
 and ordinary build steps.
+
+The optional CPU environment enables `scripts/check_scalar_fit.py` in the full
+check. It checks small scalar-model updates, mask gradients, calibration-only
+window selection, safetensors reload and disk limits; it never launches a full
+terrain fit. See [scalar fitting](../docs/workflows/scalar-codec-fitting.md) for
+the separately authorized job and optional completion-contract fixtures.

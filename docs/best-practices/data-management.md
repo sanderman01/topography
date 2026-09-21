@@ -2,7 +2,7 @@
 
 Applies to provider adapters, manual import, the catalog, dataset releases, and
 artifact storage. Raw acquisition/import and integrity checks exist; SQLite
-crop-curation persistence and gated native preparation exist; training releases
+crop-curation persistence and gated native preparation exist; a scoped scalar fitting release exists; production training releases
 remain planned. Use the
 [master plan](../plans/terrain-design-master-plan.md), sections 2–4 and 9, for
 the project's source-admission and provenance requirements.

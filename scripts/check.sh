@@ -86,3 +86,9 @@ if command -v python3 >/dev/null && command -v gdalinfo >/dev/null && command -v
 else
   printf 'GDAL acquisition workflow skipped: Python 3.11+ and GDAL command-line tools are required.\n'
 fi
+
+if [[ -x data/models/codec-environment-v1/.venv/bin/python ]]; then
+  data/models/codec-environment-v1/.venv/bin/python scripts/check_scalar_fit.py
+else
+  printf 'Scalar fitting checks skipped: the optional CPU Torch environment is not installed.\n'
+fi
