@@ -13,7 +13,8 @@ and explicit human decisions. Regional mask assessment and preparation eligibili
 checks compare measured coverage with pinned decisions. Eligible areas from the
 same survey can be composed on an exact native grid into immutable prepared
 regions. Evaluation-only dataset releases and a reusable CPU numeric worker now
-check scalar precision. Model training, generation and export remain planned.
+check scalar precision. A separate, bounded scalar-autoencoder fitting trial is
+implemented; production training, generation and export remain planned.
 Processing success never approves terrain.
 Review crops include a self-contained browser preview with multiple hillshades,
 cross-sections and metric low-altitude views where the source metadata supports them.
@@ -111,5 +112,12 @@ technical decisions to the implementer. The [numeric workflow](docs/workflows/nu
 publishes the selected collection, verifies current sources and measures height
 and slope error while excluding masked water. The
 [image-codec experiment](docs/reports/image-codec-pilot-v1.md) measured large height
-errors and rejected that representation before LoRA training. Terrain-specific
-modeling and training feasibility remain pending.
+errors and rejected that representation before LoRA training. The subsequent
+[scalar fitting trial](docs/reports/scalar-codec-fit-v1.md) also failed to preserve
+terrain detail. The next world pilot uses the plan's curated-patch-and-blending
+fallback; no further model tuning is scheduled.
+
+A [first coarse world proposal](docs/reports/world-layout-proposal-v1.md) is ready
+for whole-world review. It is an authored layout at 16 m, with a connected river
+and retained patch transforms; reusable world composition, finer terrain and
+export remain planned.

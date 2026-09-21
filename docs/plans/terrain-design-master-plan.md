@@ -310,16 +310,22 @@ The [numeric workflow](../workflows/numeric-evaluation.md) publishes an evaluati
 release and runs a reusable Rust/Python scalar check. The
 [first image-codec experiment](../reports/image-codec-pilot-v1.md) completed twelve
 real windows and four synthetic cases; the tested representation was rejected
-for metre-scale height errors and narrow-feature loss. Terrain-specific modeling
-and training feasibility remain pending. Prepared outputs retain their separate
-unreviewed state and remain excluded from training release. Cross-survey alignment,
-repairs, output acceptance, model-training releases and per-cell label editing remain pending.
+for metre-scale height errors and narrow-feature loss. One separately approved
+[scalar fitting trial](../reports/scalar-codec-fit-v1.md) also completed and was
+technically rejected. Its fitting-only release preserves the original evaluation
+scope; no production training is admitted. Continue the world pilot with curated
+real patches and blending under the fallback above. Prepared outputs retain their
+separate unreviewed state. Cross-survey alignment, repairs, output acceptance,
+production model-training releases and per-cell label editing remain pending.
+A [first coarse world proposal](../reports/world-layout-proposal-v1.md) is ready
+for whole-world review at 16 m. It is an authored layout, not the reusable world
+composer or completed fine-resolution pilot.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.
 - [x] Run an early karst acquisition trial, tracing source data through to several inspectable high-detail crops. Keep a failed candidate report if the geometry is not supported.
 - [ ] Add the highest-value agency adapters, regional quality checks, human crop selection, and label editing.
-- [ ] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
+- [x] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
 - [ ] Compare LoRA plus a trained control branch against a terrain-specific representation if needed; benchmark quality, memory, and runtime.
 - [ ] Build a 4,096 × 4,096 m pilot with several biome boundaries, a connected water feature, one protected landmark, and a demonstrably local rerun.
 - [ ] Expand to all finalized classes (nine as a working target, adjusted per §1's acquisition-driven exceptions) and test coherent coarse-to-fine generation at the full extent, with human review between scales.

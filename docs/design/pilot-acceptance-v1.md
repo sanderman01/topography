@@ -4,8 +4,9 @@ These are initial requirements from the [master plan](../plans/terrain-design-ma
 sections 1, 2, 4–7 and 10. Configuration validation, raw import/integrity checks
 and native-grid review crops are implemented. Curation records explicit human
 decisions; regional mask checks and preparation eligibility are implemented.
-Aligned native prepared-data publication is implemented; output acceptance,
-dataset releases and model evaluation remain pending.
+Aligned native prepared-data publication, scoped evaluation/fitting releases and
+bounded model evaluation are implemented. Output acceptance and production model
+training remain pending.
 
 ## Exact contracts
 

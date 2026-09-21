@@ -1,9 +1,9 @@
 # Implementation progress
 
 Updated 2026-09-21. Twelve real terrain regions are qualified, prepared and released
-for initial numeric evaluation. Scalar Float32 loading passes. The first image
-autoencoder experiment completed and its terrain representation was rejected;
-one reviewed source tile remains excluded.
+for initial numeric evaluation. Scalar Float32 loading passes. Both bounded
+reconstruction candidates were rejected. A first coarse world layout built from
+real patches is ready for whole-world review; one source tile remains excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
@@ -41,13 +41,33 @@ image-VAE representation: real-window height RMSE was 5.47–31.24 m, and the
 12.5 cm narrow ridge became a shallow dip. See the
 [result](reports/image-codec-pilot-v1.md). Do not repeat it or train LoRA on it.
 
-Next is the [single-channel fitting trial](plans/scalar-codec-fit-pilot-v1.md), with a separate experiment/training budget
-and release scope. No model fitting has run or been admitted by the current
-evaluation-only release. The owner need not inspect geographic grouping,
-technical masks or arithmetic tables, and no new source vote is needed.
+The owner then answered **“continue”** to the [single-channel fitting trial](plans/scalar-codec-fit-pilot-v1.md).
+The separately scoped fitting release was published, and the one 200-step CPU
+trial completed in 74.90 s at about 615.5 MiB worker RSS, no GPU. Codex rejected
+this candidate: held-out interior height RMSE remains 7.66–12.17 m and the narrow
+ridge's local contrast disappears. See the [result](reports/scalar-codec-fit-v1.md).
+Preserve both model runs; do not launch further tuning or request another source vote.
+The original numeric release remains evaluation-only, and production training
+is not admitted.
+
+**Awaiting the next whole-world yes/no:**
+`data/worlds/pilot-layout-proposal-v2/review.html` is the first 4,096 m layout,
+with hills, a winding gorge and a southern floodplain. The
+[proposal report](reports/world-layout-proposal-v1.md) pins its identity and limits.
+It is a small authored 16 m layout, not a production world revision or a completed
+4 m/1 m pilot. Ask only whether the overall landscape works; no individual
+feature selection or technical review is needed. Record the response against
+this exact manifest/page before refining. Source acceptance is unchanged.
+
+If accepted, retain the coarse proposal and implement the reusable Rust
+composition/edit consumer for real patches and blending, then refine according
+to the master plan. Keep water separate and demonstrate protected/local edits.
+The authored recipe is retained as input design, not production domain logic in
+Python. Obtain readiness before genuinely substantial raster work; the completed
+scalar trial's readiness is not authorization for unrelated heavy jobs.
 
 Continue in the existing checkout on `feat/east-ridges-qualification`; no worktree.
-This continuation builds on `6890cec` and implements the CPU image-codec experiment.
+This continuation builds on `a88cdfd`; `817877c` adds the scalar fitting workflow.
 Merging remains with the owner.
 
 ## Implemented and verified
@@ -63,7 +83,9 @@ Merging remains with the owner.
 | Ground sampling | Three early 64 m samples and three completed full-crop count checks. All native count bins verified against retained XY points. Counts remain diagnostics, not measured feature accuracy. |
 | Numeric evaluation | Scoped immutable release, six geographic groups, current-parent verification, scalar Rust/Python job and full twelve-region Float32/Float16 measurements. |
 | Image-codec evaluation | Pinned public VAE, deterministic CPU reconstruction, retained scalar/channel outputs, physical metrics and bounded supervision. First representation technically rejected. |
-| Future work | Model-training releases, terrain-specific models, label editing, generation, world editing and terrain export remain unimplemented. |
+| Scalar fitting | Separate fitting-only child release, fixed CPU trial, initial/final weights and native outputs, checked scope and completion. First candidate technically rejected. |
+| Coarse world proposal | One-off 4,096 m layout at 16 m from real patches, connected authored water and exact local-edit/lock demonstration; awaiting whole-world review. |
+| Future work | Production model training, reusable world composition/editing, label editing, refinement and terrain export remain unimplemented. |
 
 ## Current Río Abajo state
 
@@ -265,25 +287,38 @@ Rust 1.85 itself was not tested.
   against reported hashes, and retained results are unchanged. No model rerun
   was needed to verify cancellation/publication fixes. Nothing was promoted.
 
-## Continue after the image-codec experiment
+## Scalar fitting and coarse-layout verification
 
-1. Do not pursue LoRA training on this representation. The
-   [scalar-codec fitting proposal](plans/scalar-codec-fit-pilot-v1.md) bounds one
-   small single-channel reconstruction trial to 200 steps, two CPU threads,
-   30 minutes, 6 GiB address space and no GPU. It needs a separate fitting-only
-   release; existing numeric-release scope is preserved. Obtain readiness and
-   scoped fitting permission for substantial new work; the “Continue”
-   above covered the completed reconstruction run, not open-ended model training.
-2. Keep numeric-pilot and future model-training releases distinct. This collection
-   has no untouched test split or large coarse-context coverage; expand/repartition
-   only when the next concrete experiment requires it. Do not restart broad tile
-   review for the same sources.
-3. Evaluate candidate codecs in metres before choosing or training a
-   model. Establish actual tolerances and a bounded experiment budget from the
-   pilot; obtain readiness for substantial new workloads. Keep 16 GB VRAM ceiling
-   and curated-patch/blending fallback.
-4. Continue toward the 4,096 m world pilot, regional editing and export as ordered
-   in the master plan. Vehicle dimensions remain explicitly unset.
+- Separate fitting release `f6cf0af754c65840ea072d06898e92b376cb2e6591fb128ee0cac0d9220c641a`
+  preserves the parent evaluation-only release and the six/six geographic split.
+  Scope/currentness/corruption/rejection workflow checks pass.
+- `data/models/scalar-codec-fit-v1/result.json` has SHA-256
+  `528ec0e6cfa2014f3b9103bc764c8795ab8d90defc45ca49db836d49f63c0ba5`.
+  Initial/final weights, all 200 scheduled loss entries and 80 scalar/mask arrays
+  are retained. Direct scalar Float32 remains exact on every measured land cell.
+- All scalar fitting artifact hashes, shapes, original/mask values and physical
+  metrics were verified. Before/after Rust source status matches. Peak/time cover
+  the worker only; the completed run uses 59,013,048 bytes. No GPU or new download.
+- One fresh reviewer found a caller-job replacement race. It was reproduced and
+  fixed: execution/verification use archived prechecked bytes and completion IDs
+  must agree with initial admission. Caller/archive replacement fixtures pass.
+  Actual-run job/source identities were independently confirmed unchanged; exact
+  executed code is archived, and no model rerun was needed.
+- Full `bash scripts/check.sh` passes after the fix, plus the optional real-input
+  completion fixtures. Tiny checks cover loss masking, calibration-only schedule,
+  actual optimizer/checkpoint reload and resource/cancellation failures. Existing
+  image-codec completion fixtures pass after shared scalar-loader extraction.
+- Coarse world v2 contains 64,183 land cells and 1,353 connected water cells.
+  Ground below water is deterministic zero; surface levels descend southward.
+  Its local edit changes 1,965 land cells, preserving outside/locked bits exactly.
+  All 32 artifacts were independently rehashed; all six source regions remain
+  current. Overview inspected; four viewpoints exercised with a Node canvas
+  fixture. No full browser automation was run.
+- World proposal manifest is
+  `087193857ae1f3d6f492e2329488dc761db097c5f57faa2d90a0a36fb4635ad9`;
+  review HTML is
+  `d35253aaf69f84493b5316b363f48c0c70f2e4dc22593e4e280d097b99da858d`.
+  The first draft is preserved separately; neither has human acceptance.
 
 **Standing constraints:** public downloads only; never send or draft email, or
 ask the owner to contact institutions. Whole-tile yes/no review in batches.
