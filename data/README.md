@@ -48,6 +48,13 @@ retain the request, decoded binary inputs, metrics, worker result/log and comple
 manifest. Verify the release before reuse: later source rejection preserves output
 but revokes current use. See [numeric evaluation](../docs/workflows/numeric-evaluation.md).
 
+Image-codec experiments retain public model/configuration manifests and separate
+CPU environments under `models/`. Completed runs have `result.json`, a worker
+report/log and explicit original/decoded/channel/mask arrays. Failure retains
+partial artifacts and `failure.json` without promoting them. A codec result does
+not attest current curation status: keep the separate Rust before/after release
+checks with the experiment. See [image-codec evaluation](../docs/workflows/image-codec-evaluation.md).
+
 Rejection records an exclusion; it does not delete raw assets. Cache housekeeping
 is separate from curation. Preserve accepted world output and source provenance;
 ignored files are not backed up by Git, and accepted artifacts need separate

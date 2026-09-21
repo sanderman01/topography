@@ -73,6 +73,10 @@ Its result pins request, dataset and metric hashes and declares `gpu_used: false
 elapsed time and worker-process RSS scope. It does not authorize source use by
 itself: the Rust command performs release verification before and after the job.
 
+Source hashes include `numeric.py` and `payload.py`, plus `metrics.py` after the
+shared-error extraction. Verification accepts the historical two-file form and
+the three-file form; old results keep their original recorded code identities.
+
 Metrics report per-region identity/role, land/water/invalid counts, Float32 and
 Float16 height max/RMS error in metres, slope-component max/RMS error in m/m,
 valid/nonflat neighbor counts, newly flat pairs and bit agreement. Slopes require

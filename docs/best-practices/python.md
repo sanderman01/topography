@@ -1,8 +1,8 @@
 # Python
 
 Applies to `training/`: Python 3.11+, setuptools, a `src/topography_training/`
-layout and a NumPy CPU numeric worker. No trainer, model inference, GPU framework,
-formal Python test runner, formatter or linter is configured yet.
+layout, a NumPy CPU numeric worker and an optional CPU image-codec experiment.
+No trainer, GPU runtime, formal Python test runner, formatter or linter is configured yet.
 
 ## Packaging and code
 

@@ -72,6 +72,7 @@ if command -v python3 >/dev/null && command -v gdalinfo >/dev/null && command -v
   python3 scripts/check_preparation.py "$cli_binary"
   if [[ -x training/.venv/bin/python ]] && training/.venv/bin/python -c 'import topography_training.numeric' >/dev/null 2>&1; then
     training/.venv/bin/python scripts/check_numeric.py
+    training/.venv/bin/python scripts/check_codec.py
     python3 scripts/check_datasets.py "$cli_binary" --python "$project_root/training/.venv/bin/python"
   else
     python3 scripts/check_datasets.py "$cli_binary"

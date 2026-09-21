@@ -4,6 +4,10 @@ Next step after the [numeric result](../reports/numeric-evaluation-v1.md), under
 master-plan §7. Technical choices belong to the implementer. The owner is asked
 only for workload readiness, not to approve this configuration or judge metrics.
 
+**Completed:** see [measured results](../reports/image-codec-pilot-v1.md).
+The tested representation was rejected technically; preserve the run and do not
+repeat it or begin LoRA training on this VAE mapping.
+
 ## Concrete experiment
 
 Evaluate the public `stabilityai/sd-vae-ft-mse` autoencoder at revision
@@ -19,7 +23,8 @@ Captured public API metadata and the experiment request are in
 `data/review/codec-pilot-proposal-v1/`. The weights are 334,643,276 bytes with SHA-256
 `a1d993488569e928462932c8c38a0760b874d166399b14414135bd9c42df5815`.
 Metadata reports no account gate. Recheck access at download; no correspondence
-or accounts should be needed. Weights and ML dependencies are not installed yet.
+or accounts should be needed. The weights and isolated CPU dependencies are now
+installed locally; the original numeric environment remains separate.
 
 Use the completed numeric release, preserving its twelve native regions and
 geographic roles. Select one fixed central 256 × 256 cell window from each region
@@ -38,6 +43,9 @@ separate edge effects; masked fill can influence neighboring reconstructions and
 must remain a documented limitation. Reject nonfinite or malformed output.
 
 ## Workload and implementation bounds
+
+The owner's “Continue” in response to the readiness question authorizes this
+bounded run. Keep that scope; do not ask again for the same experiment.
 
 - CPU only, at most two compute threads, one window at a time; no GPU or training.
 - Stop after 30 minutes of model processing. Implement timeout/cancellation and

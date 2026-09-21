@@ -25,6 +25,12 @@ checks scoped approval, geography, corruption, later source rejection and worker
 success/failure. Omit `--python` for release checks without NumPy. These checks
 use small artificial terrain, temporary catalogs and no GPU.
 
+`training/.venv/bin/python scripts/check_codec.py` checks the shared reconstruction
+metrics, masks, process failure, timeouts and log limits without model weights.
+With `--job <pinned-codec-job.json>` it also checks completed/corrupt output using
+temporary identity reconstructions. See [the codec workflow](../docs/workflows/image-codec-evaluation.md).
+The real autoencoder experiment is never part of routine `check.sh`.
+
 For the complete acquisition workflow check:
 
 ```sh

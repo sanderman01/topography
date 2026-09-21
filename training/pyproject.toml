@@ -10,5 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy==2.3.5"]
 
+[project.optional-dependencies]
+codec = ["diffusers==0.36.0", "safetensors==0.7.0"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

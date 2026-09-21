@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twelve real regions are qualified under the supplier-QA pilot rule. Model-training admission, codecs and model work remain open. Sources checked 13 September 2026; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twelve real regions are qualified under the supplier-QA pilot rule. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -307,8 +307,11 @@ areas are now selected and prepared. A [numeric pilot proposal](../reports/numer
 groups the six areas for calibration/validation. The owner's assent to initial
 evaluation is captured with technical responsibility left to the implementer.
 The [numeric workflow](../workflows/numeric-evaluation.md) publishes an evaluation-only
-release and runs a reusable Rust/Python scalar check. Autoencoder reconstruction
-and model feasibility remain pending. Prepared outputs retain their separate
+release and runs a reusable Rust/Python scalar check. The
+[first image-codec experiment](../reports/image-codec-pilot-v1.md) completed twelve
+real windows and four synthetic cases; the tested representation was rejected
+for metre-scale height errors and narrow-feature loss. Terrain-specific modeling
+and training feasibility remain pending. Prepared outputs retain their separate
 unreviewed state and remain excluded from training release. Cross-survey alignment,
 repairs, output acceptance, model-training releases and per-cell label editing remain pending.
 

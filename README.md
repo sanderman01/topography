@@ -109,5 +109,7 @@ with exact native ground elevation preserved and water masked separately.
 source areas for evaluation. The owner assented to initial evaluation and left
 technical decisions to the implementer. The [numeric workflow](docs/workflows/numeric-evaluation.md)
 publishes the selected collection, verifies current sources and measures height
-and slope error while excluding masked water. Autoencoder reconstruction and
-model feasibility remain pending.
+and slope error while excluding masked water. The
+[image-codec experiment](docs/reports/image-codec-pilot-v1.md) measured large height
+errors and rejected that representation before LoRA training. Terrain-specific
+modeling and training feasibility remain pending.

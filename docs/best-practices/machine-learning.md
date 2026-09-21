@@ -1,7 +1,8 @@
 # Machine learning
 
-Applies to future dataset releases, numeric evaluation, training, and inference.
-The Python package has no ML dependencies yet. Follow sections 6–7 of the
+Applies to dataset releases, numeric evaluation, training, and inference.
+The scalar worker is implemented; the optional codec experiment uses a separate
+CPU-only Torch/Diffusers environment. Model training is not implemented. Follow sections 6–7 of the
 [master plan](../plans/terrain-design-master-plan.md): prove numeric fidelity and
 feasibility before committing to a diffusion architecture or a large training run.
 

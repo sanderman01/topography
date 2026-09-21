@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
-import math
 import os
 from pathlib import Path
 import platform
@@ -16,14 +15,13 @@ import time
 import numpy as np
 
 from .payload import digest, fields, identity, load_region, read_document
+from .metrics import compare_terrain
 
 
 def measure(height: np.ndarray, valid: np.ndarray, spacing_m: list[float]) -> dict:
     """Measure height and adjacent slope errors, excluding every masked sample/pair."""
     if height.dtype != np.dtype("float32") or height.ndim != 2 or valid.shape != height.shape or valid.dtype != np.dtype("bool"):
         raise ValueError("expected Float32 [row,column] heights and aligned Boolean validity")
-    if len(spacing_m) != 2 or any(not math.isfinite(n) or n <= 0 for n in spacing_m):
-        raise ValueError("invalid metric spacing")
     if not np.any(valid):
         raise ValueError("all-masked numeric input")
     if not np.all(np.isfinite(height[valid])) or np.any(np.abs(height[valid]) > 2048):
@@ -34,28 +32,7 @@ def measure(height: np.ndarray, valid: np.ndarray, spacing_m: list[float]) -> di
         encoded = np.zeros(height.shape, dtype=dtype)
         encoded[valid] = (height[valid] / np.float32(2048)).astype(dtype)
         decoded = encoded.astype(np.float32) * np.float32(2048)
-        error = decoded[valid].astype(np.float64) - height[valid].astype(np.float64)
-        sum_squared = 0.0
-        maximum = 0.0
-        pairs = nonflat = newly_flat = 0
-        for axis, spacing in [(0, spacing_m[1]), (1, spacing_m[0])]:
-            use = valid[1:, :] & valid[:-1, :] if axis == 0 else valid[:, 1:] & valid[:, :-1]
-            original_delta = np.diff(height.astype(np.float64), axis=axis)[use]
-            decoded_delta = np.diff(decoded.astype(np.float64), axis=axis)[use]
-            slope_error = (decoded_delta - original_delta) / spacing
-            if slope_error.size:
-                maximum = max(maximum, float(np.max(np.abs(slope_error))))
-                sum_squared += float(np.sum(slope_error**2))
-            pairs += int(use.sum())
-            nonflat += int(np.count_nonzero(original_delta != 0))
-            newly_flat += int(np.count_nonzero((original_delta != 0) & (decoded_delta == 0)))
-        result[name] = {"max_height_error_m": float(np.max(np.abs(error))),
-                        "height_rmse_m": float(np.sqrt(np.mean(error**2))),
-                        "max_slope_component_error_m_per_m": maximum if pairs else None,
-                        "slope_component_rmse_m_per_m": math.sqrt(sum_squared / pairs) if pairs else None,
-                        "valid_neighbor_pairs": pairs, "nonflat_pairs": nonflat,
-                        "newly_flat_pairs": newly_flat,
-                        "bit_identical_valid_samples": bool(np.array_equal(height[valid].view(np.uint32), decoded[valid].view(np.uint32)))}
+        result[name] = compare_terrain(height, decoded, valid, spacing_m)
     return result
 
 
@@ -123,7 +100,7 @@ def execute(request_path: Path, output: Path) -> Path:
                                   "platform": platform.platform(), "elapsed_seconds": time.monotonic() - started,
                                   "max_self_rss_kib": rss / 1024 if sys.platform == "darwin" else rss,
                                   "rss_scope": "worker process only; excludes Rust and child processes",
-                                  "source_sha256": {p.name: digest(p.read_bytes()) for p in [Path(__file__), Path(__file__).with_name("payload.py")]}}}
+                                  "source_sha256": {p.name: digest(p.read_bytes()) for p in [Path(__file__), Path(__file__).with_name("payload.py"), Path(__file__).with_name("metrics.py")]}}}
         write_json(stage / "result.json", result)
         output.mkdir()
         os.replace(stage, output)

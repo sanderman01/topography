@@ -226,7 +226,11 @@ fn validate_environment(environment: &Environment) -> Result<()> {
             && environment.elapsed_seconds >= 0.0
             && environment.max_self_rss_kib.is_finite()
             && environment.max_self_rss_kib > 0.0
-            && environment.source_sha256.len() == 2
+            && (2..=3).contains(&environment.source_sha256.len())
+            && environment.source_sha256.iter().all(|(name, id)| {
+                ["numeric.py", "payload.py", "metrics.py"].contains(&name.as_str())
+                    && valid_digest(id)
+            })
             && ["numeric.py", "payload.py"].iter().all(|name| {
                 environment
                     .source_sha256

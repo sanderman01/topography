@@ -1,8 +1,9 @@
 # Implementation progress
 
 Updated 2026-09-21. Twelve real terrain regions are qualified, prepared and released
-for initial numeric evaluation. The reusable Float32 check passed; one reviewed
-tile remains excluded.
+for initial numeric evaluation. Scalar Float32 loading passes. The first image
+autoencoder experiment completed and its terrain representation was rejected;
+one reviewed source tile remains excluded.
 The [master plan](plans/terrain-design-master-plan.md) remains authoritative.
 
 ## Resume here
@@ -33,13 +34,21 @@ The [numeric evaluation result](reports/numeric-evaluation-v1.md) completes the
 reusable scalar loader step on all twelve regions. Every valid ground sample
 round-trips exactly in Float32; Float16 absolute-height storage loses detail.
 The evaluation-only release is published and no model training is admitted.
-Next is the [bounded image-codec experiment](plans/image-codec-pilot-v1.md), requiring
-workload readiness before substantial compute. The owner need not inspect
-geographic grouping, technical masks or arithmetic tables.
+The owner then answered **“Continue”** to readiness for the bounded CPU image-codec
+experiment. It completed all twelve real windows and four synthetic cases in
+154.14 seconds, about 1.07 GiB worker RSS and no GPU. Codex rejected this fixed
+image-VAE representation: real-window height RMSE was 5.47–31.24 m, and the
+12.5 cm narrow ridge became a shallow dip. See the
+[result](reports/image-codec-pilot-v1.md). Do not repeat it or train LoRA on it.
+
+Next is the [single-channel fitting trial](plans/scalar-codec-fit-pilot-v1.md), with a separate experiment/training budget
+and release scope. No model fitting has run or been admitted by the current
+evaluation-only release. The owner need not inspect geographic grouping,
+technical masks or arithmetic tables, and no new source vote is needed.
 
 Continue in the existing checkout on `feat/east-ridges-qualification`; no worktree.
-This continuation builds on `8594d49` and implements the Rust/Python numeric
-boundary. Merging remains with the owner.
+This continuation builds on `6890cec` and implements the CPU image-codec experiment.
+Merging remains with the owner.
 
 ## Implemented and verified
 
@@ -53,7 +62,8 @@ boundary. Merging remains with the owner.
 | Preparation | Same-survey native regions preserve valid Float32 bits and separate masks; immutable publication, current-parent checks and catalog registration. Twelve real regions now prepared; water receives deterministic masked fill. |
 | Ground sampling | Three early 64 m samples and three completed full-crop count checks. All native count bins verified against retained XY points. Counts remain diagnostics, not measured feature accuracy. |
 | Numeric evaluation | Scoped immutable release, six geographic groups, current-parent verification, scalar Rust/Python job and full twelve-region Float32/Float16 measurements. |
-| Future work | Model-training releases, autoencoder/model evaluation, label editing, generation, world editing and terrain export remain unimplemented. |
+| Image-codec evaluation | Pinned public VAE, deterministic CPU reconstruction, retained scalar/channel outputs, physical metrics and bounded supervision. First representation technically rejected. |
+| Future work | Model-training releases, terrain-specific models, label editing, generation, world editing and terrain export remain unimplemented. |
 
 ## Current Río Abajo state
 
@@ -174,6 +184,9 @@ These are ignored by Git; preserve and back them up separately.
 | Exact selection and scoped assent for the reusable consumer | `data/review/numeric-evaluation-v1/` |
 | Immutable evaluation-only release | `data/datasets/6b7e2049f45d94bd87216ac07d96c38ece2885e8f22a00fb9d5e0686d6f07411/manifest.json` |
 | Completed numeric run, all binary inputs, metrics and software provenance | `data/models/numeric-pilot-v1/` |
+| Completed image-codec run and all original/reconstructed/channel/mask arrays | `data/models/image-codec-pilot-v1/` |
+| Pinned codec job, readiness, environment freeze, current-source checks, executed code and rejection assessment | `data/review/codec-pilot-proposal-v1/` |
+| Public pinned model artifacts / isolated CPU environment | `data/models/sd-vae-ft-mse-31f26fde/` / `data/models/codec-environment-v1/.venv/` |
 
 Earlier incomplete assessments, source evidence and catalog snapshots remain
 historical. Do not use their blocker lists as current status. Current original-region IDs are in
@@ -211,8 +224,9 @@ Rust 1.85 itself was not tested.
 ## Numeric consumer verification
 
 - The installed Python worker ran outside the checkout and through the Rust CLI.
-  Python 3.14.7 and pinned NumPy 2.3.5 are installed in `training/.venv`; no Torch,
-  diffusion framework or GPU runtime was installed. Python 3.11 remains untested.
+  Python 3.14.7 and pinned NumPy 2.3.5 are installed in `training/.venv`. That
+  environment remains unchanged; the later CPU codec uses a separate environment.
+  Python 3.11 remains untested.
 - Full `bash scripts/check.sh` covers formatting, locked offline build, Clippy,
   existing workflows, release geography/currentness and the CPU numeric boundary.
   Faulty successful workers exercise incomplete metrics, invalid counts,
@@ -227,19 +241,43 @@ Rust 1.85 itself was not tested.
   binary payload hashes, worker source hashes and complete real-region metrics.
   Previous source outputs and decisions remain unchanged.
 
-## Continue after numeric loading
+## Image-codec verification
 
-1. Follow [image-codec pilot v1](plans/image-codec-pilot-v1.md) before LoRA training:
-   twelve fixed central windows and four synthetic cases, public pinned VAE,
-   two CPU threads, 30-minute model-processing limit, 6 GiB address-space ceiling,
-   no GPU. Peak RAM/runtime are unmeasured. Obtain
-   readiness for its substantial workload under AGENTS.md, with resource bounds
-   and uncertainty stated plainly. Scalar loading already passes; do not redo it
-   or present another technical approval page.
+- Public safetensors checksum matches the pinned provider identity. Configuration,
+  model card and exact CPU dependency versions are preserved; no private source,
+  email, credential or GPU setup was needed.
+- Small analytical metrics, mask exclusion, child failure, timeout and log-limit
+  checks passed. A tiny CPU AutoencoderKL API smoke ran under the same address
+  limit. Temporary identity fixtures exercised complete/corrupt result handling.
+- All sixteen actual cases completed. Verification rehashed eighty binary output
+  arrays, compared originals/masks against inputs and recomputed metrics. The
+  existing Rust release check passed before and after. Source acceptances and
+  the earlier rejection remain unchanged.
+- One fresh reviewer reproduced SIGTERM leaving a worker alive and partial
+  completion publication on fsync failure. Both are fixed with cleanup on
+  termination and atomic completion publication; new workflow fixtures pass.
+  A worker-local alarm also bounds execution if its supervisor is forcibly lost.
+- Full `bash scripts/check.sh` passed after the fixes, including existing Rust,
+  data workflows, numeric jobs and small codec checks. The shared metric extraction
+  preserves prior numeric behavior; Rust accepts historical two-file and current
+  three-file worker source-hash provenance.
+- The model ran before the supervisor fixes. Its exact executed code is archived
+  against reported hashes, and retained results are unchanged. No model rerun
+  was needed to verify cancellation/publication fixes. Nothing was promoted.
+
+## Continue after the image-codec experiment
+
+1. Do not pursue LoRA training on this representation. The
+   [scalar-codec fitting proposal](plans/scalar-codec-fit-pilot-v1.md) bounds one
+   small single-channel reconstruction trial to 200 steps, two CPU threads,
+   30 minutes, 6 GiB address space and no GPU. It needs a separate fitting-only
+   release; existing numeric-release scope is preserved. Obtain readiness and
+   scoped fitting permission for substantial new work; the “Continue”
+   above covered the completed reconstruction run, not open-ended model training.
 2. Keep numeric-pilot and future model-training releases distinct. This collection
    has no untouched test split or large coarse-context coverage; expand/repartition
    only when the next concrete experiment requires it. Do not restart broad tile
-   review for this reconstruction test.
+   review for the same sources.
 3. Evaluate candidate codecs in metres before choosing or training a
    model. Establish actual tolerances and a bounded experiment budget from the
    pilot; obtain readiness for substantial new workloads. Keep 16 GB VRAM ceiling
