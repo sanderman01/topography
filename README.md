@@ -107,7 +107,7 @@ native 0.5 m crops from the Río Abajo area. The
 and evidence. The [regional quality workflow](docs/workflows/regional-quality.md)
 measures whole-crop masks and checks current preparation eligibility.
 [Aligned native preparation](docs/workflows/aligned-preparation.md) now preserves
-eligible regions without resampling or cross-survey joins. Twelve accepted terrain
+eligible regions without resampling or cross-survey joins. Twenty-five accepted terrain
 regions are prepared under the [simple supplier-QA pilot policy](docs/design/source-quality-pilot-v1.md),
 with exact native ground elevation preserved and water masked separately.
 [Batch 3](docs/reports/pilot-tile-batch-3.md) is accepted and prepared. A
@@ -125,6 +125,6 @@ fallback; no further model tuning is scheduled.
 The owner rejected the [first coarse world proposal](docs/reports/world-layout-proposal-v1.md)
 for repetition, visible joins and an uninteresting layout. The
 [source library](docs/reports/pilot-source-coverage-v1.md) needs broader geography
-and larger connected landscapes before another world-quality review. Twelve
-small crops support initial technical checks; reusable world composition, finer
+and larger connected landscapes before another world-quality review. The original
+twelve small crops support initial numeric checks; reusable world composition, finer
 terrain and export remain planned.

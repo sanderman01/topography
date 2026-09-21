@@ -1,24 +1,23 @@
 # Pilot source coverage
 
-As of 2026-09-21, the library has **20 accepted, prepared patches**: twelve
+As of 2026-09-21, the library has **25 accepted, prepared patches**: twelve
 512 × 512 m crops and two 1,024 × 1,024 m contexts at native 0.5 m spacing,
-plus three Banks Peninsula and one Grand Canyon crop at 1,536 × 1,536 m,
-and two Mount St. Helens crops at 2,048 × 2,048 m, all native 1 m.
+plus six 1,536 × 1,536 m crops and five 2,048 × 2,048 m crops at native 1 m.
 Two rejected tiles remain preserved and excluded. The selected St. Helens crater
 rim is separately blocked from ground preparation because it contains glacier
-surface. Five additional Grand Canyon/Zion crops now have owner Yes decisions;
-their technical qualification remains pending. See the
-[vote recovery checkpoint](gallery-vote-recovery-v1.md).
+surface. The five additional Grand Canyon/Zion crops are now qualified and
+prepared, preserving their existing owner Yes decisions. Three new Milford Sound
+crops await whole-tile review in gallery v8.
 
-Nine named areas now span Puerto Rico, Banks Peninsula, Grand Canyon and Mount
-St. Helens. The two US mainland survey projects supplement the Puerto Rico
+Ten named areas now span Puerto Rico, Banks Peninsula, Grand Canyon, Mount
+St. Helens and Zion. The three US mainland survey projects supplement the Puerto Rico
 collection and Banks survey. Multiple crops, survey subareas and metadata-only
 successor records do not establish independent projects or extra terrain patches.
 
 | Broad pilot family | Areas | Accepted patches |
 | --- | --- | ---: |
 | Karst | Río Abajo, Camuy | 6 |
-| Gorge | Central gorge, Guajataca, Grand Canyon | 6 |
+| Gorge | Central gorge, Guajataca, Grand Canyon, Zion | 11 |
 | River/floodplain | Southern floodplain, Arecibo | 3 |
 | Eroded volcanic terrain | Banks Peninsula, Mount St. Helens flanks | 5 |
 
@@ -35,6 +34,10 @@ new native regions; those also remain outside the existing numeric release.
 The [landmark continuation](landmark-continuation-v1.md) adds three qualified
 regions without extending that release. Its `inventory.json` records exact grids
 and survey descriptions under `data/review/landmark-continuation-v1/`.
+The [Grand Canyon expansion](grand-canyon-expansion-qualification-v1.md) and
+[Zion qualification](zion-qualification-v1.md) add five more native regions,
+also outside the existing release. The current `inventory.json` and catalog
+preservation audit are under `data/review/canyon-fjord-continuation-v1/`.
 
 ## What this collection establishes
 
@@ -44,11 +47,12 @@ representations and runs; they do not establish broader terrain-model feasibilit
 or adequate geographic generalization.
 
 The library is too small and geographically narrow for a representative
-world-quality pilot. Its unique prepared footprint is now 22.232003 km²: the
+world-quality pilot. Its unique prepared footprint is now 39.533507 km²: the
 4.406211 km² Puerto Rico window union, 7.077888 km² of disjoint Banks crops,
-2.359296 km² from Grand Canyon and 8.388608 km² from St. Helens. This includes
+11.272192 km² from Grand Canyon, 8.388608 km² from St. Helens and 8.388608 km²
+from Zion. This includes
 masked cells; it is not an independently measured ground-area claim. Summing
-overlapping crop areas would overstate the footprint as 23.068672 km².
+overlapping crop areas would overstate the footprint as 40.370176 km².
 The 4,096 m square pilot covers 16.777216 km².
 At the original 512 m patch scale, direct patch assembly
 would require 64 non-overlapping patch-equivalents just to cover that footprint,
@@ -67,11 +71,13 @@ test set; broader contexts need a fresh geographic split check.
 Use [the example locations](../locations.md) as the explicit discovery shortlist,
 recording actual native coverage before choosing downloads. The preceding Banks
 batch was an opportunistic public-source expansion, not a ranking of that list.
-Grand Canyon and Zion Narrows now have completed USGS downloads and a five-tile
-review batch. The owner explicitly liked Grand Canyon; keep adding varied canyon
-contexts in later batches while broadening the other families. Two LINZ Milford
-Sound-area source targets are queued for a future batch under
-`data/staging/fjord-shortlist-v1/`; actual valid-ground coverage still needs inspection.
+Grand Canyon and Zion Narrows now have a completed five-tile qualification batch.
+The owner explicitly liked Grand Canyon; keep adding varied canyon contexts in
+later batches while broadening the other families. The two queued LINZ Milford
+Sound-area sources are downloaded. Three native 2,048 m crops are ready in the
+[Milford review batch](milford-review-v1.md), including two adjacent crops spanning
+4,096 × 2,048 m. They remain outside the prepared counts until owner selection
+and technical qualification.
 
 The final library must cover all finalized terrain families. Hundreds or
 thousands of crops are a plausible result, not an established sufficiency target.
