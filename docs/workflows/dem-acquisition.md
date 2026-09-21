@@ -117,7 +117,10 @@ a strong ETag and exact byte-range responses. Use manual import for other server
 Completed 8 MiB chunks are retained under the configured staging root, keyed by
 URL, strong ETag and total size. Every range request sends `If-Match`. Only HTTP
 206 responses with the exact requested Content-Range, matching ETag and expected
-length become completed chunks. Transient transfers retry at most three times;
+length become completed chunks. Each range attempt allows up to five minutes
+so slow transfers can complete an 8 MiB chunk; connection setup remains limited
+to 15 seconds, and HEAD/metadata requests to two minutes per attempt.
+Transient transfers retry at most three times;
 permission failures and identity/range violations stop. A failed chunk restarts
 from its beginning. Completed chunks are rehashed before reuse.
 

@@ -259,6 +259,9 @@ class RangeHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(412)
             return
         part = payload[start:end + 1]
+        if self.path == "/slow.tif":
+            # Scale a slow successful range transfer down to a short local check.
+            threading.Event().wait(0.3)
         self.send_response(206)
         self.send_header("Content-Length", str(len(part)))
         self.send_header("ETag", etag)
@@ -342,6 +345,27 @@ def https_checks(directory, runtime, source, asset):
             assert report['completed']==1 and report['failed']==1
         assert server.control['requests'].count(('/batch-good.tif',0))==1
         assert json.loads((directory/'downloaded-metadata.json').read_text())['fixture']=='public metadata download'
+
+        wrappers = directory / "slow-network-bin"
+        wrappers.mkdir()
+        real_curl = shutil.which("curl")
+        wrapper = wrappers / "curl"
+        wrapper.write_text(f'''#!{sys.executable}
+import os, sys
+args = sys.argv[1:]
+if "--range" in args and any(a.endswith("/slow.tif") for a in args):
+    for i, arg in enumerate(args):
+        if arg == "--max-time":
+            args[i + 1] = str(float(args[i + 1]) / 500)
+os.execv({real_curl!r}, [{real_curl!r}, *args])
+''')
+        wrapper.chmod(0o755)
+        slow_env = dict(env, PATH=str(wrappers) + os.pathsep + env["PATH"])
+        slow = Path(run(CLI, "acquire", candidate("slow"), runtime, 2 * CHUNK, env=slow_env))
+        assert json.loads(slow.read_text())["asset_sha256"] == hashlib.sha256(server.control["payload"]).hexdigest()
+        requests = list(server.control["requests"])
+        assert Path(run(CLI, "acquire", candidate("slow"), runtime, 2 * CHUNK, env=slow_env)) == slow
+        assert server.control["requests"] == requests
     finally:
         server.shutdown()
         server.server_close()

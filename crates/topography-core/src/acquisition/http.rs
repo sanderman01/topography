@@ -171,6 +171,9 @@ pub(super) fn download(identity: &Identity, staging: &Path, destination: &Path) 
             for attempt in 0..3 {
                 let response = run(curl()
                     .args([
+                        // An 8 MiB range can take over two minutes on a healthy slow link.
+                        "--max-time",
+                        "300",
                         "--range",
                         &format!("{start}-{end}"),
                         "--header",
