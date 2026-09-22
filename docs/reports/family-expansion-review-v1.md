@@ -1,5 +1,10 @@
 # Great Sand Dunes and Badlands review batch
 
+Update 2026-09-22: the owner accepted all four tiles. Both Badlands crops are now
+prepared by the [automatic workflow](automatic-preparation-rollout-v1.md); both
+dunes choices remain Yes with striping reported as technical attention. The
+original publication checkpoint below is retained as history.
+
 2026-09-21. Four native 2,048 × 2,048 m crops are ready for whole-tile Yes/No
 review. Two show Great Sand Dunes in Colorado, USA; two show the Badlands in
 South Dakota, USA. They introduce dunes and badlands candidates alongside the

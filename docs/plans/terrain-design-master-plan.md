@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twenty-eight real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 22 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Thirty real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 22 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -124,6 +124,13 @@ so workload readiness remains explicit. The gallery provides one place to browse
 tiles, inspect terrain and save whole-tile Yes/No decisions directly to the catalog;
 show prior votes and preserve them for unchanged artifacts. Avoid separate review
 links and conversational vote transcription as the normal workflow.
+
+[Automatic preparation](../design/automatic-preparation-v1.md) reuses pinned
+source assessments to run technical checks when tiles enter the library. A saved
+Yes queues native preparation in the gallery's background worker. Show Preparing,
+Ready or Needs technical attention; retain the vote through technical exceptions
+without requesting repeat approval. Evidence interpretation remains a source-level
+technical task. Successful preparation does not create training admission.
 
 Process each real-world survey region in its appropriate projected metric CRS. Resolve horizontal units, vertical units and datum, axis orientation, nodata, and pixel alignment explicitly. Use an available verified vertical transformation when joining surveys that need one; otherwise isolate the incompatible surveys and flag the uncertainty. Do not silently treat ellipsoidal and sea-level heights as interchangeable.
 
@@ -352,8 +359,11 @@ other families. Three [Milford Sound crops](../reports/milford-qualification-v1.
 now accepted, qualified and prepared, including an adjacent fjord-head and valley
 pair. Four verified native crops from Great Sand Dunes and Badlands in
 [gallery v9](../reports/family-expansion-review-v1.md) now have owner Yes decisions.
-They broaden the candidate terrain families; technical qualification and
-preparation remain next.
+Both Badlands crops are now qualified and prepared by the
+[automatic preparation workflow](../reports/automatic-preparation-rollout-v1.md),
+bringing the prepared library to thirty regions across six broad families.
+Both dunes choices remain Yes with unresolved striping reported as technical
+attention. Gallery v10 preserves all choices and reports preparation status.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), world presets and source metadata contract.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.

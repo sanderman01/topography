@@ -25,6 +25,9 @@ For source expansion, use the [batch download and gallery workflow](docs/workflo
 A target list drives downloads and native crops. One local gallery provides
 thumbnail browsing, terrain inspection, Yes/No shortcuts and saved catalog votes.
 Existing source decisions remain visible; technical qualification is separate.
+Reusable source assessments let the batch tool check new tiles automatically.
+A saved Yes queues native preparation in the background; the gallery shows
+Preparing, Ready or Needs technical attention without asking for another vote.
 
 ```text
 catalog/                 Versioned provider descriptions, areas, and label legends

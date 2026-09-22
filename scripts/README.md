@@ -161,6 +161,12 @@ temporary browser profile and synthetic catalog only. It checks buttons, filters
 reload, preview-ready voting, sandboxed-frame shortcuts and escaped labels.
 The optional browser is not installed by this workflow.
 
+`python3 scripts/check_automatic_preparation.py target/debug/topography` exercises
+profile pinning, preflight without voting, Yes-to-Ready preparation, exact native
+samples/masks, restart/reaccept, stale decisions and technical exceptions using
+tiny local rasters and a loopback gallery. `check.sh` includes it when Python and
+GDAL are available. It never uses the real catalog or downloads source terrain.
+
 Acquisition checks also exercise the alternate TIFF reader when the installed
 GDAL exposes `LIBERTIFF`: a wrapper makes the primary reader unavailable while
 real GDAL verifies native samples, nodata validity, coordinates and Float32

@@ -3,6 +3,7 @@
 pub(crate) mod bundle;
 pub mod gallery;
 pub mod gallery_server;
+pub(crate) mod preparation_worker;
 
 use crate::{
     acquisition::{

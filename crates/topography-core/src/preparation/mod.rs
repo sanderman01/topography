@@ -1,5 +1,6 @@
 //! Regional quality assessment and preparation eligibility.
 
+pub mod automatic;
 mod quality;
 mod region;
 

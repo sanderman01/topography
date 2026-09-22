@@ -27,6 +27,19 @@ struct InputTile {
     raw: PathBuf,
     review: PathBuf,
     primary_class_id: u16,
+    preparation_profile: Option<InputProfile>,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum InputProfile {
+    Pinned(ProfileRef),
+    Path(PathBuf),
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProfileRef {
+    pub path: PathBuf,
+    pub sha256: String,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +54,8 @@ pub(crate) struct Tile {
     pub preview_sha256: String,
     pub preview_bytes: u64,
     pub thumbnail_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation_profile: Option<ProfileRef>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -159,6 +174,25 @@ pub fn build(input: &Path, legend: &Path, output: &Path) -> Result<PathBuf> {
             preview_sha256: preview.sha256.clone(),
             preview_bytes: preview.bytes,
             thumbnail_sha256: hash_file(&thumb)?.0,
+            preparation_profile: tile
+                .preparation_profile
+                .map(|input| {
+                    let (path, expected) = match input {
+                        InputProfile::Path(path) => (path, None),
+                        InputProfile::Pinned(profile) => (profile.path, Some(profile.sha256)),
+                    };
+                    let path = io_context(
+                        "resolve preparation profile",
+                        fs::canonicalize(base.join(path)),
+                    )?;
+                    let sha256 = digest(&read_small(&path)?);
+                    ensure(
+                        expected.is_none_or(|expected| expected == sha256),
+                        "preparation profile differs from batch input",
+                    )?;
+                    Ok::<_, crate::acquisition::AcquisitionError>(ProfileRef { sha256, path })
+                })
+                .transpose()?,
         });
     }
     let legend_bytes = read_small(legend)?;
@@ -198,6 +232,12 @@ pub(crate) fn load(path: &Path) -> Result<(Gallery, String, Vec<super::bundle::B
     let mut raw_cache = BTreeMap::new();
     let mut snapshots = Vec::new();
     for (index, tile) in gallery.tiles.iter().enumerate() {
+        if let Some(profile) = &tile.preparation_profile {
+            ensure(
+                crate::acquisition::valid_digest(&profile.sha256) && profile.path.is_absolute(),
+                "invalid preparation profile reference",
+            )?;
+        }
         ensure(
             digest(&read_small(&tile.raw)?) == tile.raw_sha256
                 && digest(&read_small(&tile.review)?) == tile.review_sha256,

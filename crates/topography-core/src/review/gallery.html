@@ -5,15 +5,18 @@
 </style></head><body>
 <header><div><h1 id="title">Terrain library</h1><p>Inspect the whole tile. Choose Yes or No; your choice saves immediately.</p></div><p id="counts" aria-live="polite"></p></header>
 <main><aside><div class="filter"><label for="filter">Show</label><select id="filter"><option value="pending">To review</option><option value="all">All tiles</option><option value="accept">Accepted</option><option value="reject">Rejected</option></select></div><div id="tiles"></div><p id="empty" hidden>No tiles in this view.</p></aside>
-<article><div class="toolbar"><div class="identity"><h2 id="tile-title">Select a tile</h2><p id="tile-state"></p></div><button id="previous" aria-label="Previous tile">←</button><button id="next" aria-label="Next tile">→</button><button id="no">No <kbd>N</kbd></button><button id="yes">Yes <kbd>Y</kbd></button></div>
+<article><div class="toolbar"><div class="identity"><h2 id="tile-title">Select a tile</h2><p id="tile-state"></p><p id="preparation-detail" aria-live="polite"></p></div><button id="previous" aria-label="Previous tile">←</button><button id="next" aria-label="Next tile">→</button><button id="no">No <kbd>N</kbd></button><button id="yes">Yes <kbd>Y</kbd></button></div>
 <iframe id="preview" title="Terrain inspector" sandbox="allow-scripts"></iframe>
 <footer><p id="message" role="status" aria-live="polite">Loading saved decisions…</p><p>Use the terrain view’s overhead, profile and perspective controls. Arrow keys browse; Y/N save and advance. Rejected data is kept.</p></footer></article></main>
 <script>
 'use strict';
 const CONFIG=__GALLERY_CONFIG__;
 const byId=id=>document.getElementById(id), filter=byId('filter'), frame=byId('preview');
-let state={tiles:[]},active=null,busy=false,ready=false;
+let state={tiles:[]},active=null,busy=false,ready=false,revision=0;
 const labels={pending:'To review',accept:'Accepted',reject:'Rejected'};
+const preparationLabels={checking:'Checking',awaiting_acceptance:'Checks complete',preparing:'Preparing',ready:'Ready',needs_attention:'Needs technical attention',not_selected:'Not selected'};
+function tileLabel(tile){const preparation=tile.preparation?.state;return `${labels[tile.decision]}${preparation&&tile.decision!=='reject'?' · '+(preparationLabels[preparation]||preparation):''}`;}
+function identity(){const tile=state.tiles.find(t=>t.index===active);if(!tile)return;byId('tile-state').textContent=`${tileLabel(tile)} · Tile ${tile.index+1} of ${state.tiles.length}`;byId('preparation-detail').textContent=tile.preparation?.message||'';}
 function visible(){return state.tiles.filter(t=>filter.value==='all'||t.decision===filter.value);}
 function message(text,error=false){byId('message').textContent=text;byId('message').classList.toggle('error',error);}
 function controls(){for(const id of ['yes','no','previous','next'])byId(id).disabled=busy||active===null||(['yes','no'].includes(id)&&!ready);filter.disabled=busy;}
@@ -21,16 +24,16 @@ function draw(){
  const counts={pending:0,accept:0,reject:0};for(const tile of state.tiles)counts[tile.decision]++;
  byId('title').textContent=state.title;byId('counts').textContent=`${counts.pending} to review · ${counts.accept} accepted · ${counts.reject} rejected`;
  const list=byId('tiles');list.replaceChildren();const tiles=visible();byId('empty').hidden=tiles.length>0;
- for(const tile of tiles){const button=document.createElement('button');button.className='tile';button.dataset.decision=tile.decision;button.setAttribute('aria-current',String(tile.index===active));button.setAttribute('aria-label',`${tile.title}: ${labels[tile.decision]}`);
+ for(const tile of tiles){const button=document.createElement('button');button.className='tile';button.dataset.decision=tile.decision;button.setAttribute('aria-current',String(tile.index===active));button.setAttribute('aria-label',`${tile.title}: ${tileLabel(tile)}`);
  const img=document.createElement('img');img.loading='lazy';img.src=`/thumb/${tile.index}`;img.alt='';
  const name=document.createElement('span');name.className='name';name.textContent=tile.title;
- const status=document.createElement('span');status.className='state';status.textContent=labels[tile.decision];button.append(img,name,status);button.onclick=()=>select(tile.index);list.append(button);}
- controls();
+ const status=document.createElement('span');status.className='state';status.textContent=tileLabel(tile);button.append(img,name,status);button.onclick=()=>select(tile.index);list.append(button);}
+ identity();controls();
 }
-function select(index){if(busy)return;active=index;ready=false;const tile=state.tiles.find(t=>t.index===index);if(!tile){active=null;frame.removeAttribute('src');byId('tile-title').textContent='No tile selected';byId('tile-state').textContent='Choose another filter to browse saved decisions.';}else{byId('tile-title').textContent=tile.title;byId('tile-state').textContent=`${labels[tile.decision]} · Tile ${tile.index+1} of ${state.tiles.length}`;frame.src=`/preview/${index}`;}draw();}
+function select(index){if(busy)return;active=index;ready=false;const tile=state.tiles.find(t=>t.index===index);if(!tile){active=null;frame.removeAttribute('src');byId('tile-title').textContent='No tile selected';byId('tile-state').textContent='Choose another filter to browse saved decisions.';byId('preparation-detail').textContent='';}else{byId('tile-title').textContent=tile.title;byId('tile-state').textContent=`${labels[tile.decision]} · Tile ${tile.index+1} of ${state.tiles.length}`;frame.src=`/preview/${index}`;}draw();}
 function move(step){if(busy)return;const tiles=visible();if(!tiles.length)return;const i=tiles.findIndex(t=>t.index===active);select(tiles[(i+step+tiles.length)%tiles.length].index);}
-async function refresh(initial=false){const response=await fetch('/api/tiles',{cache:'no-store'});if(!response.ok)throw Error('Could not load saved decisions.');state=await response.json();if(initial){if(!state.tiles.some(t=>t.decision==='pending'))filter.value='all';select(visible()[0]?.index??null);}else draw();}
-async function vote(decision){if(busy||active===null||!ready)return;const tile=state.tiles.find(t=>t.index===active);const index=active;busy=true;controls();message('Saving…');try{
+async function refresh(initial=false){const revisionAtStart=revision;const response=await fetch('/api/tiles',{cache:'no-store'});if(!response.ok)throw Error('Could not load saved decisions.');const updated=await response.json();if((busy&&!initial)||revisionAtStart!==revision)return;if(!initial&&JSON.stringify(updated)===JSON.stringify(state))return;state=updated;if(initial){if(!state.tiles.some(t=>t.decision==='pending'))filter.value='all';select(visible()[0]?.index??null);}else draw();}
+async function vote(decision){if(busy||active===null||!ready)return;const tile=state.tiles.find(t=>t.index===active);const index=active;revision++;busy=true;controls();message('Saving…');try{
  const response=await fetch('/api/decision',{method:'POST',headers:{'Content-Type':'application/json','X-Topography-Token':CONFIG.token},body:JSON.stringify({index,gallery_sha256:state.gallery_sha256,review_sha256:tile.review_sha256,previous_record_sha256:tile.head,decision})});
  const result=await response.json();if(!response.ok)throw Error(result.error||'Choice was not saved.');Object.assign(tile,result);busy=false;const tiles=visible();select(tiles.find(t=>t.index>index)?.index??tiles[0]?.index??null);message(`Saved ${decision==='accept'?'Yes':'No'} for ${tile.title}.`);
  }catch(error){busy=false;try{await refresh();select(index);}catch{}message(`${error.message} No automatic retry; inspect the current choice before trying again.`,true);}finally{busy=false;controls();}}
@@ -38,5 +41,6 @@ function key(event){if(event.repeat||event.ctrlKey||event.altKey||event.metaKey|
 byId('yes').onclick=()=>vote('accept');byId('no').onclick=()=>vote('reject');byId('previous').onclick=()=>move(-1);byId('next').onclick=()=>move(1);
 filter.onchange=()=>select(visible()[0]?.index??null);addEventListener('keydown',key);
 addEventListener('message',event=>{const tile=state.tiles.find(t=>t.index===active);if(event.source!==frame.contentWindow||event.origin!=='null'||!tile||event.data?.index!==active||event.data?.review!==tile.review_sha256)return;if(event.data.ready){ready=true;controls();}else if(ready&&typeof event.data.key==='string')key({key:event.data.key,preventDefault(){}});});
-refresh(true).then(()=>message('Choices are saved in the local catalog.')).catch(error=>message(error.message,true));
+refresh(true).then(()=>message('Choices are saved in the local catalog. Accepted tiles prepare automatically.')).catch(error=>message(error.message,true));
+let polling=false;setInterval(async()=>{if(busy||polling||document.hidden)return;polling=true;try{await refresh();}catch{message('Could not refresh preparation status. Your saved choices are retained.',true);}finally{polling=false;}},2000);
 </script></body></html>

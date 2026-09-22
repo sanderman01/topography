@@ -1,4 +1,4 @@
-//! Single-user loopback gallery. Only explicit, same-origin selections mutate curation.
+//! Single-user loopback gallery with explicit votes and background technical preparation.
 use super::gallery::{self, Gallery};
 use crate::{
     acquisition::{AcquisitionError, Result, digest, ensure, hash_file, io_context},
@@ -12,6 +12,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -125,8 +126,9 @@ struct Vote {
     decision: String,
 }
 struct Session {
-    gallery: Gallery,
-    snapshots: Vec<super::bundle::Bundle>,
+    gallery: Arc<Gallery>,
+    snapshots: Arc<Vec<super::bundle::Bundle>>,
+    preparation: super::preparation_worker::Worker,
     id: String,
     root: PathBuf,
     runtime: PathBuf,
@@ -135,11 +137,32 @@ struct Session {
 }
 impl Session {
     fn state(&self) -> Result<Value> {
+        let selections = self
+            .gallery
+            .tiles
+            .iter()
+            .zip(self.snapshots.iter())
+            .map(|(tile, snapshot)| {
+                curation::selection(&self.runtime, &tile.review_sha256, snapshot)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let heads = self
+            .gallery
+            .tiles
+            .iter()
+            .zip(&selections)
+            .map(|(tile, state)| {
+                (
+                    tile.review_sha256.clone(),
+                    state["head"].as_str().map(str::to_owned),
+                )
+            })
+            .collect();
         let mut tiles = Vec::new();
         for (index, tile) in self.gallery.tiles.iter().enumerate() {
-            let state =
-                curation::selection(&self.runtime, &tile.review_sha256, &self.snapshots[index])?;
-            tiles.push(json!({"index":index,"title":tile.title,"id":tile.id,"primary_class_id":tile.primary_class_id,"review_sha256":tile.review_sha256,"head":state["head"],"decision":state["decision"]}));
+            let state = &selections[index];
+            let preparation = self.preparation.state(index, state, &heads);
+            tiles.push(json!({"index":index,"title":tile.title,"id":tile.id,"primary_class_id":tile.primary_class_id,"review_sha256":tile.review_sha256,"head":state["head"],"decision":state["decision"],"preparation":preparation}));
         }
         Ok(json!({"title":self.gallery.title,"gallery_sha256":self.id,"tiles":tiles}))
     }
@@ -279,11 +302,24 @@ pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
         "read gallery session entropy",
         fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut entropy)),
     )?;
+    let gallery = Arc::new(gallery);
+    let snapshots = Arc::new(snapshots);
+    for (tile, snapshot) in gallery.tiles.iter().zip(snapshots.iter()) {
+        curation::selection(runtime, &tile.review_sha256, snapshot)?;
+    }
+    let root = manifest.parent().unwrap_or(Path::new("."));
+    let preparation = super::preparation_worker::start(
+        runtime,
+        &root.join("legend.toml"),
+        gallery.clone(),
+        snapshots.clone(),
+    )?;
     let session = Session {
         gallery,
         snapshots,
+        preparation,
         id,
-        root: manifest.parent().unwrap_or(Path::new(".")).into(),
+        root: root.into(),
         runtime: runtime.into(),
         authority,
         token: digest(&entropy),

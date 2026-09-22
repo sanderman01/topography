@@ -10,9 +10,9 @@ The Rust CLI validates presets/metadata, discovers USGS DEM candidates, acquires
 and imports raw Float32 GeoTIFFs, verifies raw storage and creates small native-grid
 review crops through GDAL. Eligible sources now support aligned native regional
 preparation with immutable outputs, scoped dataset releases, and bounded CPU
-numeric/model experiments. Batch acquisition and a persistent review gallery are
-implemented. Production training, reusable world generation and export remain
-planned.
+numeric/model experiments. Batch acquisition, a persistent review gallery and
+profile-driven automatic preparation after acceptance are implemented. Production
+training, reusable world generation and export remain planned.
 Preset values remain draft pilot choices; processing does not create human acceptance.
 
 Read [README.md](README.md) for setup and the

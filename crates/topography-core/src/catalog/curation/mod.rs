@@ -142,6 +142,17 @@ struct Record {
     preparation_blockers: Vec<String>,
     admission: String,
     topography_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    automation: Option<Automation>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Automation {
+    kind: String,
+    inherited_human_record_sha256: String,
+    profile_sha256: String,
+    quality_report_sha256: String,
 }
 
 impl Record {
@@ -571,6 +582,7 @@ pub fn record(path: &Path, runtime: &Path) -> Result<String> {
         preparation_blockers,
         admission: "not admitted".into(),
         topography_version: env!("CARGO_PKG_VERSION").into(),
+        automation: None,
     };
     journal::Store::locate(runtime)?.append(&record, &objects, &raw_path, &review_path)
 }
@@ -614,6 +626,201 @@ pub(crate) fn prepared_status(
         current &= records.last().is_some_and(|(id, _)| id == expected);
     }
     Ok((registered, current))
+}
+
+/// Append a technical successor to one pinned human acceptance. The human vote
+/// fields are copied verbatim; automation provenance is stored separately.
+pub(crate) fn qualify_automatic(
+    runtime: &Path,
+    expected: &str,
+    package: &crate::preparation::automatic::Package,
+    package_base: &Path,
+    report_bytes: &[u8],
+    report: &serde_json::Value,
+    legend_sha256: &str,
+) -> Result<String> {
+    ensure(valid_digest(expected), "invalid expected curation head")?;
+    let store = journal::Store::locate(runtime)?;
+    let review = report["review_sha256"].as_str().ok_or_else(|| {
+        AcquisitionError::Invalid("quality report review identity missing".into())
+    })?;
+    let history = store.history(review)?;
+    let (head, bytes) = history
+        .last()
+        .ok_or_else(|| AcquisitionError::Invalid("crop has no curation records".into()))?;
+    let current: Record = serde_json::from_slice(bytes)?;
+    ensure(
+        current.target.legend_sha256 == legend_sha256,
+        "automatic preparation legend differs from accepted vote",
+    )?;
+    if let Some(automation) = &current.automation {
+        ensure(
+            head == expected || automation.inherited_human_record_sha256 == expected,
+            "stale human decision; automatic preparation blocked",
+        )?;
+        ensure(
+            current.claims.decision == Decision::Accept
+                && automation.kind == "supplier_qa_qualification_v1"
+                && automation.profile_sha256 == package.profile_sha256
+                && automation.quality_report_sha256 == digest(report_bytes),
+            "current automatic qualification differs",
+        )?;
+        return Ok(head.clone());
+    }
+    ensure(
+        head == expected,
+        "stale human decision; automatic preparation blocked",
+    )?;
+    ensure(
+        current.claims.actor.kind == ActorKind::Human
+            && current.claims.decision == Decision::Accept,
+        "automatic preparation requires the pinned current human Yes",
+    )?;
+    let mut claims = current.claims;
+    let original_actor = serde_json::to_vec(&claims.actor)?;
+    let original_reason = claims.reason.clone();
+    let original_class = claims.primary_class_id;
+    if !matches!(
+        claims.license.training_permission,
+        TrainingPermission::Restricted | TrainingPermission::Prohibited
+    ) {
+        claims.license = serde_json::from_value(package.source_license.clone())?;
+        claims.permission_evidence_ids = package.permission_evidence_ids.clone();
+    }
+    let report_sha = digest(report_bytes);
+    let assessment_id = format!("automatic-quality-{}", &report_sha[..16]);
+    for name in FINDINGS {
+        let finding = claims
+            .findings
+            .get_mut(name)
+            .expect("validated record finding");
+        if finding.state != FindingState::Fail {
+            finding.state = FindingState::Pass;
+            let assessed = &package.findings[name];
+            finding.note = format!("Automated supplier-QA qualification: {}", assessed.note);
+            finding.evidence_ids = assessed.evidence_ids.clone();
+            finding.evidence_ids.push(assessment_id.clone());
+        }
+    }
+    let counts = &report["counts"];
+    claims.coverage = Some(Coverage {
+        terrestrial_cells: counts["terrestrial_cells"].as_u64().ok_or_else(|| {
+            AcquisitionError::Invalid("quality report terrestrial count missing".into())
+        })?,
+        valid_terrestrial_cells: counts["valid_terrestrial_cells"].as_u64().ok_or_else(|| {
+            AcquisitionError::Invalid("quality report valid count missing".into())
+        })?,
+        note: "Measured by automatic native-grid quality assessment".into(),
+        evidence_ids: vec![assessment_id.clone()],
+    });
+    ensure(
+        serde_json::to_vec(&claims.actor)? == original_actor
+            && claims.reason == original_reason
+            && claims.primary_class_id == original_class
+            && claims.decision == Decision::Accept,
+        "automatic qualification changed the human vote",
+    )?;
+    let mut evidence = current.evidence;
+    let mut objects = BTreeMap::new();
+    for item in &evidence {
+        objects.insert(item.sha256.clone(), store.object(item.sha256.as_str())?);
+    }
+    for item in &package.evidence {
+        if let Some(existing) = evidence.iter().find(|e| e.id == item.id) {
+            ensure(
+                existing.sha256 == item.sha256
+                    && existing.description == item.description
+                    && existing.source_url == item.source_url,
+                "automatic evidence ID conflicts with captured evidence",
+            )?;
+        } else {
+            let content = read_small(&package_base.join(&item.path))?;
+            ensure(
+                digest(&content) == item.sha256,
+                "automatic evidence digest mismatch",
+            )?;
+            objects.insert(item.sha256.clone(), content);
+            evidence.push(Evidence {
+                id: item.id.clone(),
+                description: item.description.clone(),
+                source_url: item.source_url.clone(),
+                sha256: item.sha256.clone(),
+            });
+        }
+    }
+    objects.insert(report_sha.clone(), report_bytes.to_vec());
+    if let Some(existing) = evidence.iter().find(|e| e.id == assessment_id) {
+        ensure(
+            existing.sha256 == report_sha,
+            "automatic assessment evidence ID conflicts",
+        )?;
+    } else {
+        evidence.push(Evidence {
+            id: assessment_id,
+            description: "Automatic native-grid quality assessment".into(),
+            source_url: None,
+            sha256: report_sha.clone(),
+        });
+    }
+    for sha in [
+        &current.target.raw_receipt_sha256,
+        &current.target.review_sha256,
+        &current.target.legend_sha256,
+    ] {
+        objects.insert(sha.clone(), store.object(sha)?);
+    }
+    let [_, _, w, h] = current.window_cells;
+    let legend_temp = io_context("stage captured legend", tempfile::tempdir())?;
+    let legend_path = legend_temp.path().join("legend.toml");
+    write_new(&legend_path, &objects[&current.target.legend_sha256])?;
+    validate_claims(
+        &claims,
+        &evidence,
+        &inspect_legend(&legend_path)?.classes,
+        u64::from(w) * u64::from(h),
+    )?;
+    let (raw_parent, review_parent) = package.parents();
+    let verified_bundle = bundle::verify(raw_parent, review_parent)?;
+    let preparation_blockers = blockers(&claims, &verified_bundle);
+    let record = Record {
+        schema_version: 1,
+        kind: "crop_curation".into(),
+        target: current.target,
+        previous_record_sha256: Some(head.clone()),
+        asset_sha256: current.asset_sha256,
+        window_cells: current.window_cells,
+        legend_version: current.legend_version,
+        preparation_blockers,
+        claims,
+        evidence,
+        admission: "not admitted".into(),
+        topography_version: env!("CARGO_PKG_VERSION").into(),
+        automation: Some(Automation {
+            kind: "supplier_qa_qualification_v1".into(),
+            inherited_human_record_sha256: head.clone(),
+            profile_sha256: package.profile_sha256.clone(),
+            quality_report_sha256: report_sha,
+        }),
+    };
+    let raw_path = store.record_locator(head, true)?;
+    let review_path = store.record_locator(head, false)?;
+    store.append(&record, &objects, &raw_path, &review_path)
+}
+
+pub(crate) fn prepared_for_review(runtime: &Path, review: &str) -> Result<Vec<PathBuf>> {
+    let store = journal::Store::locate(runtime)?;
+    if !store.db.exists() {
+        return Ok(Vec::new());
+    }
+    store.prepared_for_review(review)
+}
+
+pub(crate) fn current_head(runtime: &Path, review: &str) -> Result<Option<String>> {
+    let store = journal::Store::locate(runtime)?;
+    if !store.db.exists() {
+        return Ok(None);
+    }
+    store.head(review)
 }
 
 /// Export verified small records/evidence. Raw and crop rasters need separate backup.
@@ -662,10 +869,22 @@ pub(crate) fn select(
     } else {
         vec![]
     };
+    let current_id = history.last().map(|(id, _)| id.clone());
+    let recognized_successor = match (history.last(), expected.as_deref()) {
+        (Some((_, bytes)), Some(expected)) => {
+            let record: Record = serde_json::from_slice(bytes)?;
+            record.automation.as_ref().is_some_and(|a| {
+                a.kind == "supplier_qa_qualification_v1"
+                    && a.inherited_human_record_sha256 == expected
+            })
+        }
+        _ => false,
+    };
     ensure(
-        history.last().map(|(id, _)| id.as_str()) == expected.as_deref(),
+        current_id.as_deref() == expected.as_deref() || recognized_successor,
         "stale decision; reload current gallery state",
     )?;
+    let expected = current_id;
     let (mut claims, evidence) = if let Some((_, bytes)) = history.last() {
         let prior: Record = serde_json::from_slice(bytes)?;
         (prior.claims, prior.evidence)
@@ -773,6 +992,7 @@ pub(crate) fn select(
         evidence,
         admission: "not admitted".into(),
         topography_version: env!("CARGO_PKG_VERSION").into(),
+        automation: None,
     };
     let id = store.append_snapshot(&record, &objects, &input.raw, &input.review, snapshot)?;
     Ok(serde_json::json!({"head":id,"decision":decision}))

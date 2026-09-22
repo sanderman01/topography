@@ -54,3 +54,35 @@ When published evidence is already available, complete survey/date scope, actual
 CRS, units, datum and processing declarations before publishing review crops.
 This avoids unnecessary metadata-only successors after selection. Preserve
 unknowns when evidence is missing; never infer acquisition dates from a title.
+
+## Automatic technical preparation
+
+Add an optional `preparation_profile` path to each queue source. The
+[profile contract](../design/automatic-preparation-v1.md) captures a reusable
+supplier-QA assessment, source/asset identities, permission evidence and an
+explicit terrestrial footprint or source-grid water mask. An assessment needs
+technical judgment once; it is not another human tile-selection task.
+
+`batch review` checks configured profiles, stages immutable masks and reports
+technical exceptions in `preparation-status.json`. A technical exception leaves
+the terrain available for Yes/No review. The profile digest is pinned through
+batch and gallery publication; changed assessments need a new queue/gallery.
+
+While the gallery service runs, one background worker checks pending tiles and
+prepares accepted tiles sequentially. **Yes saves immediately**. The gallery
+shows Checking, Awaiting acceptance, Preparing, Ready or Needs technical
+attention. No shows Not selected. Ready means verified native prepared terrain,
+not training admission. Existing prepared regions are recognized without profiles.
+
+No additional vote is needed for an unchanged tile. Missing source assessments,
+unknown water, known defects and integrity failures remain technical exceptions;
+they never turn a Yes into a No or erase a failed finding. Existing permission
+restrictions cannot be upgraded automatically. Large new raster batches still
+require workload readiness before starting the processing service.
+
+Job artifacts live under the runtime review root's `automatic-preparation/`.
+Restarting the same service verifies and reuses completed artifacts and resumes
+interrupted work. Failed jobs retry once per restart or changed decision, rather
+than retrying endlessly. The saved status is advisory; actual artifacts and
+current catalog decisions determine readiness. Rejection preserves old products
+and excludes them from use.

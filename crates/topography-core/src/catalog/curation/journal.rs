@@ -240,11 +240,47 @@ impl Store {
         Ok(id)
     }
 
-    fn object(&self, id: &str) -> Result<Vec<u8>> {
+    pub fn object(&self, id: &str) -> Result<Vec<u8>> {
         ensure(valid_digest(id), "invalid captured object digest")?;
         let bytes = read_small(&self.root.join("objects").join(id))?;
         ensure(digest(&bytes) == id, "captured object integrity mismatch")?;
         Ok(bytes)
+    }
+
+    pub fn record_locator(&self, id: &str, raw: bool) -> Result<PathBuf> {
+        ensure(valid_digest(id), "invalid record digest")?;
+        let column = if raw { "raw_path" } else { "review_path" };
+        let path: String = self.open(false)?.query_row(
+            &format!("SELECT {column} FROM records WHERE id=?1"),
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(PathBuf::from(path))
+    }
+
+    pub fn prepared_for_review(&self, review: &str) -> Result<Vec<PathBuf>> {
+        ensure(valid_digest(review), "invalid review digest")?;
+        let db = self.open(false)?;
+        if db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))? == 1 {
+            return Ok(Vec::new());
+        }
+        let mut statement =
+            db.prepare("SELECT body,manifest_path FROM prepared_regions ORDER BY id")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut paths = Vec::new();
+        for row in rows {
+            let (body, path) = row?;
+            let value: serde_json::Value = serde_json::from_slice(&body)?;
+            if value["parents"]
+                .as_array()
+                .is_some_and(|parents| parents.iter().any(|p| p["review_sha256"] == review))
+            {
+                paths.push(PathBuf::from(path));
+            }
+        }
+        Ok(paths)
     }
 
     fn verified_record(
@@ -325,6 +361,63 @@ impl Store {
             &legend.classes,
             u64::from(w) * u64::from(h),
         )?;
+        if let Some(automation) = &record.automation {
+            ensure(
+                automation.kind == "supplier_qa_qualification_v1"
+                    && valid_digest(&automation.inherited_human_record_sha256)
+                    && valid_digest(&automation.profile_sha256)
+                    && valid_digest(&automation.quality_report_sha256)
+                    && record.previous_record_sha256.as_deref()
+                        == Some(automation.inherited_human_record_sha256.as_str()),
+                "invalid automatic qualification provenance",
+            )?;
+            let prior_body: Vec<u8> = db.query_row(
+                "SELECT body FROM records WHERE id=?1",
+                [&automation.inherited_human_record_sha256],
+                |row| row.get(0),
+            )?;
+            let prior: Record = serde_json::from_slice(&prior_body)?;
+            ensure(
+                digest(&prior_body) == automation.inherited_human_record_sha256
+                    && prior.automation.is_none()
+                    && prior.claims.actor.kind == ActorKind::Human
+                    && prior.claims.decision == Decision::Accept
+                    && record.claims.actor.kind == ActorKind::Human
+                    && record.claims.decision == Decision::Accept
+                    && serde_json::to_vec(&record.claims.actor)?
+                        == serde_json::to_vec(&prior.claims.actor)?
+                    && record.claims.reason == prior.claims.reason
+                    && record.claims.primary_class_id == prior.claims.primary_class_id
+                    && record.target.raw_receipt_sha256 == prior.target.raw_receipt_sha256
+                    && record.target.review_sha256 == prior.target.review_sha256
+                    && record.target.legend_sha256 == prior.target.legend_sha256
+                    && record.asset_sha256 == prior.asset_sha256
+                    && record.window_cells == prior.window_cells
+                    && record.legend_version == prior.legend_version,
+                "automatic qualification does not preserve its human acceptance",
+            )?;
+            ensure(
+                record.evidence.len() >= prior.evidence.len(),
+                "automatic qualification changed captured human evidence",
+            )?;
+            for (current, prior) in record.evidence.iter().zip(&prior.evidence) {
+                ensure(
+                    serde_json::to_vec(current)? == serde_json::to_vec(prior)?,
+                    "automatic qualification changed captured human evidence",
+                )?;
+            }
+            for (name, finding) in &prior.claims.findings {
+                if finding.state == FindingState::Fail {
+                    let current = &record.claims.findings[name];
+                    ensure(
+                        current.state == FindingState::Fail
+                            && current.note == finding.note
+                            && current.evidence_ids == finding.evidence_ids,
+                        "automatic qualification changed a failed finding",
+                    )?;
+                }
+            }
+        }
         // Policy output is versioned with the record; do not silently reinterpret history.
         ensure(
             !record.preparation_blockers.is_empty(),

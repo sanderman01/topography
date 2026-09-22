@@ -27,6 +27,7 @@ struct Source {
     source: PathBuf,
     metadata_url: Option<String>,
     existing_receipt: Option<PathBuf>,
+    preparation_profile: Option<PathBuf>,
     max_bytes: u64,
     crops: Vec<Crop>,
 }
@@ -97,6 +98,12 @@ fn load(path: &Path) -> Result<(Queue, Value)> {
         if let Some(receipt) = &mut item.existing_receipt {
             *receipt = io_context("resolve receipt", fs::canonicalize(base.join(&receipt)))?;
         }
+        if let Some(profile) = &mut item.preparation_profile {
+            *profile = io_context(
+                "resolve preparation profile",
+                fs::canonicalize(base.join(&profile)),
+            )?;
+        }
         let mut names = BTreeSet::new();
         for crop in &item.crops {
             ensure(identifier(&crop.id), "invalid crop identifier")?;
@@ -118,7 +125,11 @@ fn load(path: &Path) -> Result<(Queue, Value)> {
             ensure(crop.primary_class_id > 0, "crop needs a primary class ID")?;
             crops += 1;
         }
-        pinned.push(json!({"id": item.id, "source": item.source, "source_sha256": digest(&read_small(&item.source)?), "existing_receipt":item.existing_receipt}));
+        let mut pin = json!({"id": item.id, "source": item.source, "source_sha256": digest(&read_small(&item.source)?), "existing_receipt":item.existing_receipt});
+        if let Some(profile) = &item.preparation_profile {
+            pin["preparation_profile_sha256"] = json!(digest(&read_small(profile)?));
+        }
+        pinned.push(pin);
     }
     ensure(crops <= 2048, "queue exceeds 2048 crops")?;
     ensure(
@@ -319,9 +330,11 @@ pub fn download(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, St
 /// Generate native crops from completed downloads. Reuse requires exact verified inputs.
 pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, String)> {
     let queue = initialize(queue, runtime, output)?;
+    let request_pin: Value = read_json(&output.join("request.json"))?;
     let mut count = 0;
     let mut errors = Vec::new();
     let mut tiles = Vec::new();
+    let mut preparation = Vec::new();
     for item in &queue.sources {
         let raw = completed(
             item,
@@ -344,9 +357,41 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
                     "existing review window differs",
                 )?;
                 let review = io_context("resolve review", fs::canonicalize(manifest))?;
-                Ok::<_, super::AcquisitionError>(
-                    json!({"id":id,"title":crop.title,"raw":raw,"review":review,"primary_class_id":crop.primary_class_id}),
-                )
+                let mut tile = json!({"id":id,"title":crop.title,"raw":raw,"review":review,"primary_class_id":crop.primary_class_id});
+                if let Some(profile) = &item.preparation_profile {
+                    let expected = request_pin["sources"]
+                        .as_array()
+                        .and_then(|sources| sources.iter().find(|source| source["id"] == item.id))
+                        .and_then(|source| source["preparation_profile_sha256"].as_str())
+                        .ok_or_else(|| {
+                            super::AcquisitionError::Invalid(
+                                "preparation profile pin missing".into(),
+                            )
+                        })?;
+                    tile["preparation_profile"] = json!({"path":profile,"sha256":expected});
+                    let root = crate::review::preparation_worker::package_root(
+                        runtime,
+                        &digest(&read_small(&review)?),
+                        expected,
+                    )?;
+                    let staged = (|| {
+                        ensure(
+                            digest(&read_small(profile)?) == expected,
+                            "preparation profile differs from batch input",
+                        )?;
+                        crate::preparation::automatic::stage(raw, &review, profile, &root)
+                    })();
+                    let state = match staged {
+                        Ok(package) => {
+                            json!({"id":id,"state":"awaiting_acceptance","package":package})
+                        }
+                        Err(error) => {
+                            json!({"id":id,"state":"needs_attention","message":error.to_string()})
+                        }
+                    };
+                    preparation.push(state);
+                }
+                Ok::<_, super::AcquisitionError>(tile)
             })();
             match result {
                 Ok(tile) => {
@@ -360,6 +405,10 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
     status(
         &output.join("gallery-input.json"),
         &json!({"schema_version":1,"title":"Terrain source review","tiles":tiles}),
+    )?;
+    status(
+        &output.join("preparation-status.json"),
+        &json!({"schema_version":1,"tiles":preparation}),
     )?;
     report(output, "review", count, errors)
 }

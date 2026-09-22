@@ -56,6 +56,16 @@ A portable record retains `schema_version`, `kind: crop_curation`, `target`,
 exact JSON bytes. No timestamp is generated during publication, so identical
 retries retain identity. A new decision's previous-record link distinguishes it.
 
+Automatic preparation may append a technical successor carrying the exact
+existing human actor, Yes decision, reason and class. Its optional `automation`
+object has `kind: supplier_qa_qualification_v1`,
+`inherited_human_record_sha256`, `profile_sha256` and `quality_report_sha256`.
+This attributes new technical findings to automation; it is not a new human vote.
+Original record bytes remain unchanged. Existing failed findings and permission
+restrictions cannot be cleared automatically. Old records omit this field.
+Earlier binaries with strict decoding cannot read records containing this new
+field; use the updated CLI after automatic qualification has run.
+
 SQLite stores the record bytes and machine-local input locators, plus the current
 head per review digest. Application ID is `0x544f504f`; curation-only catalogs use
 `user_version=1`. [Prepared-region registration](prepared-region-v1.md) migrates to

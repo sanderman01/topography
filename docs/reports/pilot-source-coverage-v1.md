@@ -1,16 +1,18 @@
 # Pilot source coverage
 
-As of 2026-09-21, the library has **28 accepted, prepared patches**: twelve
+As of 2026-09-22, the library has **30 accepted, prepared patches**: twelve
 512 × 512 m crops and two 1,024 × 1,024 m contexts at native 0.5 m spacing,
-plus six 1,536 × 1,536 m crops and eight 2,048 × 2,048 m crops at native 1 m.
+plus six 1,536 × 1,536 m crops and ten 2,048 × 2,048 m crops at native 1 m.
 Two rejected tiles remain preserved and excluded. The selected St. Helens crater
 rim is separately blocked from ground preparation because it contains glacier
 surface. The five additional Grand Canyon/Zion crops are now qualified and
 prepared, preserving their existing owner Yes decisions. The three Milford Sound
 crops also have saved owner Yes decisions and are qualified and prepared.
+Both Badlands crops are now prepared through the automatic workflow. Two accepted
+Great Sand Dunes crops retain unresolved striping and are excluded from these counts.
 
-Eleven named areas now span Puerto Rico, Banks Peninsula, Grand Canyon, Mount
-St. Helens, Zion and Milford Sound. The three US mainland survey projects and
+Twelve named areas now span Puerto Rico, Banks Peninsula, Grand Canyon, Mount
+St. Helens, Zion, Milford Sound and Badlands. The four US mainland survey projects and
 two New Zealand surveys supplement the Puerto Rico collection. Multiple crops,
 survey subareas and metadata-only successor records do not establish independent
 projects or extra terrain patches.
@@ -22,6 +24,7 @@ projects or extra terrain patches.
 | Fjord / glacial valley | Milford Sound | 3 |
 | River/floodplain | Southern floodplain, Arecibo | 3 |
 | Eroded volcanic terrain | Banks Peninsula, Mount St. Helens flanks | 5 |
+| Badlands | South Dakota Badlands | 2 |
 
 The original twelve-crop numeric inventory and geographic roles are retained in
 `data/review/numeric-evaluation-v1/selection.json`. Its evaluation-only release is
@@ -40,7 +43,9 @@ The [Grand Canyon expansion](grand-canyon-expansion-qualification-v1.md) and
 [Zion qualification](zion-qualification-v1.md) add five more native regions,
 also outside the existing release. The [Milford qualification](milford-qualification-v1.md)
 adds three more native regions without changing that release. The current
-inventory and catalog preservation audit are under `data/review/milford-family-continuation-v1/`.
+Badlands [automatic preparation](automatic-preparation-rollout-v1.md) preserves
+all previous entries. Its inventory and catalog audit are under
+`data/review/automatic-preparation-rollout-v1/`.
 
 ## What this collection establishes
 
@@ -50,12 +55,12 @@ representations and runs; they do not establish broader terrain-model feasibilit
 or adequate geographic generalization.
 
 The library is too small and geographically narrow for a representative
-world-quality pilot. Its unique prepared footprint is now 52.116419 km²: the
+world-quality pilot. Its unique prepared footprint is now 60.505027 km²: the
 4.406211 km² Puerto Rico window union, 7.077888 km² of disjoint Banks crops,
 11.272192 km² from Grand Canyon, 8.388608 km² from St. Helens and 8.388608 km²
-from Zion, plus 12.582912 km² from Milford Sound. This includes
+from Zion, plus 12.582912 km² from Milford Sound and 8.388608 km² from Badlands. This includes
 masked cells; it is not an independently measured ground-area claim. Summing
-overlapping crop areas would overstate the footprint as 52.953088 km².
+overlapping crop areas would overstate the footprint as 61.341696 km².
 The 4,096 m square pilot covers 16.777216 km².
 At the original 512 m patch scale, direct patch assembly
 would require 64 non-overlapping patch-equivalents just to cover that footprint,
@@ -81,8 +86,10 @@ Sound-area sources are downloaded. Three native 2,048 m crops from the
 [Milford review batch](milford-review-v1.md) are now accepted and prepared,
 including two adjacent crops spanning 4,096 × 2,048 m. Four new crops from
 Great Sand Dunes and Badlands are downloaded and verified in the
-[next review batch](family-expansion-review-v1.md). They are pending owner Yes/No
-choices and technical qualification, and are excluded from the prepared counts above.
+[next review batch](family-expansion-review-v1.md). All four have owner Yes choices;
+both Badlands crops are prepared, while the two dunes crops need technical
+attention for visible striping. The gallery now automates preparation using
+reusable source profiles and shows these exceptions without requiring another vote.
 
 The final library must cover all finalized terrain families. Hundreds or
 thousands of crops are a plausible result, not an established sufficiency target.
