@@ -46,18 +46,18 @@ checks. The separate HTTPS workflow check is documented in
 | Source admission | Traceable survey, supported terrain features, recorded quality decision, and dataset-specific training-permission evidence |
 | Dataset release | No geographic split leakage, paired layers aligned, fixed normalization, compatible versioned labels |
 | Model feasibility | Loader/codec error in metres, preserved features, measured peak VRAM within 16 GB, runtime, and comparison with real-patch blending |
-| World composition | Class area requirements, recognizable terrain, height/slope joins, connected water surfaces, landmarks, and usable routes |
+| World composition | Declared class areas, height/slope joins, connected water surfaces, and landmark placement |
 | Local edits | Values outside the edit domain and inside locks unchanged exactly; transition bands and dependent regions checked |
 | Export | Shared encoded vertices bit-identical, compatible masks, correct partial tiles, and no-clipping quantization error within half a step plus declared arithmetic tolerance |
 | Recovery | Interrupted work remains identifiable; restart validates completed artifacts and preserves accepted outputs and lineage |
 
 Exact border equality and protected-cell equality are not visual judgments.
-Height/slope tolerances and feature-quality thresholds must be established
-against accepted sources and vehicle clearance during the pilot, then stored in
-versioned configuration. Apply the plan's initial terrestrial coverage policy
-(at least 99.5% valid cells for the initial training pool, with no unsupported
-gaps through defining features) without presenting every proposed gate as an
-implemented or permanently fixed rule.
+Measured numeric tolerances must be justified by the relevant representation,
+encoding, or experiment and stored with the versioned contract that uses them.
+They do not define whether terrain is suitable for play. Apply the plan's initial
+terrestrial coverage policy (at least 99.5% valid cells for the initial training
+pool, with no unsupported gaps through defining features) without presenting
+every proposed gate as an implemented or permanently fixed rule.
 
 ## Make human review repeatable
 
@@ -71,14 +71,14 @@ implemented or permanently fixed rule.
   and export. Batch processing should remain usable between checkpoints.
 - Offer accept/reject decisions, reasons, annotations, variant comparisons, and
   locks tied to immutable artifact identities. Rejection does not remove raw data.
-- Combine numeric metrics with hillshades from multiple directions, contours,
-  cross-sections, oblique views, and repeatable camera routes. The plan's initial
-  review clearances are 32, 64, and 128 m; use the configured vehicle envelope to
-  judge width, turning room, clearance, and climb requirements. Include
-  fixed-altitude views so terrain-following cameras do not hide required climbs.
-- Inspect landmarks and recovery areas alongside difficult passages. A
-  heightfield cannot represent caves, arches, or overhangs; flag features the
-  chosen representation or survey cannot support.
+- When useful, supplement numeric metrics with hillshades from multiple
+  directions, contours, cross-sections, oblique views, or repeatable camera
+  routes. Optional camera-height controls are viewing aids. The owner decides
+  whole-tile suitability with a yes/no judgment; these views do not define
+  acceptance thresholds.
+- Record representation limits during review. A heightfield cannot represent
+  caves, arches, or overhangs; flag features the chosen representation or survey
+  cannot support.
 - Preserve the reviewed outputs, configuration, camera settings, and decision
   records. See the [master plan](../plans/terrain-design-master-plan.md), sections
   9–11, for the acceptance gates and milestone sequence.

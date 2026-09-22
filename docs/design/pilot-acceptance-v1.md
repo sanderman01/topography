@@ -1,6 +1,6 @@
-# Pilot acceptance criteria, version 1
+# Pilot technical checks and terrain review, version 1
 
-These are initial requirements from the [master plan](../plans/terrain-design-master-plan.md),
+These are technical requirements from the [master plan](../plans/terrain-design-master-plan.md),
 sections 1, 2, 4–7 and 10. Configuration validation, raw import/integrity checks
 and native-grid review crops are implemented. Curation records explicit human
 decisions; regional mask checks and preparation eligibility are implemented.
@@ -45,19 +45,15 @@ bounds do not prove exact coverage. Metadata strings do not prove accuracy.
 
 ## Human review
 
-Use overhead, low-oblique and fixed-altitude views. Initial above-terrain review
-clearances are 32, 64 and 128 m. Judge passage width, turning room, climb demands,
-ridge continuity, landmarks, recovery areas and route choices together. A
-terrain-following camera alone can conceal required climbs.
-
-The vehicle envelope is explicitly unset for this pilot, as directed by the
-user. Until dimensions, margin, speed, turning diameter and climb rate are
-supplied, morphology reviews cannot claim vehicle fit. The optional ceiling
-uses the world's elevation reference.
+Present source tiles in batches and record a whole-tile Yes/No decision. Overhead,
+oblique and fixed-altitude views are optional aids. The owner judges terrain
+suitability without defining vehicle dimensions, movement limits, clearance
+requirements or formal gameplay thresholds. These are outside the plan, rather
+than unresolved pilot settings. Existing camera-height controls are viewing aids.
 
 Keep separate records for processing completion, numeric checks and human
 accept/reject decisions, each tied to an exact artifact/revision. A rejection
-records exclusion and a reason; it does not delete source files.
+records exclusion; a reason is optional, and source files are preserved.
 
 ## Decisions from pilot evidence
 
@@ -65,14 +61,12 @@ records exclusion and a reason; it does not delete source files.
 | --- | --- |
 | Class precedence/minimum areas | Unset; inspect overlaps and layout, then version the legend and ownership policy |
 | Final vocabulary/2 m exceptions | Nine candidates; review acquisitions, retain stable IDs and record retired IDs without reuse |
-| Vehicle envelope | Unset; supply gameplay dimensions and movement limits before clearance acceptance |
 | Loader/codec height, slope and feature thresholds | Unset; measure ramps, flats, ridges and held-out real sources in metres before model work |
-| Seam and repair tolerances | Unset; calibrate against accepted sources and vehicle clearance |
 | Height encoding offset/range | Unset; choose one world-wide physical range, record clipping and keep all 65,536 codes usable |
 | Inference overlap/large training crops | Draft settings; benchmark seams, memory and runtime |
 | Model feasibility attempt budget | Unset; agree bounded experiments before expensive work, retaining real-patch blending as fallback |
 
 No-clipping export error must stay within half the encoding step plus a declared
-arithmetic tolerance. Neither that tolerance nor terrain quality thresholds are
-assigned invented values here. Accepted real terrain and review artifacts must
-establish them before a model or world is promoted.
+arithmetic tolerance. Numeric checks, source qualification and artifact integrity
+remain technical responsibilities. Human terrain suitability is a Yes/No judgment,
+with no separate threshold-setting task.

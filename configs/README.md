@@ -72,8 +72,12 @@ N intervals contains N + 1. Only dimensions are calculated, not raster sampling.
 ## Review settings
 
 `review.clearances_m` is a nonempty list of finite positive clearances above
-terrain, initially 32, 64 and 128 m. `review.vehicle` is optional and deliberately
-absent from the pilot presets. When supplied, the whole table must contain:
+terrain, initially 32, 64 and 128 m. It remains validated compatibility
+configuration; the current native review preview does not read world presets.
+These values are not required clearance targets or acceptance thresholds.
+`review.vehicle` is optional and deliberately absent from the pilot presets. It
+also remains serialized compatibility configuration. When supplied, the whole
+table must contain:
 
 | Field | Meaning and constraint |
 | --- | --- |
@@ -84,8 +88,7 @@ absent from the pilot presets. When supplied, the whole table must contain:
 | `climb_rate_m_s` | Positive finite climb rate |
 | `ceiling_elevation_m` | Optional finite ceiling relative to the world's elevation zero |
 
-Vehicle dimensions, clearance margin, flight speed, turning space, climb rate,
-height encoding range, biome precedence, and numerical acceptance tolerances
-still need pilot decisions. See the
-[initial acceptance criteria](../docs/design/pilot-acceptance-v1.md). Providing
-an envelope does not itself establish flight suitability.
+Validation of these optional fields only checks their serialized shape and numeric
+bounds. Supplying them does not create a flight envelope, impose clearance needs,
+or establish terrain suitability. Whole-tile suitability remains the owner's
+yes/no judgment, separate from technical data, numeric, and provenance checks.

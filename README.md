@@ -95,8 +95,8 @@ within the plan's 16 GB VRAM limit.
 
 The [configuration contract](configs/README.md),
 [candidate legend](schemas/legend-v1.md), [source record](schemas/source-v1.md)
-and [initial acceptance criteria](docs/design/pilot-acceptance-v1.md) start the
-first plan item. Vehicle dimensions remain explicitly unset for the pilot.
+and [technical checks and whole-tile review](docs/design/pilot-acceptance-v1.md)
+start the first plan item. Terrain suitability uses whole-tile Yes/No decisions.
 Follow the [acquisition and import workflow](docs/workflows/dem-acquisition.md)
 for discovery, bounded downloads, integrity checks and review crops. A real USGS
 coastal DEM has been imported locally and the native-grid crop path is verified;

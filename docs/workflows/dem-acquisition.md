@@ -184,10 +184,10 @@ water surface authoring and coverage admission await explicit preparation rules.
 Open `preview.html` directly in a browser for overhead, cross-section and
 low-altitude inspection. **Keep view in address** preserves a repeatable camera
 view in the URL fragment. Open the GeoTIFFs in QGIS for detailed numeric review.
-This does not establish vehicle fit, numerical model precision, fine-feature
-fidelity or source acceptance. The [pilot criteria](../design/pilot-acceptance-v1.md)
-and dataset-specific training-permission gate still apply; the vehicle envelope
-remains unset.
+This does not establish numerical model precision, fine-feature fidelity or source
+acceptance. Whole-tile source acceptance remains the owner's yes/no suitability
+judgment, separate from the technical and numeric evidence. The dataset-specific
+training-permission gate still applies.
 
 The [Río Abajo trial](../reports/rio-abajo-karst-trial.md) traces a native 0.5 m
 survey tile to three inspectable crops using this same acquisition command.

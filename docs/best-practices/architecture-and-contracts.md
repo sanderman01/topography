@@ -30,8 +30,9 @@ Model, world and export batch contracts remain future work.
 - Keep world size, training crop size, inference overlap, and delivery tile size
   independent. Validate partial edge tiles and rectangular grids.
 - Use explicit units and coordinate conventions in fields and documentation.
-  Keep vehicle dimensions, tolerances, and encoding ranges configurable; the
-  pilot must establish values still absent from the plan.
+  Keep numeric tolerances and encoding ranges configurable when a concrete
+  consumer requires them. Existing optional vehicle and camera-review settings
+  are compatibility inputs, not pilot decisions or terrain-suitability gates.
 - Record the resolved, non-secret configuration in each run. Resolve machine
   paths without embedding credentials in manifests. Follow the
   [configuration notes](../../configs/README.md).

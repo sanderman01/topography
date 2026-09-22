@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twenty-eight real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 21 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Twenty-eight real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 22 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 ## Intended result
 
@@ -51,7 +51,7 @@ Store these as stable integer IDs with a versioned color legend. The proposed co
 
 For every area of interest, record its polygon, biome/subtype, approximate feature dimensions, elevation range, landmark candidates, and the specific flying experience it might support. Keep “interesting geography” and “usable source data” as separate scores.
 
-Review both overhead views and low-oblique views at representative clearances, initially 32, 64, and 128 m above terrain. Flight-envelope settings should include airship width, length, clearance margin, speed, minimum turning space, climb rate, and optional ceiling. Do not assume that an attractive slot canyon can fit the vehicle. A fixed-altitude view is also useful: a camera that automatically follows terrain conceals climb requirements.
+Use overhead, oblique and fixed-altitude views as optional aids for judging terrain. Terrain suitability is the owner's whole-tile Yes/No decision. Vehicle dimensions, movement limits, clearance requirements and formal gameplay acceptance thresholds are outside this plan; they are not pending pilot decisions.
 
 Use relief, ridge density, channel branching, passage width, line-of-sight occlusion, and skyline distinctiveness to rank candidates. Keep the human decision final. Include memorable landmarks and recovery areas as well as confusing terrain; uninterrupted difficulty would reduce both navigability and visual variety. Fog and wind are scenario annotations here, not features supplied by the DEM.
 
@@ -171,7 +171,6 @@ Recommended world preset: 32,768 × 32,768 m with 1 m cells, yielding 32,768 × 
 | Generation window / stride | 1,024 / 512 cells | Overlap selected through seam experiments |
 | Layout painting resolution | 512 × 512 | Other resolutions, plus vector boundaries |
 | Generation scales | 16 m, 4 m, 1 m | A versioned scale pyramid |
-| Review clearance | 32, 64, 128 m | Vehicle- and scenario-specific values |
 
 Use powers of two for convenient defaults; retain agency-native tile dimensions until preparation. Do not distort geography merely to fit power-of-two source tiles.
 
@@ -271,11 +270,11 @@ Before promoting a world revision, verify:
 - Presence and minimum area of all finalized biome classes, plus human confirmation of recognizable terrain in each.
 - No nodata leaks, clipping plateaus, unexplained spikes, or visible grid patterns.
 - Height/slope agreement at seams, continuous named ridges and routes, and consistent water levels and connections.
-- Preserved locked regions and successful representative low-altitude route inspections at the chosen vehicle envelope.
+- Preserved locked regions and human review of the composed terrain.
 - Export quantization within half the chosen encoding step when there is no clipping; agreement between tiled and master elevation values.
 - Complete provenance, versioned controls, source attribution, and a reproducible build manifest.
 
-Tune numerical terrain tolerances against accepted real-source examples and the vehicle's clearance needs during the pilot. Keep exact invariants, such as untouched pixels outside an edit domain, separate from subjective judgments such as whether a canyon is enjoyable.
+Keep exact invariants, such as untouched pixels outside an edit domain, separate from the owner's visual judgment of the terrain. The implementer handles technical data, numeric and export checks; human review does not require a gameplay suitability checklist or calibrated terrain-acceptance thresholds.
 
 Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit height tiles, biome/water/validity masks, encoding and coordinate metadata, review overviews, and the world manifest. Export tiles are packaging units; they must not determine how the world was trained or generated.
 
@@ -284,9 +283,9 @@ Deliver a Float32 master mosaic or equivalent indexed tile collection, configura
 The first item is underway: [loadable presets](../../configs/README.md), a
 [candidate legend](../../schemas/legend-v1.md), a
 [source-description contract](../../schemas/source-v1.md), and
-[initial acceptance criteria](../design/pilot-acceptance-v1.md) are implemented
-or documented. Vehicle values and measured pilot tolerances remain explicitly
-unset. These metadata checks do not complete the real-terrain milestone.
+[technical checks and whole-tile review](../design/pilot-acceptance-v1.md) are
+implemented or documented. These metadata checks do not complete the
+real-terrain milestone.
 
 The second item has an initial [acquisition/import implementation](../workflows/dem-acquisition.md)
 with raw integrity, resumable HTTPS staging and small native-grid review crops.
@@ -351,12 +350,12 @@ prepared. Retain the preference for varied canyon contexts in later expansion;
 additional Grand Canyon crops remain one survey project. Continue broadening the
 other families. Three [Milford Sound crops](../reports/milford-qualification-v1.md) are
 now accepted, qualified and prepared, including an adjacent fjord-head and valley
-pair. Four verified native crops from Great Sand Dunes and Badlands are now
-[pending whole-tile review](../reports/family-expansion-review-v1.md) in gallery v9.
-They broaden the candidate terrain families; preparation follows owner selection
-and technical qualification.
+pair. Four verified native crops from Great Sand Dunes and Badlands in
+[gallery v9](../reports/family-expansion-review-v1.md) now have owner Yes decisions.
+They broaden the candidate terrain families; technical qualification and
+preparation remain next.
 
-- [ ] Establish the initial candidate-class legend (nine as a working target), vehicle review envelope, world presets, source metadata contract, and acceptance criteria.
+- [ ] Establish the initial candidate-class legend (nine as a working target), world presets and source metadata contract.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.
 - [x] Run an early karst acquisition trial, tracing source data through to several inspectable high-detail crops. Keep a failed candidate report if the geometry is not supported.
 - [ ] Add the highest-value agency adapters, regional quality checks, human crop selection, and label editing.
