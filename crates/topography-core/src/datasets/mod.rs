@@ -108,7 +108,7 @@ fn short_text(s: &str) -> bool {
 
 fn documents(release: &Release) -> Result<Selection> {
     ensure(
-        release.schema_version == 1
+        matches!(release.schema_version, 1 | 2)
             && release.kind == "numeric_evaluation_release"
             && release.purpose == "numeric_evaluation_only",
         "unsupported dataset release",
@@ -116,7 +116,8 @@ fn documents(release: &Release) -> Result<Selection> {
     let selection: Selection = serde_json::from_str(&release.selection_document)?;
     let approval: Approval = serde_json::from_str(&release.approval_document)?;
     ensure(
-        selection.schema_version == 1 && selection.purpose == "numeric_evaluation_only",
+        selection.schema_version == release.schema_version
+            && selection.purpose == "numeric_evaluation_only",
         "unsupported dataset selection",
     )?;
     ensure(
@@ -213,6 +214,10 @@ fn members(runtime: &Path, selection: &Selection) -> Result<Vec<Member>> {
             let bytes = read_small(&path)?;
             ensure(digest(&bytes) == *id, "prepared parent identity changed")?;
             let manifest: Value = serde_json::from_slice(&bytes)?;
+            ensure(
+                manifest["schema_version"] == selection.schema_version,
+                "dataset selection and prepared surface-cover contract versions differ",
+            )?;
             let grid: Grid = serde_json::from_value(manifest["grid"].clone())?;
             ensure(
                 grid.size.iter().all(|n| (1..=2048).contains(n))
@@ -297,8 +302,9 @@ pub fn build(runtime: &Path, selection: &Path, approval: &Path) -> Result<PathBu
         String::from_utf8(bytes)
             .map_err(|_| AcquisitionError::Invalid("dataset documents must be UTF-8".into()))
     };
+    let selected: Selection = serde_json::from_slice(&selection_bytes)?;
     let release = Release {
-        schema_version: 1,
+        schema_version: selected.schema_version,
         kind: "numeric_evaluation_release".into(),
         purpose: "numeric_evaluation_only".into(),
         selection_document: utf8(selection_bytes.clone())?,
@@ -324,10 +330,11 @@ pub fn build(runtime: &Path, selection: &Path, approval: &Path) -> Result<PathBu
 
 /// Verify release identity and current source status; a historical release may become unusable.
 pub fn verify(runtime: &Path, path: &Path) -> Result<String> {
-    let (id, _, members) = checked(runtime, path)?;
+    let (id, selection, members) = checked(runtime, path)?;
     Ok(serde_json::to_string_pretty(
-        &json!({"schema_version":1,"kind":"numeric_dataset_status",
+        &json!({"schema_version":selection.schema_version,"kind":"numeric_dataset_status",
         "manifest_sha256":id,"current":true,"purpose":"numeric_evaluation_only",
+        "surface_cover":if selection.schema_version == 2 {"assessed"} else {"legacy_assessment_pending"},
         "regions":members.len(),"training_admission":"not admitted"}),
     )?)
 }

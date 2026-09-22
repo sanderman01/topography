@@ -12,8 +12,11 @@ checks, instead of a second schema engine. Their first consumer is
 - [Crop curation v1](curation-v1.md): evidence, explicit decisions, labels and portable history.
 - [Batch acquisition and gallery v1](batch-gallery-v1.md): target lists, verified resume and direct whole-tile decisions.
 - [Regional quality v1](regional-quality-v1.md): whole-crop mask measurements and current preparation eligibility.
+- [Regional quality v2](regional-quality-v2.md): snow/ice, optional vegetation and evidenced cover assessment.
 - [Prepared native region v1](prepared-region-v1.md): aligned rasters, pinned decisions, immutable publication and current status.
+- [Prepared native region v2](prepared-region-v2.md): independent measured surface, ground fill and cover masks.
 - [Numeric evaluation v1](numeric-evaluation-v1.md): scoped releases, geographic separation and the Rust/Python scalar job boundary.
+- [Numeric evaluation v2](numeric-evaluation-v2.md): surface-cover propagation and ground-only metrics, with explicit legacy compatibility.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.

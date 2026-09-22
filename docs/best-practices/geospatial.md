@@ -53,7 +53,7 @@ for Rust builds or metadata-only validation.
 
 - Keep biome IDs, water, validity, repairs, and quality distinguishable. Zero
   elevation can be valid land; do not infer missingness or water from height.
-- Give every planned snow/ice and vegetation layer an explicit assessment state:
+- Give every snow/ice and vegetation layer an explicit assessment state:
   unknown, assessed absent or present. Track assessed coverage separately from
   provider validity. Missing or unavailable observations remain unknown; a
   compact all-clear declaration may represent confirmed absence until a consumer

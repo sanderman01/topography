@@ -52,28 +52,31 @@ profile. Both modes use the profile's captured water
 finding. Known defects require a corrected scoped assessment; do not auto-pass
 unresolved findings or erase existing failed findings.
 
-## Planned surface-layer follow-up
+## Version 2 surface-cover profile
 
-The implemented v1 profile, package and prepared-product contracts have no
-snow/ice or vegetation fields. A later schema version will add an explicit
-per-layer assessment of unknown, assessed absent or present, with assessed
-coverage kept separate from provider validity. Missing or unavailable data never
-means absent. Confirmed absence may use a compact all-clear declaration and need
-not be rasterized until a consumer requires it. Preserve existing v1 products,
-their original qualification and human votes; they are not automatically certified
-under the new mask contract.
+Profile schema 2 uses policy `supplier_qa_cover_v1` and adds `snow_ice` and
+`vegetation` descriptors. Each descriptor has a nonempty `note`, nullable
+`observed_at` and captured `evidence_ids`. Its tagged shape is one of:
 
-Snow/ice present will require a native-aligned mask plus source, observation date
-and provenance. An unresolved footprint will hold revised ground qualification;
-the workflow will not fabricate ground beneath ice. A wholly ice-covered tile
-may retain its accepted review but cannot serve as a bare-earth training sample.
+```json
+{"kind":"all_absent","windows":[[0,0,2048,2048]],"note":"Assessed absent","observed_at":"2025-08-14","evidence_ids":["supplier"]}
+{"kind":"mask","path":"snow-ice.tif","sha256":"64 hex characters","note":"Dated classification","observed_at":"2025-08-14","evidence_ids":["supplier"]}
+{"kind":"unavailable","note":"No suitable public classification","observed_at":null,"evidence_ids":[]}
+```
 
-Vegetation will be a best-effort independent layer that may remain unavailable
-or partial without blocking valid bare-earth preparation or invoking
-canopy-confidence checks. It may logically overlap snow/ice and water and cannot
-be inferred from a biome label or bare-earth DEM. Tiles assessed with neither
-vegetation nor snow/ice are a valid empty case. Vegetation classification is in
-scope; rendering, placement and growth remain outside scope.
+`all_absent` must cover the complete review window. `mask` is a complete
+source-grid Byte raster with 0 unknown, 1 absent and 2 present. It follows the
+same grid, CRS, categorical and contained-path checks as water. `unavailable` is
+permitted only for vegetation and produces an all-unknown crop mask. Assessed
+snow/ice with unknown crop cells blocks qualification; unknown vegetation remains
+optional and does not remove valid ground.
+
+The v2 package and quality input retain both masks plus per-layer status, note,
+date and pinned evidence. Snow/ice is excluded from the ground denominator and
+ground output, while the measured provider surface remains separate. Existing v1
+profiles, package bytes, products, qualifications and human votes remain valid
+legacy artifacts and are not cover-certified. Backfill appends an attributed
+technical successor to the existing human Yes and never clears a failed finding.
 
 ## Existing interfaces and integration
 
@@ -105,7 +108,10 @@ scope; rendering, placement and growth remain outside scope.
   output is reported, never silently replaced. Current catalog heads are checked
   before technical publication and prepared registration.
 - `/api/tiles` adds `preparation: {state,message,manifest}`. States are checking,
-  awaiting_acceptance, preparing, ready, needs_attention and not_selected.
+  awaiting_acceptance, preparing, ready, assessment_pending, needs_attention and
+  not_selected. Legacy products retain their manifest link with
+  `assessment_pending`; configuring a v2 profile queues a cover backfill without
+  asking for another Yes. Only v2 products report Ready under the cover contract.
   The page refreshes statuses without changing the selected preview or retrying
   votes. A technical successor alone must not turn a deliberate vote into a stale
   user-decision conflict; actual competing human votes retain conflict protection.

@@ -10,10 +10,51 @@ import tempfile
 
 from check_acquisition import run, sha
 from check_preparation import check as prepare_fixture
+from check_surface_cover import preparation_checks as prepare_cover_fixture
 
 
 def write(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def check_cover(cli, directory, python=None):
+    (directory / "left").mkdir()
+    (directory / "right").mkdir()
+    runtime, left = prepare_cover_fixture(cli, directory / "left")
+    _, right = prepare_cover_fixture(cli, directory / "right", runtime=runtime, west=702000)
+    selection = {"schema_version": 2, "purpose": "numeric_evaluation_only",
+                 "maximum_context_m": 40.0, "separation_buffer_m": 40.0,
+                 "normalization": {"offset_m": 0.0, "scale_m": 2048.0},
+                 "groups": [{"id": "left", "role": "calibration", "prepared": [sha(left)]},
+                            {"id": "right", "role": "validation", "prepared": [sha(right)]}]}
+    request, approval_path = directory / "selection.json", directory / "approval.json"
+    write(request, selection)
+    approval = {"schema_version": 1, "kind": "numeric_evaluation_approval",
+                "selection_sha256": sha(request), "actor_kind": "human",
+                "actor_name": "Synthetic fixture only", "recorder": "workflow check",
+                "decision": "approve", "exact_response": "Synthetic cover evaluation only",
+                "scope": "numeric_evaluation_only", "reviewed_proposal_sha256": "0" * 64,
+                "reviewed_page_sha256": "0" * 64}
+    write(approval_path, approval)
+    release = Path(run(cli, "dataset", "build", runtime, request, approval_path))
+    assert json.loads(release.read_text())["schema_version"] == 2
+    status = json.loads(run(cli, "dataset", "verify", runtime, release))
+    assert status["current"] and status["surface_cover"] == "assessed"
+    if python:
+        completed = Path(run(cli, "evaluate", "numeric", runtime, release, python, directory / "numeric"))
+        assert json.loads(completed.read_text())["schema_version"] == 2
+        metrics = json.loads((completed.parent / "metrics.json").read_text())
+        for region in metrics["regions"]:
+            assert region["snow_ice_cells"] == 2 and region["valid_cells"] == 13
+            assert region["invalid_land_cells"] == 0
+        payload = json.loads((completed.parent / "request.json").read_text())
+        assert all({"snow-ice", "vegetation", "surface-elevation"} <= set(r["layers"])
+                   for r in payload["regions"])
+    damaged = right.parent / "vegetation.tif"
+    original = damaged.read_bytes()
+    damaged.write_bytes(b"corrupt")
+    run(cli, "dataset", "verify", runtime, release, expected=1, message="integrity")
+    damaged.write_bytes(original)
 
 
 def check(cli, directory, python=None):
@@ -89,7 +130,8 @@ def check(cli, directory, python=None):
         write(approval_path, dict(approval, selection_sha256=sha(request)))
         run(cli, "dataset", "build", runtime, request, approval_path, expected=1, message=message)
     for edit, message in [
-        (lambda s: s.update(schema_version=2), "unsupported"),
+        (lambda s: s.update(schema_version=3), "unsupported"),
+        (lambda s: s.update(schema_version=2), "surface-cover contract versions differ"),
         (lambda s: s.update(typo=True), "unknown field"),
         (lambda s: s["groups"][1].update(prepared=[sha(first)]), "duplicate"),
         (lambda s: s["groups"][1].update(role="calibration"), "both"),
@@ -196,6 +238,8 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="topography datasets ") as name:
         check(args.binary.resolve(), Path(name), args.python.absolute() if args.python else None)
+    with tempfile.TemporaryDirectory(prefix="topography cover datasets ") as name:
+        check_cover(args.binary.resolve(), Path(name), args.python.absolute() if args.python else None)
     print("Dataset workflows passed: scoped approval, geographic separation, immutable release and source revocation.")
 
 

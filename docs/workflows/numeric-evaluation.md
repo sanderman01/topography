@@ -25,7 +25,8 @@ the executable symlink to the system interpreter.
 
 ## Publish a collection
 
-Use the [strict v1 contracts](../../schemas/numeric-evaluation-v1.md) to write a
+Use the [v2 cover contracts](../../schemas/numeric-evaluation-v2.md) for new
+cover-assessed regions, or the [legacy v1 contracts](../../schemas/numeric-evaluation-v1.md), to write a
 selection and a captured approval. Pin the exact prepared IDs and keep nearby
 regions in one role. The initial pilot uses six geographic areas and a 512 m
 maximum context/buffer; it has no independent final test split. Confirm actual
@@ -49,8 +50,8 @@ portable metadata; raw/prepared data and the curation catalog still need backup.
 target/debug/topography evaluate numeric configs/runtime.example.toml data/datasets/RELEASE_SHA256/manifest.json training/.venv/bin/python data/models/numeric-pilot-v1
 ```
 
-The output directory must not exist. Rust verifies the release, decodes seven
-native layers sequentially, pins a JSON request and little-endian binary samples,
+The output directory must not exist. Rust verifies the release, decodes ten
+native layers sequentially for v2 (seven for legacy v1), pins a JSON request and little-endian binary samples,
 then invokes `python -m topography_training.numeric <request> <new-output-dir>`.
 The worker loads one region at a time. Its maximum runtime is 600 seconds, log
 limit 1 MiB and thread count one. Bounds are 32 regions and 2,048 cells per side;
@@ -60,7 +61,8 @@ The initial normalization is height ÷ 2,048 with inverse × 2,048, in Float32.
 The alternative casts normalized heights to Float16 before decoding. Valid signed
 zero is preserved in the Float32 path. Neither input loading nor evaluation uses
 RGB, gamma, per-crop contrast normalization, resampling or a reserved height code.
-Water/invalid fill is excluded from height and adjacent slope metrics. Range and
+Water, snow/ice and invalid ground fill are excluded from v2 height and adjacent
+slope metrics. Unknown vegetation remains usable for ground evaluation. Range and
 all-masked errors stop the job. Fixed small synthetic cases expose narrow-feature
 loss in addition to the real regions.
 

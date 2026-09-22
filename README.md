@@ -28,6 +28,9 @@ Existing source decisions remain visible; technical qualification is separate.
 Reusable source assessments let the batch tool check new tiles automatically.
 A saved Yes queues native preparation in the background; the gallery shows
 Preparing, Ready or Needs technical attention without asking for another vote.
+Version-2 preparation keeps snow/ice and available vegetation masks alongside
+ground and measured surface elevations. Legacy products show Surface assessment
+pending until backed by a new source assessment; their saved choices remain.
 
 ```text
 catalog/                 Versioned provider descriptions, areas, and label legends

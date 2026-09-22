@@ -83,6 +83,13 @@ declares a non-synthetic source to reach that branch; its terrain, permission an
 human declarations remain artificial. No actual prepared data is published.
 Run without Python's `-O` assertion bypass.
 
+`python3 scripts/check_surface_cover.py target/debug/topography` exercises the
+versioned snow/ice and vegetation contracts with tiny native-grid rasters. It
+checks legacy serialization, explicit unavailable versus assessed cover,
+snow/ice ground exclusion, exact surface preservation, malformed cover masks,
+captured evidence, automatic preparation and restart behavior. All inputs and
+catalog records are isolated synthetic fixtures.
+
 `python3 scripts/check_preparation.py target/debug/topography` builds tiny adjacent
 native regions from artificial eligible reviews, including 0.51 m spacing. It
 checks exact Float32 land bits, signed zero, deterministic masked fill, distinct

@@ -363,50 +363,73 @@ impl Store {
         )?;
         if let Some(automation) = &record.automation {
             ensure(
-                automation.kind == "supplier_qa_qualification_v1"
-                    && valid_digest(&automation.inherited_human_record_sha256)
+                matches!(
+                    automation.kind.as_str(),
+                    "supplier_qa_qualification_v1" | "supplier_qa_qualification_v2"
+                ) && valid_digest(&automation.inherited_human_record_sha256)
                     && valid_digest(&automation.profile_sha256)
                     && valid_digest(&automation.quality_report_sha256)
-                    && record.previous_record_sha256.as_deref()
-                        == Some(automation.inherited_human_record_sha256.as_str()),
+                    && record.previous_record_sha256.is_some(),
                 "invalid automatic qualification provenance",
             )?;
-            let prior_body: Vec<u8> = db.query_row(
+            let human_body: Vec<u8> = db.query_row(
                 "SELECT body FROM records WHERE id=?1",
                 [&automation.inherited_human_record_sha256],
                 |row| row.get(0),
             )?;
-            let prior: Record = serde_json::from_slice(&prior_body)?;
+            let human: Record = serde_json::from_slice(&human_body)?;
+            let previous_id = record
+                .previous_record_sha256
+                .as_ref()
+                .expect("checked predecessor");
+            let previous_body: Vec<u8> = db.query_row(
+                "SELECT body FROM records WHERE id=?1",
+                [previous_id],
+                |row| row.get(0),
+            )?;
+            let previous: Record = serde_json::from_slice(&previous_body)?;
             ensure(
-                digest(&prior_body) == automation.inherited_human_record_sha256
-                    && prior.automation.is_none()
-                    && prior.claims.actor.kind == ActorKind::Human
-                    && prior.claims.decision == Decision::Accept
+                digest(&human_body) == automation.inherited_human_record_sha256
+                    && human.automation.is_none()
+                    && human.claims.actor.kind == ActorKind::Human
+                    && human.claims.decision == Decision::Accept
                     && record.claims.actor.kind == ActorKind::Human
                     && record.claims.decision == Decision::Accept
                     && serde_json::to_vec(&record.claims.actor)?
-                        == serde_json::to_vec(&prior.claims.actor)?
-                    && record.claims.reason == prior.claims.reason
-                    && record.claims.primary_class_id == prior.claims.primary_class_id
-                    && record.target.raw_receipt_sha256 == prior.target.raw_receipt_sha256
-                    && record.target.review_sha256 == prior.target.review_sha256
-                    && record.target.legend_sha256 == prior.target.legend_sha256
-                    && record.asset_sha256 == prior.asset_sha256
-                    && record.window_cells == prior.window_cells
-                    && record.legend_version == prior.legend_version,
+                        == serde_json::to_vec(&human.claims.actor)?
+                    && record.claims.reason == human.claims.reason
+                    && record.claims.primary_class_id == human.claims.primary_class_id
+                    && record.target.raw_receipt_sha256 == human.target.raw_receipt_sha256
+                    && record.target.review_sha256 == human.target.review_sha256
+                    && record.target.legend_sha256 == human.target.legend_sha256
+                    && record.asset_sha256 == human.asset_sha256
+                    && record.window_cells == human.window_cells
+                    && record.legend_version == human.legend_version,
                 "automatic qualification does not preserve its human acceptance",
             )?;
             ensure(
-                record.evidence.len() >= prior.evidence.len(),
+                previous_id == &automation.inherited_human_record_sha256
+                    || (automation.kind == "supplier_qa_qualification_v2"
+                        && previous.automation.as_ref().is_some_and(|value| {
+                            matches!(
+                                value.kind.as_str(),
+                                "supplier_qa_qualification_v1" | "supplier_qa_qualification_v2"
+                            ) && value.inherited_human_record_sha256
+                                == automation.inherited_human_record_sha256
+                        })),
+                "automatic qualification predecessor has different human authority",
+            )?;
+            ensure(
+                record.evidence.len() >= previous.evidence.len(),
                 "automatic qualification changed captured human evidence",
             )?;
-            for (current, prior) in record.evidence.iter().zip(&prior.evidence) {
+            for (current, prior) in record.evidence.iter().zip(&previous.evidence) {
                 ensure(
                     serde_json::to_vec(current)? == serde_json::to_vec(prior)?,
                     "automatic qualification changed captured human evidence",
                 )?;
             }
-            for (name, finding) in &prior.claims.findings {
+            for (name, finding) in &previous.claims.findings {
                 if finding.state == FindingState::Fail {
                     let current = &record.claims.findings[name];
                     ensure(
@@ -416,6 +439,16 @@ impl Store {
                         "automatic qualification changed a failed finding",
                     )?;
                 }
+            }
+            if matches!(
+                previous.claims.license.training_permission,
+                TrainingPermission::Restricted | TrainingPermission::Prohibited
+            ) {
+                ensure(
+                    serde_json::to_vec(&record.claims.license)?
+                        == serde_json::to_vec(&previous.claims.license)?,
+                    "automatic qualification relaxed a permission restriction",
+                )?;
             }
         }
         // Policy output is versioned with the record; do not silently reinterpret history.

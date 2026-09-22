@@ -27,6 +27,7 @@ const LAYERS: [&str; 7] = [
     "repairs",
     "features",
 ];
+const COVER_LAYERS: [&str; 3] = ["snow-ice", "vegetation", "surface-elevation"];
 
 #[derive(Serialize)]
 struct Payload {
@@ -46,6 +47,10 @@ struct Region {
     valid_cells: u64,
     #[serde(skip)]
     water_cells: u64,
+    #[serde(skip)]
+    snow_ice_cells: Option<u64>,
+    #[serde(skip)]
+    invalid_land_cells: u64,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,6 +113,8 @@ struct RegionMetrics {
     role: Role,
     valid_cells: u64,
     water_cells: u64,
+    #[serde(default)]
+    snow_ice_cells: Option<u64>,
     invalid_land_cells: u64,
     representations: Representations,
 }
@@ -241,9 +248,9 @@ fn validate_environment(environment: &Environment) -> Result<()> {
     )
 }
 
-fn validate_metrics(metrics: &Metrics, regions: &[Region]) -> Result<()> {
+fn validate_metrics(metrics: &Metrics, regions: &[Region], version: u32) -> Result<()> {
     ensure(
-        metrics.schema_version == 1 && metrics.kind == "numeric_representation_metrics",
+        metrics.schema_version == version && metrics.kind == "numeric_representation_metrics",
         "unsupported numeric metrics",
     )?;
     ensure(
@@ -252,7 +259,6 @@ fn validate_metrics(metrics: &Metrics, regions: &[Region]) -> Result<()> {
     )?;
     for (item, expected) in metrics.regions.iter().zip(regions) {
         let [width, height] = expected.grid.size.map(u64::from);
-        let cells = width * height;
         ensure(
             item.prepared_sha256 == expected.prepared_sha256
                 && item.group == expected.group
@@ -260,7 +266,8 @@ fn validate_metrics(metrics: &Metrics, regions: &[Region]) -> Result<()> {
                 && item.valid_cells > 0
                 && item.valid_cells == expected.valid_cells
                 && item.water_cells == expected.water_cells
-                && item.invalid_land_cells == cells - expected.valid_cells - expected.water_cells,
+                && item.snow_ice_cells == expected.snow_ice_cells
+                && item.invalid_land_cells == expected.invalid_land_cells,
             "numeric metrics identity or cell counts mismatch",
         )?;
         validate_representations(
@@ -292,6 +299,7 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
         "numeric output already exists; choose a new run directory",
     )?;
     let (dataset_id, selection, members) = checked(runtime, release)?;
+    let version = selection.schema_version;
     let output = io_context("resolve numeric output", std::path::absolute(output))?;
     let parent = output
         .parent()
@@ -310,18 +318,28 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
         let mut layers = BTreeMap::new();
         let mut valid_cells = 0;
         let mut water_cells = 0;
-        for layer in LAYERS {
+        let mut water_mask = Vec::new();
+        let mut ice_mask = Vec::new();
+        let layers_to_read = LAYERS.iter().chain(if version == 2 {
+            COVER_LAYERS.iter()
+        } else {
+            [].iter()
+        });
+        for &layer in layers_to_read {
             let bytes = band(
                 &member.path.with_file_name(format!("{layer}.tif")),
                 scratch.path(),
                 "decode",
                 cells,
-                layer == "elevation",
+                matches!(layer, "elevation" | "surface-elevation"),
             )?;
             if layer == "validity" {
                 valid_cells = bytes.iter().filter(|&&value| value == 255).count() as u64;
             } else if layer == "water" {
                 water_cells = bytes.iter().filter(|&&value| value == 255).count() as u64;
+                water_mask.clone_from(&bytes);
+            } else if layer == "snow-ice" {
+                ice_mask.clone_from(&bytes);
             }
             let name = format!("{index:02}-{layer}.bin");
             write_new(&stage.path().join(&name), &bytes)?;
@@ -338,6 +356,18 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
             valid_cells + water_cells <= cells as u64,
             "inconsistent input cell counts",
         )?;
+        let snow_ice_cells =
+            (version == 2).then(|| ice_mask.iter().filter(|&&v| v == 2).count() as u64);
+        let ice_land_cells = ice_mask
+            .iter()
+            .zip(&water_mask)
+            .filter(|(ice, water)| **ice == 2 && **water == 0)
+            .count() as u64;
+        let invalid_land_cells = (cells as u64)
+            .checked_sub(valid_cells + water_cells + ice_land_cells)
+            .ok_or_else(|| {
+                AcquisitionError::Invalid("overlapping ground and surface cover".into())
+            })?;
         regions.push(Region {
             prepared_sha256: member.id,
             group: member.group,
@@ -347,9 +377,11 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
             layers,
             valid_cells,
             water_cells,
+            snow_ice_cells,
+            invalid_land_cells,
         });
     }
-    let request = json!({"schema_version":1,"kind":"numeric_evaluation_job","dataset_sha256":dataset_id,
+    let request = json!({"schema_version":version,"kind":"numeric_evaluation_job","dataset_sha256":dataset_id,
         "normalization":selection.normalization,"regions":regions});
     let request_bytes = serde_json::to_vec_pretty(&request)?;
     ensure(
@@ -370,7 +402,7 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
     let metrics_path = worker_output.join("metrics.json");
     let metrics_bytes = read_small(&metrics_path)?;
     ensure(
-        worker.schema_version == 1
+        worker.schema_version == version
             && worker.kind == "numeric_worker_result"
             && worker.request_sha256 == digest(&request_bytes)
             && worker.dataset_sha256 == dataset_id
@@ -379,7 +411,7 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
         "numeric worker completion identity mismatch",
     )?;
     validate_environment(&worker.environment)?;
-    validate_metrics(&serde_json::from_slice(&metrics_bytes)?, &regions)?;
+    validate_metrics(&serde_json::from_slice(&metrics_bytes)?, &regions, version)?;
     ensure(
         read_small(&request_path)? == request_bytes,
         "numeric request changed",
@@ -406,7 +438,7 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
         fs::rename(&result_path, stage.path().join("worker-result.json")),
     )?;
     io_context("remove empty worker stage", fs::remove_dir(&worker_output))?;
-    let manifest = json!({"schema_version":1,"kind":"verified_numeric_evaluation","dataset_sha256":dataset_id,
+    let manifest = json!({"schema_version":version,"kind":"verified_numeric_evaluation","dataset_sha256":dataset_id,
         "request_sha256":digest(&request_bytes),"metrics_sha256":digest(&metrics_bytes),
         "worker_result_sha256":hash_file(&stage.path().join("worker-result.json"))?.0,
         "current_at_completion":true,"gpu_used":false,"training_admission":"not admitted",

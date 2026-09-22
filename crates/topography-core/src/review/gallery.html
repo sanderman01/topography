@@ -14,7 +14,7 @@ const CONFIG=__GALLERY_CONFIG__;
 const byId=id=>document.getElementById(id), filter=byId('filter'), frame=byId('preview');
 let state={tiles:[]},active=null,busy=false,ready=false,revision=0;
 const labels={pending:'To review',accept:'Accepted',reject:'Rejected'};
-const preparationLabels={checking:'Checking',awaiting_acceptance:'Checks complete',preparing:'Preparing',ready:'Ready',needs_attention:'Needs technical attention',not_selected:'Not selected'};
+const preparationLabels={checking:'Checking',awaiting_acceptance:'Checks complete',preparing:'Preparing',ready:'Ready',assessment_pending:'Surface assessment pending',needs_attention:'Needs technical attention',not_selected:'Not selected'};
 function tileLabel(tile){const preparation=tile.preparation?.state;return `${labels[tile.decision]}${preparation&&tile.decision!=='reject'?' · '+(preparationLabels[preparation]||preparation):''}`;}
 function identity(){const tile=state.tiles.find(t=>t.index===active);if(!tile)return;byId('tile-state').textContent=`${tileLabel(tile)} · Tile ${tile.index+1} of ${state.tiles.length}`;byId('preparation-detail').textContent=tile.preparation?.message||'';}
 function visible(){return state.tiles.filter(t=>filter.value==='all'||t.decision===filter.value);}

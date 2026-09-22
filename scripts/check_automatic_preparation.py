@@ -247,7 +247,7 @@ def check(cli, directory):
         saved = vote(authority, headers, gallery_sha256, 0, valid, "accept")
         assert saved["decision"] == "accept"
         human_head = saved["head"]
-        ready = eventually(authority, 0, {"ready"})
+        ready = eventually(authority, 0, {"assessment_pending"})
         assert ready["decision"] == "accept" and ready["preparation"]["manifest"]
         ready_manifest = Path(ready["preparation"]["manifest"])
         product = json.loads(ready_manifest.read_text())
@@ -287,7 +287,7 @@ def check(cli, directory):
         before_records = database.execute("SELECT COUNT(*) FROM records").fetchone()[0]
     process, authority, headers = start_server(cli, runtime, manifest)
     try:
-        restarted = eventually(authority, 0, {"ready"})
+        restarted = eventually(authority, 0, {"assessment_pending"})
         assert restarted["decision"] == "accept"
         assert Path(restarted["preparation"]["manifest"]) == ready_manifest
         time.sleep(0.3)

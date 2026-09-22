@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const LAYERS: [&str; 7] = [
+const LAYERS_V1: [&str; 7] = [
     "elevation",
     "validity",
     "provider-validity",
@@ -26,6 +26,22 @@ const LAYERS: [&str; 7] = [
     "repairs",
     "features",
 ];
+const LAYERS_V2: [&str; 10] = [
+    "elevation",
+    "surface-elevation",
+    "validity",
+    "provider-validity",
+    "water",
+    "quality",
+    "repairs",
+    "features",
+    "snow-ice",
+    "vegetation",
+];
+
+fn layers(version: u32) -> &'static [&'static str] {
+    if version == 1 { &LAYERS_V1 } else { &LAYERS_V2 }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -265,8 +281,10 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
     let request_bytes = read_small(request_path)?;
     let request: Request = serde_json::from_slice(&request_bytes)?;
     ensure(
-        request.schema_version == 1 && !request.inputs.is_empty() && request.inputs.len() <= 16,
-        "prepared request v1 requires 1..=16 inputs",
+        matches!(request.schema_version, 1 | 2)
+            && !request.inputs.is_empty()
+            && request.inputs.len() <= 16,
+        "prepared request v1/v2 requires 1..=16 inputs",
     )?;
     grid_valid(&request.grid)?;
     ensure(
@@ -282,6 +300,12 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
             &input.curation_record_sha256,
         )?);
     }
+    ensure(
+        ready
+            .iter()
+            .all(|item| item.schema_version == request.schema_version),
+        "prepared request and all quality inputs must use the same schema version",
+    )?;
     let windows = layout(&request.grid, &ready)?;
     let first = &ready[0].bundle;
     let wkt = first.inspection["coordinateSystem"]["wkt"]
@@ -297,7 +321,8 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
     let stage = io_context("stage prepared region", tempfile::tempdir_in(&root))?;
     let scratch = io_context("stage native bands", tempfile::tempdir_in(stage.path()))?;
     let mut parents = Vec::new();
-    let mut band_sources: Vec<Vec<PathBuf>> = (0..LAYERS.len()).map(|_| Vec::new()).collect();
+    let layer_names = layers(request.schema_version);
+    let mut band_sources: Vec<Vec<PathBuf>> = (0..layer_names.len()).map(|_| Vec::new()).collect();
     for (index, (item, window)) in ready.iter().zip(&windows).enumerate() {
         let [_, _, w, h] = item.bundle.manifest.window_cells;
         let t: [f64; 6] = serde_json::from_value(item.bundle.inspection["geoTransform"].clone())?;
@@ -306,7 +331,8 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
             size: [w, h],
             spacing_m: request.grid.spacing_m,
         };
-        let mut heights = item.heights.clone();
+        let surface_heights = item.heights.clone();
+        let mut heights = surface_heights.clone();
         let mut validity = vec![0; w as usize * h as usize];
         let water: Vec<u8> = item.masks["water"]
             .iter()
@@ -316,6 +342,7 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
             let finite =
                 f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]).is_finite();
             if item.masks["water"][i] == 1
+                && (request.schema_version == 1 || item.masks["snow-ice"][i] == 1)
                 && item.masks["quality"][i] == 1
                 && item.provider[i] == 255
                 && finite
@@ -325,23 +352,38 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
                 sample.copy_from_slice(&request.masked_fill_m.to_le_bytes());
             }
         }
-        let bytes = [
-            &heights,
-            &validity,
-            &item.provider,
-            &water,
-            &item.masks["quality"],
-            &item.masks["repairs"],
-            &item.masks["features"],
-        ];
+        let bytes: Vec<&Vec<u8>> = if request.schema_version == 1 {
+            vec![
+                &heights,
+                &validity,
+                &item.provider,
+                &water,
+                &item.masks["quality"],
+                &item.masks["repairs"],
+                &item.masks["features"],
+            ]
+        } else {
+            vec![
+                &heights,
+                &surface_heights,
+                &validity,
+                &item.provider,
+                &water,
+                &item.masks["quality"],
+                &item.masks["repairs"],
+                &item.masks["features"],
+                &item.masks["snow-ice"],
+                &item.masks["vegetation"],
+            ]
+        };
         for (layer, values) in bytes.into_iter().enumerate() {
             band_sources[layer].push(write_band(
                 scratch.path(),
-                &format!("input-{index}-{}", LAYERS[layer]),
+                &format!("input-{index}-{}", layer_names[layer]),
                 &grid,
                 wkt,
                 values,
-                layer == 0,
+                layer_names[layer].ends_with("elevation"),
             )?);
         }
         write_new(
@@ -361,16 +403,13 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
             destination_window: *window,
         });
     }
-    for (layer, name) in LAYERS.iter().enumerate() {
-        let kind = if layer == 0 { "Float32" } else { "Byte" };
+    for (layer, name) in layer_names.iter().enumerate() {
+        let float = name.ends_with("elevation");
+        let kind = if float { "Float32" } else { "Byte" };
         let mut body = format!(
             "{}<VRTRasterBand dataType=\"{kind}\" band=\"1\">{}",
             dataset(&request.grid, wkt),
-            if layer == 0 {
-                "<UnitType>m</UnitType>"
-            } else {
-                ""
-            }
+            if float { "<UnitType>m</UnitType>" } else { "" }
         );
         for (source, [x, y, w, h]) in band_sources[layer].iter().zip(&windows) {
             body.push_str(&format!("<SimpleSource><SourceFilename relativeToVRT=\"0\">{}</SourceFilename><SourceBand>1</SourceBand><SrcRect xOff=\"0\" yOff=\"0\" xSize=\"{w}\" ySize=\"{h}\"/><DstRect xOff=\"{x}\" yOff=\"{y}\" xSize=\"{w}\" ySize=\"{h}\"/></SimpleSource>", xml(&source.to_string_lossy())));
@@ -384,7 +423,7 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
             &output,
             &request.grid,
             &first.inspection["coordinateSystem"],
-            layer == 0,
+            float,
         )?;
         // Verify every output cell against each disjoint native source window.
         let all = band(
@@ -392,16 +431,16 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
             scratch.path(),
             &format!("verify-{name}"),
             request.grid.size[0] as usize * request.grid.size[1] as usize,
-            layer == 0,
+            float,
         )?;
-        let stride = if layer == 0 { 4 } else { 1 };
+        let stride = if float { 4 } else { 1 };
         for (index, [x, y, w, h]) in windows.iter().enumerate() {
             let original = band(
                 &band_sources[layer][index],
                 scratch.path(),
                 &format!("verify-{index}-{name}"),
                 *w as usize * *h as usize,
-                layer == 0,
+                float,
             )?;
             for row in 0..*h as usize {
                 let begin =
@@ -416,7 +455,7 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
     }
     drop(scratch);
     let mut artifacts = Vec::new();
-    for name in LAYERS
+    for name in layer_names
         .iter()
         .map(|n| format!("{n}.tif"))
         .chain((0..parents.len()).map(|i| format!("quality-{i}.json")))
@@ -434,9 +473,14 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
         });
     }
     let manifest = Manifest {
-        schema_version: 1,
+        schema_version: request.schema_version,
         kind: "prepared_native_region".into(),
-        policy: "native_preparation_v1".into(),
+        policy: if request.schema_version == 1 {
+            "native_preparation_v1"
+        } else {
+            "native_ground_cover_v1"
+        }
+        .into(),
         grid: request.grid,
         coordinate_system: first.inspection["coordinateSystem"].clone(),
         vertical_datum: first
@@ -512,9 +556,10 @@ pub(crate) fn verify_files(path: &Path) -> Result<()> {
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
     grid_valid(&manifest.grid)?;
     ensure(
-        manifest.schema_version == 1
+        matches!(manifest.schema_version, 1 | 2)
             && manifest.kind == "prepared_native_region"
-            && manifest.policy == "native_preparation_v1"
+            && ((manifest.schema_version == 1 && manifest.policy == "native_preparation_v1")
+                || (manifest.schema_version == 2 && manifest.policy == "native_ground_cover_v1"))
             && manifest.resampling == "none"
             && manifest.review_state == "unreviewed"
             && manifest.training_admission == "not admitted"
@@ -522,7 +567,7 @@ pub(crate) fn verify_files(path: &Path) -> Result<()> {
             && (1..=16).contains(&manifest.parents.len()),
         "unsupported prepared manifest",
     )?;
-    let required: BTreeSet<_> = LAYERS
+    let required: BTreeSet<_> = layers(manifest.schema_version)
         .iter()
         .map(|n| format!("{n}.tif"))
         .chain((0..manifest.parents.len()).map(|i| format!("quality-{i}.json")))
@@ -545,7 +590,7 @@ pub(crate) fn verify_files(path: &Path) -> Result<()> {
                 &parent.join(&a.path),
                 &manifest.grid,
                 &manifest.coordinate_system,
-                a.path == "elevation.tif",
+                matches!(a.path.as_str(), "elevation.tif" | "surface-elevation.tif"),
             )?;
         }
     }
@@ -583,7 +628,7 @@ pub fn verify(runtime: &Path, path: &Path) -> Result<(bool, String)> {
     Ok((
         registered && current,
         serde_json::to_string_pretty(
-            &json!({"schema_version": 1, "kind": "prepared_region_status", "manifest_sha256": digest(&read_small(path)?),
+            &json!({"schema_version": manifest.schema_version, "kind": "prepared_region_status", "manifest_sha256": digest(&read_small(path)?),
         "integrity": "verified", "registered": registered, "current": current, "review_state": "unreviewed", "training_admission": "not admitted"}),
         )?,
     ))

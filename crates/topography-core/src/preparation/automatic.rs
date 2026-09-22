@@ -45,7 +45,7 @@ pub(crate) struct Finding {
     pub(crate) evidence_ids: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Water {
     AllTerrestrial { windows: Vec<[u32; 4]> },
@@ -54,7 +54,7 @@ enum Water {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Profile {
+struct ProfileV1 {
     schema_version: u32,
     policy: String,
     source_sha256: String,
@@ -65,6 +65,68 @@ struct Profile {
     water: Water,
     #[serde(default)]
     blockers: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum Cover {
+    AllAbsent {
+        windows: Vec<[u32; 4]>,
+        note: String,
+        observed_at: Option<String>,
+        evidence_ids: Vec<String>,
+    },
+    Mask {
+        path: PathBuf,
+        sha256: String,
+        note: String,
+        observed_at: Option<String>,
+        evidence_ids: Vec<String>,
+    },
+    Unavailable {
+        note: String,
+        observed_at: Option<String>,
+        evidence_ids: Vec<String>,
+    },
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileV2 {
+    schema_version: u32,
+    policy: String,
+    source_sha256: String,
+    asset_sha256: String,
+    evidence: Vec<Evidence>,
+    permission_evidence_ids: Vec<String>,
+    findings: BTreeMap<String, Finding>,
+    water: Water,
+    snow_ice: Cover,
+    vegetation: Cover,
+    #[serde(default)]
+    blockers: Vec<String>,
+}
+
+struct ProfileData {
+    schema_version: u32,
+    policy: String,
+    source_sha256: String,
+    asset_sha256: String,
+    evidence: Vec<Evidence>,
+    permission_evidence_ids: Vec<String>,
+    findings: BTreeMap<String, Finding>,
+    water: Water,
+    covers: Option<BTreeMap<String, Cover>>,
+    blockers: Vec<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PackageCover {
+    status: String,
+    note: String,
+    observed_at: Option<String>,
+    evidence_ids: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -90,6 +152,8 @@ pub(crate) struct Package {
     pub(crate) findings: BTreeMap<String, Finding>,
     pub(crate) source_license: Value,
     masks: BTreeMap<String, FileRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    surface_cover: Option<BTreeMap<String, PackageCover>>,
     grid: Value,
     window_cells: [u32; 4],
     admission: String,
@@ -99,11 +163,15 @@ impl Package {
     pub(crate) fn parents(&self) -> (&Path, &Path) {
         (&self.raw_receipt.path, &self.review.path)
     }
+
+    pub(crate) fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
 }
 
-fn verified_profile(path: &Path) -> Result<(Profile, Vec<u8>)> {
+fn verified_profile(path: &Path) -> Result<(ProfileData, Vec<u8>)> {
     let bytes = read_small(path)?;
-    let profile: Profile = serde_json::from_slice(&bytes)?;
+    let profile = decode_profile(&bytes)?;
     validate_profile_contract(&profile)?;
     ensure(
         profile.blockers.is_empty(),
@@ -122,9 +190,55 @@ fn verified_profile(path: &Path) -> Result<(Profile, Vec<u8>)> {
     Ok((profile, bytes))
 }
 
-fn validate_profile_contract(profile: &Profile) -> Result<()> {
+fn decode_profile(bytes: &[u8]) -> Result<ProfileData> {
+    let value: Value = serde_json::from_slice(bytes)?;
+    let profile = match value["schema_version"].as_u64() {
+        Some(1) => {
+            let value: ProfileV1 = serde_json::from_value(value)?;
+            ProfileData {
+                schema_version: value.schema_version,
+                policy: value.policy,
+                source_sha256: value.source_sha256,
+                asset_sha256: value.asset_sha256,
+                evidence: value.evidence,
+                permission_evidence_ids: value.permission_evidence_ids,
+                findings: value.findings,
+                water: value.water,
+                covers: None,
+                blockers: value.blockers,
+            }
+        }
+        Some(2) => {
+            let value: ProfileV2 = serde_json::from_value(value)?;
+            ProfileData {
+                schema_version: value.schema_version,
+                policy: value.policy,
+                source_sha256: value.source_sha256,
+                asset_sha256: value.asset_sha256,
+                evidence: value.evidence,
+                permission_evidence_ids: value.permission_evidence_ids,
+                findings: value.findings,
+                water: value.water,
+                covers: Some(BTreeMap::from([
+                    ("snow-ice".into(), value.snow_ice),
+                    ("vegetation".into(), value.vegetation),
+                ])),
+                blockers: value.blockers,
+            }
+        }
+        _ => {
+            return Err(AcquisitionError::Invalid(
+                "unsupported automatic preparation profile".into(),
+            ));
+        }
+    };
+    Ok(profile)
+}
+
+fn validate_profile_contract(profile: &ProfileData) -> Result<()> {
     ensure(
-        profile.schema_version == 1 && profile.policy == "supplier_qa_pilot_v1",
+        (profile.schema_version == 1 && profile.policy == "supplier_qa_pilot_v1")
+            || (profile.schema_version == 2 && profile.policy == "supplier_qa_cover_v1"),
         "unsupported automatic preparation profile",
     )?;
     ensure(
@@ -185,7 +299,80 @@ fn validate_profile_contract(profile: &Profile) -> Result<()> {
             "profile water path must be relative and contained",
         )?;
     }
+    match (&profile.covers, profile.schema_version) {
+        (None, 1) => {}
+        (Some(covers), 2)
+            if covers.len() == 2
+                && covers.contains_key("snow-ice")
+                && covers.contains_key("vegetation") =>
+        {
+            for (name, cover) in covers {
+                validate_cover(name, cover, &ids)?;
+            }
+        }
+        _ => {
+            return Err(AcquisitionError::Invalid(
+                "profile cover contract/version mismatch".into(),
+            ));
+        }
+    }
     Ok(())
+}
+
+fn validate_cover(name: &str, cover: &Cover, evidence: &BTreeSet<&str>) -> Result<()> {
+    let (note, observed_at, evidence_ids) = match cover {
+        Cover::AllAbsent {
+            windows,
+            note,
+            observed_at,
+            evidence_ids,
+        } => {
+            ensure(
+                !windows.is_empty(),
+                format!("{name} all-absent assessment needs windows"),
+            )?;
+            (note, observed_at, evidence_ids)
+        }
+        Cover::Mask {
+            path,
+            sha256,
+            note,
+            observed_at,
+            evidence_ids,
+        } => {
+            ensure(
+                safe_relative(path) && valid_digest(sha256),
+                format!("invalid {name} mask reference"),
+            )?;
+            (note, observed_at, evidence_ids)
+        }
+        Cover::Unavailable {
+            note,
+            observed_at,
+            evidence_ids,
+        } => {
+            ensure(
+                name == "vegetation",
+                "snow/ice cannot be unavailable in a v2 profile",
+            )?;
+            (note, observed_at, evidence_ids)
+        }
+    };
+    ensure(
+        !note.trim().is_empty(),
+        format!("{name} assessment note must not be empty"),
+    )?;
+    if let Some(value) = observed_at {
+        ensure(
+            !value.trim().is_empty(),
+            format!("{name} observed_at must be nonempty or null"),
+        )?;
+    }
+    ensure(
+        evidence_ids.iter().all(|id| evidence.contains(id.as_str()))
+            && (matches!(cover, Cover::Unavailable { .. }) || !evidence_ids.is_empty()),
+        format!("{name} assessment requires known evidence IDs"),
+    )
 }
 
 fn safe_relative(path: &Path) -> bool {
@@ -196,20 +383,21 @@ fn safe_relative(path: &Path) -> bool {
 }
 
 fn validate_profile_scope(
-    profile: &Profile,
+    profile: &ProfileData,
     raw: &Path,
     receipt: &crate::acquisition::RawReceipt,
     bundle: &bundle::Bundle,
 ) -> Result<()> {
-    if let Water::AllTerrestrial { windows } = &profile.water {
-        let objects = raw
-            .parent()
-            .and_then(Path::parent)
-            .ok_or_else(|| AcquisitionError::Invalid("raw receipt needs storage root".into()))?
-            .join("objects");
-        let original: Value = read_json(&objects.join(&receipt.inspection_sha256))?;
-        let source_width = original["size"][0].as_u64().unwrap_or(0);
-        let source_height = original["size"][1].as_u64().unwrap_or(0);
+    let objects = raw
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| AcquisitionError::Invalid("raw receipt needs storage root".into()))?
+        .join("objects");
+    let original: Value = read_json(&objects.join(&receipt.inspection_sha256))?;
+    let source_width = original["size"][0].as_u64().unwrap_or(0);
+    let source_height = original["size"][1].as_u64().unwrap_or(0);
+    let [x, y, width, height] = bundle.manifest.window_cells;
+    let scoped = |windows: &[[u32; 4]], name: &str| -> Result<()> {
         ensure(
             !windows.is_empty()
                 && windows.iter().all(|[wx, wy, ww, wh]| {
@@ -218,9 +406,8 @@ fn validate_profile_scope(
                         && u64::from(*wx) + u64::from(*ww) <= source_width
                         && u64::from(*wy) + u64::from(*wh) <= source_height
                 }),
-            "all-terrestrial windows must be nonempty and inside the source grid",
+            format!("{name} windows must be nonempty and inside the source grid"),
         )?;
-        let [x, y, width, height] = bundle.manifest.window_cells;
         ensure(
             windows.iter().any(|[wx, wy, ww, wh]| {
                 x >= *wx
@@ -228,8 +415,18 @@ fn validate_profile_scope(
                     && u64::from(x) + u64::from(width) <= u64::from(*wx) + u64::from(*ww)
                     && u64::from(y) + u64::from(height) <= u64::from(*wy) + u64::from(*wh)
             }),
-            "review lies outside assessed all-terrestrial windows",
-        )?;
+            format!("review lies outside assessed {name} windows"),
+        )
+    };
+    if let Water::AllTerrestrial { windows } = &profile.water {
+        scoped(windows, "all-terrestrial")?;
+    }
+    if let Some(covers) = &profile.covers {
+        for (name, cover) in covers {
+            if let Cover::AllAbsent { windows, .. } = cover {
+                scoped(windows, name)?;
+            }
+        }
     }
     Ok(())
 }
@@ -291,6 +488,135 @@ fn add_georeference(path: &Path, reference: &Value) -> Result<()> {
     io_context("replace georeferenced mask", fs::rename(&temp, path))
 }
 
+fn cover_metadata(cover: &Cover) -> PackageCover {
+    let (status, note, observed_at, evidence_ids) = match cover {
+        Cover::AllAbsent {
+            note,
+            observed_at,
+            evidence_ids,
+            ..
+        }
+        | Cover::Mask {
+            note,
+            observed_at,
+            evidence_ids,
+            ..
+        } => ("assessed", note, observed_at, evidence_ids),
+        Cover::Unavailable {
+            note,
+            observed_at,
+            evidence_ids,
+        } => ("unavailable", note, observed_at, evidence_ids),
+    };
+    PackageCover {
+        status: status.into(),
+        note: note.clone(),
+        observed_at: observed_at.clone(),
+        evidence_ids: evidence_ids.clone(),
+    }
+}
+
+fn surface_cover_input(
+    covers: &BTreeMap<String, PackageCover>,
+    evidence: &[Evidence],
+    base: &Path,
+) -> Result<Value> {
+    let by_id: BTreeMap<_, _> = evidence
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect();
+    let mut out = serde_json::Map::new();
+    for (name, cover) in covers {
+        let mut pinned = Vec::new();
+        for id in &cover.evidence_ids {
+            let item = by_id.get(id.as_str()).ok_or_else(|| {
+                AcquisitionError::Invalid(format!("{name} references missing packaged evidence"))
+            })?;
+            pinned.push(json!({"path":base.join(&item.path),"sha256":item.sha256}));
+        }
+        out.insert(name.clone(), json!({"status":cover.status,"note":cover.note,"observed_at":cover.observed_at,"evidence":pinned}));
+    }
+    Ok(Value::Object(out))
+}
+
+fn quality_masks(
+    masks: &BTreeMap<String, FileRef>,
+    covers: Option<&BTreeMap<String, PackageCover>>,
+    base: &Path,
+) -> BTreeMap<String, Value> {
+    masks
+        .iter()
+        .map(|(name, file)| {
+            let unavailable = name == "vegetation"
+                && covers
+                    .and_then(|values| values.get(name))
+                    .is_some_and(|cover| cover.status == "unavailable");
+            (
+                name.clone(),
+                if unavailable {
+                    Value::Null
+                } else {
+                    json!({"path":base.join(&file.path),"sha256":file.sha256})
+                },
+            )
+        })
+        .collect()
+}
+
+fn crop_cover_mask(
+    name: &str,
+    cover: &Cover,
+    profile_base: &Path,
+    output: &Path,
+    bundle: &bundle::Bundle,
+    raw: &Path,
+    receipt: &crate::acquisition::RawReceipt,
+) -> Result<()> {
+    let [x, y, width, height] = bundle.manifest.window_cells;
+    match cover {
+        Cover::AllAbsent { .. } => {
+            vrt_mask(output, width, height, 1)?;
+            add_georeference(output, &bundle.inspection)
+        }
+        Cover::Unavailable { .. } => {
+            vrt_mask(output, width, height, 0)?;
+            add_georeference(output, &bundle.inspection)
+        }
+        Cover::Mask { path, sha256, .. } => {
+            let source = profile_base.join(path);
+            ensure(
+                hash_file(&source)?.0 == *sha256,
+                format!("{name} mask digest mismatch"),
+            )?;
+            verify_source_cover(&source, raw, receipt, name)?;
+            run(command("gdal_translate")
+                .args([
+                    "-q",
+                    "-of",
+                    "GTiff",
+                    "-srcwin",
+                    &x.to_string(),
+                    &y.to_string(),
+                    &width.to_string(),
+                    &height.to_string(),
+                    "-mask",
+                    "none",
+                    "-a_nodata",
+                    "none",
+                    "-co",
+                    "COMPRESS=DEFLATE",
+                ])
+                .arg(&source)
+                .arg(output))?;
+            ensure(
+                hash_file(&source)?.0 == *sha256,
+                format!("{name} mask changed during crop"),
+            )?;
+            Ok(())
+        }
+    }
+}
+
 /// Validate a source assessment and publish immutable preflight masks. No curation is written.
 pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> Result<PathBuf> {
     let bundle = bundle::verify(raw, review)?;
@@ -310,6 +636,15 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
     )?;
     io_context("create automatic package root", fs::create_dir_all(output))?;
     let temp = io_context("stage automatic package", tempfile::tempdir_in(output))?;
+    let mut evidence = profile.evidence.clone();
+    for item in &mut evidence {
+        let source = profile_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(&item.path);
+        item.path = PathBuf::from(format!("evidence-{}", item.id));
+        write_new(&temp.path().join(&item.path), &read_small(&source)?)?;
+    }
     let mut masks = BTreeMap::new();
     for (name, value) in [("quality", 1), ("repairs", 0), ("features", 0)] {
         let path = temp.path().join(format!("{name}.tif"));
@@ -335,7 +670,7 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
                 valid_digest(sha256) && hash_file(&source)?.0 == *sha256,
                 "water mask digest mismatch",
             )?;
-            verify_source_water(&source, raw, &receipt)?;
+            verify_source_cover(&source, raw, &receipt, "water")?;
             run(command("gdal_translate")
                 .args([
                     "-q",
@@ -353,8 +688,12 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
                     "-co",
                     "COMPRESS=DEFLATE",
                 ])
-                .arg(source)
+                .arg(&source)
                 .arg(&water_path))?;
+            ensure(
+                hash_file(&source)?.0 == *sha256,
+                "water mask changed during crop",
+            )?;
         }
     }
     masks.insert(
@@ -364,17 +703,44 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
             sha256: hash_file(&water_path)?.0,
         },
     );
+    let surface_cover = if let Some(covers) = &profile.covers {
+        let mut metadata = BTreeMap::new();
+        for (name, cover) in covers {
+            let path = temp.path().join(format!("{name}.tif"));
+            crop_cover_mask(
+                name,
+                cover,
+                profile_path.parent().unwrap_or(Path::new(".")),
+                &path,
+                &bundle,
+                raw,
+                &receipt,
+            )?;
+            masks.insert(
+                name.clone(),
+                FileRef {
+                    path: PathBuf::from(format!("{name}.tif")),
+                    sha256: hash_file(&path)?.0,
+                },
+            );
+            metadata.insert(name.clone(), cover_metadata(cover));
+        }
+        Some(metadata)
+    } else {
+        None
+    };
     preflight_source(&bundle)?;
     let quality_input = temp.path().join("preflight-input.json");
-    write_new(
-        &quality_input,
-        &serde_json::to_vec_pretty(&json!({
-            "schema_version":1,
-            "raw_receipt":{"path":fs::canonicalize(raw).map_err(|e| AcquisitionError::Io { context:"resolve raw receipt".into(), source:e })?,"sha256":digest(&read_small(raw)?)},
-            "review":{"path":fs::canonicalize(review).map_err(|e| AcquisitionError::Io { context:"resolve review".into(), source:e })?,"sha256":digest(&read_small(review)?)},
-            "masks":masks.iter().map(|(n,f)|(n,json!({"path":temp.path().join(&f.path),"sha256":f.sha256}))).collect::<BTreeMap<_,_>>()
-        }))?,
-    )?;
+    let mut quality_value = json!({
+        "schema_version":profile.schema_version,
+        "raw_receipt":{"path":fs::canonicalize(raw).map_err(|e| AcquisitionError::Io { context:"resolve raw receipt".into(), source:e })?,"sha256":digest(&read_small(raw)?)},
+        "review":{"path":fs::canonicalize(review).map_err(|e| AcquisitionError::Io { context:"resolve review".into(), source:e })?,"sha256":digest(&read_small(review)?)},
+        "masks":quality_masks(&masks, surface_cover.as_ref(), temp.path())
+    });
+    if let Some(covers) = &surface_cover {
+        quality_value["surface_cover"] = surface_cover_input(covers, &evidence, temp.path())?;
+    }
+    write_new(&quality_input, &serde_json::to_vec_pretty(&quality_value)?)?;
     let preflight = temp.path().join("preflight-report.json");
     preparation::assess(&quality_input, &preflight)?;
     let assessment: Value = read_json(&preflight)?;
@@ -385,7 +751,14 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
     for path in [quality_input, preflight] {
         io_context("remove transient preflight metadata", fs::remove_file(path))?;
     }
-    for name in ["quality", "repairs", "features", "water"] {
+    for name in [
+        "quality",
+        "repairs",
+        "features",
+        "water",
+        "snow-ice",
+        "vegetation",
+    ] {
         for extension in ["bin", "vrt"] {
             let path = temp.path().join(format!("{name}.{extension}"));
             if path.exists() {
@@ -393,19 +766,10 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
             }
         }
     }
-    let mut evidence = profile.evidence;
-    for item in &mut evidence {
-        let source = profile_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(&item.path);
-        item.path = PathBuf::from(format!("evidence-{}", item.id));
-        write_new(&temp.path().join(&item.path), &read_small(&source)?)?;
-    }
     write_new(&temp.path().join("profile.json"), &profile_bytes)?;
     let transform: [f64; 6] = serde_json::from_value(bundle.inspection["geoTransform"].clone())?;
     let package = Package {
-        schema_version: 1,
+        schema_version: profile.schema_version,
         kind: "automatic_preparation_package".into(),
         policy: profile.policy,
         raw_receipt: FileRef {
@@ -430,6 +794,7 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
         findings: profile.findings,
         source_license: serde_json::to_value(&bundle.source.license)?,
         masks,
+        surface_cover,
         grid: json!({"origin":[transform[0],transform[3]],"size":[width,height],"spacing_m":[transform[1],-transform[5]]}),
         window_cells: bundle.manifest.window_cells,
         admission: "not admitted".into(),
@@ -450,15 +815,16 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
 fn verify_package(path: &Path) -> Result<Package> {
     let package: Package = read_json(path)?;
     ensure(
-        package.schema_version == 1
+        matches!(package.schema_version, 1 | 2)
             && package.kind == "automatic_preparation_package"
-            && package.policy == "supplier_qa_pilot_v1"
+            && ((package.schema_version == 1 && package.policy == "supplier_qa_pilot_v1")
+                || (package.schema_version == 2 && package.policy == "supplier_qa_cover_v1"))
             && package.admission == "not admitted",
         "unsupported automatic preparation package",
     )?;
     let base = path.parent().unwrap_or(Path::new("."));
     let profile_bytes = read_small(&base.join("profile.json"))?;
-    let profile: Profile = serde_json::from_slice(&profile_bytes)?;
+    let profile = decode_profile(&profile_bytes)?;
     validate_profile_contract(&profile)?;
     ensure(
         profile.blockers.is_empty(),
@@ -494,8 +860,7 @@ fn verify_package(path: &Path) -> Result<Package> {
         "spacing_m":[transform[1],-transform[5]],
     });
     ensure(
-        profile.schema_version == 1
-            && profile.policy == "supplier_qa_pilot_v1"
+        profile.schema_version == package.schema_version
             && profile.blockers.is_empty()
             && package.policy == profile.policy
             && package.source_sha256 == profile.source_sha256
@@ -529,11 +894,33 @@ fn verify_package(path: &Path) -> Result<Package> {
                 }),
         "automatic package evidence differs from its captured profile",
     )?;
+    let expected_cover = profile.covers.as_ref().map(|covers| {
+        covers
+            .iter()
+            .map(|(name, cover)| (name.clone(), cover_metadata(cover)))
+            .collect::<BTreeMap<_, _>>()
+    });
     ensure(
-        package.masks.len() == 4,
+        serde_json::to_value(&package.surface_cover)? == serde_json::to_value(&expected_cover)?,
+        "automatic package surface-cover metadata differs from its captured profile",
+    )?;
+    ensure(
+        package.masks.len() == if package.schema_version == 1 { 4 } else { 6 },
         "automatic package masks incomplete",
     )?;
-    for name in ["water", "quality", "repairs", "features"] {
+    let required = if package.schema_version == 1 {
+        vec!["water", "quality", "repairs", "features"]
+    } else {
+        vec![
+            "water",
+            "quality",
+            "repairs",
+            "features",
+            "snow-ice",
+            "vegetation",
+        ]
+    };
+    for name in required {
         let f = package.masks.get(name).ok_or_else(|| {
             AcquisitionError::Invalid(format!("automatic package missing {name} mask"))
         })?;
@@ -568,7 +955,10 @@ pub fn prepare(
     let work = base.join("work");
     io_context("create automatic work directory", fs::create_dir_all(&work))?;
     let quality_input = work.join("quality-input.json");
-    let input = json!({"schema_version":1,"raw_receipt":{"path":package.raw_receipt.path,"sha256":package.raw_receipt.sha256},"review":{"path":package.review.path,"sha256":package.review.sha256},"masks":package.masks.iter().map(|(n,f)|(n,json!({"path":base.join(&f.path),"sha256":f.sha256}))).collect::<BTreeMap<_,_>>()});
+    let mut input = json!({"schema_version":package.schema_version,"raw_receipt":{"path":package.raw_receipt.path,"sha256":package.raw_receipt.sha256},"review":{"path":package.review.path,"sha256":package.review.sha256},"masks":quality_masks(&package.masks, package.surface_cover.as_ref(), base)});
+    if let Some(covers) = &package.surface_cover {
+        input["surface_cover"] = surface_cover_input(covers, &package.evidence, base)?;
+    }
     write_new(&quality_input, &serde_json::to_vec_pretty(&input)?)?;
     let report = work.join("quality-report.json");
     let report_stage = io_context(
@@ -594,7 +984,7 @@ pub fn prepare(
     write_new(
         &request,
         &serde_json::to_vec_pretty(
-            &json!({"schema_version":1,"inputs":[{"quality_path":quality_input,"curation_record_sha256":qualified}],"grid":package.grid,"masked_fill_m":0.0}),
+            &json!({"schema_version":package.schema_version,"inputs":[{"quality_path":quality_input,"curation_record_sha256":qualified}],"grid":package.grid,"masked_fill_m":0.0}),
         )?,
     )?;
     region::build(runtime, &request)
@@ -604,10 +994,11 @@ fn package_permission_confirmed(license: &crate::catalog::source::License) -> Re
     Ok(serde_json::to_value(license)?["training_permission"] == "confirmed")
 }
 
-fn verify_source_water(
+fn verify_source_cover(
     path: &Path,
     raw: &Path,
     receipt: &crate::acquisition::RawReceipt,
+    name: &str,
 ) -> Result<()> {
     ensure(
         fs::metadata(path)
@@ -617,7 +1008,7 @@ fn verify_source_water(
             })?
             .len()
             <= 128 * 1024 * 1024,
-        "source water mask exceeds 128 MiB",
+        format!("source {name} mask exceeds 128 MiB"),
     )?;
     let info: Value = serde_json::from_slice(&run(command("gdalinfo")
         .args(["-json", "-noct", "-norat", "-nogcp", "-if", "GTiff"])
@@ -633,7 +1024,7 @@ fn verify_source_water(
             && info["size"] == source["size"]
             && info["geoTransform"] == source["geoTransform"]
             && info["coordinateSystem"] == source["coordinateSystem"],
-        "source water mask must match the exact source grid and CRS",
+        format!("source {name} mask must match the exact source grid and CRS"),
     )?;
     ensure(
         info["bands"].as_array().is_some_and(|b| {
@@ -644,20 +1035,20 @@ fn verify_source_water(
                 && b[0].get("scale").is_none_or(|v| v == 1)
                 && b[0].get("offset").is_none_or(|v| v == 0)
         }),
-        "source water mask must be one complete Byte band",
+        format!("source {name} mask must be one complete Byte band"),
     )?;
     let [w, h]: [u32; 2] = serde_json::from_value(info["size"].clone())?;
     let scratch = io_context("inspect source water values", tempfile::tempdir())?;
     let values = crate::review::band(
         path,
         scratch.path(),
-        "source-water",
+        &format!("source-{name}"),
         w as usize * h as usize,
         false,
     )?;
     ensure(
         values.iter().all(|v| *v <= 2),
-        "source water mask contains an unsupported category",
+        format!("source {name} mask contains an unsupported category"),
     )
 }
 

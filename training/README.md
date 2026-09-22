@@ -24,7 +24,8 @@ current sources/results before publishing. The direct module invocation is the
 internal batch boundary, not a way to bypass catalog/source-admission checks.
 
 See the [workflow](../docs/workflows/numeric-evaluation.md),
-[v1 contracts](../schemas/numeric-evaluation-v1.md) and
+[v1 contracts](../schemas/numeric-evaluation-v1.md),
+[v2 surface-cover contracts](../schemas/numeric-evaluation-v2.md), and the
 [implementation plan](../docs/plans/numeric-evaluation-v1.md).
 Future model jobs retain the 16 GB VRAM ceiling and require numeric representation
 validation before expensive training. The current metric results do not approve

@@ -60,7 +60,11 @@ fn validate(runtime: &Path, release: &FitRelease) -> Result<Vec<Member>> {
     let parent = storage(runtime, "datasets")?
         .join(&release.dataset_sha256)
         .join("manifest.json");
-    let (_, _, members) = checked(runtime, &parent)?;
+    let (_, selection, members) = checked(runtime, &parent)?;
+    ensure(
+        selection.schema_version == 1,
+        "scalar_codec_fit_v1 supports only legacy v1 datasets; surface-cover fitting is not implemented",
+    )?;
     Ok(members)
 }
 

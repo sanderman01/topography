@@ -51,7 +51,19 @@ impl Status {
     }
     fn ready(head: Option<String>, manifest: &Path) -> Result<Self> {
         let body: Value = read_json(manifest)?;
-        let mut result = Self::new(head, "ready", "Prepared terrain is ready.");
+        let mut result = if body["schema_version"] == 2 {
+            Self::new(
+                head,
+                "ready",
+                "Prepared terrain and surface masks are ready.",
+            )
+        } else {
+            Self::new(
+                head,
+                "assessment_pending",
+                "Existing terrain is prepared. Snow/ice and vegetation assessment is pending; your choice is saved.",
+            )
+        };
         result.value["manifest"] = json!(manifest);
         for parent in body["parents"].as_array().ok_or_else(|| {
             crate::acquisition::AcquisitionError::Invalid("prepared parents missing".into())
@@ -271,7 +283,24 @@ fn work(
             let result = (|| -> Result<Status> {
                 if accepted {
                     if let Some(manifest) = automatic::existing(runtime, &tile.review_sha256)? {
-                        return Status::ready(head.clone(), &manifest);
+                        let status = Status::ready(head.clone(), &manifest)?;
+                        let has_cover_profile = tile
+                            .preparation_profile
+                            .as_ref()
+                            .map(|profile| -> Result<bool> {
+                                let bytes = read_small(&profile.path)?;
+                                ensure(
+                                    digest(&bytes) == profile.sha256,
+                                    "Source assessment changed; publish an updated gallery.",
+                                )?;
+                                let body: Value = serde_json::from_slice(&bytes)?;
+                                Ok(body["schema_version"] == 2)
+                            })
+                            .transpose()?
+                            .unwrap_or(false);
+                        if status.value["state"] == "ready" || !has_cover_profile {
+                            return Ok(status);
+                        }
                     }
                 }
                 let profile = tile.preparation_profile.as_ref().ok_or_else(|| {

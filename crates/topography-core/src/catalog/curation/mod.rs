@@ -653,24 +653,29 @@ pub(crate) fn qualify_automatic(
         current.target.legend_sha256 == legend_sha256,
         "automatic preparation legend differs from accepted vote",
     )?;
-    if let Some(automation) = &current.automation {
+    let inherited_human = if let Some(automation) = &current.automation {
         ensure(
             head == expected || automation.inherited_human_record_sha256 == expected,
             "stale human decision; automatic preparation blocked",
         )?;
+        if current.claims.decision == Decision::Accept
+            && automation.profile_sha256 == package.profile_sha256
+            && automation.quality_report_sha256 == digest(report_bytes)
+        {
+            return Ok(head.clone());
+        }
         ensure(
-            current.claims.decision == Decision::Accept
-                && automation.kind == "supplier_qa_qualification_v1"
-                && automation.profile_sha256 == package.profile_sha256
-                && automation.quality_report_sha256 == digest(report_bytes),
+            package.schema_version() == 2 && current.claims.decision == Decision::Accept,
             "current automatic qualification differs",
         )?;
-        return Ok(head.clone());
-    }
-    ensure(
-        head == expected,
-        "stale human decision; automatic preparation blocked",
-    )?;
+        automation.inherited_human_record_sha256.clone()
+    } else {
+        ensure(
+            head == expected,
+            "stale human decision; automatic preparation blocked",
+        )?;
+        head.clone()
+    };
     ensure(
         current.claims.actor.kind == ActorKind::Human
             && current.claims.decision == Decision::Accept,
@@ -796,8 +801,8 @@ pub(crate) fn qualify_automatic(
         admission: "not admitted".into(),
         topography_version: env!("CARGO_PKG_VERSION").into(),
         automation: Some(Automation {
-            kind: "supplier_qa_qualification_v1".into(),
-            inherited_human_record_sha256: head.clone(),
+            kind: format!("supplier_qa_qualification_v{}", package.schema_version()),
+            inherited_human_record_sha256: inherited_human,
             profile_sha256: package.profile_sha256.clone(),
             quality_report_sha256: report_sha,
         }),
@@ -874,8 +879,10 @@ pub(crate) fn select(
         (Some((_, bytes)), Some(expected)) => {
             let record: Record = serde_json::from_slice(bytes)?;
             record.automation.as_ref().is_some_and(|a| {
-                a.kind == "supplier_qa_qualification_v1"
-                    && a.inherited_human_record_sha256 == expected
+                matches!(
+                    a.kind.as_str(),
+                    "supplier_qa_qualification_v1" | "supplier_qa_qualification_v2"
+                ) && a.inherited_human_record_sha256 == expected
             })
         }
         _ => false,

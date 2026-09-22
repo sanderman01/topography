@@ -59,13 +59,13 @@ def write_json(path: Path, value: dict) -> bytes:
 
 
 def execute(request_path: Path, output: Path) -> Path:
-    """Consume a v1 Rust-produced request, atomically publishing unpromoted metrics."""
+    """Consume a versioned Rust request, atomically publishing unpromoted metrics."""
     started = time.monotonic()
     if output.exists():
         raise ValueError("worker output already exists")
     request, request_bytes = read_document(request_path)
     fields(request, {"schema_version", "kind", "dataset_sha256", "normalization", "regions"}, "request")
-    if type(request["schema_version"]) is not int or request["schema_version"] != 1 or request["kind"] != "numeric_evaluation_job":
+    if type(request["schema_version"]) is not int or request["schema_version"] not in (1, 2) or request["kind"] != "numeric_evaluation_job":
         raise ValueError("unsupported numeric request")
     identity(request["dataset_sha256"])
     fields(request["normalization"], {"offset_m", "scale_m"}, "normalization")
@@ -77,15 +77,24 @@ def execute(request_path: Path, output: Path) -> Path:
     seen = set()
     rows = []
     for region in regions:
-        height, valid, water = load_region(region, request_path.parent)
+        height, valid, water = load_region(region, request_path.parent, version=request["schema_version"])
         if region["prepared_sha256"] in seen:
             raise ValueError("duplicate numeric region")
         seen.add(region["prepared_sha256"])
-        rows.append({"prepared_sha256": region["prepared_sha256"], "group": region["group"], "role": region["role"],
+        row = {"prepared_sha256": region["prepared_sha256"], "group": region["group"], "role": region["role"],
                      "valid_cells": int(valid.sum()), "water_cells": int(water.sum()),
                      "invalid_land_cells": int((~valid & ~water).sum()),
-                     "representations": measure(height, valid, region["grid"]["spacing_m"])})
-    metrics = {"schema_version": 1, "kind": "numeric_representation_metrics", "regions": rows, "synthetic": synthetic_cases()}
+                     "representations": measure(height, valid, region["grid"]["spacing_m"])}
+        if request["schema_version"] == 2:
+            layer = region["layers"]["snow-ice"]
+            data = (request_path.parent / layer["path"]).read_bytes()
+            if len(data) != layer["bytes"] or digest(data) != layer["sha256"]:
+                raise ValueError("snow/ice payload changed")
+            ice = np.frombuffer(data, dtype="u1").reshape(height.shape) == 2
+            row["snow_ice_cells"] = int(ice.sum())
+            row["invalid_land_cells"] = int((~valid & ~water & ~ice).sum())
+        rows.append(row)
+    metrics = {"schema_version": request["schema_version"], "kind": "numeric_representation_metrics", "regions": rows, "synthetic": synthetic_cases()}
     if read_document(request_path)[1] != request_bytes:
         raise ValueError("request changed during numeric evaluation")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +102,7 @@ def execute(request_path: Path, output: Path) -> Path:
         stage = Path(name)
         metrics_bytes = write_json(stage / "metrics.json", metrics)
         rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        result = {"schema_version": 1, "kind": "numeric_worker_result", "request_sha256": digest(request_bytes),
+        result = {"schema_version": request["schema_version"], "kind": "numeric_worker_result", "request_sha256": digest(request_bytes),
                   "dataset_sha256": request["dataset_sha256"], "metrics_sha256": digest(metrics_bytes), "gpu_used": False,
                   "environment": {"python": sys.version, "numpy": np.__version__,
                                   "package_version": importlib.metadata.version("topography-training"),

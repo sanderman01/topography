@@ -147,7 +147,7 @@ Ready or Needs technical attention; retain the vote through technical exceptions
 without requesting repeat approval. Evidence interpretation remains a source-level
 technical task. Successful preparation does not create training admission.
 
-### Snow/ice and vegetation masks (planned extension)
+### Snow/ice and vegetation masks
 
 Assess both layers for every source footprint and every resulting tile, including
 tiles with no snow, ice or vegetation. Reuse source assessments and crop the
@@ -194,9 +194,14 @@ denominator; unknown snow/ice cannot be removed from that denominator to pass a
 tile. Vegetation-covered bare ground remains in it. Changing this domain requires
 a versioned quality policy and consumer update, not reinterpretation of old reports.
 
-The current v1 tooling has water/quality/repair/feature masks, but no dedicated
-snow/ice or vegetation contract. Implement the versioned schema, source-profile,
-quality, preparation and consumer changes together. Backfill existing accepted
+Version-2 quality, preparation and automatic source-profile contracts now add
+snow/ice and vegetation, with a compatible CPU numeric consumer. Version-1
+products retain their original water/quality/repair/feature contract. See the
+[quality contract](../../schemas/regional-quality-v2.md),
+[prepared contract](../../schemas/prepared-region-v2.md) and
+[numeric contract](../../schemas/numeric-evaluation-v2.md).
+Source-layer acquisition, real-library backfill, cover overlays and propagation
+through future model/world/export consumers remain separate work. Backfill existing accepted
 tiles as new derived revisions without changing their Yes/No decisions or replacing
 old products. A legacy tile is not automatically certified under the new contract;
 record its pending snow/ice assessment explicitly. Missing optional vegetation
@@ -457,17 +462,21 @@ bringing the prepared library to thirty regions across six broad families.
 Both dunes choices remain Yes with unresolved striping reported as technical
 attention. Gallery v10 preserves all choices and reports preparation status.
 
-Next, implement the snow/ice and optional vegetation workflow in §4 before
-claiming that existing or new tiles satisfy those added requirements. Prioritize
+The versioned snow/ice and optional vegetation implementation in §4 passes
+synthetic workflow verification and independent review. See the
+[implementation checkpoint](../reports/surface-cover-workflow-v2.md).
+Next, backfill public source evidence before
+claiming that existing tiles satisfy those added requirements. Prioritize
 the accepted St. Helens crater as a snow/ice case, plus mixed and confirmed-absent
-tiles. Reuse public source layers and preserve existing selections. This planning
-update does not itself add masks to the current thirty prepared regions.
+tiles. Reuse public source layers and preserve existing selections. Existing
+products remain unchanged until new derived revisions have been verified.
 
 - [ ] Establish the initial candidate-class legend (nine as a working target), world presets and source metadata contract.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.
 - [x] Run an early karst acquisition trial, tracing source data through to several inspectable high-detail crops. Keep a failed candidate report if the geometry is not supported.
 - [ ] Add the highest-value agency adapters, regional quality checks, human crop selection, and label editing.
-- [ ] Version and implement snow/ice and optional vegetation mask contracts, automated source-layer acquisition/preparation, gallery status and optional overlays; backfill accepted tiles without repeating review.
+- [x] Version and implement snow/ice and optional vegetation quality/preparation contracts, automatic profiles, gallery status and numeric dataset propagation.
+- [ ] Automate source-layer acquisition, add useful optional cover overlays and backfill accepted tiles without repeating review.
 - [ ] Verify present, confirmed-absent, partial, unavailable, fully ice-covered and fully vegetated cases, including boundary/date uncertainty, missing artifacts, downstream mask propagation and zero-ground windows.
 - [x] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
 - [ ] Compare LoRA plus a trained control branch against a terrain-specific representation if needed; benchmark quality, memory, and runtime.

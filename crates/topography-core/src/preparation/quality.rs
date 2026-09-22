@@ -2,7 +2,7 @@ use crate::{
     acquisition::{
         Result, digest, ensure, hash_file, io_context,
         raster::{command, run},
-        read_json, read_small, valid_digest, write_new,
+        read_small, valid_digest, write_new,
     },
     catalog::curation,
     review::{band, bundle},
@@ -15,7 +15,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MASK_NAMES: [&str; 4] = ["water", "quality", "repairs", "features"];
+const MASK_NAMES_V1: [&str; 4] = ["water", "quality", "repairs", "features"];
+const MASK_NAMES_V2: [&str; 6] = [
+    "water",
+    "quality",
+    "repairs",
+    "features",
+    "snow-ice",
+    "vegetation",
+];
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +39,17 @@ struct Input {
     raw_receipt: InputFile,
     review: InputFile,
     masks: BTreeMap<String, Option<InputFile>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    surface_cover: Option<BTreeMap<String, SurfaceCoverInput>>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SurfaceCoverInput {
+    status: String,
+    note: String,
+    observed_at: Option<String>,
+    evidence: Vec<InputFile>,
 }
 
 #[derive(Default, Serialize)]
@@ -46,6 +65,16 @@ pub(crate) struct Counts {
     repaired_cells: u64,
     defining_feature_cells: u64,
     unsupported_feature_cells: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ground_cells: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snow_ice_cells: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unknown_snow_ice_cells: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vegetation_cells: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unknown_vegetation_cells: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -59,6 +88,8 @@ struct Assessment {
     window_cells: [u32; 4],
     grid: Value,
     masks: BTreeMap<String, Option<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    surface_cover: Option<BTreeMap<String, Value>>,
     counts: Option<Counts>,
     blockers: Vec<String>,
     gdal_version: String,
@@ -104,7 +135,11 @@ pub fn draft(raw: &Path, review: &Path, output: &Path) -> Result<PathBuf> {
         schema_version: 1,
         raw_receipt: pinned(raw)?,
         review: pinned(review)?,
-        masks: MASK_NAMES.into_iter().map(|n| (n.into(), None)).collect(),
+        masks: MASK_NAMES_V1
+            .into_iter()
+            .map(|n| (n.into(), None))
+            .collect(),
+        surface_cover: None,
     };
     write_new(output, &serde_json::to_vec_pretty(&input)?)?;
     Ok(output.to_path_buf())
@@ -170,7 +205,7 @@ fn mask_samples(
         format!("{name} must not have scale/offset"),
     )?;
     let values = band(path, scratch, name, cells, false)?;
-    let max = if matches!(name, "water" | "quality") {
+    let max = if matches!(name, "water" | "quality" | "snow-ice" | "vegetation") {
         2
     } else {
         1
@@ -189,14 +224,24 @@ fn mask_samples(
 }
 
 fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
-    let input: Input = read_json(path)?;
+    let input_bytes = read_small(path)?;
+    let input: Input = serde_json::from_slice(&input_bytes)?;
     ensure(
-        input.schema_version == 1,
-        "only quality input version 1 is supported",
+        matches!(input.schema_version, 1 | 2),
+        "only quality input versions 1 and 2 are supported",
     )?;
+    let names: &[&str] = if input.schema_version == 1 {
+        &MASK_NAMES_V1
+    } else {
+        &MASK_NAMES_V2
+    };
     ensure(
-        input.masks.len() == 4 && MASK_NAMES.iter().all(|n| input.masks.contains_key(*n)),
-        "quality input requires exactly water, quality, repairs and features masks",
+        input.masks.len() == names.len() && names.iter().all(|n| input.masks.contains_key(*n)),
+        if input.schema_version == 1 {
+            "quality input v1 requires exactly water, quality, repairs and features masks"
+        } else {
+            "quality input v2 requires exactly water, quality, repairs, features, snow-ice and vegetation masks"
+        },
     )?;
     let base = path.parent().unwrap_or(Path::new("."));
     let raw = verify_input(base, &input.raw_receipt, 1024 * 1024)?;
@@ -210,7 +255,71 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
     let mut masks = BTreeMap::new();
     let mut samples = BTreeMap::new();
     let mut blockers = Vec::new();
-    for name in MASK_NAMES {
+    let mut surface_cover = None;
+    if input.schema_version == 1 {
+        ensure(
+            input.surface_cover.is_none(),
+            "quality input v1 cannot declare surface cover",
+        )?;
+    } else {
+        let cover = input.surface_cover.as_ref().ok_or_else(|| {
+            crate::acquisition::AcquisitionError::Invalid(
+                "quality input v2 requires surface_cover provenance".into(),
+            )
+        })?;
+        ensure(
+            cover.len() == 2 && cover.contains_key("snow-ice") && cover.contains_key("vegetation"),
+            "surface_cover requires exactly snow-ice and vegetation",
+        )?;
+        let mut portable = BTreeMap::new();
+        for name in ["snow-ice", "vegetation"] {
+            let item = &cover[name];
+            ensure(
+                !item.note.trim().is_empty(),
+                format!("{name} surface-cover note is empty"),
+            )?;
+            if let Some(value) = &item.observed_at {
+                ensure(
+                    !value.trim().is_empty(),
+                    format!("{name} observed_at is empty"),
+                )?;
+            }
+            ensure(
+                matches!(item.status.as_str(), "assessed" | "unavailable"),
+                format!("{name} surface-cover status unsupported"),
+            )?;
+            ensure(
+                item.status != "unavailable" || name == "vegetation",
+                "snow-ice provenance cannot be unavailable",
+            )?;
+            ensure(
+                (item.status == "assessed"
+                    && input.masks[name].is_some()
+                    && !item.evidence.is_empty())
+                    || (item.status == "unavailable" && input.masks[name].is_none()),
+                format!("{name} mask and provenance status disagree"),
+            )?;
+            let mut evidence = Vec::new();
+            for file in &item.evidence {
+                let evidence_path = verify_input(base, file, 128 * 1024 * 1024)?;
+                evidence.push(json!({
+                    "sha256": file.sha256,
+                    "bytes": io_context("inspect surface-cover evidence", fs::metadata(evidence_path))?.len()
+                }));
+            }
+            portable.insert(
+                name.into(),
+                json!({
+                    "status": item.status,
+                    "note": item.note,
+                    "observed_at": item.observed_at,
+                    "evidence": evidence
+                }),
+            );
+        }
+        surface_cover = Some(portable);
+    }
+    for &name in names {
         if let Some(file) = &input.masks[name] {
             let mask = verify_input(base, file, 128 * 1024 * 1024)?;
             samples.insert(
@@ -233,12 +342,17 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
             );
         } else {
             masks.insert(name.into(), None);
-            blockers.push(format!(
-                "{name} mask missing; whole-crop classification unresolved"
-            ));
+            if !(input.schema_version == 2 && name == "vegetation") {
+                blockers.push(format!(
+                    "{name} mask missing; whole-crop classification unresolved"
+                ));
+            }
         }
     }
-    let counts = if samples.len() == 4 {
+    if input.schema_version == 2 && !samples.contains_key("vegetation") {
+        samples.insert("vegetation", vec![0; cells]);
+    }
+    let counts = if names.iter().all(|name| samples.contains_key(*name)) {
         let elevation = directory.join("elevation.tif");
         let info = inspect(&elevation)?;
         ensure(
@@ -267,26 +381,47 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
             let finite = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).is_finite();
             let water = samples["water"][i];
             let quality = samples["quality"][i];
-            let valid = water == 1 && quality == 1 && provider[i] == 255 && finite;
+            let snow_ice = if input.schema_version == 2 {
+                samples["snow-ice"][i]
+            } else {
+                1
+            };
+            let ground = water == 1 && snow_ice == 1;
+            let valid = ground && quality == 1 && provider[i] == 255 && finite;
             counts.water_cells += u64::from(water == 2);
             counts.unclassified_water_cells += u64::from(water == 0);
-            counts.terrestrial_cells += u64::from(water == 1);
+            counts.terrestrial_cells += u64::from(if input.schema_version == 1 {
+                water == 1
+            } else {
+                ground
+            });
             counts.valid_terrestrial_cells += u64::from(valid);
-            counts.unsupported_terrestrial_cells += u64::from(water == 1 && quality == 2);
-            counts.unknown_terrestrial_quality_cells += u64::from(water == 1 && quality == 0);
-            counts.provider_invalid_terrestrial_cells += u64::from(water == 1 && provider[i] == 0);
+            counts.unsupported_terrestrial_cells += u64::from(ground && quality == 2);
+            counts.unknown_terrestrial_quality_cells += u64::from(ground && quality == 0);
+            counts.provider_invalid_terrestrial_cells += u64::from(ground && provider[i] == 0);
             counts.nonfinite_terrestrial_cells +=
-                u64::from(water == 1 && provider[i] == 255 && !finite);
+                u64::from(ground && provider[i] == 255 && !finite);
             counts.repaired_cells += u64::from(samples["repairs"][i] == 1);
             counts.defining_feature_cells += u64::from(samples["features"][i] == 1);
             counts.unsupported_feature_cells += u64::from(samples["features"][i] == 1 && !valid);
+            if input.schema_version == 2 {
+                *counts.ground_cells.get_or_insert(0) += u64::from(ground);
+                *counts.snow_ice_cells.get_or_insert(0) += u64::from(snow_ice == 2);
+                *counts.unknown_snow_ice_cells.get_or_insert(0) += u64::from(snow_ice == 0);
+                *counts.vegetation_cells.get_or_insert(0) +=
+                    u64::from(samples["vegetation"][i] == 2);
+                *counts.unknown_vegetation_cells.get_or_insert(0) +=
+                    u64::from(samples["vegetation"][i] == 0);
+            }
         }
         if counts.unclassified_water_cells > 0 {
             blockers.push("water classification incomplete".into());
         }
-        if counts.terrestrial_cells == 0
-            || counts.valid_terrestrial_cells * 1000 < counts.terrestrial_cells * 995
-        {
+        if input.schema_version == 2 && counts.unknown_snow_ice_cells.unwrap_or(0) > 0 {
+            blockers.push("snow/ice classification incomplete".into());
+        }
+        let denominator = counts.ground_cells.unwrap_or(counts.terrestrial_cells);
+        if denominator == 0 || counts.valid_terrestrial_cells * 1000 < denominator * 995 {
             blockers.push("at least 99.5% valid terrestrial coverage not established".into());
         }
         if counts.nonfinite_terrestrial_cells > 0 {
@@ -306,16 +441,32 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
     bundle::verify(&raw, &review)?;
     verify_input(base, &input.raw_receipt, 1024 * 1024)?;
     verify_input(base, &input.review, 1024 * 1024)?;
+    if let Some(cover) = &input.surface_cover {
+        for item in cover.values() {
+            for file in &item.evidence {
+                verify_input(base, file, 128 * 1024 * 1024)?;
+            }
+        }
+    }
+    ensure(
+        read_small(path)? == input_bytes,
+        "quality input changed during assessment",
+    )?;
     let report = Assessment {
-        schema_version: 1,
+        schema_version: input.schema_version,
         kind: "regional_quality_assessment",
-        policy: "native_quality_v2",
+        policy: if input.schema_version == 1 {
+            "native_quality_v2"
+        } else {
+            "native_quality_cover_v1"
+        },
         raw_receipt_sha256: input.raw_receipt.sha256,
         review_sha256: input.review.sha256,
         asset_sha256: bundle.manifest.asset_sha256.clone(),
         window_cells: bundle.manifest.window_cells,
         grid: json!({"size": bundle.inspection["size"], "geoTransform": bundle.inspection["geoTransform"], "coordinateSystem": bundle.inspection["coordinateSystem"]}),
         masks,
+        surface_cover,
         counts,
         blockers,
         gdal_version: String::from_utf8_lossy(&run(command("gdalinfo").arg("--version"))?)
@@ -356,7 +507,7 @@ pub fn check(runtime: &Path, input: &Path, record_sha256: &str) -> Result<Check>
     blockers.extend(claims);
     Ok(Check {
         eligible: blockers.is_empty(),
-        schema_version: 1,
+        schema_version: report.schema_version,
         kind: "preparation_eligibility",
         policy: report.policy,
         curation_record_sha256: record_sha256.into(),
@@ -369,6 +520,7 @@ pub fn check(runtime: &Path, input: &Path, record_sha256: &str) -> Result<Check>
 }
 
 pub(super) struct Ready {
+    pub schema_version: u32,
     pub check: Check,
     pub bundle: bundle::Bundle,
     pub report: Vec<u8>,
@@ -414,16 +566,26 @@ pub(super) fn ready(runtime: &Path, path: &Path, record: &str) -> Result<Ready> 
         false,
     )?;
     let mut masks = BTreeMap::new();
-    for name in MASK_NAMES {
-        let file = input.masks[name].as_ref().ok_or_else(|| {
-            crate::acquisition::AcquisitionError::Invalid("missing preparation mask".into())
-        })?;
-        let mask = verify_input(base, file, 128 * 1024 * 1024)?;
-        masks.insert(
-            name.into(),
-            band(&mask, scratch.path(), name, cells, false)?,
-        );
-        verify_input(base, file, 128 * 1024 * 1024)?;
+    let names: &[&str] = if input.schema_version == 1 {
+        &MASK_NAMES_V1
+    } else {
+        &MASK_NAMES_V2
+    };
+    for &name in names {
+        if let Some(file) = input.masks[name].as_ref() {
+            let mask = verify_input(base, file, 128 * 1024 * 1024)?;
+            masks.insert(
+                name.into(),
+                band(&mask, scratch.path(), name, cells, false)?,
+            );
+            verify_input(base, file, 128 * 1024 * 1024)?;
+        } else if input.schema_version == 2 && name == "vegetation" {
+            masks.insert(name.into(), vec![0; cells]);
+        } else {
+            return Err(crate::acquisition::AcquisitionError::Invalid(
+                "missing preparation mask".into(),
+            ));
+        }
     }
     ensure(
         read_small(path)? == input_bytes,
@@ -435,6 +597,7 @@ pub(super) fn ready(runtime: &Path, path: &Path, record: &str) -> Result<Ready> 
         "quality assessment changed during preparation",
     )?;
     Ok(Ready {
+        schema_version: input.schema_version,
         check,
         bundle,
         report,

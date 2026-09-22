@@ -76,8 +76,58 @@ def main():
                                 capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert (root / "out/result.json").is_file()
+        # Cover v2 preserves the measured ice surface but excludes it from ground metrics.
+        covered = copy.deepcopy(region)
+        cover_arrays = {key: value.copy() for key, value in arrays.items()}
+        cover_arrays["surface-elevation"] = height.copy()
+        cover_arrays["snow-ice"] = np.ones((3, 4), np.uint8)
+        cover_arrays["snow-ice"][1, 1] = 2
+        cover_arrays["snow-ice"][0, 2] = 2  # Water and ice may overlap.
+        cover_arrays["vegetation"] = np.zeros((3, 4), np.uint8)
+        cover_arrays["vegetation"][1, :] = 2
+        cover_arrays["elevation"][1, 1] = 0
+        cover_arrays["validity"][1, 1] = 0
+
+        def cover_layer(key):
+            data = cover_arrays[key].tobytes()
+            filename = "cover-" + key + ".bin"
+            (root / filename).write_bytes(data)
+            covered["layers"][key] = {"path": filename, "bytes": len(data),
+                                       "sha256": hashlib.sha256(data).hexdigest()}
+
+        for key in cover_arrays:
+            cover_layer(key)
+        ground, ground_valid, ice_water = load_region(covered, root, version=2)
+        assert ground_valid.sum() == 9 and ice_water.sum() == 1
+        assert not ground_valid[1, 1] and ground[1, 1] == 0
+        for key, index, value, message in [
+            ("snow-ice", (0, 2), 0, "unknown snow"),
+            ("vegetation", (0, 0), 3, "category"),
+            ("validity", (1, 1), 255, "validity"),
+            ("surface-elevation", (1, 0), 999, "surface"),
+        ]:
+            previous = cover_arrays[key][index].copy()
+            cover_arrays[key][index] = value
+            cover_layer(key)
+            try:
+                load_region(covered, root, version=2)
+            except ValueError as error:
+                assert message in str(error), str(error)
+            else:
+                raise AssertionError("invalid cover payload accepted")
+            cover_arrays[key][index] = previous
+            cover_layer(key)
+        job.update(schema_version=2, regions=[covered])
+        request.write_text(json.dumps(job))
+        result = subprocess.run([sys.executable, "-m", "topography_training.numeric", str(request), str(root / "cover-out")],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        cover_metrics = json.loads((root / "cover-out/metrics.json").read_text())
+        assert cover_metrics["schema_version"] == 2
+        assert cover_metrics["regions"][0]["snow_ice_cells"] == 2
+        assert cover_metrics["regions"][0]["invalid_land_cells"] == 1
         # Failure publishes neither a success result nor a partial output directory.
-        job["schema_version"] = 2
+        job["schema_version"] = 3
         request.write_text(json.dumps(job))
         failed = root / "failed"
         result = subprocess.run([sys.executable, "-m", "topography_training.numeric", str(request), str(failed)],
