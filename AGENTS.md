@@ -69,6 +69,11 @@ exists. Consult upstream documentation for the versions actually selected.
   separate from successful processing. Preserve accepted outputs and edits.
 - Keep water masks and authored surface levels separate from ground elevation.
   Underwater cells use deterministic masked fill; bathymetry is outside scope.
+- Treat snow/ice and vegetation as independent assessed layers in planned
+  contracts. Record each layer as unknown, assessed absent or present; never
+  infer absence from missing data. Snow/ice present requires a native-aligned
+  provenance-backed mask before revised ground qualification. Vegetation
+  classification is best effort and does not block valid bare-earth preparation.
 - Split training data geographically before overlapping crops. Admit source data
   only under the master plan's quality and documented training-permission gates.
 - Keep the 16 GB VRAM ceiling. Establish real-terrain and numeric-precision
@@ -76,8 +81,8 @@ exists. Consult upstream documentation for the versions actually selected.
   supported fallback if diffusion fails its feasibility gate.
 - Keep training windows, inference windows, and export tiles independent. Full
   export tiles span 1,024 intervals and contain 1,025 shared-edge vertices per side.
-- Leave Bevy integration, QuadTrees, vegetation, weather, a full flight model,
-  and underwater terrain outside the current plan.
+- Leave Bevy integration, QuadTrees, vegetation rendering/placement/growth,
+  weather, a full flight model, and underwater terrain outside the current plan.
 
 ## Before heavy workloads
 

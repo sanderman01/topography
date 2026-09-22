@@ -2,6 +2,9 @@
 
 Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Thirty real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 22 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
+Next planned extension: snow/ice masks and optional vegetation masks throughout
+the workflow (§§4, 6, 8, 10–11). These requirements are not yet implemented.
+
 ## Intended result
 
 Create a human-directed terrain workshop for a dirigible game: collect detailed Earth elevation, curate a reusable terrain library, and use conditional diffusion to assemble an original world with a working target of nine deliberately placed terrain biomes (§1 allows that count to shift with what acquisition actually finds). The result should offer recognizable landmarks, concealed routes, confusing junctions, narrow passages, and meaningful choices about when to climb.
@@ -10,7 +13,7 @@ The central design decision is to separate the world's large-scale structure fro
 
 Keep an authoritative elevation surface in floating-point metres throughout processing. Produce 16-bit heightmaps as controlled exports and optional training intermediates. A grayscale image is a storage representation of elevation, not the definition of the terrain.
 
-This plan covers acquisition, cleaning, labeling, training experiments, generation, editing, validation, and export. Bevy integration, QuadTree subdivision, vegetation, weather simulation, a complete flight model, and underwater bathymetry remain outside its scope. This is a solo project; every human checkpoint below is performed by the same person, so checkpoints are a workflow discipline, not a multi-role handoff.
+This plan covers acquisition, cleaning, labeling, training experiments, generation, editing, validation, and export, including snow/ice classification and vegetation masks where available. Bevy integration, QuadTree subdivision, vegetation placement/rendering/growth, weather simulation, a complete flight model, and underwater bathymetry remain outside its scope. This is a solo project; every human checkpoint below is performed by the same person, so checkpoints are a workflow discipline, not a multi-role handoff.
 
 Being solo also caps the scope of everything above: the plan's many provider adapters, quality gates, and a possible custom autoencoder are a menu to draw from as needed, not a checklist to fully complete before the pilot means anything. Keep the real-patch-and-blending baseline (§7) a genuine fallback, not just a comparison point — if diffusion training does not clear its feasibility gate within a reasonable number of attempts, ship the world using curated real terrain and blending instead of treating diffusion as mandatory. Prefer adding a small number of high-value agency adapters over integrating every table row in §2, and prefer a narrow first source region per biome over broad simultaneous coverage.
 
@@ -47,7 +50,7 @@ The following locations are search candidates, not claims of verified high-resol
 | 8 / yellow | Dunes and sand ridges | Repeated forms and weak landmarks interrupted by distinctive ridges | Dune du Pilat; covered US dune fields; English coastal dunes |
 | 9 / blue | Braided river basins and floodplains | Channel choice, meanders, terrace edges, open recovery areas | Covered New Zealand braided rivers; English floodplains |
 
-Store these as stable integer IDs with a versioned color legend. The proposed colors are editable before the label schema is frozen. Water and missing data are separate masks, so they do not consume extra biome classes.
+Store these as stable integer IDs with a versioned color legend. The proposed colors are editable before the label schema is frozen. Water, snow/ice, vegetation and missing data use separate masks; they do not consume extra biome classes. A tile's biome label does not establish whether any of these covers is present.
 
 For every area of interest, record its polygon, biome/subtype, approximate feature dimensions, elevation range, landmark candidates, and the specific flying experience it might support. Keep “interesting geography” and “usable source data” as separate scores.
 
@@ -89,6 +92,18 @@ For each provider, the collection tool should discover coverage, list matching a
 
 Save original metadata, source URLs, dataset and survey identifiers, acquisition dates, CRS and height datum, units, resolution, ground-point density when known, processing history, and license/attribution information. Record reuse requirements for training, edited maps, and redistribution without assuming every dataset hosted on the same portal has identical terms.
 
+Include companion water, snow/ice and vegetation layers in source discovery and
+the batch download list. Prefer supplied masks or polygons and documented LiDAR
+classifications; use other public glacier inventories, land-cover products or
+dated imagery when suitable. Record each layer's source, license, date, extent,
+resolution and class definitions independently of the DEM. Project-wide class
+counts do not establish coverage of a particular crop. Check seasonal snow and
+permanent ice separately when assessing completeness; a generic snow-free survey
+description does not establish that a glacier is absent. Use a combined snow/ice
+mask as the required minimum; retain subtypes when the source supports them.
+Vegetation extent is optional where reliable public data is unavailable. Neither
+an empty download nor absence of classified returns proves absence of cover.
+
 **Licensing gate.** Before any dataset enters the prepared or training pool, confirm its license permits ML training use. A dataset whose license prohibits, restricts, or leaves ambiguous the right to train models on it is excluded outright, regardless of resolution or geographic value; do not admit it under a "review later" status. Record the specific clause or confirmation relied on next to the dataset's metadata. This gate is evaluated per dataset, not per portal or per agency, since a single portal can mix terms across products.
 
 ## 3. Data organization and tool boundaries
@@ -103,7 +118,7 @@ Keep these artifact groups distinct:
 | --- | --- |
 | Source registry and area catalog | Provider capabilities, candidate polygons, coverage status, metadata, human decisions |
 | Immutable raw assets | Original files and metadata, identified by checksums |
-| Prepared regional rasters | Physical elevation, validity and quality masks, transformation records |
+| Prepared regional rasters | Physical elevation, water/snow-ice/vegetation assessments and masks, validity and quality masks, transformation records |
 | Review assets | Hillshades, contours, oblique previews, metrics, annotations, accepted crop polygons |
 | Dataset releases | Approved tiles, labels, spatial splits, normalization settings, source lineage |
 | Model runs | Model versions, controls, training configuration, checkpoints, evaluations |
@@ -132,6 +147,61 @@ Ready or Needs technical attention; retain the vote through technical exceptions
 without requesting repeat approval. Evidence interpretation remains a source-level
 technical task. Successful preparation does not create training admission.
 
+### Snow/ice and vegetation masks (planned extension)
+
+Assess both layers for every source footprint and every resulting tile, including
+tiles with no snow, ice or vegetation. Reuse source assessments and crop the
+layers automatically when adding tiles or preparing an existing Yes. Require a
+snow/ice mask for every tile containing either surface. Produce a vegetation mask
+where suitable public evidence exists. These are independent layers alongside
+water, provider validity and ground quality; vegetation and snow may overlap.
+Do not treat vegetation as a ground defect or ice as water.
+
+Each layer records its assessment state, assessed footprint, evidence and date.
+Within assessed areas, distinguish **present** and **absent**; outside them, retain
+**unknown**. Unknown is distinct from a provider-invalid elevation sample. A
+binary mask with a separate classification-validity mask is also acceptable if
+the versioned contract preserves these three meanings. Do not infer cover from
+elevation, terrain class, nominal resolution or an empty set of LiDAR returns.
+
+| Tile/layer case | Required handling |
+| --- | --- |
+| Cover present, extent assessed | Retain an aligned categorical mask, including present and absent cells, with source evidence. Snow/ice coverage is required; vegetation uses this path wherever suitable data exists. |
+| Cover confirmed absent throughout the tile | Record an evidenced **absent** assessment. A compact constant-absent declaration is sufficient; materialize an all-absent raster only when a consumer needs it. No new download or repeated human review is required. |
+| Only part of the tile assessed | Retain the useful mask and assessed footprint; mark the remainder unknown. Do not silently extend absence or copy coverage from a neighbouring tile. Unresolved snow/ice extent requires technical attention before qualification under the new contract. Partial vegetation coverage remains usable as optional metadata. |
+| Layer unavailable or not yet assessed | Record that state and its reason, never an all-absent mask. Unresolved snow/ice requires technical attention. Unavailable vegetation does not block otherwise valid bare-earth preparation or ground training. |
+| Tile entirely covered by snow/ice, or no usable ground remains | Preserve the tile, its mask, measured surface and human selection. It is not a bare-earth training sample; skip it in ground-only batches without empty-denominator errors. |
+| Tile entirely vegetated | Keep the vegetation mask and assess the supplied bare-earth DEM normally. Vegetation presence alone does not exclude ground or create another canopy-confidence requirement. |
+
+Masks must follow the exact crop extent, grid, CRS and row orientation of their
+elevation layer. Align vector/raster inputs with documented categorical rules;
+coarse source data remains coarse evidence even when rasterized onto a finer
+grid. Record date mismatches and boundary uncertainty as unknown coverage where
+they prevent classification. Missing files and corrupt masks are technical errors,
+not evidence of absence. Verify that masks identify the reviewed crop before
+reporting readiness. The gallery may show these layers as optional overlays;
+mask authoring and repeated tile approval are not human review requirements.
+
+Over snow/ice, preserve the measured surface and classification separately from
+authoritative bare-ground elevation. A surface measurement does not reveal the
+ground beneath it. Ground rasters use deterministic masked fill for those cells,
+excluded from ground losses, terrain controls and height/slope comparisons; do not
+interpolate a bed beneath the ice. Mixed tiles can retain their valid exposed
+ground. For the new contract, report mapped water, snow/ice, unknown classification
+and eligible terrestrial ground counts separately. Apply the existing 99.5% ground
+coverage requirement to the non-water, non-snow/ice domain with a positive
+denominator; unknown snow/ice cannot be removed from that denominator to pass a
+tile. Vegetation-covered bare ground remains in it. Changing this domain requires
+a versioned quality policy and consumer update, not reinterpretation of old reports.
+
+The current v1 tooling has water/quality/repair/feature masks, but no dedicated
+snow/ice or vegetation contract. Implement the versioned schema, source-profile,
+quality, preparation and consumer changes together. Backfill existing accepted
+tiles as new derived revisions without changing their Yes/No decisions or replacing
+old products. A legacy tile is not automatically certified under the new contract;
+record its pending snow/ice assessment explicitly. Missing optional vegetation
+must never look like a failed human review.
+
 Process each real-world survey region in its appropriate projected metric CRS. Resolve horizontal units, vertical units and datum, axis orientation, nodata, and pixel alignment explicitly. Use an available verified vertical transformation when joining surveys that need one; otherwise isolate the incompatible surveys and flag the uncertainty. Do not silently treat ellipsoidal and sea-level heights as interchangeable.
 
 Create the aligned regional mosaic before extracting training tiles. Prefer the best supported survey in an overlap according to declared criteria. Estimate residual offsets on stable ground, examine difference rasters, and reject incompatible joins. Averaging displaced ridges produces false terrain; broad smoothing is not a substitute for correcting alignment.
@@ -145,7 +215,8 @@ Initial quality policy, adjustable per terrain family:
 | Gate | Proposed decision |
 | --- | --- |
 | Effective resolution | Prefer native 0.5–1 m ground data. Admit other nominal products only after checking actual spacing and feature preservation. Keep 2 m data in an explicitly approved secondary tier; exclude 5–30 m originals from fine-detail training. |
-| Missing ground | Require at least 99.5% valid terrestrial cells for the initial training pool. Evaluate whole-tile support automatically; any optional annotated landmarks or passages must also have no unsupported gaps. Water is evaluated separately. Do not require manual feature annotations for source selection. |
+| Missing ground | Require at least 99.5% valid terrestrial ground cells for the initial training pool. Under the planned mask contract above, mapped water and snow/ice are separate excluded domains; unresolved snow/ice blocks qualification. Vegetated bare ground remains eligible. Evaluate support automatically; optional annotated landmarks or passages must have no unsupported ground gaps. Do not require manual feature annotations. |
+| Cover masks | Require an evidenced snow/ice mask or confirmed-absence declaration for every tile under the new contract. Preserve partial/unavailable vegetation explicitly; it is optional and cannot substitute for ground-quality evidence. |
 | Interpolation | Permit small, reviewed repairs with a repair mask. Large voids, invisible canyon floors, or interpolated pillar fields trigger exclusion or another source search. |
 | Artifacts | Flag stripes, terraces, spikes, pits, duplicate edges, vegetation remnants, buildings, and implausible survey-boundary steps. Compare against context before rejecting natural steepness. |
 | Feature fidelity | Human reviews the entire tile and chooses yes or no. The technical workflow assesses sampling and feature fidelity from available evidence, reporting concrete limitations without asking the human to label individual features. |
@@ -199,6 +270,16 @@ Label accepted geographic regions before cropping. Use human polygons supported 
 
 Each example contains elevation, the categorical biome mask, validity/quality masks, physical spacing, source identity, and any coarse elevation or structural controls needed by the model. Derive the RGB conditioning image from the integer labels. Scale categorical masks with nearest-neighbor rules; prevent antialiasing and JPEG compression from inventing colors. Transition widths belong in a separate control layer, not in ambiguous label colors.
 
+Dataset manifests must also carry snow/ice and vegetation masks or their explicit
+absence/availability declarations from §4. Crop, transform and augment them with
+the terrain; propagate unknown coverage. Exclude snow/ice surface heights and
+their ground-fill cells from bare-ground learning and evaluation. Vegetation
+classification is optional metadata unless a model explicitly consumes it; mask
+unknown vegetation out of that supervision only, not out of valid ground losses.
+Do not turn missing vegetation into a negative training label. Handle all-absent,
+partially known and all-ground-masked windows explicitly. Record coverage and
+mask provenance in each release; do not silently upgrade existing releases.
+
 Include mixed-biome windows and genuine transitions. Match the coarse and simplified masks seen during training to the kind of low-resolution layout the human will paint. If a model only sees one solid color per tile, it has little evidence for learning regional placement inside mixed tiles.
 
 Use geographical train/validation/test splits established before extracting overlapping tiles. Keep adjacent crops, repeated surveys, alternate resolutions, and augmentations of the same landform in one split. Add a separation buffer based on the largest physical context window. Report independent source regions and surveyed area as well as tile counts; overlapping tiles are not independent evidence.
@@ -245,6 +326,16 @@ Prevent broad elevation drift through the coarse surface and height anchors. Kee
 
 **Water is out of scope as bathymetry.** Since flight happens above the surface, bed elevation is not a gameplay requirement here; do not source, author, or infer any underwater surface. Represent each water body as a mask plus an authored water-surface function (a flat elevation for lakes/ocean, a monotonic downstream profile for rivers, with explicit drops where a waterfall is designed). Cells under the water mask carry a fixed deterministic fill value in the elevation raster, not a sloped or shaped bed; that fill value is excluded from training loss, structural controls, seam/continuity checks, and export validation alike, exactly like other masked-invalid cells. If a future need for underwater flight or diving arises, that is a separate follow-on effort with its own data sourcing and its own bed representation, not an extension of this plan.
 
+Carry snow/ice and available vegetation layers through source placement, joins
+and local edits using categorical rules and the same spatial transforms as the
+terrain. Keep overlapping cover layers independent; do not average their IDs or
+infer vegetation from a biome. A mask for a generated or edited area must be
+authored or derived with recorded provenance; do not retain stale Earth-source
+labels after changes that invalidate them. Worlds that intentionally have no
+snow/ice or vegetation record that absence explicitly. Any retained snow/ice
+surface is a separate surface layer, with no claim to ground beneath it. Mask
+support does not add vegetation placement/rendering or seasonal simulation.
+
 Final join repair can use constrained local blending, boundary-conditioned inpainting, or a gradient-domain correction within a marked seam band. It must preserve locked heights and named landmarks. Recheck water connections and nearby passages afterward; a visually invisible seam can still block a river or erase a saddle.
 
 Exact placement is achieved operationally: retain the ownership map, enforce explicit constraints, reject unsuitable regional outputs, and allow local replacement or sculpting. Do not claim a learned model can guarantee a particular geological shape at every pixel.
@@ -274,6 +365,7 @@ Use windowed reads/writes and overview pyramids. Keep staging space configurable
 Before promoting a world revision, verify:
 
 - Correct extent, spacing, orientation, dimensions, units, and complete valid output coverage.
+- Snow/ice masks wherever present, evidenced absence where not present, and explicit known/unknown vegetation coverage; aligned categorical layers and correct ground exclusions after every crop, placement and edit.
 - Presence and minimum area of all finalized biome classes, plus human confirmation of recognizable terrain in each.
 - No nodata leaks, clipping plateaus, unexplained spikes, or visible grid patterns.
 - Height/slope agreement at seams, continuous named ridges and routes, and consistent water levels and connections.
@@ -283,7 +375,7 @@ Before promoting a world revision, verify:
 
 Keep exact invariants, such as untouched pixels outside an edit domain, separate from the owner's visual judgment of the terrain. The implementer handles technical data, numeric and export checks; human review does not require a gameplay suitability checklist or calibrated terrain-acceptance thresholds.
 
-Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit height tiles, biome/water/validity masks, encoding and coordinate metadata, review overviews, and the world manifest. Export tiles are packaging units; they must not determine how the world was trained or generated.
+Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit height tiles, biome/water/validity masks, snow/ice masks wherever present, available vegetation masks, explicit absence/availability declarations, encoding and coordinate metadata, review overviews, and the world manifest. Keep cover masks categorical at their declared cell grid; the height cell-to-vertex conversion must not average them into invented classes. Export tiles are packaging units; they must not determine how the world was trained or generated.
 
 ## 11. Proposed implementation sequence
 
@@ -365,10 +457,18 @@ bringing the prepared library to thirty regions across six broad families.
 Both dunes choices remain Yes with unresolved striping reported as technical
 attention. Gallery v10 preserves all choices and reports preparation status.
 
+Next, implement the snow/ice and optional vegetation workflow in §4 before
+claiming that existing or new tiles satisfy those added requirements. Prioritize
+the accepted St. Helens crater as a snow/ice case, plus mixed and confirmed-absent
+tiles. Reuse public source layers and preserve existing selections. This planning
+update does not itself add masks to the current thirty prepared regions.
+
 - [ ] Establish the initial candidate-class legend (nine as a working target), world presets and source metadata contract.
 - [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.
 - [x] Run an early karst acquisition trial, tracing source data through to several inspectable high-detail crops. Keep a failed candidate report if the geometry is not supported.
 - [ ] Add the highest-value agency adapters, regional quality checks, human crop selection, and label editing.
+- [ ] Version and implement snow/ice and optional vegetation mask contracts, automated source-layer acquisition/preparation, gallery status and optional overlays; backfill accepted tiles without repeating review.
+- [ ] Verify present, confirmed-absent, partial, unavailable, fully ice-covered and fully vegetated cases, including boundary/date uncertainty, missing artifacts, downstream mask propagation and zero-ground windows.
 - [x] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
 - [ ] Compare LoRA plus a trained control branch against a terrain-specific representation if needed; benchmark quality, memory, and runtime.
 - [ ] Build a 4,096 × 4,096 m pilot with several biome boundaries, a connected water feature, one protected landmark, and a demonstrably local rerun.

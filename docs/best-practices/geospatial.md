@@ -53,6 +53,21 @@ for Rust builds or metadata-only validation.
 
 - Keep biome IDs, water, validity, repairs, and quality distinguishable. Zero
   elevation can be valid land; do not infer missingness or water from height.
+- Give every planned snow/ice and vegetation layer an explicit assessment state:
+  unknown, assessed absent or present. Track assessed coverage separately from
+  provider validity. Missing or unavailable observations remain unknown; a
+  compact all-clear declaration may represent confirmed absence until a consumer
+  requires a raster.
+- Snow or ice present requires a native-aligned mask with source, observation
+  date and provenance. An unresolved footprint holds revised ground
+  qualification, and processing must not fabricate ground beneath ice. A wholly
+  ice-covered tile may retain its human acceptance but is not a usable bare-earth
+  training sample.
+- Vegetation classification is a best-effort independent layer. It may be
+  unavailable or partial without blocking valid bare-earth preparation or
+  triggering canopy-confidence checks. It may logically overlap snow/ice and
+  water, and must not be inferred from a biome label or bare-earth DEM. Assessed
+  no-vegetation and no-snow/ice is a valid empty case.
 - Water has an authored surface and a separate mask. Store a fixed deterministic
   fill under it, excluding that fill from terrain losses, structural controls,
   seam metrics, and elevation validation. Do not interpolate it into nearby

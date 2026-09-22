@@ -52,6 +52,29 @@ profile. Both modes use the profile's captured water
 finding. Known defects require a corrected scoped assessment; do not auto-pass
 unresolved findings or erase existing failed findings.
 
+## Planned surface-layer follow-up
+
+The implemented v1 profile, package and prepared-product contracts have no
+snow/ice or vegetation fields. A later schema version will add an explicit
+per-layer assessment of unknown, assessed absent or present, with assessed
+coverage kept separate from provider validity. Missing or unavailable data never
+means absent. Confirmed absence may use a compact all-clear declaration and need
+not be rasterized until a consumer requires it. Preserve existing v1 products,
+their original qualification and human votes; they are not automatically certified
+under the new mask contract.
+
+Snow/ice present will require a native-aligned mask plus source, observation date
+and provenance. An unresolved footprint will hold revised ground qualification;
+the workflow will not fabricate ground beneath ice. A wholly ice-covered tile
+may retain its accepted review but cannot serve as a bare-earth training sample.
+
+Vegetation will be a best-effort independent layer that may remain unavailable
+or partial without blocking valid bare-earth preparation or invoking
+canopy-confidence checks. It may logically overlap snow/ice and water and cannot
+be inferred from a biome label or bare-earth DEM. Tiles assessed with neither
+vegetation nor snow/ice are a valid empty case. Vegetation classification is in
+scope; rendering, placement and growth remain outside scope.
+
 ## Existing interfaces and integration
 
 - Acquisition source and gallery input accept optional `preparation_profile`.
