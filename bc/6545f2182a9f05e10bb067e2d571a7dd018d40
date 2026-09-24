@@ -1,0 +1,24 @@
+crates/topography-core/src/acquisition/raster.rs
+  h_72decab43bbb75 42-52,55-58,112-114,141
+crates/topography-core/src/review/mod.rs
+  h_72decab43bbb75 118,126-129,131-144
+docs/workflows/dem-acquisition.md
+  h_72decab43bbb75 91-101
+schemas/raw-receipt-v1.md
+  h_72decab43bbb75 24-25
+scripts/README.md
+  h_72decab43bbb75 162-166
+scripts/check_acquisition.py
+  h_72decab43bbb75 15,58-120,130,373-374
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bc6545f2182a9f05e10bb067e2d571a7dd018d40",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
