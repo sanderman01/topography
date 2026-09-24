@@ -1,0 +1,26 @@
+README.md
+  h_72decab43bbb75 110,128-129
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 3,310,347-355
+docs/progress.md
+  h_72decab43bbb75 1-12
+docs/reports/grand-canyon-expansion-qualification-v1.md
+  h_72decab43bbb75 1-84
+docs/reports/milford-review-v1.md
+  h_72decab43bbb75 1-58
+docs/reports/pilot-source-coverage-v1.md
+  h_72decab43bbb75 3,5,8-10,12-13,20,37-40,50,52-53,55,74-80
+docs/reports/zion-qualification-v1.md
+  h_72decab43bbb75 1-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "646e32e667d10067523857a9ddd3e666173ed662",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
