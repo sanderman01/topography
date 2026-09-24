@@ -1,0 +1,18 @@
+docs/workflows/scalar-codec-fitting.md
+  h_72decab43bbb75 41-43
+scripts/check_scalar_fit.py
+  h_72decab43bbb75 133-170
+training/src/topography_training/scalar_fit.py
+  h_72decab43bbb75 31,34,36-37,45-47,49,51-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8682ac66c4aaa3bb930e4e75b744184a24e01213",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
