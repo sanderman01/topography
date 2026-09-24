@@ -1,0 +1,16 @@
+docs/progress.md
+  h_72decab43bbb75 3,7-11,24-26,32-33,51-61,68-70,82-83,89-91,100-101,104-129,155-157,165-166
+docs/reports/rio-abajo-permission-review.md
+  h_72decab43bbb75 1-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "dcdf15ec39f24415ecd1112d3edc7c1a7ac96a36",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
