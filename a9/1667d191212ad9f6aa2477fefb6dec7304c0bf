@@ -1,0 +1,24 @@
+docs/progress.md
+  h_72decab43bbb75 14-24,28-29,39,41-42,52-55
+docs/reports/gallery-vote-recovery-v1.md
+  h_72decab43bbb75 1-55
+docs/reports/grand-canyon-expansion-v1.md
+  h_72decab43bbb75 3-6
+docs/reports/landmark-continuation-v1.md
+  h_72decab43bbb75 3-6
+docs/reports/pilot-source-coverage-v1.md
+  h_72decab43bbb75 9-11
+docs/reports/zion-review-v1.md
+  h_72decab43bbb75 3-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a91667d191212ad9f6aa2477fefb6dec7304c0bf",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
