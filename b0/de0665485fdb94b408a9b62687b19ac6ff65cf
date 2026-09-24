@@ -1,0 +1,64 @@
+README.md
+  h_72decab43bbb75 24-28
+crates/topography-cli/src/main.rs
+  h_72decab43bbb75 4,13-16,93-130,296-309
+crates/topography-core/src/acquisition/batch.rs
+  h_72decab43bbb75 1-365
+crates/topography-core/src/acquisition/http.rs
+  h_72decab43bbb75 44-51
+crates/topography-core/src/acquisition/mod.rs
+  h_72decab43bbb75 3
+crates/topography-core/src/catalog/curation/journal.rs
+  h_72decab43bbb75 14-16,169-190,200,209,255,297-303,306-307,337-352,364
+crates/topography-core/src/catalog/curation/mod.rs
+  h_72decab43bbb75 623-772
+crates/topography-core/src/review/bundle.rs
+  h_72decab43bbb75 48-56,78,115
+crates/topography-core/src/review/gallery.html
+  h_72decab43bbb75 1-42
+crates/topography-core/src/review/gallery.rs
+  h_72decab43bbb75 1-226
+crates/topography-core/src/review/gallery_server.rs
+  h_72decab43bbb75 1-308
+crates/topography-core/src/review/mod.rs
+  h_72decab43bbb75 4-5
+docs/design/batch-source-workflow-v1.md
+  h_72decab43bbb75 1-63
+docs/design/design-overview.md
+  h_72decab43bbb75 18-23
+docs/plans/batch-source-workflow-v1.md
+  h_72decab43bbb75 1-53
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 119-127
+docs/progress.md
+  h_72decab43bbb75 6-8,13-43,125-126,383-403
+docs/workflows/batch-source-review.md
+  h_72decab43bbb75 1-43
+examples/manifests/batch-queue-v1.json
+  h_72decab43bbb75 1-19
+schemas/README.md
+  h_72decab43bbb75 13
+schemas/batch-gallery-v1.md
+  h_72decab43bbb75 1-80
+scripts/README.md
+  h_72decab43bbb75 147-161
+scripts/check.sh
+  h_72decab43bbb75 71
+scripts/check_acquisition.py
+  h_72decab43bbb75 182-188,265-279
+scripts/check_batch_gallery.py
+  h_72decab43bbb75 1-154
+scripts/check_gallery_browser.mjs
+  h_72decab43bbb75 1-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b0de0665485fdb94b408a9b62687b19ac6ff65cf",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
