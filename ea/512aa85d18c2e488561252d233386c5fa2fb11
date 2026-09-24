@@ -1,0 +1,32 @@
+README.md
+  h_72decab43bbb75 101,103
+catalog/README.md
+  h_72decab43bbb75 40-43
+catalog/areas/pilot-batch-2-crops.geojson
+  h_72decab43bbb75 47-49,95-97,143-145,191-193,239-241,287-289
+catalog/areas/pilot-batch-3-crops.geojson
+  h_72decab43bbb75 1-189
+catalog/candidates/pilot-batch-3/arecibo-river.toml
+  h_72decab43bbb75 1-30
+catalog/candidates/pilot-batch-3/guajataca-gorge.toml
+  h_72decab43bbb75 1-30
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 301-305
+docs/progress.md
+  h_72decab43bbb75 3,15-23,26,38,40,45,50,75-97,113-116,121-122,134-146,156,163-167
+docs/reports/pilot-tile-batch-2.md
+  h_72decab43bbb75 3-6,9-11,52,65-66,84-127
+docs/reports/pilot-tile-batch-3.md
+  h_72decab43bbb75 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ea512aa85d18c2e488561252d233386c5fa2fb11",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
