@@ -1,0 +1,36 @@
+AGENTS.md
+  h_72decab43bbb75 123-124
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 3,310,342-351
+docs/progress.md
+  h_72decab43bbb75 3,7-9,14-17,19-21,25,28-52,57-58,65-66,89-95
+docs/reports/grand-canyon-expansion-v1.md
+  h_72decab43bbb75 1-78
+docs/reports/grand-canyon-qualification-v1.md
+  h_72decab43bbb75 1-43
+docs/reports/landmark-continuation-v1.md
+  h_72decab43bbb75 1-70
+docs/reports/landmark-source-review-v1.md
+  h_72decab43bbb75 3-7
+docs/reports/pilot-source-coverage-v1.md
+  h_72decab43bbb75 3,5-14,19,21,33-35,45-49,68-72
+docs/reports/st-helens-qualification-v1.md
+  h_72decab43bbb75 1-69
+docs/reports/zion-review-v1.md
+  h_72decab43bbb75 1-52
+docs/workflows/batch-source-review.md
+  h_72decab43bbb75 44-47
+docs/workflows/source-curation.md
+  h_72decab43bbb75 109-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0df0544ab1b7fca0bbfdb42aeab2d1d321849ed4",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
