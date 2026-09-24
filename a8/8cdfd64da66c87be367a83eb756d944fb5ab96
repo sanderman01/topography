@@ -1,0 +1,56 @@
+README.md
+  h_72decab43bbb75 112-115
+crates/topography-core/src/datasets/numeric.rs
+  h_72decab43bbb75 229-233
+data/README.md
+  h_72decab43bbb75 51-57
+docs/best-practices/machine-learning.md
+  h_72decab43bbb75 3-5
+docs/best-practices/python.md
+  h_72decab43bbb75 4-5
+docs/plans/image-codec-pilot-v1.md
+  h_72decab43bbb75 7-10,26-27,47-49
+docs/plans/scalar-codec-fit-pilot-v1.md
+  h_72decab43bbb75 1-63
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 3,310-314
+docs/progress.md
+  h_72decab43bbb75 4-6,37-47,50-51,65-66,187-189,227-229,244-276,280
+docs/reports/image-codec-pilot-v1.md
+  h_72decab43bbb75 1-103
+docs/workflows/image-codec-evaluation.md
+  h_72decab43bbb75 1-103
+schemas/numeric-evaluation-v1.md
+  h_72decab43bbb75 76-79
+scripts/README.md
+  h_72decab43bbb75 28-33
+scripts/check.sh
+  h_72decab43bbb75 75
+scripts/check_codec.py
+  h_72decab43bbb75 1-188
+training/README.md
+  h_72decab43bbb75 6-7,31-39
+training/pyproject.toml
+  h_72decab43bbb75 13-15
+training/requirements-codec-cpu.txt
+  h_72decab43bbb75 1-35
+training/src/topography_training/codec.py
+  h_72decab43bbb75 1-126
+training/src/topography_training/metrics.py
+  h_72decab43bbb75 1-40
+training/src/topography_training/numeric.py
+  h_72decab43bbb75 18,35,103
+training/src/topography_training/reconstruction.py
+  h_72decab43bbb75 1-263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a88cdfd64da66c87be367a83eb756d944fb5ab96",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
