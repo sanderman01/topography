@@ -1,0 +1,68 @@
+README.md
+  h_72decab43bbb75 15-16,42,45,71-73,109-113
+crates/topography-cli/src/main.rs
+  h_72decab43bbb75 3-5,26-28,146-173
+crates/topography-core/src/datasets/mod.rs
+  h_72decab43bbb75 1-331
+crates/topography-core/src/datasets/numeric.rs
+  h_72decab43bbb75 1-422
+data/README.md
+  h_72decab43bbb75 44-50
+docs/best-practices/architecture-and-contracts.md
+  h_72decab43bbb75 4-6
+docs/best-practices/python.md
+  h_72decab43bbb75 3-5,62-63
+docs/design/design-overview.md
+  h_72decab43bbb75 13-20,27-28
+docs/design/numeric-evaluation-v1.md
+  h_72decab43bbb75 1-79
+docs/plans/image-codec-pilot-v1.md
+  h_72decab43bbb75 1-66
+docs/plans/numeric-evaluation-v1.md
+  h_72decab43bbb75 1-47
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 3,284-285,307-313
+docs/progress.md
+  h_72decab43bbb75 3-5,26-38,41-42,55-56,129,139,147-149,174-176,190,204,209-239,242-243,247
+docs/reports/numeric-evaluation-v1.md
+  h_72decab43bbb75 1-73
+docs/reports/numeric-pilot-proposal-v1.md
+  h_72decab43bbb75 89,92-103
+docs/workflows/numeric-evaluation.md
+  h_72decab43bbb75 1-92
+schemas/README.md
+  h_72decab43bbb75 15,21-23,25
+schemas/numeric-evaluation-v1.md
+  h_72decab43bbb75 1-89
+scripts/README.md
+  h_72decab43bbb75 15-17,21-27
+scripts/check.sh
+  h_72decab43bbb75 73-79
+scripts/check_datasets.py
+  h_72decab43bbb75 1-178
+scripts/check_numeric.py
+  h_72decab43bbb75 1-90
+scripts/check_preparation.py
+  h_72decab43bbb75 26-27,38,51,77,99,105-106
+training/README.md
+  h_72decab43bbb75 3-6,10,13-29
+training/pyproject.toml
+  h_72decab43bbb75 8,11
+training/src/topography_training/__init__.py
+  h_72decab43bbb75 1
+training/src/topography_training/numeric.py
+  h_72decab43bbb75 1-152
+training/src/topography_training/payload.py
+  h_72decab43bbb75 1-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6890cec6f60ec2386bc46837537e2863eba092c3",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
