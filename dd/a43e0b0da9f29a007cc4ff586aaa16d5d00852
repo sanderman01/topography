@@ -1,0 +1,36 @@
+AGENTS.md
+  h_72decab43bbb75 59-62
+crates/topography-core/src/preparation/quality.rs
+  h_72decab43bbb75 312
+docs/best-practices/validation-and-review.md
+  h_72decab43bbb75 64-68
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 132,135,141,232
+docs/progress.md
+  h_72decab43bbb75 3,26,29-30,69-78,87-94,108-109,132-134,153-154,163-178,184-185,187-189,196-197,212,219-221
+docs/reports/rio-abajo-source-qualification.md
+  h_72decab43bbb75 10-18,20,36-37,82-89
+docs/reports/rio-abajo-whole-crop-review.md
+  h_72decab43bbb75 68-73
+docs/workflows/regional-quality.md
+  h_72decab43bbb75 31-34,69-70
+docs/workflows/source-curation.md
+  h_72decab43bbb75 8-20,35-38,68-69,102-107
+schemas/curation-v1.md
+  h_72decab43bbb75 29-30,33
+schemas/regional-quality-v1.md
+  h_72decab43bbb75 35,56,60-67,84,89
+scripts/check_quality.py
+  h_72decab43bbb75 51,60-61,64,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "dda43e0b0da9f29a007cc4ff586aaa16d5d00852",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
