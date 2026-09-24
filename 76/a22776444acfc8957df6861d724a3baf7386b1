@@ -1,0 +1,18 @@
+crates/topography-core/src/acquisition/http.rs
+  h_72decab43bbb75 174-176
+docs/workflows/dem-acquisition.md
+  h_72decab43bbb75 120-123
+scripts/check_acquisition.py
+  h_72decab43bbb75 262-264,348-368
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "76a22776444acfc8957df6861d724a3baf7386b1",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
