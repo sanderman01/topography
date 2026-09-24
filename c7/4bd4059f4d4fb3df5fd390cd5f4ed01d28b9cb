@@ -1,0 +1,22 @@
+docs/progress.md
+  h_72decab43bbb75 3-4,13-35,44-51,53-58,60-65,67-73,75-81
+docs/reports/banks-peninsula-review-v1.md
+  h_72decab43bbb75 1-62
+docs/reports/connected-context-qualification-v1.md
+  h_72decab43bbb75 1-44
+docs/reports/pilot-source-coverage-v1.md
+  h_72decab43bbb75 3-7,11-12,15,19-22,32-35
+docs/workflows/source-curation.md
+  h_72decab43bbb75 16-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c74bd4059f4d4fb3df5fd390cd5f4ed01d28b9cb",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
