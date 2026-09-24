@@ -1,0 +1,22 @@
+crates/topography-core/src/catalog/curation/mod.rs
+  h_72decab43bbb75 673-679,703
+docs/workflows/batch-source-review.md
+  h_72decab43bbb75 44-48
+scripts/README.md
+  h_72decab43bbb75 153-154
+scripts/check_batch_gallery.py
+  h_72decab43bbb75 72-76,78-99,110,128,151-162,165-179,183-184
+scripts/check_gallery_browser.mjs
+  h_72decab43bbb75 27,29,43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5485644a7ebcba4b9c5f85dca12a4fa6b675afef",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
