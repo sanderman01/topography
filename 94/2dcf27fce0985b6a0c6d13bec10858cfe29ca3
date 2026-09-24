@@ -1,0 +1,24 @@
+README.md
+  h_72decab43bbb75 16-17,115-123
+docs/design/pilot-acceptance-v1.md
+  h_72decab43bbb75 7-9
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 313-322,328
+docs/progress.md
+  h_72decab43bbb75 4-6,44-67,70,86-88,290-321
+docs/reports/scalar-codec-fit-v1.md
+  h_72decab43bbb75 1-112
+docs/reports/world-layout-proposal-v1.md
+  h_72decab43bbb75 1-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "942dcf27fce0985b6a0c6d13bec10858cfe29ca3",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
