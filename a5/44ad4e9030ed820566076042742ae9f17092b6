@@ -1,0 +1,22 @@
+README.md
+  h_72decab43bbb75 120-125
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 320-326
+docs/progress.md
+  h_72decab43bbb75 5-7,54-82,85,102,338-349
+docs/reports/pilot-source-coverage-v1.md
+  h_72decab43bbb75 1-53
+docs/reports/world-layout-proposal-v1.md
+  h_72decab43bbb75 3-11,64-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a544ad4e9030ed820566076042742ae9f17092b6",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
