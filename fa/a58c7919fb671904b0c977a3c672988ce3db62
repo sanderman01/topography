@@ -1,0 +1,44 @@
+README.md
+  h_72decab43bbb75 12-13,96-98
+crates/topography-cli/src/main.rs
+  h_72decab43bbb75 3,19-21,30-31,107-131
+crates/topography-core/src/catalog/curation/mod.rs
+  h_72decab43bbb75 350,398-404,410,415-504
+crates/topography-core/src/preparation/mod.rs
+  h_72decab43bbb75 1-6
+crates/topography-core/src/preparation/quality.rs
+  h_72decab43bbb75 1-368
+crates/topography-core/src/review/mod.rs
+  h_72decab43bbb75 17-23
+docs/design/pilot-acceptance-v1.md
+  h_72decab43bbb75 5-7,37-39
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 3,276-279
+docs/workflows/regional-quality.md
+  h_72decab43bbb75 1-127
+docs/workflows/source-curation.md
+  h_72decab43bbb75 53,59-63
+examples/manifests/regional-quality-v1.json
+  h_72decab43bbb75 1-17
+schemas/README.md
+  h_72decab43bbb75 13
+schemas/regional-quality-v1.md
+  h_72decab43bbb75 1-90
+scripts/README.md
+  h_72decab43bbb75 15,60-69
+scripts/check.sh
+  h_72decab43bbb75 71
+scripts/check_quality.py
+  h_72decab43bbb75 1-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "faa58c7919fb671904b0c977a3c672988ce3db62",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
