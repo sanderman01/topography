@@ -1,0 +1,20 @@
+docs/progress.md
+  h_72decab43bbb75 3,12-14,30,77,81-83,98-99,131-156
+docs/reports/rio-abajo-source-files-request.md
+  h_72decab43bbb75 1-25
+docs/reports/rio-abajo-source-qualification.md
+  h_72decab43bbb75 1-73
+docs/reports/rio-abajo-whole-crop-review.md
+  h_72decab43bbb75 13-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8e8cdfd6f43839c9e9e4f90c87fdefcb7a4b976c",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
