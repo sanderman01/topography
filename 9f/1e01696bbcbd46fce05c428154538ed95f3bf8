@@ -1,0 +1,22 @@
+AGENTS.md
+  h_72decab43bbb75 72-76,84-85
+docs/best-practices/geospatial.md
+  h_72decab43bbb75 56-70
+docs/design/automatic-preparation-v1.md
+  h_72decab43bbb75 55-77
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 5-7,16,53,95-106,121,150-204,218-219,273-282,329-338,368,378,460-465,470-471
+docs/progress.md
+  h_72decab43bbb75 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9f1e01696bbcbd46fce05c428154538ed95f3bf8",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
