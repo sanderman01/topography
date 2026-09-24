@@ -1,0 +1,32 @@
+README.md
+  h_72decab43bbb75 102
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 273-276
+docs/progress.md
+  h_72decab43bbb75 3,8,11-14,23,27-28,67-82,92-93,95,99,102-104,107,118-122,126-140,148-150,160-165,171
+docs/reports/rio-abajo-ground-support.md
+  h_72decab43bbb75 8-11,114-117
+docs/reports/rio-abajo-karst-trial.md
+  h_72decab43bbb75 11-13
+docs/reports/rio-abajo-permission-review.md
+  h_72decab43bbb75 5-8,13,88,97-108,117,128-134
+docs/reports/rio-abajo-whole-crop-review.md
+  h_72decab43bbb75 1-112
+docs/workflows/regional-quality.md
+  h_72decab43bbb75 106-110,112
+docs/workflows/whole-crop-ground-support.md
+  h_72decab43bbb75 82-84,87,129-132
+scripts/README.md
+  h_72decab43bbb75 95-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "027cf36164c714c2dfe9cabaf701fa9ea7c52e24",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
