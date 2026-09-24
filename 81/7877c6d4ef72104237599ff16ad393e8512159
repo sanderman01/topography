@@ -1,0 +1,46 @@
+crates/topography-cli/src/main.rs
+  h_72decab43bbb75 28-29,148-161
+crates/topography-core/src/datasets/fitting.rs
+  h_72decab43bbb75 1-123
+crates/topography-core/src/datasets/mod.rs
+  h_72decab43bbb75 1,3,5
+docs/best-practices/data-management.md
+  h_72decab43bbb75 5
+docs/best-practices/machine-learning.md
+  h_72decab43bbb75 5
+docs/best-practices/python.md
+  h_72decab43bbb75 5-6
+docs/workflows/scalar-codec-fitting.md
+  h_72decab43bbb75 1-109
+scripts/README.md
+  h_72decab43bbb75 141-146
+scripts/check.sh
+  h_72decab43bbb75 89-94
+scripts/check_datasets.py
+  h_72decab43bbb75 47-69,118,188
+scripts/check_scalar_fit.py
+  h_72decab43bbb75 1-164
+training/README.md
+  h_72decab43bbb75 7-8,41-45
+training/src/topography_training/codec.py
+  h_72decab43bbb75 20-21,42-43
+training/src/topography_training/fitting.py
+  h_72decab43bbb75 1-252
+training/src/topography_training/reconstruction.py
+  h_72decab43bbb75 44-46,50,61,76-85,102-104,112,116-117,124-129
+training/src/topography_training/scalar_fit.py
+  h_72decab43bbb75 1-83
+training/src/topography_training/scalar_model.py
+  h_72decab43bbb75 1-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "817877c6d4ef72104237599ff16ad393e8512159",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
