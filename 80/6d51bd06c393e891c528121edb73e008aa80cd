@@ -1,0 +1,74 @@
+AGENTS.md
+  h_72decab43bbb75 72
+README.md
+  h_72decab43bbb75 31-33
+crates/topography-core/src/catalog/curation/journal.rs
+  h_72decab43bbb75 366-369,372,375,380-390,392-395,399-407,411-423,426,432,443-452
+crates/topography-core/src/catalog/curation/mod.rs
+  h_72decab43bbb75 656,661-666,668,671-678,804-805,882-885
+crates/topography-core/src/datasets/fitting.rs
+  h_72decab43bbb75 63-67
+crates/topography-core/src/datasets/mod.rs
+  h_72decab43bbb75 111,119-120,217-220,305,307,333,335,337
+crates/topography-core/src/datasets/numeric.rs
+  h_72decab43bbb75 30,50-53,116-117,251,253,269-270,302,321-328,334,340-342,359-370,380-381,384,405,414,441
+crates/topography-core/src/preparation/automatic.rs
+  h_72decab43bbb75 48,57-95,104-105,110-131,155-156,166-169,172,174,193-238,240-241,302-318,322-377,386,391-400,409,418-429,491-619,639-647,673,691,693-696,706-731,734-743,754-761,772,797,818,820-821,827,863,897-906,908,911-923,958-961,987,997,1001,1011,1027,1038,1045,1051
+crates/topography-core/src/preparation/quality.rs
+  h_72decab43bbb75 5,18-26,42-52,68-77,91-92,138-142,208,227-228,230-231,233-237,239-244,258-322,345-349,352-355,384-390,393-397,399-401,403,407-415,420-424,444-454,456,458-462,469,510,523,569-588,600
+crates/topography-core/src/preparation/region.rs
+  h_72decab43bbb75 20,29-44,284-287,303-308,324-325,334-335,345,355-378,382,386,406-408,412,426,434,436,443,458,476,478-483,559,561-562,570,593,631
+crates/topography-core/src/review/gallery.html
+  h_72decab43bbb75 17
+crates/topography-core/src/review/preparation_worker.rs
+  h_72decab43bbb75 54-66,286-303
+docs/best-practices/geospatial.md
+  h_72decab43bbb75 56
+docs/design/automatic-preparation-v1.md
+  h_72decab43bbb75 55,57-59,61-72,74-79,111-114
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 150,197-204,465-469,471-472,478-479
+docs/progress.md
+  h_72decab43bbb75 9-11
+docs/reports/surface-cover-workflow-v2.md
+  h_72decab43bbb75 1-42
+docs/workflows/numeric-evaluation.md
+  h_72decab43bbb75 28-29,53-54,64-65
+schemas/README.md
+  h_72decab43bbb75 15,17,19
+schemas/numeric-evaluation-v2.md
+  h_72decab43bbb75 1-36
+schemas/prepared-region-v2.md
+  h_72decab43bbb75 1-25
+schemas/regional-quality-v2.md
+  h_72decab43bbb75 1-46
+scripts/README.md
+  h_72decab43bbb75 86-92
+scripts/check.sh
+  h_72decab43bbb75 74
+scripts/check_automatic_preparation.py
+  h_72decab43bbb75 250,290
+scripts/check_datasets.py
+  h_72decab43bbb75 13,20-59,133-134,241-242
+scripts/check_numeric.py
+  h_72decab43bbb75 79-128,130
+scripts/check_surface_cover.py
+  h_72decab43bbb75 1-375
+training/README.md
+  h_72decab43bbb75 27-28
+training/src/topography_training/numeric.py
+  h_72decab43bbb75 62,68,80,84,87-97,105
+training/src/topography_training/payload.py
+  h_72decab43bbb75 1,13,18,47,67-69,79-80,86,97-104,107-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "806d51bd06c393e891c528121edb73e008aa80cd",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
