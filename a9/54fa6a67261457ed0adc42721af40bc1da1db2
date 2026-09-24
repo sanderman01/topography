@@ -1,0 +1,60 @@
+AGENTS.md
+  h_72decab43bbb75 13-15
+README.md
+  h_72decab43bbb75 28-30
+crates/topography-core/src/acquisition/batch.rs
+  h_72decab43bbb75 30,101-106,128-132,333,337,360-394,409-412
+crates/topography-core/src/catalog/curation/journal.rs
+  h_72decab43bbb75 243,250-285,364-420
+crates/topography-core/src/catalog/curation/mod.rs
+  h_72decab43bbb75 145-155,585,631-825,872-882,884,887,995
+crates/topography-core/src/preparation/automatic.rs
+  h_72decab43bbb75 1-705
+crates/topography-core/src/preparation/mod.rs
+  h_72decab43bbb75 3
+crates/topography-core/src/review/gallery.html
+  h_72decab43bbb75 8,15,17-19,27,30-31,33,35-36,44-45
+crates/topography-core/src/review/gallery.rs
+  h_72decab43bbb75 30-42,57-58,177-195,235-240
+crates/topography-core/src/review/gallery_server.rs
+  h_72decab43bbb75 1,15,129-131,140-160,163-165,305-316,320,322
+crates/topography-core/src/review/mod.rs
+  h_72decab43bbb75 6
+crates/topography-core/src/review/preparation_worker.rs
+  h_72decab43bbb75 1-327
+docs/design/automatic-preparation-v1.md
+  h_72decab43bbb75 1-103
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 3,128-134,362-366
+docs/progress.md
+  h_72decab43bbb75 4,6-9,13
+docs/reports/automatic-preparation-rollout-v1.md
+  h_72decab43bbb75 1-61
+docs/reports/family-expansion-review-v1.md
+  h_72decab43bbb75 3-7
+docs/reports/pilot-source-coverage-v1.md
+  h_72decab43bbb75 3,5,11-12,14-15,27,46-48,58,61,63,89-92
+docs/workflows/batch-source-review.md
+  h_72decab43bbb75 57-88
+schemas/batch-gallery-v1.md
+  h_72decab43bbb75 23-25,47-48,56-58,87-88,91-99
+schemas/curation-v1.md
+  h_72decab43bbb75 58-67
+scripts/README.md
+  h_72decab43bbb75 164-169
+scripts/check.sh
+  h_72decab43bbb75 72
+scripts/check_automatic_preparation.py
+  h_72decab43bbb75 1-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a954fa6a67261457ed0adc42721af40bc1da1db2",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
