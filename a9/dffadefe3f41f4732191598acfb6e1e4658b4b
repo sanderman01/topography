@@ -1,0 +1,14 @@
+docs/progress.md
+  h_72decab43bbb75 21-26,30,37-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a9dffadefe3f41f4732191598acfb6e1e4658b4b",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
