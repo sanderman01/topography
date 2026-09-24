@@ -1,0 +1,38 @@
+README.md
+  h_72decab43bbb75 101-104
+catalog/README.md
+  h_72decab43bbb75 24-26,37-41
+catalog/areas/pilot-batch-2-crops.geojson
+  h_72decab43bbb75 1-281
+catalog/candidates/pilot-batch-2/camuy-karst.toml
+  h_72decab43bbb75 1-30
+catalog/candidates/pilot-batch-2/central-gorge.toml
+  h_72decab43bbb75 1-30
+catalog/candidates/pilot-batch-2/south-floodplain.toml
+  h_72decab43bbb75 1-30
+docs/design/source-quality-pilot-v1.md
+  h_72decab43bbb75 1-40
+docs/plans/terrain-design-master-plan.md
+  h_72decab43bbb75 139-147,288-290,301-305
+docs/progress.md
+  h_72decab43bbb75 3-4,6,8-13,15-20,22-24,26,28-74,78-147
+docs/reports/pilot-tile-batch-2.md
+  h_72decab43bbb75 1-82
+docs/reports/rio-abajo-source-qualification.md
+  h_72decab43bbb75 16-17,20-23,57-60,142-178
+docs/workflows/aligned-preparation.md
+  h_72decab43bbb75 7-10
+docs/workflows/regional-quality.md
+  h_72decab43bbb75 28-32,120-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d625f982d2b005a102b69a92ad0a594a6da7b874",
+  "prompts": {},
+  "humans": {
+    "h_72decab43bbb75": {
+      "author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
