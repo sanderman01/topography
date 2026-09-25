@@ -155,7 +155,7 @@ impl Grid {
 }
 
 /// GDAL command with bounded HTTP behaviour for public COG reads.
-fn gdal(program: &str) -> Command {
+pub(super) fn gdal(program: &str) -> Command {
     let mut c = command(program);
     c.env("GDAL_HTTP_MAX_RETRY", "3")
         .env("GDAL_HTTP_RETRY_DELAY", "2")
@@ -739,6 +739,39 @@ fn generate_with(
         note,
         observed_at: w.observed_at.clone(),
     })
+}
+
+/// Game water (WorldCover class 80 plus OpenStreetMap water) on an arbitrary metric grid.
+/// Returns one byte per cell (1 water, 0 dry) and source details.
+pub(crate) fn world_water(
+    width: u32,
+    height: u32,
+    transform: [f64; 6],
+    wkt: &str,
+    bbox: [f64; 4],
+) -> Result<(Vec<u8>, Value)> {
+    let (_, policy) = load_policy(None)?;
+    let grid = Grid {
+        width,
+        height,
+        transform,
+        wkt: wkt.into(),
+    };
+    let scratch = super::io_context("create water scratch", tempfile::tempdir())?;
+    let (classes, wc) = worldcover(&policy.worldcover, bbox, &grid, scratch.path())
+        .map_err(|e| AcquisitionError::Invalid(format!("WorldCover unavailable: {e}")))?;
+    let (mapped, os) = osm(&policy.osm, bbox, &grid, scratch.path(), None)
+        .map_err(|e| AcquisitionError::Invalid(format!("OpenStreetMap unavailable: {e}")))?;
+    let water = classes
+        .iter()
+        .zip(&mapped)
+        .map(|(c, m)| u8::from(policy.worldcover.water_present.contains(c) || *m == 1))
+        .collect();
+    Ok((
+        water,
+        json!({"policy": POLICY, "worldcover": wc, "osm": os,
+            "attribution": [policy.osm.attribution, policy.worldcover.citation]}),
+    ))
 }
 
 /// Write game cover for one reviewed crop into a new directory (inspection aid).
