@@ -214,7 +214,7 @@ Recommended world preset: 32,768 × 32,768 m with 1 m cells, yielding 32,768 × 
 | World extent | 32,768 m per side | Rectangular extents and exact 32 km |
 | Final spacing | 1 m | Other physical spacings, including 0.5 and 2 m |
 | Training tile size | 512 × 512 cells | 1,024 or 2,048 as a measured stretch target, subject to VRAM (§7) |
-| Final file tile size | 1,024 × 1,024 cells | Independent of training/inference windows |
+| Final file tile size | 256 × 256 intervals (257² texels, `shared_edge`) | Configurable power of two; independent of training/inference windows |
 | Generation window / stride | 1,024 / 512 cells | Overlap selected through seam experiments |
 | Layout painting resolution | 512 × 512 | Other resolutions, plus vector boundaries |
 | Generation scales | 16 m, 4 m, 1 m | A versioned scale pyramid |
@@ -231,10 +231,10 @@ Do not independently min/max normalize each tile. That would make a flat field a
 
 Define cell-center coordinates, north/south row orientation, horizontal axes, world origin, and elevation units in the export contract. The export delivers heightmap textures, not meshes or vertex data; the game's own quadtree LOD renderer builds geometry from them. This preserves a clean handoff without designing the renderer here.
 
-The master mosaic and all internal processing stay cell-center rasters (§5's cell counts, e.g. 32,768² for the full extent). Each texel is one master sample read directly from that surface, so export adds only height encoding, not resampling. Tiles span a configurable power-of-two number of intervals (1,024 by default) and use one of two configurable layouts:
+The master mosaic and all internal processing stay cell-center rasters (§5's cell counts, e.g. 32,768² for the full extent). Each texel is one master sample read directly from that surface, so export adds only height encoding, not resampling. Tiles span a configurable power-of-two number of intervals and use one of two configurable layouts. The default follows Microsoft Flight Simulator 2020's DEM tiles: 256 intervals in the `shared_edge` layout, 257 × 257 texels at 16 bits.
 
-- **`shared_edge`**: 2ⁿ + 1 texels per full side (1,025²). Adjacent tiles repeat their border row/column bit-identically, so each tile is self-contained and seams close without neighbour access. This is the common heightfield convention (Unity terrain; Microsoft Flight Simulator's DEM tiles are 257² quadtree tiles).
-- **`power_of_two`**: 2ⁿ texels per full side (1,024²) with no duplication; the renderer reads the closing row/column from the neighbouring tile. Dimensions suit texture arrays, atlases, and GPU block compression (which needs multiples of four).
+- **`shared_edge`**: 2ⁿ + 1 texels per full side (257² by default). Adjacent tiles repeat their border row/column bit-identically, so each tile is self-contained and seams close without neighbour access. This is the common heightfield convention (Unity terrain; Microsoft Flight Simulator 2020).
+- **`power_of_two`**: 2ⁿ texels per full side (256²) with no duplication; the renderer reads the closing row/column from the neighbouring tile. Dimensions suit texture arrays, atlases, and GPU block compression (which needs multiples of four).
 
 Both layouts use the same global sample lattice and encoding, so switching layout never changes a height value. World-edge and partial-tile behavior is defined explicitly with the first exporter.
 
@@ -332,7 +332,7 @@ Cache by source checksums, configuration, model version, and controls. Interrupt
 
 A 32,768² raster contains 1,073,741,824 cells. One uncompressed Float32 elevation layer is 4 GiB; a UInt16 export is 2 GiB; a byte biome mask is 1 GiB. Nine full-resolution Float32 one-hot biome channels would consume 36 GiB, so derive conditioning windows on demand instead of storing that representation globally.
 
-The world contains 1,024 non-overlapping 1,024² delivery tiles. At a 512-cell stride, 1,024-cell inference windows yield 63 × 63 = 3,969 windows before extra edge padding. Each is revisited across denoising steps and model passes. Measure a representative regional run and extrapolate total compute, temporary storage, and I/O before scaling up. Global state and accumulation buffers may require storage in RAM or on disk; model windows alone do not account for all memory.
+The world contains 16,384 delivery tiles of 256 intervals (257² texels). At a 512-cell stride, 1,024-cell inference windows yield 63 × 63 = 3,969 windows before extra edge padding. Each is revisited across denoising steps and model passes. Measure a representative regional run and extrapolate total compute, temporary storage, and I/O before scaling up. Global state and accumulation buffers may require storage in RAM or on disk; model windows alone do not account for all memory.
 
 Use windowed reads/writes and overview pyramids. Keep staging space configurable and make compression error bounds explicit if using lossy numeric compression. Do not promise that a 4 GiB raster implies a 4 GiB generation working set. Generation runs against the fixed 16 GB VRAM budget (§7): the 3,969-window full-extent run is a long sequential (or batched-within-budget) job on this hardware, not a one-shot pass, so estimate wall-clock time from a measured per-window cost rather than assuming throughput.
 

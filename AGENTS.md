@@ -84,8 +84,9 @@ exists. Consult upstream documentation for the versions actually selected.
   supported fallback if diffusion fails its feasibility gate.
 - Keep training windows, inference windows, and export tiles independent. Export
   delivers 16-bit heightmap textures, not meshes or vertex data. Tiles span a
-  power-of-two interval count (1,024 default) in a configurable `shared_edge`
-  (1,025² texels) or `power_of_two` (1,024²) layout.
+  configurable power-of-two interval count. The default follows MSFS 2020:
+  256 intervals, `shared_edge` layout, 257² texels at 16 bits (`power_of_two`
+  gives 256²).
 - Leave Bevy integration, QuadTrees, vegetation rendering/placement/growth,
   weather, a full flight model, and underwater terrain outside the current plan.
 

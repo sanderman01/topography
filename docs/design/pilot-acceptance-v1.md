@@ -15,8 +15,8 @@ training remain pending.
 - Water surfaces are authored separately. Underwater cells contain deterministic
   masked fill, excluded from terrain losses, controls and validation.
 - Training, generation windows and export tiles are independent. Export tiles
-  are 16-bit heightmap textures spanning 1,024 intervals, in a `shared_edge`
-  (1,025²) or `power_of_two` (1,024²) layout. Duplicated border texels must
+  are 16-bit heightmap textures, by default 256 intervals in the `shared_edge`
+  layout (257² texels); `power_of_two` (256²) is configurable. Duplicated border texels must
   match exactly.
 - Source identity, raw checksums, original metadata, transformations and review
   decisions stay traceable. Raw bytes and accepted outputs are preserved.

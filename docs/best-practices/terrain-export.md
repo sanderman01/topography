@@ -13,7 +13,8 @@ defines these requirements; the game's Bevy quadtree renderer remains outside sc
 - Export single-channel 16-bit heightmap textures and matching mask textures,
   not meshes or vertex buffers. Each texel is one master sample read directly
   from the authoritative surface in global coordinates; do not resample.
-- Tiles span a configurable power-of-two interval count (1,024 by default).
+- Tiles span a configurable power-of-two interval count. The default copies
+  MSFS 2020 DEM tiles: 256 intervals, `shared_edge`, 257² texels at 16 bits.
   Training crops and inference windows do not determine tile geometry.
 - Support two layouts over the same global sample lattice:
   - `shared_edge`: 2ⁿ + 1 texels per full side. Neighbours repeat their border
