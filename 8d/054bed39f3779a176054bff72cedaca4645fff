@@ -1,0 +1,24 @@
+scripts/check_cover_acquisition.py
+  s_f6c04b9d7eeb89::t_dd1127cd829deb 234
+  s_f6c04b9d7eeb89::t_08ca234cd0c835 139
+  s_f6c04b9d7eeb89::t_898c3acd6c5927 1-138,140-161,167-233,235-374
+  s_f6c04b9d7eeb89::t_f4aef326677a63 162-166
+scripts/check.sh
+  s_f6c04b9d7eeb89::t_a2606d027ea7f2 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8d054bed39f3779a176054bff72cedaca4645fff",
+  "prompts": {},
+  "sessions": {
+    "s_f6c04b9d7eeb89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bae888e-8bf2-4368-b4b6-87b6e40c4da7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
