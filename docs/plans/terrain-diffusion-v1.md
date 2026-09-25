@@ -84,7 +84,7 @@ explicitly (below).
 
 - [ ] **Environment:** ROCm PyTorch in `data/models/diffusion-env-v1/.venv`, plus
   the `diffusion` extra. A GPU matmul check confirms the RX 9060 XT (gfx1200) runs.
-- [ ] **Release:** `topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>`
+- [x] **Release:** `topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>`
   builds the training release from current Ready tiles.
 - [ ] **Training code:** data loading, split and crops, the model, EDM training with
   checkpoints/resume, a VRAM and throughput log, and a sampler that supports
@@ -106,13 +106,13 @@ explicitly (below).
   Yes/No. The gate passes when at least half the generated patches get Yes and the
   seam strip shows no visible joins. Otherwise try the next run, or fall back after
   three.
-- [ ] **Pilot world inputs:** a 4,096 m world config with a coarse base (a chosen
+- [x] **Pilot world inputs:** `topography world input configs/diffusion/pilot-1.toml <dir>`; a 4,096 m world config with a coarse base (a chosen
   GLO-30 region at 32 m or a sculpted surface), a coarse class map and authored
   water.
 - [ ] **Pilot world generation:** 1 m MultiDiffusion over 4,096² (about 1,000 windows
   of 256² at stride 128), writing Float32 elevation and masks with provenance. Then
   a whole-world visual review.
-- [ ] **16-bit export:** 257² `shared_edge` tiles and quadtree LOD levels, per master
+- [x] **16-bit export:** `topography export heightmap <world-output> <dir>`; 257² `shared_edge` tiles and quadtree LOD levels, per master
   plan §5 and §10.
 
 ## Resource expectations
