@@ -71,16 +71,26 @@ permitted only for vegetation and produces an all-unknown crop mask. Assessed
 snow/ice with unknown crop cells blocks qualification; unknown vegetation remains
 optional and does not remove valid ground.
 
-`topography cover draft` produces these descriptors and source-grid masks from
-public evidence, and `topography cover merge` adds them to an existing profile;
-see the [cover acquisition workflow](../workflows/cover-acquisition.md).
+The descriptors are optional. When a profile (schema 1 or 2) has none, `stage`
+generates `game_cover_v1` masks on the crop grid, captures their `cover.json` as
+evidence `game-cover` and packages the tile as v2; see the
+[cover acquisition workflow](../workflows/cover-acquisition.md).
+
+Legacy tiles need no profile. When an accepted tile has a current v1 product
+from its current head, `automatic::upgrade` reuses that product's water,
+quality, repair and feature masks, adds game cover, reassesses the crop and
+appends a `game_cover_upgrade_v1` technical successor. The successor copies the
+head's vote, findings and confirmed permission, adds the new report and
+`cover.json` as evidence, and never creates permission. It then builds the v2
+product on the legacy grid. A head with a failed finding or unconfirmed
+permission is a technical exception. The v1 product stays on disk.
 
 The v2 package and quality input retain both masks plus per-layer status, note,
 date and pinned evidence. Snow/ice is excluded from the ground denominator and
 ground output, while the measured provider surface remains separate. Existing v1
-profiles, package bytes, products, qualifications and human votes remain valid
-legacy artifacts and are not cover-certified. Backfill appends an attributed
-technical successor to the existing human Yes and never clears a failed finding.
+package bytes, products, qualifications and human votes remain as legacy
+artifacts. Upgrades append an attributed technical successor to the existing
+human Yes and never clear a failed finding.
 
 ## Existing interfaces and integration
 
@@ -113,9 +123,9 @@ technical successor to the existing human Yes and never clears a failed finding.
   before technical publication and prepared registration.
 - `/api/tiles` adds `preparation: {state,message,manifest}`. States are checking,
   awaiting_acceptance, preparing, ready, assessment_pending, needs_attention and
-  not_selected. Legacy products retain their manifest link with
-  `assessment_pending`; configuring a v2 profile queues a cover backfill without
-  asking for another Yes. Only v2 products report Ready under the cover contract.
+  not_selected. Accepted legacy products are upgraded to v2 automatically without
+  another Yes; `assessment_pending` only remains for a v1 product that cannot be
+  upgraded. Only v2 products report Ready under the cover contract.
   The page refreshes statuses without changing the selected preview or retrying
   votes. A technical successor alone must not turn a deliberate vote into a stale
   user-decision conflict; actual competing human votes retain conflict protection.

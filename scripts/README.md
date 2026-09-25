@@ -54,11 +54,13 @@ These are CLI workflow checks; live provider availability and source fidelity
 require the separate [real-data workflow](../docs/workflows/dem-acquisition.md).
 
 `python3 scripts/check_cover_acquisition.py target/debug/topography` (run by
-`check.sh`) drafts cover masks against a loopback HTTPS server with synthetic
-WorldCover, GLIMS and Sentinel-2 fixtures. It checks all-absent, present and
-boundary bands, stale and reconstructed outlines, cloud gaps, missing dates,
-source failures, exact source-grid output and v2 preparation of a merged profile.
-It needs GDAL, curl and OpenSSL and contacts no external service.
+`check.sh`) exercises `game_cover_v1` against a loopback HTTPS server with
+synthetic WorldCover and GLIMS fixtures (`cover_fixtures.py`). It checks
+WorldCover and latest-outline glacier rules, crops outside WorldCover coverage,
+a profile without cover descriptors, the automatic v2 upgrade of a legacy tile
+(vote kept, no extra records on restart) and a source failure leaving the tile
+needing attention. It needs GDAL, curl and OpenSSL and contacts no external
+service. `check_automatic_preparation.py` uses the same fixtures.
 
 For an acquired source and one or more newly generated review crops:
 

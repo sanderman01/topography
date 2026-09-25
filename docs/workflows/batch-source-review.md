@@ -72,15 +72,17 @@ While the gallery service runs, one background worker checks pending tiles and
 prepares accepted tiles sequentially. **Yes saves immediately**. The gallery
 shows Checking, Awaiting acceptance, Preparing, Ready or Needs technical
 attention. No shows Not selected. Ready means verified native prepared terrain,
-not training admission. Existing prepared regions are recognized without profiles.
+not training admission. Existing prepared regions are recognized without profiles;
+accepted legacy (v1) products gain snow/ice and vegetation masks automatically
+(`game_cover_v1`, see [cover acquisition](cover-acquisition.md)) and become Ready.
 
 A Ready tile (v2 product) offers optional **Water**, **Snow/ice** and
 **Vegetation** overlays on the overhead view. Solid colour marks present cells,
 grey hatching marks unknown cells and clear cells are assessed absent. The page
 loads them lazily from `/api/overlay/N`, which verifies the product manifest and
 mask hashes before cropping the tile's native window. Overlays are read-only; they
-never vote, write the catalog or ask for mask authoring. Legacy v1 products show
-Surface assessment pending and no overlay controls.
+never vote, write the catalog or ask for mask authoring. Cover sources that
+cannot be reached leave the tile needing attention until the next service start.
 
 No additional vote is needed for an unchanged tile. Missing source assessments,
 unknown water, known defects and integrity failures remain technical exceptions;
