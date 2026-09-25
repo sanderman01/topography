@@ -1,7 +1,9 @@
 //! Immutable scoped pilot datasets with current prepared-source checks.
 
+mod diffusion;
 mod fitting;
 mod numeric;
+pub use diffusion::build_diffusion;
 pub use fitting::{build_fit, verify_fit};
 pub use numeric::evaluate;
 
