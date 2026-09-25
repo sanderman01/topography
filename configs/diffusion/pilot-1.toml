@@ -1,15 +1,10 @@
 # Diffusion pilot world input: GLO-30 base around Milford Sound (fjord), draft choice.
+# Optional [[regions]] (class_id, x_m, y_m, width_m, height_m; metres from the
+# north-west corner, 32 m aligned) override default_class. Use only classes with
+# accepted training tiles.
 schema_version = 1
 name = "diffusion-pilot-1"
 center_lon = 167.93
 center_lat = -44.64
 extent_m = 4096
 default_class = 3
-
-# Example authored class region, metres from the north-west corner.
-[[regions]]
-class_id = 6
-x_m = 2048
-y_m = 0
-width_m = 2048
-height_m = 1024
