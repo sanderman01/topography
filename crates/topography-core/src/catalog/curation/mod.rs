@@ -59,6 +59,14 @@ struct Finding {
     evidence_ids: Vec<String>,
 }
 
+/// Technical successors that preserve an accepted human vote.
+const AUTOMATION_KINDS: [&str; 3] = [
+    "supplier_qa_qualification_v1",
+    "supplier_qa_qualification_v2",
+    UPGRADE_KIND,
+];
+const UPGRADE_KIND: &str = "game_cover_upgrade_v1";
+
 const FINDINGS: [&str; 6] = [
     "coordinates",
     "ground_support",
@@ -151,6 +159,7 @@ struct Record {
 struct Automation {
     kind: String,
     inherited_human_record_sha256: String,
+    /// Source profile, or for `game_cover_upgrade_v1` the legacy prepared manifest.
     profile_sha256: String,
     quality_report_sha256: String,
 }
@@ -812,6 +821,183 @@ pub(crate) fn qualify_automatic(
     store.append(&record, &objects, &raw_path, &review_path)
 }
 
+/// The record a current game cover upgrade replaced, if the head is one.
+pub(crate) fn upgrade_predecessor(runtime: &Path, review: &str) -> Result<Option<String>> {
+    let store = journal::Store::locate(runtime)?;
+    if !store.db.exists() {
+        return Ok(None);
+    }
+    let history = store.history(review)?;
+    let Some((_, bytes)) = history.last() else {
+        return Ok(None);
+    };
+    let record: Record = serde_json::from_slice(bytes)?;
+    Ok(record
+        .automation
+        .filter(|a| a.kind == UPGRADE_KIND)
+        .and(record.previous_record_sha256))
+}
+
+/// Append the technical successor of a legacy accepted record: its claims, vote and
+/// permission verbatim, plus game cover and the new v2 assessment as evidence.
+pub(crate) fn qualify_cover_upgrade(
+    runtime: &Path,
+    expected: &str,
+    bundle: &bundle::Bundle,
+    report_bytes: &[u8],
+    report: &serde_json::Value,
+    cover_bytes: &[u8],
+    legacy_product_sha256: &str,
+) -> Result<String> {
+    let store = journal::Store::locate(runtime)?;
+    let review = report["review_sha256"].as_str().ok_or_else(|| {
+        AcquisitionError::Invalid("quality report review identity missing".into())
+    })?;
+    let history = store.history(review)?;
+    let (head, bytes) = history
+        .last()
+        .ok_or_else(|| AcquisitionError::Invalid("crop has no curation records".into()))?;
+    let current: Record = serde_json::from_slice(bytes)?;
+    let report_sha = digest(report_bytes);
+    if let Some(automation) = &current.automation
+        && automation.kind == UPGRADE_KIND
+        && automation.quality_report_sha256 == report_sha
+        && current.previous_record_sha256.as_deref() == Some(expected)
+    {
+        return Ok(head.clone());
+    }
+    ensure(
+        head == expected,
+        "stale decision; the legacy product no longer matches the current choice",
+    )?;
+    ensure(
+        current.claims.actor.kind == ActorKind::Human
+            && current.claims.decision == Decision::Accept,
+        "cover upgrade requires a current human Yes",
+    )?;
+    ensure(
+        matches!(
+            current.claims.license.training_permission,
+            TrainingPermission::Confirmed
+        ),
+        "the accepted record does not confirm training permission",
+    )?;
+    let inherited = match &current.automation {
+        Some(a) => a.inherited_human_record_sha256.clone(),
+        None => head.clone(),
+    };
+    let mut claims = current.claims;
+    let report_id = format!("game-cover-quality-{}", &report_sha[..16]);
+    let cover_sha = digest(cover_bytes);
+    let cover_id = format!("game-cover-{}", &cover_sha[..16]);
+    for name in FINDINGS {
+        let finding = claims
+            .findings
+            .get_mut(name)
+            .expect("validated record finding");
+        ensure(
+            finding.state == FindingState::Pass,
+            format!("accepted record finding {name} does not pass"),
+        )?;
+        if matches!(
+            name,
+            "ground_support"
+                | "artifacts_and_repairs"
+                | "water_classification"
+                | "unsupported_feature_gaps"
+        ) {
+            finding
+                .evidence_ids
+                .extend([report_id.clone(), cover_id.clone()]);
+            finding.note.push_str(
+                " Game cover v1 upgrade (technical, no new vote): unchanged masks reassessed with snow/ice excluded from ground; vegetation is informational.",
+            );
+        }
+    }
+    let counts = &report["counts"];
+    let coverage = claims
+        .coverage
+        .as_mut()
+        .ok_or_else(|| AcquisitionError::Invalid("accepted record lacks coverage".into()))?;
+    coverage.terrestrial_cells = counts["terrestrial_cells"].as_u64().ok_or_else(|| {
+        AcquisitionError::Invalid("quality report terrestrial count missing".into())
+    })?;
+    coverage.valid_terrestrial_cells = counts["valid_terrestrial_cells"]
+        .as_u64()
+        .ok_or_else(|| AcquisitionError::Invalid("quality report valid count missing".into()))?;
+    coverage.evidence_ids.push(report_id.clone());
+    coverage
+        .note
+        .push_str(" Game cover v1: ground excludes water and snow/ice.");
+    let mut evidence = current.evidence;
+    let mut objects = BTreeMap::new();
+    for item in &evidence {
+        objects.insert(item.sha256.clone(), store.object(item.sha256.as_str())?);
+    }
+    for (id, sha, body, description) in [
+        (
+            report_id,
+            report_sha.clone(),
+            report_bytes,
+            "Native v2 quality assessment of the legacy masks with game cover",
+        ),
+        (
+            cover_id,
+            cover_sha,
+            cover_bytes,
+            "game_cover_v1 snow/ice and vegetation sources, licences, rules and counts",
+        ),
+    ] {
+        objects.insert(sha.clone(), body.to_vec());
+        evidence.push(Evidence {
+            id,
+            description: description.into(),
+            source_url: None,
+            sha256: sha,
+        });
+    }
+    for sha in [
+        &current.target.raw_receipt_sha256,
+        &current.target.review_sha256,
+        &current.target.legend_sha256,
+    ] {
+        objects.insert(sha.clone(), store.object(sha)?);
+    }
+    let [_, _, w, h] = current.window_cells;
+    let legend_temp = io_context("stage captured legend", tempfile::tempdir())?;
+    let legend_path = legend_temp.path().join("legend.toml");
+    write_new(&legend_path, &objects[&current.target.legend_sha256])?;
+    validate_claims(
+        &claims,
+        &evidence,
+        &inspect_legend(&legend_path)?.classes,
+        u64::from(w) * u64::from(h),
+    )?;
+    let record = Record {
+        schema_version: 1,
+        kind: "crop_curation".into(),
+        target: current.target,
+        previous_record_sha256: Some(head.clone()),
+        asset_sha256: current.asset_sha256,
+        window_cells: current.window_cells,
+        legend_version: current.legend_version,
+        preparation_blockers: blockers(&claims, bundle),
+        claims,
+        evidence,
+        admission: "not admitted".into(),
+        topography_version: env!("CARGO_PKG_VERSION").into(),
+        automation: Some(Automation {
+            kind: UPGRADE_KIND.into(),
+            inherited_human_record_sha256: inherited,
+            profile_sha256: legacy_product_sha256.into(),
+            quality_report_sha256: report_sha,
+        }),
+    };
+    let raw_path = store.record_locator(head, true)?;
+    let review_path = store.record_locator(head, false)?;
+    store.append(&record, &objects, &raw_path, &review_path)
+}
+
 pub(crate) fn prepared_for_review(runtime: &Path, review: &str) -> Result<Vec<PathBuf>> {
     let store = journal::Store::locate(runtime)?;
     if !store.db.exists() {
@@ -879,10 +1065,8 @@ pub(crate) fn select(
         (Some((_, bytes)), Some(expected)) => {
             let record: Record = serde_json::from_slice(bytes)?;
             record.automation.as_ref().is_some_and(|a| {
-                matches!(
-                    a.kind.as_str(),
-                    "supplier_qa_qualification_v1" | "supplier_qa_qualification_v2"
-                ) && a.inherited_human_record_sha256 == expected
+                AUTOMATION_KINDS.contains(&a.kind.as_str())
+                    && a.inherited_human_record_sha256 == expected
             })
         }
         _ => false,

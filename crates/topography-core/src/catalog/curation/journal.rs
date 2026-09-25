@@ -363,10 +363,8 @@ impl Store {
         )?;
         if let Some(automation) = &record.automation {
             ensure(
-                matches!(
-                    automation.kind.as_str(),
-                    "supplier_qa_qualification_v1" | "supplier_qa_qualification_v2"
-                ) && valid_digest(&automation.inherited_human_record_sha256)
+                super::AUTOMATION_KINDS.contains(&automation.kind.as_str())
+                    && valid_digest(&automation.inherited_human_record_sha256)
                     && valid_digest(&automation.profile_sha256)
                     && valid_digest(&automation.quality_report_sha256)
                     && record.previous_record_sha256.is_some(),
@@ -409,13 +407,11 @@ impl Store {
             )?;
             ensure(
                 previous_id == &automation.inherited_human_record_sha256
-                    || (automation.kind == "supplier_qa_qualification_v2"
+                    || (automation.kind != "supplier_qa_qualification_v1"
                         && previous.automation.as_ref().is_some_and(|value| {
-                            matches!(
-                                value.kind.as_str(),
-                                "supplier_qa_qualification_v1" | "supplier_qa_qualification_v2"
-                            ) && value.inherited_human_record_sha256
-                                == automation.inherited_human_record_sha256
+                            super::AUTOMATION_KINDS.contains(&value.kind.as_str())
+                                && value.inherited_human_record_sha256
+                                    == automation.inherited_human_record_sha256
                         })),
                 "automatic qualification predecessor has different human authority",
             )?;

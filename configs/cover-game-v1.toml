@@ -1,0 +1,23 @@
+# Game cover policy for automatic snow/ice and vegetation masks (game_cover_v1).
+# Judgment layers for a game, not measurements. Everything not present is absent.
+# Built into the binary; TOPOGRAPHY_COVER_POLICY may point at another copy.
+schema_version = 1
+policy = "game_cover_v1"
+
+[worldcover]
+# Public COG, read by HTTPS range requests. A missing tile means outside coverage.
+url_template = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif"
+observed_at = "2021"
+snow_ice_present = [70]
+vegetation_present = [10, 20, 30, 40, 90, 95, 100]
+license = "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)"
+citation = "ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium. Zanaga, D. et al. (2022) ESA WorldCover 10 m 2021 v200, doi:10.5281/zenodo.7254221"
+
+[glims]
+endpoint = "https://www.glims.org/geoserver/ows"
+type_name = "GLIMS:GLIMS_Glacier_Outlines"
+line_types = ["glac_bound"]
+# Older outlines are historical reconstructions (e.g. Little Ice Age), not current ice.
+ignore_before_year = 1900
+license = "GLIMS data are freely available; citation of the GLIMS Glacier Database is required"
+citation = "GLIMS Consortium (2005, updated 2018). GLIMS Glacier Database, Version 1. Boulder, Colorado USA. NSIDC: National Snow and Ice Data Center. doi:10.7265/N5V98602 (NSIDC-0272)"

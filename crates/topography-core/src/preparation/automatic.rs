@@ -101,8 +101,11 @@ struct ProfileV2 {
     permission_evidence_ids: Vec<String>,
     findings: BTreeMap<String, Finding>,
     water: Water,
-    snow_ice: Cover,
-    vegetation: Cover,
+    // Optional: without them, preparation generates game cover.
+    #[serde(default)]
+    snow_ice: Option<Cover>,
+    #[serde(default)]
+    vegetation: Option<Cover>,
     #[serde(default)]
     blockers: Vec<String>,
 }
@@ -190,35 +193,6 @@ fn verified_profile(path: &Path) -> Result<(ProfileData, Vec<u8>)> {
     Ok((profile, bytes))
 }
 
-/// Check a profile's contract and pinned files without requiring it to be blocker-free.
-pub(crate) fn check_profile(path: &Path) -> Result<u32> {
-    let profile = decode_profile(&read_small(path)?)?;
-    validate_profile_contract(&profile)?;
-    let base = path.parent().unwrap_or(Path::new("."));
-    for item in &profile.evidence {
-        ensure(
-            hash_file(&base.join(&item.path))?.0 == item.sha256,
-            "profile evidence digest mismatch",
-        )?;
-    }
-    let mut masks = Vec::new();
-    if let Water::Mask { path, sha256 } = &profile.water {
-        masks.push((path, sha256));
-    }
-    for cover in profile.covers.iter().flat_map(BTreeMap::values) {
-        if let Cover::Mask { path, sha256, .. } = cover {
-            masks.push((path, sha256));
-        }
-    }
-    for (path, sha256) in masks {
-        ensure(
-            hash_file(&base.join(path))?.0 == *sha256,
-            "profile mask digest mismatch",
-        )?;
-    }
-    Ok(profile.schema_version)
-}
-
 fn decode_profile(bytes: &[u8]) -> Result<ProfileData> {
     let value: Value = serde_json::from_slice(bytes)?;
     let profile = match value["schema_version"].as_u64() {
@@ -239,6 +213,18 @@ fn decode_profile(bytes: &[u8]) -> Result<ProfileData> {
         }
         Some(2) => {
             let value: ProfileV2 = serde_json::from_value(value)?;
+            let covers = match (value.snow_ice, value.vegetation) {
+                (Some(snow_ice), Some(vegetation)) => Some(BTreeMap::from([
+                    ("snow-ice".into(), snow_ice),
+                    ("vegetation".into(), vegetation),
+                ])),
+                (None, None) => None,
+                _ => {
+                    return Err(AcquisitionError::Invalid(
+                        "profile must describe both snow_ice and vegetation or neither".into(),
+                    ));
+                }
+            };
             ProfileData {
                 schema_version: value.schema_version,
                 policy: value.policy,
@@ -248,10 +234,7 @@ fn decode_profile(bytes: &[u8]) -> Result<ProfileData> {
                 permission_evidence_ids: value.permission_evidence_ids,
                 findings: value.findings,
                 water: value.water,
-                covers: Some(BTreeMap::from([
-                    ("snow-ice".into(), value.snow_ice),
-                    ("vegetation".into(), value.vegetation),
-                ])),
+                covers,
                 blockers: value.blockers,
             }
         }
@@ -329,7 +312,7 @@ fn validate_profile_contract(profile: &ProfileData) -> Result<()> {
         )?;
     }
     match (&profile.covers, profile.schema_version) {
-        (None, 1) => {}
+        (None, 1 | 2) => {}
         (Some(covers), 2)
             if covers.len() == 2
                 && covers.contains_key("snow-ice")
@@ -461,8 +444,35 @@ fn validate_profile_scope(
 }
 
 fn vrt_mask(path: &Path, width: u32, height: u32, value: u8) -> Result<()> {
+    mask_from_values(
+        path,
+        width,
+        height,
+        &vec![value; width as usize * height as usize],
+    )
+}
+
+/// Write a complete Byte mask with the review crop's georeference.
+pub(crate) fn write_crop_mask(path: &Path, reference: &Value, values: &[u8]) -> Result<()> {
+    let [width, height]: [u32; 2] = serde_json::from_value(reference["size"].clone())?;
+    ensure(
+        values.len() == width as usize * height as usize,
+        "mask size differs from the review crop",
+    )?;
+    mask_from_values(path, width, height, values)?;
+    add_georeference(path, reference)?;
+    for extension in ["bin", "vrt"] {
+        io_context(
+            "remove transient mask source",
+            fs::remove_file(path.with_extension(extension)),
+        )?;
+    }
+    Ok(())
+}
+
+fn mask_from_values(path: &Path, width: u32, height: u32, values: &[u8]) -> Result<()> {
     let bin = path.with_extension("bin");
-    write_new(&bin, &vec![value; width as usize * height as usize])?;
+    write_new(&bin, values)?;
     let name = bin
         .file_name()
         .and_then(|v| v.to_str())
@@ -646,6 +656,62 @@ fn crop_cover_mask(
     }
 }
 
+const GAME_COVER_ID: &str = "game-cover";
+
+/// Generate game cover masks and evidence into a package stage.
+fn game_cover(
+    bundle: &bundle::Bundle,
+    review: &Path,
+    stage: &Path,
+    evidence: &mut Vec<Evidence>,
+    masks: &mut BTreeMap<String, FileRef>,
+) -> Result<BTreeMap<String, PackageCover>> {
+    let work = stage.join("game-cover");
+    io_context("create game cover stage", fs::create_dir(&work))?;
+    let generated = crate::acquisition::cover::generate(bundle, review, &work)?;
+    let path = PathBuf::from(format!("evidence-{GAME_COVER_ID}"));
+    io_context(
+        "stage game cover evidence",
+        fs::rename(&generated.manifest, stage.join(&path)),
+    )?;
+    evidence.push(Evidence {
+        id: GAME_COVER_ID.into(),
+        sha256: hash_file(&stage.join(&path))?.0,
+        path,
+        description: format!(
+            "{} snow/ice and vegetation sources, licences, rules and counts",
+            crate::acquisition::cover::POLICY
+        ),
+        source_url: None,
+    });
+    let mut metadata = BTreeMap::new();
+    for name in ["snow-ice", "vegetation"] {
+        let file = PathBuf::from(format!("{name}.tif"));
+        io_context(
+            "stage game cover mask",
+            fs::rename(work.join(&file), stage.join(&file)),
+        )?;
+        masks.insert(
+            name.into(),
+            FileRef {
+                sha256: hash_file(&stage.join(&file))?.0,
+                path: file,
+            },
+        );
+        metadata.insert(
+            name.into(),
+            PackageCover {
+                status: "assessed".into(),
+                note: generated.note.clone(),
+                observed_at: Some(generated.observed_at.clone()),
+                evidence_ids: vec![GAME_COVER_ID.into()],
+            },
+        );
+    }
+    io_context("remove game cover stage", fs::remove_dir(&work))?;
+    Ok(metadata)
+}
+
 /// Validate a source assessment and publish immutable preflight masks. No curation is written.
 pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> Result<PathBuf> {
     let bundle = bundle::verify(raw, review)?;
@@ -663,6 +729,7 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
         package_permission_confirmed(&bundle.source.license)?,
         "source does not declare confirmed training permission",
     )?;
+    preflight_source(&bundle)?;
     io_context("create automatic package root", fs::create_dir_all(output))?;
     let temp = io_context("stage automatic package", tempfile::tempdir_in(output))?;
     let mut evidence = profile.evidence.clone();
@@ -754,14 +821,15 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
             );
             metadata.insert(name.clone(), cover_metadata(cover));
         }
-        Some(metadata)
+        metadata
     } else {
-        None
+        game_cover(&bundle, review, temp.path(), &mut evidence, &mut masks)?
     };
-    preflight_source(&bundle)?;
+    let surface_cover = Some(surface_cover);
+    let schema_version = 2;
     let quality_input = temp.path().join("preflight-input.json");
     let mut quality_value = json!({
-        "schema_version":profile.schema_version,
+        "schema_version":schema_version,
         "raw_receipt":{"path":fs::canonicalize(raw).map_err(|e| AcquisitionError::Io { context:"resolve raw receipt".into(), source:e })?,"sha256":digest(&read_small(raw)?)},
         "review":{"path":fs::canonicalize(review).map_err(|e| AcquisitionError::Io { context:"resolve review".into(), source:e })?,"sha256":digest(&read_small(review)?)},
         "masks":quality_masks(&masks, surface_cover.as_ref(), temp.path())
@@ -798,7 +866,7 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
     write_new(&temp.path().join("profile.json"), &profile_bytes)?;
     let transform: [f64; 6] = serde_json::from_value(bundle.inspection["geoTransform"].clone())?;
     let package = Package {
-        schema_version: profile.schema_version,
+        schema_version,
         kind: "automatic_preparation_package".into(),
         policy: profile.policy,
         raw_receipt: FileRef {
@@ -846,8 +914,10 @@ fn verify_package(path: &Path) -> Result<Package> {
     ensure(
         matches!(package.schema_version, 1 | 2)
             && package.kind == "automatic_preparation_package"
-            && ((package.schema_version == 1 && package.policy == "supplier_qa_pilot_v1")
-                || (package.schema_version == 2 && package.policy == "supplier_qa_cover_v1"))
+            && matches!(
+                package.policy.as_str(),
+                "supplier_qa_pilot_v1" | "supplier_qa_cover_v1"
+            )
             && package.admission == "not admitted",
         "unsupported automatic preparation package",
     )?;
@@ -888,8 +958,10 @@ fn verify_package(path: &Path) -> Result<Package> {
         "size":[verified.manifest.window_cells[2],verified.manifest.window_cells[3]],
         "spacing_m":[transform[1],-transform[5]],
     });
+    // Profiles without cover descriptors are packaged with generated game cover.
+    let game = profile.covers.is_none() && package.schema_version == 2;
     ensure(
-        profile.schema_version == package.schema_version
+        (profile.schema_version == package.schema_version || game)
             && profile.blockers.is_empty()
             && package.policy == profile.policy
             && package.source_sha256 == profile.source_sha256
@@ -909,7 +981,12 @@ fn verify_package(path: &Path) -> Result<Package> {
         "source does not declare confirmed training permission",
     )?;
     ensure(
-        package.evidence.len() == profile.evidence.len()
+        package.evidence.len() == profile.evidence.len() + usize::from(game)
+            && (!game
+                || package
+                    .evidence
+                    .last()
+                    .is_some_and(|item| item.id == GAME_COVER_ID && item.source_url.is_none()))
             && package
                 .evidence
                 .iter()
@@ -923,16 +1000,33 @@ fn verify_package(path: &Path) -> Result<Package> {
                 }),
         "automatic package evidence differs from its captured profile",
     )?;
-    let expected_cover = profile.covers.as_ref().map(|covers| {
-        covers
-            .iter()
-            .map(|(name, cover)| (name.clone(), cover_metadata(cover)))
-            .collect::<BTreeMap<_, _>>()
-    });
-    ensure(
-        serde_json::to_value(&package.surface_cover)? == serde_json::to_value(&expected_cover)?,
-        "automatic package surface-cover metadata differs from its captured profile",
-    )?;
+    if game {
+        let cover: Value = read_json(&base.join(format!("evidence-{GAME_COVER_ID}")))?;
+        ensure(
+            cover["kind"] == "game_cover"
+                && cover["review_sha256"] == package.review.sha256.as_str()
+                && package.surface_cover.as_ref().is_some_and(|covers| {
+                    covers.len() == 2
+                        && ["snow-ice", "vegetation"].iter().all(|name| {
+                            covers.get(*name).is_some_and(|c| {
+                                c.status == "assessed" && c.evidence_ids == [GAME_COVER_ID]
+                            })
+                        })
+                }),
+            "automatic package game cover differs from its captured evidence",
+        )?;
+    } else {
+        let expected_cover = profile.covers.as_ref().map(|covers| {
+            covers
+                .iter()
+                .map(|(name, cover)| (name.clone(), cover_metadata(cover)))
+                .collect::<BTreeMap<_, _>>()
+        });
+        ensure(
+            serde_json::to_value(&package.surface_cover)? == serde_json::to_value(&expected_cover)?,
+            "automatic package surface-cover metadata differs from its captured profile",
+        )?;
+    }
     ensure(
         package.masks.len() == if package.schema_version == 1 { 4 } else { 6 },
         "automatic package masks incomplete",
@@ -1122,4 +1216,150 @@ pub fn existing(runtime: &Path, review: &str) -> Result<Option<PathBuf>> {
         }
     }
     Ok(None)
+}
+
+/// Find a legacy (v1) product of this review whose parent record is the current head,
+/// or the head an interrupted game cover upgrade replaced. Returns the product and that head.
+pub fn legacy(runtime: &Path, review: &str) -> Result<Option<(PathBuf, String)>> {
+    ensure(valid_digest(review), "invalid review digest")?;
+    let Some(head) = curation::current_head(runtime, review)? else {
+        return Ok(None);
+    };
+    let mut heads = vec![head.clone()];
+    heads.extend(curation::upgrade_predecessor(runtime, review)?);
+    for path in curation::prepared_for_review(runtime, review)? {
+        let product: Value = read_json(&path)?;
+        let parent = product["parents"]
+            .as_array()
+            .and_then(|parents| parents.iter().find(|p| p["review_sha256"] == review));
+        let Some(record) = parent.and_then(|p| p["curation_record_sha256"].as_str()) else {
+            continue;
+        };
+        if product["schema_version"] == 1 && heads.iter().any(|h| h == record) {
+            preparation::verify_files(&path)?;
+            return Ok(Some((path, record.into())));
+        }
+    }
+    Ok(None)
+}
+
+/// Build the v2 successor of a legacy single-crop product from its masks plus game cover.
+/// The appended technical record keeps the accepted human vote and permission verbatim.
+pub fn upgrade(
+    runtime: &Path,
+    raw: &Path,
+    review: &Path,
+    legacy: &Path,
+    legacy_head: &str,
+    root: &Path,
+) -> Result<PathBuf> {
+    let bundle = bundle::verify(raw, review)?;
+    let review_sha = digest(&read_small(review)?);
+    let product: Value = read_json(legacy)?;
+    let [_, _, width, height] = bundle.manifest.window_cells;
+    let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
+    ensure(
+        product["schema_version"] == 1
+            && parents.len() == 1
+            && parents[0]["review_sha256"] == review_sha.as_str()
+            && parents[0]["curation_record_sha256"] == legacy_head
+            && parents[0]["destination_window"] == json!([0, 0, width, height])
+            && product["grid"]["size"] == json!([width, height]),
+        "legacy product is not the single-crop v1 product of this review",
+    )?;
+    let base = legacy.parent().unwrap_or(Path::new("."));
+    let cells = width as usize * height as usize;
+    io_context("create upgrade root", fs::create_dir_all(root))?;
+    let temp = io_context("stage cover upgrade", tempfile::tempdir_in(root))?;
+    let scratch = io_context("stage legacy masks", tempfile::tempdir())?;
+    let mut masks = serde_json::Map::new();
+    for name in ["water", "quality", "repairs", "features"] {
+        let mut values = crate::review::band(
+            &base.join(format!("{name}.tif")),
+            scratch.path(),
+            name,
+            cells,
+            false,
+        )?;
+        if name == "water" {
+            // Prepared water is 255 water / 0 terrestrial; quality masks use 2 / 1.
+            values
+                .iter_mut()
+                .for_each(|v| *v = if *v == 255 { 2 } else { 1 });
+        }
+        let file = temp.path().join(format!("{name}.tif"));
+        write_crop_mask(&file, &bundle.inspection, &values)?;
+        masks.insert(
+            name.into(),
+            json!({"path":format!("{name}.tif"),"sha256":hash_file(&file)?.0}),
+        );
+    }
+    let cover = crate::acquisition::cover::generate(&bundle, review, temp.path())?;
+    for name in ["snow-ice", "vegetation"] {
+        let file = temp.path().join(format!("{name}.tif"));
+        masks.insert(
+            name.into(),
+            json!({"path":format!("{name}.tif"),"sha256":hash_file(&file)?.0}),
+        );
+    }
+    let evidence = json!([{"path":"cover.json","sha256":hash_file(&cover.manifest)?.0}]);
+    let described = json!({"status":"assessed","note":cover.note,"observed_at":cover.observed_at,"evidence":evidence});
+    let canonical = |path: &Path| {
+        fs::canonicalize(path).map_err(|e| AcquisitionError::Io {
+            context: "resolve upgrade parent".into(),
+            source: e,
+        })
+    };
+    let input = serde_json::to_vec_pretty(&json!({
+        "schema_version": 2,
+        "raw_receipt": {"path": canonical(raw)?, "sha256": digest(&read_small(raw)?)},
+        "review": {"path": canonical(review)?, "sha256": review_sha},
+        "masks": masks,
+        "surface_cover": {"snow-ice": described, "vegetation": described},
+    }))?;
+    write_new(&temp.path().join("quality-input.json"), &input)?;
+    let dir = root.join(digest(&input));
+    if !dir.exists() {
+        io_context("publish cover upgrade", fs::rename(temp.path(), &dir))?;
+    }
+    let input_path = dir.join("quality-input.json");
+    ensure(
+        read_small(&input_path)? == input,
+        "cover upgrade input changed",
+    )?;
+    let report_path = dir.join("quality-report.json");
+    if !report_path.exists() {
+        preparation::assess(&input_path, &report_path)?;
+    }
+    let report_bytes = read_small(&report_path)?;
+    let report: Value = serde_json::from_slice(&report_bytes)?;
+    ensure(
+        report["blockers"].as_array().is_some_and(Vec::is_empty),
+        format!("cover upgrade blocked: {}", report["blockers"]),
+    )?;
+    let old: Value = read_json(&base.join("quality-0.json"))?;
+    ensure(
+        report["counts"]["water_cells"] == old["counts"]["water_cells"]
+            && report["counts"]["repaired_cells"] == old["counts"]["repaired_cells"],
+        "legacy masks were not reproduced",
+    )?;
+    let head = curation::qualify_cover_upgrade(
+        runtime,
+        legacy_head,
+        &bundle,
+        &report_bytes,
+        &report,
+        &read_small(&dir.join("cover.json"))?,
+        &digest(&read_small(legacy)?),
+    )?;
+    let request = dir.join(format!("request-{head}.json"));
+    if !request.exists() {
+        write_new(
+            &request,
+            &serde_json::to_vec_pretty(&json!({"schema_version":2,
+                "inputs":[{"quality_path":input_path,"curation_record_sha256":head}],
+                "grid":product["grid"],"masked_fill_m":product["masked_fill_m"]}))?,
+        )?;
+    }
+    region::build(runtime, &request)
 }

@@ -67,6 +67,21 @@ pub(super) fn query(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// HEAD an HTTPS object with retries: missing (403/404) is `false`, other failures are errors.
+pub(super) fn exists(url: &str) -> Result<bool> {
+    validate_url(url)?;
+    match run(curl().args(["--head", "--retry", "3", "--url", url])) {
+        Ok(_) => Ok(true),
+        Err(AcquisitionError::Transfer { message, .. })
+            if message.contains("returned error: 404")
+                || message.contains("returned error: 403") =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn validate_url(url: &str) -> Result<()> {
     let authority = url
         .strip_prefix("https://")

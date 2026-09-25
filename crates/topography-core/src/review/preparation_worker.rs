@@ -284,23 +284,32 @@ fn work(
                 if accepted {
                     if let Some(manifest) = automatic::existing(runtime, &tile.review_sha256)? {
                         let status = Status::ready(head.clone(), &manifest)?;
-                        let has_cover_profile = tile
-                            .preparation_profile
-                            .as_ref()
-                            .map(|profile| -> Result<bool> {
-                                let bytes = read_small(&profile.path)?;
-                                ensure(
-                                    digest(&bytes) == profile.sha256,
-                                    "Source assessment changed; publish an updated gallery.",
-                                )?;
-                                let body: Value = serde_json::from_slice(&bytes)?;
-                                Ok(body["schema_version"] == 2)
-                            })
-                            .transpose()?
-                            .unwrap_or(false);
-                        if status.value["state"] == "ready" || !has_cover_profile {
+                        if status.value["state"] == "ready" {
                             return Ok(status);
                         }
+                    }
+                    // Legacy products gain game cover without a profile or a new vote.
+                    if let Some((legacy, legacy_head)) =
+                        automatic::legacy(runtime, &tile.review_sha256)?
+                    {
+                        let manifest = automatic::upgrade(
+                            runtime,
+                            &tile.raw,
+                            &tile.review,
+                            &legacy,
+                            &legacy_head,
+                            &root.join("cover-upgrade"),
+                        )?;
+                        let latest =
+                            curation::selection(runtime, &tile.review_sha256, &snapshots[index])?;
+                        ensure(
+                            latest["decision"] == "accept",
+                            "Selection changed during preparation.",
+                        )?;
+                        return Status::ready(
+                            latest["head"].as_str().map(str::to_owned),
+                            &manifest,
+                        );
                     }
                 }
                 let profile = tile.preparation_profile.as_ref().ok_or_else(|| {
