@@ -1,0 +1,29 @@
+docs/workflows/batch-source-review.md
+  s_f6c04b9d7eeb89::t_6e58700adbe26f 76-83
+docs/design/automatic-preparation-v1.md
+  s_f6c04b9d7eeb89::t_6e58700adbe26f 75-77,79-101
+configs/README.md
+  s_f6c04b9d7eeb89::t_6e58700adbe26f 15
+docs/workflows/cover-acquisition.md
+  s_f6c04b9d7eeb89::t_98d198c63cfb7c 3-4,22-30,38
+  s_f6c04b9d7eeb89::t_6e58700adbe26f 59-62
+  s_f6c04b9d7eeb89::t_7f5895a2f591b8 39-40,44-45,47-49,53-55
+docs/plans/terrain-design-master-plan.md
+  s_f6c04b9d7eeb89::t_6e58700adbe26f 153,162-166,171-172,188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "836f5afccd93f6bff7099ec36166738d1089aa41",
+  "prompts": {},
+  "sessions": {
+    "s_f6c04b9d7eeb89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bae888e-8bf2-4368-b4b6-87b6e40c4da7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
