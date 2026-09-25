@@ -24,17 +24,14 @@ Updated 2026-09-25. Follow the [master plan](plans/terrain-design-master-plan.md
 - **Snow/ice and vegetation masks (v2 contracts):** implemented and verified on
   synthetic cases. Unknown snow/ice blocks qualification; vegetation is optional.
   Legacy products show "Surface assessment pending".
-- **Cover backfill (2026-09-25):** [report](reports/surface-cover-backfill-v1.md).
-  `cover draft/merge` fetches WorldCover, GLIMS and Sentinel-2 evidence; the
-  gallery shows cover overlays. 15 tiles are v2 Ready (Río Abajo, dunes,
-  Grand Canyon, Badlands, Banks, one gorge); dunes striping qualified as a
-  sub-accuracy supplier artifact. Gallery v13: 33 Yes, 2 No; 45 prepared products.
+- **Game cover (2026-09-25):** `game_cover_v1` builds snow/ice (WorldCover 70 +
+  latest GLIMS outlines) and vegetation masks automatically. The gallery worker
+  upgrades legacy tiles without scripts or votes. Gallery v14: **32 of 33
+  accepted tiles Ready**; St. Helens crater rim waits on a source-metadata successor.
 
 ## Next
 
-1. Decide how to fill Sentinel-2 seasonal-snow gaps (15 tiles: Puerto Rico,
-   Milford, Zion) and whether tiny unknown snow/ice fractions may pass
-   (St. Helens flanks). The crater stays blocked by unresolved glacier extent.
+1. St. Helens crater rim: re-crop from the complete source receipt and vote Yes once.
 2. Broaden terrain families (six of about nine) with reusable source profiles.
 3. Later: label editing, cross-survey alignment, a 4 km pilot world, full extent,
    editing/rebuild and export.
