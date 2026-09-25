@@ -302,9 +302,10 @@ fn validate_claims(
         claims.decision != Decision::Accept || claims.primary_class_id.is_some(),
         "accept requires an explicit primary class ID",
     )?;
+    // Drafts take at most 16; technical successors append their evidence.
     ensure(
-        evidence.len() <= 16,
-        "at most 16 evidence documents are supported",
+        evidence.len() <= 64,
+        "at most 64 evidence documents are supported",
     )?;
     let mut ids = BTreeSet::new();
     for e in evidence {
