@@ -14,6 +14,7 @@ import tempfile
 import time
 
 from check_acquisition import FIXTURES, ROOT, run, runtime_file, sha, values
+import cover_fixtures
 
 FINDINGS = ["coordinates", "ground_support", "artifacts_and_repairs", "feature_fidelity",
             "water_classification", "unsupported_feature_gaps"]
@@ -144,7 +145,7 @@ def fixture(cli, directory):
     return runtime, raw, receipt, profile, evidence, gallery_input_path, gallery_input, samples
 
 
-def check(cli, directory):
+def check(cli, directory, cover_env):
     runtime, raw, receipt, profile, evidence, gallery_input_path, gallery_input, samples = fixture(cli, directory)
     profile_bytes = profile.read_bytes()
     profile.write_bytes(profile_bytes + b"\n")
@@ -224,7 +225,7 @@ def check(cli, directory):
     published_profile = json.loads(manifest.read_text())["tiles"][0]["preparation_profile"]
     assert published_profile == {"path": str(profile), "sha256": sha(profile)}
 
-    process, authority, headers = start_server(cli, runtime, manifest)
+    process, authority, headers = start_server(cli, runtime, manifest, env=cover_env)
     ready_manifest = None
     human_head = None
     try:
@@ -238,20 +239,21 @@ def check(cli, directory):
             assert attention["preparation"]["manifest"] is None
         failed = json.loads(run(cli, "curate", "status", runtime, tiles(authority)[8]["review_sha256"]))
         assert failed["claims"]["findings"]["artifacts_and_repairs"]["state"] == "fail"
-        assert failed["automation"]["kind"] == "supplier_qa_qualification_v1"
+        assert failed["automation"]["kind"] == "supplier_qa_qualification_v2"
         for index, permission in [(9, "restricted"), (10, "prohibited")]:
             status = json.loads(run(cli, "curate", "status", runtime, tiles(authority)[index]["review_sha256"]))
             assert status["claims"]["license"]["training_permission"] == permission
-            assert status["automation"]["kind"] == "supplier_qa_qualification_v1"
+            assert status["automation"]["kind"] == "supplier_qa_qualification_v2"
 
         saved = vote(authority, headers, gallery_sha256, 0, valid, "accept")
         assert saved["decision"] == "accept"
         human_head = saved["head"]
-        ready = eventually(authority, 0, {"assessment_pending"})
+        ready = eventually(authority, 0, {"ready"})
         assert ready["decision"] == "accept" and ready["preparation"]["manifest"]
         ready_manifest = Path(ready["preparation"]["manifest"])
         product = json.loads(ready_manifest.read_text())
-        assert product["review_state"] == "unreviewed"
+        assert product["review_state"] == "unreviewed" and product["schema_version"] == 2
+        assert values(ready_manifest.parent / "vegetation.tif") == [2] * 8
         first_crop = [samples[index] for index in [0, 1, 12, 13, 24, 25, 36, 37]]
         assert values(ready_manifest.parent / "elevation.tif") == first_crop
         assert values(ready_manifest.parent / "validity.tif") == [255] * 8
@@ -285,9 +287,9 @@ def check(cli, directory):
     assert ready_manifest and ready_manifest.exists()
     with sqlite3.connect(directory / "catalog_db") as database:
         before_records = database.execute("SELECT COUNT(*) FROM records").fetchone()[0]
-    process, authority, headers = start_server(cli, runtime, manifest)
+    process, authority, headers = start_server(cli, runtime, manifest, env=cover_env)
     try:
-        restarted = eventually(authority, 0, {"assessment_pending"})
+        restarted = eventually(authority, 0, {"ready"})
         assert restarted["decision"] == "accept"
         assert Path(restarted["preparation"]["manifest"]) == ready_manifest
         time.sleep(0.3)
@@ -308,7 +310,7 @@ def check(cli, directory):
         process.wait(timeout=10)
 
 
-def interrupted_no_check(cli, directory):
+def interrupted_no_check(cli, directory, cover_env):
     runtime, _raw, _receipt, _profile, _evidence, gallery_input_path, gallery_input, _samples = fixture(cli, directory)
     gallery_input["tiles"] = gallery_input["tiles"][:1]
     gallery_input_path.write_text(json.dumps(gallery_input))
@@ -336,7 +338,7 @@ if "TILED=YES" in args:
 os.execv({real_translate!r}, [{real_translate!r}] + args)
 ''')
     wrapper.chmod(0o755)
-    env = dict(os.environ, PATH=str(wrappers) + os.pathsep + os.environ["PATH"])
+    env = dict(cover_env, PATH=str(wrappers) + os.pathsep + os.environ["PATH"])
     process, authority, headers = start_server(cli, runtime, manifest, env=env)
     try:
         pending = eventually(authority, 0, {"awaiting_acceptance"})
@@ -376,7 +378,7 @@ os.execv({real_translate!r}, [{real_translate!r}] + args)
         registered = database.execute("SELECT COUNT(*) FROM prepared_regions").fetchone()[0] if table else 0
         assert registered == 0
 
-    process, authority, _headers = start_server(cli, runtime, manifest)
+    process, authority, _headers = start_server(cli, runtime, manifest, env=cover_env)
     try:
         restarted = eventually(authority, 0, {"not_selected"})
         assert restarted["decision"] == "reject" and restarted["preparation"]["manifest"] is None
@@ -390,9 +392,15 @@ def main():
     parser.add_argument("binary", type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="topography automatic preparation ") as temporary:
-        check(args.binary.resolve(), Path(temporary))
-    with tempfile.TemporaryDirectory(prefix="topography interrupted preparation ") as temporary:
-        interrupted_no_check(args.binary.resolve(), Path(temporary))
+        server = cover_fixtures.CoverServer(Path(temporary) / "cover-server")
+        try:
+            cover_env = server.policy("grassland")
+            (Path(temporary) / "check").mkdir()
+            check(args.binary.resolve(), Path(temporary) / "check", cover_env)
+            (Path(temporary) / "interrupted").mkdir()
+            interrupted_no_check(args.binary.resolve(), Path(temporary) / "interrupted", cover_env)
+        finally:
+            server.close()
     print("Automatic preparation passed: profiles, exact rasters, attention, restart reuse and interrupted No.")
 
 

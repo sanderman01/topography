@@ -279,50 +279,24 @@ def automatic_checks(cli, directory):
     receipt = json.loads(raw.read_text())
     evidence = directory / "supplier-cover.txt"
     evidence.write_text("Synthetic supplier cover assessment\n")
-    legacy_profile = profile(directory / "profile-v1.json", receipt, evidence, version=1)
-    legacy_gallery = gallery(cli, directory, raw, review, legacy_profile, "legacy-gallery")
-    legacy_gallery_sha = sha(legacy_gallery)
-    process, authority, headers = start_server(cli, runtime, legacy_gallery)
-    try:
-        pending = eventually(authority, 0, {"awaiting_acceptance"})
-        saved = vote(authority, headers, legacy_gallery_sha, 0, pending, "accept")
-        assert saved["decision"] == "accept"
-        ready = eventually(authority, 0, {"assessment_pending"})
-        legacy_manifest = Path(ready["preparation"]["manifest"])
-        assert json.loads(legacy_manifest.read_text())["schema_version"] == 1
-        # Legacy products offer no cover overlays; the page still carries the hidden controls.
-        assert "error" in overlay(authority, expected=404)
-        assert 'class="overlays" role="group" aria-label="Cover overlays" hidden>' in request(authority, "GET", "/")[1].decode()
-        legacy_status = json.loads(run(cli, "curate", "status", runtime, ready["review_sha256"]))
-        human = {key: legacy_status["claims"][key] for key in ["actor", "decision", "reason", "primary_class_id"]}
-    finally:
-        process.terminate()
-        process.wait(timeout=10)
-
-    process, authority, _headers = start_server(cli, runtime, legacy_gallery)
-    try:
-        pending_cover = eventually(authority, 0, {"assessment_pending"})
-        assert pending_cover["decision"] == "accept"
-        assert Path(pending_cover["preparation"]["manifest"]) == legacy_manifest
-    finally:
-        process.terminate()
-        process.wait(timeout=10)
-
     snow_mask = raster(directory, "automatic-snow-ice", [2, 1, 2] + [1] * 13)
     cover_profile = profile(directory / "profile-v2.json", receipt, evidence, version=2,
                             snow_mask=snow_mask)
     cover_gallery = gallery(cli, directory, raw, review, cover_profile, "cover-gallery")
-    process, authority, _headers = start_server(cli, runtime, cover_gallery)
+    process, authority, headers = start_server(cli, runtime, cover_gallery)
     try:
+        pending = eventually(authority, 0, {"awaiting_acceptance"})
+        assert "error" in overlay(authority, expected=404)
+        vote(authority, headers, sha(cover_gallery), 0, pending, "accept")
         upgraded = eventually(authority, 0, {"ready"})
         assert upgraded["decision"] == "accept"
         cover_manifest = Path(upgraded["preparation"]["manifest"])
         product = json.loads(cover_manifest.read_text())
-        assert product["schema_version"] == 2 and cover_manifest != legacy_manifest
+        assert product["schema_version"] == 2
         assert values(cover_manifest.parent / "surface-elevation.tif") == surface
         assert values(cover_manifest.parent / "elevation.tif") == [0.0, surface[1], 0.0] + surface[3:]
         upgraded_status = json.loads(run(cli, "curate", "status", runtime, upgraded["review_sha256"]))
-        assert {key: upgraded_status["claims"][key] for key in human} == human
+        assert upgraded_status["claims"]["actor"]["kind"] == "human"
         assert upgraded_status["automation"]["kind"] == "supplier_qa_qualification_v2"
         def stored():
             return {str(p): sha(p) for name in ["catalog_db", "prepared"]
