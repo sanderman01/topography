@@ -48,7 +48,7 @@ checks. The separate HTTPS workflow check is documented in
 | Model feasibility | Loader/codec error in metres, preserved features, measured peak VRAM within 16 GB, runtime, and comparison with real-patch blending |
 | World composition | Declared class areas, height/slope joins, connected water surfaces, and landmark placement |
 | Local edits | Values outside the edit domain and inside locks unchanged exactly; transition bands and dependent regions checked |
-| Export | Duplicated border texels bit-identical, texels equal encoded master samples, compatible masks, correct partial tiles, and no-clipping quantization error within half a step plus declared arithmetic tolerance |
+| Export | Duplicated border texels bit-identical, texels equal encoded master samples, coarse LOD texels equal level-0 texels at nested positions, compatible masks, correct partial tiles, and no-clipping quantization error within half a step plus declared arithmetic tolerance |
 | Recovery | Interrupted work remains identifiable; restart validates completed artifacts and preserves accepted outputs and lineage |
 
 Exact border equality and protected-cell equality are not visual judgments.

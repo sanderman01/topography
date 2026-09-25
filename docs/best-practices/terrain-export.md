@@ -22,6 +22,11 @@ defines these requirements; the game's Bevy quadtree renderer remains outside sc
     duplicated texels and masks, including four-tile corners.
   - `power_of_two`: 2ⁿ texels per full side, no duplication. The renderer reads
     the closing row/column from the neighbouring tile.
+- Export a quadtree of LOD levels with the same tile texel size. Level *k*
+  spacing is 2^*k* times level 0; continue until one tile covers the world.
+  Default to nested decimation (coarse texel = level-0 sample at index × 2^*k*)
+  so coarse heights equal fine heights exactly; treat a filtered pyramid as an
+  optional setting. Sample masks the same way.
 - Handle world edges and partial tiles explicitly. Store actual tile dimensions
   and extents rather than silently padding or changing world scale. GDAL's
   [raster data model](https://gdal.org/en/stable/user/raster_data_model.html)

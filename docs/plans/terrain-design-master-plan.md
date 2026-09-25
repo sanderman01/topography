@@ -238,6 +238,8 @@ The master mosaic and all internal processing stay cell-center rasters (§5's ce
 
 Both layouts use the same global sample lattice and encoding, so switching layout never changes a height value. World-edge and partial-tile behavior is defined explicitly with the first exporter.
 
+Export also delivers a quadtree of coarser LOD levels, as MSFS 2020 does. Level 0 is the 1 m master; level *k* has 2^*k* m spacing and the same 257² tile (256 intervals, covering 256 × 2^*k* m). Levels continue until one tile covers the world: levels 0–7 for 32,768 m, about 4/3 of level 0's storage. Tiles are addressed by level and x/y index. By default each coarse texel is the level-0 sample at the nested position (index × 2^*k*), so every coarse height exactly equals a fine height and LOD transitions cannot crack. A low-pass filtered pyramid is an optional later setting if decimation aliases visibly. Masks use the same nested sampling and stay categorical.
+
 ## 6. Build the training dataset and controls
 
 Label accepted geographic regions before cropping. Use human polygons supported by geology, slope, landform analysis, and imagery; a DEM alone does not reliably identify geology. Automatically proposed labels remain editable. Keep uncertain areas masked out of the supervised label loss.
@@ -349,7 +351,7 @@ Before promoting a world revision, verify:
 
 Keep exact invariants, such as untouched pixels outside an edit domain, separate from the owner's visual judgment of the terrain. The implementer handles technical data, numeric and export checks; human review does not require a gameplay suitability checklist or calibrated terrain-acceptance thresholds.
 
-Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit heightmap texture tiles, biome/water/validity mask textures, snow/ice masks wherever present, available vegetation masks, explicit absence/availability declarations, encoding and coordinate metadata, review overviews, and the world manifest. Keep cover masks categorical at their declared cell grid and tile them with the same layout as heights; never average them into invented classes. Export tiles are packaging units; they must not determine how the world was trained or generated.
+Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit heightmap texture tiles with coarser quadtree LOD levels, biome/water/validity mask textures, snow/ice masks wherever present, available vegetation masks, explicit absence/availability declarations, encoding and coordinate metadata, review overviews, and the world manifest. Keep cover masks categorical at their declared cell grid and tile them with the same layout as heights; never average them into invented classes. Export tiles are packaging units; they must not determine how the world was trained or generated.
 
 ## 11. Proposed implementation sequence
 

@@ -86,7 +86,7 @@ exists. Consult upstream documentation for the versions actually selected.
   delivers 16-bit heightmap textures, not meshes or vertex data. Tiles span a
   configurable power-of-two interval count. The default follows MSFS 2020:
   256 intervals, `shared_edge` layout, 257² texels at 16 bits (`power_of_two`
-  gives 256²).
+  gives 256²), plus coarser quadtree LOD levels.
 - Leave Bevy integration, QuadTrees, vegetation rendering/placement/growth,
   weather, a full flight model, and underwater terrain outside the current plan.
 
