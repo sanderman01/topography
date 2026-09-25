@@ -17,8 +17,10 @@ Updated 2026-09-25. Follow the [master plan](plans/terrain-design-master-plan.md
 - **Automatic preparation:** a Yes queues technical checks and preparation in
   the gallery worker; exceptions are reported without a repeat vote.
 - **Numeric work:** geographically split evaluation release and CPU numeric
-  check. Both model experiments (image codec, scalar fit) failed; continue with
-  curated real terrain and blending.
+  check. Both CPU representation checks (image codec, scalar fit) failed, largely
+  from absolute-height scaling and a tiny budget. The
+  [terrain diffusion pilot](plans/terrain-diffusion-v1.md) trains a GPU residual
+  model instead; blending stays the fallback.
 - **World layout:** the first 16 m layout was rejected for repetition, visible
   joins and dull geography. Expand the library before another world review.
 - **Snow/ice and vegetation masks (v2 contracts):** implemented and verified on
@@ -32,9 +34,10 @@ Updated 2026-09-25. Follow the [master plan](plans/terrain-design-master-plan.md
 
 ## Next
 
-1. Broaden terrain families (six of about nine) with reusable source profiles.
-2. Later: label editing, cross-survey alignment, a 4 km pilot world, full extent,
-   editing/rebuild and export.
+1. [Terrain diffusion pilot](plans/terrain-diffusion-v1.md): training release,
+   GPU training, blind Yes/No gate, then a 4 km pilot world and 16-bit export.
+2. Broaden terrain families (seven of nine) with reusable source profiles.
+3. Later: label editing, cross-survey alignment, full extent, editing/rebuild.
 
 Details: [source coverage](reports/pilot-source-coverage-v1.md),
 [automatic preparation](reports/automatic-preparation-rollout-v1.md),

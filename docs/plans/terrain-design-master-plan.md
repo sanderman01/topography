@@ -286,6 +286,8 @@ Compare generated output with a baseline assembled from real terrain patches and
 
 This baseline is a real fallback, not only a comparison point. If diffusion training does not clear its feasibility gate (numeric reconstruction, VRAM fit at acceptable precision, and human-judged terrain quality) within a bounded number of experiment iterations, build the world from curated real patches, sculpting, and blending instead — the implementation sequence (§11) should proceed on that basis rather than stall waiting for a diffusion architecture to work.
 
+**Current direction (2026-09-25).** The two representation checks above ran on CPU with absolute-height normalization and a 200-step fitting budget; they rejected those configurations, not learned terrain generation. The [terrain diffusion pilot](terrain-diffusion-v1.md) skips the autoencoder: pixel-space conditional diffusion on the GPU generates 1 m residuals relative to a 32 m coarse surface, together with snow/ice and vegetation masks, conditioned on terrain class and authored water. Its human gate is a blind Yes/No batch of real and generated patches, with at most three training runs before the fallback below applies.
+
 Record model and dataset versions, normalization, seeds, scheduler, control strengths, training settings, checkpoints, GPU memory, runtime, and software versions. Use checkpointed experiments with identical evaluation layouts. Promote a model only after a human accepts examples and the defined numeric and structural checks pass.
 
 ## 8. Compose, generate, and join the world
@@ -396,8 +398,10 @@ real windows and four synthetic cases; the tested representation was rejected
 for metre-scale height errors and narrow-feature loss. One separately approved
 [scalar fitting trial](../reports/scalar-codec-fit-v1.md) also completed and was
 technically rejected. Its fitting-only release preserves the original evaluation
-scope; no production training is admitted. Continue the world pilot with curated
-real patches and blending under the fallback above. Prepared outputs retain their
+scope. Both checks used absolute-height normalization and minimal CPU budgets, so
+the [terrain diffusion pilot](terrain-diffusion-v1.md) now trains a pixel-space
+residual model on all accepted Ready tiles, with curated patches and blending kept
+as the fallback. Prepared outputs retain their
 separate unreviewed state. Cross-survey alignment, repairs, output acceptance,
 production model-training releases and per-cell label editing remain pending.
 The owner rejected the [first coarse world proposal](../reports/world-layout-proposal-v1.md)
@@ -450,7 +454,7 @@ products remain unchanged until new derived revisions have been verified.
 - [ ] Automate source-layer acquisition, add useful optional cover overlays and backfill accepted tiles without repeating review.
 - [ ] Verify present, confirmed-absent, partial, unavailable, fully ice-covered and fully vegetated cases, including boundary/date uncertainty, missing artifacts, downstream mask propagation and zero-ground windows.
 - [x] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
-- [ ] Compare LoRA plus a trained control branch against a terrain-specific representation if needed; benchmark quality, memory, and runtime.
+- [ ] Train and gate the [pixel-space residual diffusion pilot](terrain-diffusion-v1.md) (LoRA/ControlNet on an image VAE was rejected by the codec check); benchmark quality, memory, and runtime.
 - [ ] Build a 4,096 × 4,096 m pilot with several biome boundaries, a connected water feature, one protected landmark, and a demonstrably local rerun.
 - [ ] Expand to all finalized classes (nine as a working target, adjusted per §1's acquisition-driven exceptions) and test coherent coarse-to-fine generation at the full extent, with human review between scales.
 - [ ] Finalize editing, restart/rebuild behavior, export validation, provenance, and documentation.
