@@ -1,0 +1,28 @@
+docs/workflows/cover-acquisition.md
+  s_f6c04b9d7eeb89::t_b3299b19985060 6-7,47,88
+  s_f6c04b9d7eeb89::t_3178a2bc1ca13b 1-5,8-46,48-87,89-93
+README.md
+  s_f6c04b9d7eeb89::t_282cb725ed6d51 34-36
+docs/design/automatic-preparation-v1.md
+  s_f6c04b9d7eeb89::t_282cb725ed6d51 74-77
+scripts/README.md
+  s_f6c04b9d7eeb89::t_282cb725ed6d51 56-62
+configs/README.md
+  s_f6c04b9d7eeb89::t_282cb725ed6d51 15-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "609e303cbc33c727503eaf494f3296ac6cdcc971",
+  "prompts": {},
+  "sessions": {
+    "s_f6c04b9d7eeb89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bae888e-8bf2-4368-b4b6-87b6e40c4da7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
