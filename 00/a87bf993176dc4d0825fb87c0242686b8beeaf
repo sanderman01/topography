@@ -1,0 +1,26 @@
+scripts/check_surface_cover.py
+  s_f6c04b9d7eeb89::t_6172e36bc62842 286,288-290,295,299
+scripts/cover_fixtures.py
+  s_f6c04b9d7eeb89::t_0585a78f28bc62 1-129
+scripts/check_automatic_preparation.py
+  s_f6c04b9d7eeb89::t_ecc3f61268f6b1 17,148,228,242,246,251,255-256,290,292,313,341,381
+  s_f6c04b9d7eeb89::t_38c7ac5c559e10 395-403
+scripts/check_cover_acquisition.py
+  s_f6c04b9d7eeb89::t_41888e7f2f3dd2 2,8,12-13,16-18,21,27,40-44,55-57,60-61,64,69-72,75-79,82-83,87,93,98-190,193,196-205,207,213-260,275-284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "00a87bf993176dc4d0825fb87c0242686b8beeaf",
+  "prompts": {},
+  "sessions": {
+    "s_f6c04b9d7eeb89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bae888e-8bf2-4368-b4b6-87b6e40c4da7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
