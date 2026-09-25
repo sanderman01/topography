@@ -60,5 +60,11 @@ data/models/diffusion-env-v1/.venv/bin/python -m pip install torch --index-url h
 data/models/diffusion-env-v1/.venv/bin/python -m pip install -e './training[diffusion]'
 ```
 
+The ROCm wheel is about 6 GB. If `/tmp` is too small, set `TMPDIR` and
+`--cache-dir` to a directory on disk. If the download keeps breaking, download
+the wheel with a browser or `curl -C -`, then install the file with
+`--extra-index-url https://download.pytorch.org/whl/rocm7.2`; its `triton-rocm`
+dependency exists only on that index.
+
 The wheel bundles its ROCm runtime; only the `amdgpu` kernel driver and access to
 `/dev/kfd` and `/dev/dri/renderD*` are required.
