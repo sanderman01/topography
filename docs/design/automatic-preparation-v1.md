@@ -115,6 +115,10 @@ technical successor to the existing human Yes and never clears a failed finding.
   The page refreshes statuses without changing the selected preview or retrying
   votes. A technical successor alone must not turn a deliberate vote into a stale
   user-decision conflict; actual competing human votes retain conflict protection.
+- `/api/overlay/N` returns packed 2-bit water, snow/ice and vegetation
+  categories (0 unknown / 1 absent / 2 present) for a v2 Ready tile's native
+  window, after checking the manifest digest and mask hashes. Other tiles get 404.
+  It is display-only and writes nothing.
 
 ## Verification
 

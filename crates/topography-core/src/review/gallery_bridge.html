@@ -1,0 +1,31 @@
+<style>body>.tag,body>h1,body>#identity,body>.note{display:none}body{padding:12px}</style><script>
+'use strict';
+const galleryIdentity=__GALLERY_IDENTITY__;
+parent.postMessage({...galleryIdentity,ready:true},'*');
+addEventListener('keydown',e=>{if(['y','n','ArrowLeft','ArrowRight'].includes(e.key)&&!e.repeat&&!e.ctrlKey&&!e.altKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){e.preventDefault();parent.postMessage({...galleryIdentity,key:e.key},'*');}});
+// Read-only cover overlays on the overhead map; the gallery sends verified native-grid categories.
+(()=>{const map=document.getElementById('map');if(!map)return;
+ const wrap=document.createElement('div');wrap.style.position='relative';map.before(wrap);wrap.append(map);
+ const layer=document.createElement('canvas');layer.id='cover-overlay';layer.setAttribute('aria-hidden','true');layer.style.cssText='position:absolute;pointer-events:none;border:0;background:transparent;image-rendering:pixelated';wrap.append(layer);
+ const colours={water:[40,100,255],snow_ice:[110,230,255],vegetation:[80,205,95]},shift={water:0,snow_ice:2,vegetation:4};
+ let cells=null,W=0,H=0,shown={};
+ function hatch(rgb,angle){const c=document.createElement('canvas');c.width=c.height=8;const x=c.getContext('2d');x.fillStyle='rgba(120,120,120,.45)';x.fillRect(0,0,8,8);x.strokeStyle=`rgb(${rgb})`;x.lineWidth=2;x.beginPath();if(angle){x.moveTo(-2,-2);x.lineTo(10,10);}else{x.moveTo(-2,10);x.lineTo(10,-2);}x.stroke();return c;}
+ function draw(){
+  Object.assign(layer.style,{left:map.clientLeft+'px',top:map.clientTop+'px',width:map.clientWidth+'px',height:map.clientHeight+'px'});
+  const ratio=devicePixelRatio||1;layer.width=Math.max(1,Math.round(map.clientWidth*ratio));layer.height=Math.max(1,Math.round(map.clientHeight*ratio));
+  const ctx=layer.getContext('2d');ctx.clearRect(0,0,layer.width,layer.height);ctx.imageSmoothingEnabled=false;
+  if(!cells)return;
+  const native=document.createElement('canvas');native.width=W;native.height=H;const n=native.getContext('2d');
+  for(const name of ['water','vegetation','snow_ice']){if(!shown[name])continue;
+   const present=n.createImageData(W,H),unknown=n.createImageData(W,H),[r,g,b]=colours[name];
+   for(let i=0;i<cells.length;i++){const v=cells[i]>>shift[name]&3;if(v===2)present.data.set([r,g,b,190],i*4);else if(v===0)unknown.data[i*4+3]=255;}
+   // Unknown cells are hatched grey at display resolution; assessed absence stays clear.
+   const scaled=document.createElement('canvas');scaled.width=layer.width;scaled.height=layer.height;const s=scaled.getContext('2d');s.imageSmoothingEnabled=false;
+   n.putImageData(unknown,0,0);s.drawImage(native,0,0,scaled.width,scaled.height);s.globalCompositeOperation='source-in';s.fillStyle=s.createPattern(hatch(colours[name],name==='snow_ice'),'repeat');s.fillRect(0,0,scaled.width,scaled.height);
+   n.putImageData(present,0,0);ctx.drawImage(native,0,0,layer.width,layer.height);ctx.drawImage(scaled,0,0);}
+ }
+ addEventListener('message',e=>{const d=e.data;if(e.source!==parent||d?.index!==galleryIdentity.index||d?.review!==galleryIdentity.review)return;
+  if(d.overlay){const text=atob(d.overlay.cells),bytes=new Uint8Array(text.length);for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);if(bytes.length!==d.overlay.width*d.overlay.height)return;cells=bytes;W=d.overlay.width;H=d.overlay.height;}
+  if(d.layers)shown={...d.layers};draw();});
+ new ResizeObserver(draw).observe(map);})();
+</script>

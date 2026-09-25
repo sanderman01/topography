@@ -166,6 +166,24 @@ impl Session {
         }
         Ok(json!({"title":self.gallery.title,"gallery_sha256":self.id,"tiles":tiles}))
     }
+    /// Read-only cover categories for a tile whose current product is v2 Ready.
+    fn overlay(&self, index: usize) -> Result<Option<Value>> {
+        let state = self.state()?;
+        let preparation = &state["tiles"][index]["preparation"];
+        let Some(manifest) = preparation["manifest"].as_str() else {
+            return Ok(None);
+        };
+        if preparation["state"] != "ready" {
+            return Ok(None);
+        }
+        let [_, _, width, height] = self.snapshots[index].manifest.window_cells;
+        super::overlay::render(
+            Path::new(manifest),
+            &self.gallery.tiles[index].review_sha256,
+            [width, height],
+        )
+        .map(Some)
+    }
     fn handle(&self, stream: &mut TcpStream, request: Request) -> Result<()> {
         ensure(
             request.headers.get("host") == Some(&self.authority),
@@ -183,6 +201,27 @@ impl Session {
                     200,
                     "application/json",
                     &serde_json::to_vec(&self.state()?)?,
+                );
+            }
+            if let Some(index) = request
+                .path
+                .strip_prefix("/api/overlay/")
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|i| *i < self.gallery.tiles.len())
+            {
+                let (code, body) = match self.overlay(index) {
+                    Ok(Some(value)) => (200, value),
+                    Ok(None) => (
+                        404,
+                        json!({"error":"Cover overlays need a ready v2 prepared product."}),
+                    ),
+                    Err(e) => (409, json!({"error":e.to_string()})),
+                };
+                return respond(
+                    stream,
+                    code,
+                    "application/json",
+                    &serde_json::to_vec(&body)?,
                 );
             }
             for (prefix, name, kind) in [
@@ -215,9 +254,8 @@ impl Session {
                             )?;
                             if name == "preview" {
                                 let identity = json!({"index":index,"review":tile.review_sha256});
-                                let bridge = format!(
-                                    r#"<style>body>.tag,body>h1,body>#identity,body>.note{{display:none}}body{{padding:12px}}</style><script>const galleryIdentity={identity};parent.postMessage({{...galleryIdentity,ready:true}},'*');addEventListener('keydown',e=>{{if(['y','n','ArrowLeft','ArrowRight'].includes(e.key)&&!e.repeat&&!e.ctrlKey&&!e.altKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){{e.preventDefault();parent.postMessage({{...galleryIdentity,key:e.key}},'*');}}}});</script>"#
-                                );
+                                let bridge = include_str!("gallery_bridge.html")
+                                    .replace("__GALLERY_IDENTITY__", &identity.to_string());
                                 bytes.extend_from_slice(bridge.as_bytes());
                             }
                             return respond(stream, 200, kind, &bytes);

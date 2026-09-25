@@ -2,6 +2,7 @@
 """Exercise versioned snow/ice and vegetation preparation through the public CLI."""
 
 import argparse
+import base64
 import copy
 import json
 import os
@@ -11,6 +12,19 @@ import tempfile
 
 from check_acquisition import FIXTURES, ROOT, run, runtime_file, sha, values
 from check_automatic_preparation import eventually, request, start_server, tiles, vote
+
+
+def overlay(authority, index=0, expected=200):
+    code, body = request(authority, "GET", f"/api/overlay/{index}")
+    assert code == expected, (code, body)
+    return json.loads(body)
+
+
+def overlay_layers(body):
+    cells = base64.b64decode(body["cells"])
+    assert len(cells) == body["width"] * body["height"]
+    return {name: [cell >> shift & 3 for cell in cells]
+            for name, shift in [("water", 0), ("snow_ice", 2), ("vegetation", 4)]}
 
 
 def raster(directory, name, samples, *, kind="Byte", x=700000, nodata=False):
@@ -276,6 +290,9 @@ def automatic_checks(cli, directory):
         ready = eventually(authority, 0, {"assessment_pending"})
         legacy_manifest = Path(ready["preparation"]["manifest"])
         assert json.loads(legacy_manifest.read_text())["schema_version"] == 1
+        # Legacy products offer no cover overlays; the page still carries the hidden controls.
+        assert "error" in overlay(authority, expected=404)
+        assert 'class="overlays" role="group" aria-label="Cover overlays" hidden>' in request(authority, "GET", "/")[1].decode()
         legacy_status = json.loads(run(cli, "curate", "status", runtime, ready["review_sha256"]))
         human = {key: legacy_status["claims"][key] for key in ["actor", "decision", "reason", "primary_class_id"]}
     finally:
@@ -307,6 +324,28 @@ def automatic_checks(cli, directory):
         upgraded_status = json.loads(run(cli, "curate", "status", runtime, upgraded["review_sha256"]))
         assert {key: upgraded_status["claims"][key] for key in human} == human
         assert upgraded_status["automation"]["kind"] == "supplier_qa_qualification_v2"
+        def stored():
+            return {str(p): sha(p) for name in ["catalog_db", "prepared"]
+                    for p in (directory / name).rglob("*") if p.is_file()}
+        before = stored()
+        assert before
+        layers = overlay_layers(overlay(authority))
+        assert layers == {"water": [1] * 16, "snow_ice": [2, 1, 2] + [1] * 13,
+                          "vegetation": [0] * 16}, layers
+        assert b"layer.id='cover-overlay'" in request(authority, "GET", "/preview/0")[1]
+        assert request(authority, "GET", "/api/overlay/1")[0] == 404
+        # A changed mask is refused, never rendered; overlays write nothing.
+        snow = cover_manifest.parent / "snow-ice.tif"
+        original = snow.read_bytes()
+        snow.chmod(0o644)
+        snow.write_bytes(original + b"\0")
+        try:
+            assert "integrity mismatch" in overlay(authority, expected=409)["error"]
+        finally:
+            snow.write_bytes(original)
+        assert overlay_layers(overlay(authority))["snow_ice"] == [2, 1, 2] + [1] * 13
+        assert stored() == before
+        assert json.loads(run(cli, "curate", "status", runtime, upgraded["review_sha256"])) == upgraded_status
     finally:
         process.terminate()
         process.wait(timeout=10)
