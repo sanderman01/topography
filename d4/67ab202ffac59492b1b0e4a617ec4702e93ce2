@@ -1,0 +1,28 @@
+Cargo.toml
+  s_8a3239663527df::t_e3e89048fbc7a6 18
+crates/topography-core/Cargo.toml
+  s_8a3239663527df::t_726594a860ae3a 15
+crates/topography-core/src/export/heightmap.rs
+  s_8a3239663527df::t_aa3b6b3a9a83c4 34-40,49-55,73-80,94-98,123-126,135-155,187-190,220-229,231-240,255-261,290-293
+  s_8a3239663527df::t_3724a1b0e4c862 1-33,41-48,56-72,81-93,99-122,127-134,156-186,191-219,230,241-254,262-289,294-296
+crates/topography-core/src/export/mod.rs
+  s_8a3239663527df::t_aa3b6b3a9a83c4 2-4
+Cargo.lock
+  s_8a3239663527df::t_131799fb12713b 5-10,57-65,120-128,135-145,256-275,288-300,438-443,567,681-686
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d467ab202ffac59492b1b0e4a617ec4702e93ce2",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
