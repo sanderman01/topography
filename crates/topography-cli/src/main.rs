@@ -22,6 +22,8 @@ Usage: topography [--help | --version]
        topography curate status <runtime.toml> <review-sha256>
        topography curate check <runtime.toml>
        topography curate export <runtime.toml> <review-sha256> <new-output-dir>
+       topography cover draft <raw-receipt.json> <review.json> <cover-policy.toml> <new-output-dir> [--acquired YYYY-MM-DD[/YYYY-MM-DD]]
+       topography cover merge <profile.json> <cover.json> <new-profile-dir>
        topography quality draft <raw-receipt.json> <review.json> <quality.json>
        topography quality assess <quality.json> <new-report.json>
        topography prepare check <runtime.toml> <quality.json> <curation-record-sha256>
@@ -43,6 +45,8 @@ Import, acquire and review print their resulting manifest path. Curation records
 explicit actor declarations, evidence and crop decisions. Quality measures masks;
 prepare check reports current eligibility (exit 1 if blocked). Prepare build publishes
 eligible native regions; outputs remain unreviewed and excluded from training.
+Cover draft fetches bounded public snow/ice and vegetation evidence and writes
+source-grid masks plus v2 profile descriptors; cover merge builds a v2 profile.
 Processing never creates a human decision.
 See docs/plans/terrain-design-master-plan.md for the implementation plan.";
 
@@ -153,6 +157,30 @@ fn main() -> ExitCode {
             };
             return workflow_result(
                 acquisition::create_review(Path::new(receipt), Path::new(output), window)
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, raw, review, policy, output, rest @ ..]
+            if command == "cover"
+                && action == "draft"
+                && (rest.is_empty() || (rest.len() == 2 && rest[0] == "--acquired")) =>
+        {
+            let acquired = match rest.get(1).map(|v| v.to_str()) {
+                Some(Some(value)) => Some(value),
+                Some(None) => return usage_error(),
+                None => None,
+            };
+            return workflow_result(acquisition::cover::draft(
+                Path::new(raw),
+                Path::new(review),
+                Path::new(policy),
+                Path::new(output),
+                acquired,
+            ));
+        }
+        [command, action, profile, cover, output] if command == "cover" && action == "merge" => {
+            return workflow_result(
+                acquisition::cover::merge(Path::new(profile), Path::new(cover), Path::new(output))
                     .map(|p| p.display().to_string()),
             );
         }

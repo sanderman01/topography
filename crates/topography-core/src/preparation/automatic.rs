@@ -190,6 +190,35 @@ fn verified_profile(path: &Path) -> Result<(ProfileData, Vec<u8>)> {
     Ok((profile, bytes))
 }
 
+/// Check a profile's contract and pinned files without requiring it to be blocker-free.
+pub(crate) fn check_profile(path: &Path) -> Result<u32> {
+    let profile = decode_profile(&read_small(path)?)?;
+    validate_profile_contract(&profile)?;
+    let base = path.parent().unwrap_or(Path::new("."));
+    for item in &profile.evidence {
+        ensure(
+            hash_file(&base.join(&item.path))?.0 == item.sha256,
+            "profile evidence digest mismatch",
+        )?;
+    }
+    let mut masks = Vec::new();
+    if let Water::Mask { path, sha256 } = &profile.water {
+        masks.push((path, sha256));
+    }
+    for cover in profile.covers.iter().flat_map(BTreeMap::values) {
+        if let Cover::Mask { path, sha256, .. } = cover {
+            masks.push((path, sha256));
+        }
+    }
+    for (path, sha256) in masks {
+        ensure(
+            hash_file(&base.join(path))?.0 == *sha256,
+            "profile mask digest mismatch",
+        )?;
+    }
+    Ok(profile.schema_version)
+}
+
 fn decode_profile(bytes: &[u8]) -> Result<ProfileData> {
     let value: Value = serde_json::from_slice(bytes)?;
     let profile = match value["schema_version"].as_u64() {
@@ -994,7 +1023,7 @@ fn package_permission_confirmed(license: &crate::catalog::source::License) -> Re
     Ok(serde_json::to_value(license)?["training_permission"] == "confirmed")
 }
 
-fn verify_source_cover(
+pub(crate) fn verify_source_cover(
     path: &Path,
     raw: &Path,
     receipt: &crate::acquisition::RawReceipt,

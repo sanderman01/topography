@@ -49,6 +49,24 @@ pub(super) fn metadata(url: &str, output: &Path) -> Result<()> {
     write_new(output, &bytes)
 }
 
+/// Fetch a small public JSON response from an HTTPS query URL, bounded to 1 MiB.
+pub(super) fn query(url: &str) -> Result<Vec<u8>> {
+    let authority = url
+        .strip_prefix("https://")
+        .and_then(|u| u.split(['/', '?']).next())
+        .unwrap_or("");
+    ensure(
+        !authority.is_empty()
+            && !authority.contains('@')
+            && !url.contains('#')
+            && url.bytes().all(|b| b.is_ascii_graphic()),
+        "query URL must be HTTPS without credentials, fragments or whitespace",
+    )?;
+    let bytes = run(curl().args(["--max-filesize", "1048576", "--retry", "2", "--url", url]))?;
+    ensure(!bytes.is_empty(), "empty query response")?;
+    Ok(bytes)
+}
+
 pub(super) fn validate_url(url: &str) -> Result<()> {
     let authority = url
         .strip_prefix("https://")
