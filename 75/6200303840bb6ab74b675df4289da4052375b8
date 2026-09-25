@@ -1,0 +1,33 @@
+schemas/README.md
+  s_f059313882eb90::t_760b94ed7c92f2 40
+AGENTS.md
+  s_f059313882eb90::t_760b94ed7c92f2 53,85-88
+configs/README.md
+  s_f059313882eb90::t_760b94ed7c92f2 67-69
+docs/design/pilot-acceptance-v1.md
+  s_f059313882eb90::t_760b94ed7c92f2 17-20
+crates/topography-core/src/export/mod.rs
+  s_f059313882eb90::t_760b94ed7c92f2 1
+docs/plans/terrain-design-master-plan.md
+  s_f059313882eb90::t_760b94ed7c92f2 15,232,234-239,347,352
+docs/best-practices/terrain-export.md
+  s_f059313882eb90::t_002b977d8cbaaa 6,8,13-31,52-53,61-62,70
+docs/best-practices/validation-and-review.md
+  s_f059313882eb90::t_760b94ed7c92f2 51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "756200303840bb6ab74b675df4289da4052375b8",
+  "prompts": {},
+  "sessions": {
+    "s_f059313882eb90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e7f9328c-bcf1-4f78-9322-7b1200045a5b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
