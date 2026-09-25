@@ -32,6 +32,9 @@ Usage: topography [--help | --version]
        topography dataset verify <runtime.toml> <dataset-manifest.json>
        topography dataset fit-build <runtime.toml> <evaluation-manifest.json> <approval.json>
        topography dataset fit-verify <runtime.toml> <fitting-manifest.json>
+       topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>
+       topography world input <world.toml> <new-output-dir>
+       topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
 Options:
@@ -222,6 +225,53 @@ fn main() -> ExitCode {
                     Path::new(runtime),
                     Path::new(selection),
                     Path::new(approval),
+                )
+                .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, world, output, rest @ ..]
+            if command == "export" && action == "heightmap" && rest.len() <= 2 =>
+        {
+            let intervals = match rest
+                .first()
+                .map(|v| v.to_str().and_then(|s| s.parse().ok()))
+            {
+                None => 256,
+                Some(Some(n)) => n,
+                Some(None) => return usage_error(),
+            };
+            let layout = match rest
+                .get(1)
+                .map(|v| v.to_str().and_then(topography_core::export::Layout::parse))
+            {
+                None => topography_core::export::Layout::SharedEdge,
+                Some(Some(l)) => l,
+                Some(None) => return usage_error(),
+            };
+            return workflow_result(
+                topography_core::export::heightmap(
+                    Path::new(world),
+                    Path::new(output),
+                    intervals,
+                    layout,
+                )
+                .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, config, output] if command == "world" && action == "input" => {
+            return workflow_result(
+                topography_core::world::build_input(Path::new(config), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, runtime, gallery, output]
+            if command == "dataset" && action == "diffusion" =>
+        {
+            return workflow_result(
+                datasets::build_diffusion(
+                    Path::new(runtime),
+                    Path::new(gallery),
+                    Path::new(output),
                 )
                 .map(|p| p.display().to_string()),
             );
