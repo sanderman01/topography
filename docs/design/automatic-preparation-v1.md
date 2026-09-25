@@ -71,6 +71,10 @@ permitted only for vegetation and produces an all-unknown crop mask. Assessed
 snow/ice with unknown crop cells blocks qualification; unknown vegetation remains
 optional and does not remove valid ground.
 
+`topography cover draft` produces these descriptors and source-grid masks from
+public evidence, and `topography cover merge` adds them to an existing profile;
+see the [cover acquisition workflow](../workflows/cover-acquisition.md).
+
 The v2 package and quality input retain both masks plus per-layer status, note,
 date and pinned evidence. Snow/ice is excluded from the ground denominator and
 ground output, while the measured provider surface remains separate. Existing v1

@@ -53,6 +53,13 @@ and safe embedding of retained metadata in HTML.
 These are CLI workflow checks; live provider availability and source fidelity
 require the separate [real-data workflow](../docs/workflows/dem-acquisition.md).
 
+`python3 scripts/check_cover_acquisition.py target/debug/topography` (run by
+`check.sh`) drafts cover masks against a loopback HTTPS server with synthetic
+WorldCover, GLIMS and Sentinel-2 fixtures. It checks all-absent, present and
+boundary bands, stale and reconstructed outlines, cloud gaps, missing dates,
+source failures, exact source-grid output and v2 preparation of a merged profile.
+It needs GDAL, curl and OpenSSL and contacts no external service.
+
 For an acquired source and one or more newly generated review crops:
 
 ```sh

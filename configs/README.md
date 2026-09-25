@@ -12,6 +12,8 @@ cargo run --locked --offline -p topography-cli -- validate runtime configs/runti
 - `worlds/pilot.toml`: the 4,096 m pilot world.
 - `worlds/standard.toml`: the recommended 32,768 m world.
 - `worlds/exact-32km.toml`: the alternative 32,000 m world.
+- `cover-sources-v1.toml`: draft public snow/ice and vegetation sources for
+  `topography cover draft` ([workflow](../docs/workflows/cover-acquisition.md)).
 - `local/`: ignored machine-specific overrides and local paths.
 
 ## Loading and paths
