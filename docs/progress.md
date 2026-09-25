@@ -1,15 +1,43 @@
 # Progress
 
-- Updated 2026-09-22. Follow the [master plan](plans/terrain-design-master-plan.md).
-- **30 terrain regions are prepared**, including both accepted Badlands tiles.
-- Removed vehicle dimensions, clearance requirements and formal gameplay acceptance thresholds from the plan. Terrain suitability is Yes/No.
-- **Automatic preparation is implemented:** source profiles run technical checks; Yes queues preparation; the gallery shows progress and exceptions.
-- [Open the gallery](http://127.0.0.1:8765/): **33 Yes, 2 No; 30 Ready**. Manifest: `data/review/library-gallery-v10/gallery.json`.
-- Three accepted tiles need technical attention: two dunes tiles with unresolved striping and the St. Helens glacier tile. No repeat vote is needed.
-- Implemented and verified: snow/ice and optional vegetation masks, automatic profiles, dataset safeguards and pending-assessment status for legacy tiles.
-- Checkpoint: full repository checks, numeric workflows and independent Sol reviews pass. Three Río Abajo backfills are being staged; the running gallery and real catalog are unchanged so far.
-- Next: verify mixed, absent, unknown and all-covered tiles; backfill public source evidence without repeating tile review, then expand the library.
-- The first world layout was rejected for repetition, visible joins and dull geography. Expand the library before another world review.
-- Both model experiments failed their quality checks. Continue with curated terrain and blending.
-- Use public downloads, batch tools, whole-tile review and Sol subagents. Never email or use Git worktrees.
-- Details: [source coverage](reports/pilot-source-coverage-v1.md), [automatic preparation](reports/automatic-preparation-rollout-v1.md), [gallery workflow](workflows/batch-source-review.md).
+Updated 2026-09-25. Follow the [master plan](plans/terrain-design-master-plan.md).
+
+## Done
+
+- **Foundation:** Rust CLI validates presets, legend and source metadata;
+  `scripts/check.sh` runs format, build, Clippy and CLI workflows.
+- **Acquisition:** USGS discovery, resumable HTTPS download and manual import of
+  raw Float32 GeoTIFFs with checksums; raw assets are immutable.
+- **Curation and review:** SQLite catalog, batch download queue and a persistent
+  [review gallery](workflows/batch-source-review.md) with whole-tile Yes/No
+  votes (33 Yes, 2 No).
+- **Preparation:** native same-survey preparation without resampling; 30
+  prepared regions across 11 areas and six families (Río Abajo karst, Banks
+  Peninsula, Grand Canyon, Zion, St. Helens, Milford Sound, Badlands and others).
+- **Automatic preparation:** a Yes queues technical checks and preparation in
+  the gallery worker; exceptions are reported without a repeat vote.
+- **Numeric work:** geographically split evaluation release and CPU numeric
+  check. Both model experiments (image codec, scalar fit) failed; continue with
+  curated real terrain and blending.
+- **World layout:** the first 16 m layout was rejected for repetition, visible
+  joins and dull geography. Expand the library before another world review.
+- **Snow/ice and vegetation masks (v2 contracts):** implemented and verified on
+  synthetic cases. Unknown snow/ice blocks qualification; vegetation is optional.
+  Legacy products show "Surface assessment pending".
+
+## Next
+
+1. Backfill surface-cover evidence for existing tiles without repeat votes:
+   three Río Abajo drafts and the St. Helens crater (NOAA 9211 class-21 snow).
+2. Verify present, absent, partial, unknown and fully covered cases on real tiles,
+   including date/boundary uncertainty.
+3. Automate source-layer acquisition and add optional cover overlays in the gallery.
+4. Resolve the three technical exceptions: two dunes tiles with striping and the
+   St. Helens glacier tile.
+5. Broaden terrain families (six of about nine) with reusable source profiles.
+6. Later: label editing, cross-survey alignment, a 4 km pilot world, full extent,
+   editing/rebuild and export.
+
+Details: [source coverage](reports/pilot-source-coverage-v1.md),
+[automatic preparation](reports/automatic-preparation-rollout-v1.md),
+[surface-cover checkpoint](reports/surface-cover-workflow-v2.md).
