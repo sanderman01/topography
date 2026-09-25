@@ -1,1 +1,1 @@
-//! Shared-edge vertex tiles, height encoding, masks, and export validation.
+//! Heightmap texture tiles, height encoding, masks, and export validation.

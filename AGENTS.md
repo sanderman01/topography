@@ -50,7 +50,7 @@ exists. Consult upstream documentation for the versions actually selected.
 | DEMs, LiDAR, coordinates, masks, and raster processing | [Geospatial processing](docs/best-practices/geospatial.md) |
 | Dataset splits, numeric fidelity, training, and evaluation | [Machine learning](docs/best-practices/machine-learning.md) |
 | Coarse-to-fine composition and reversible regional edits | [World generation and editing](docs/best-practices/world-generation-and-editing.md) |
-| Cell-to-vertex conversion and height encoding | [Terrain export](docs/best-practices/terrain-export.md) |
+| Heightmap texture tiles and height encoding | [Terrain export](docs/best-practices/terrain-export.md) |
 | Workflow verification and human acceptance | [Validation and review](docs/best-practices/validation-and-review.md) |
 
 ## Essential constraints
@@ -82,8 +82,10 @@ exists. Consult upstream documentation for the versions actually selected.
 - Keep the 16 GB VRAM ceiling. Establish real-terrain and numeric-precision
   baselines before expensive model work; curated patches and blending remain a
   supported fallback if diffusion fails its feasibility gate.
-- Keep training windows, inference windows, and export tiles independent. Full
-  export tiles span 1,024 intervals and contain 1,025 shared-edge vertices per side.
+- Keep training windows, inference windows, and export tiles independent. Export
+  delivers 16-bit heightmap textures, not meshes or vertex data. Tiles span a
+  power-of-two interval count (1,024 default) in a configurable `shared_edge`
+  (1,025² texels) or `power_of_two` (1,024²) layout.
 - Leave Bevy integration, QuadTrees, vegetation rendering/placement/growth,
   weather, a full flight model, and underwater terrain outside the current plan.
 

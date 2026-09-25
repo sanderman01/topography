@@ -14,9 +14,10 @@ training remain pending.
   quality and water masks and complete coordinate metadata.
 - Water surfaces are authored separately. Underwater cells contain deterministic
   masked fill, excluded from terrain losses, controls and validation.
-- Training, generation windows and export tiles are independent. Full export
-  tiles span 1,024 intervals with 1,025 shared-edge vertices per side. Shared
-  encoded border values must match exactly.
+- Training, generation windows and export tiles are independent. Export tiles
+  are 16-bit heightmap textures spanning 1,024 intervals, in a `shared_edge`
+  (1,025²) or `power_of_two` (1,024²) layout. Duplicated border texels must
+  match exactly.
 - Source identity, raw checksums, original metadata, transformations and review
   decisions stay traceable. Raw bytes and accepted outputs are preserved.
 - Geographic splits precede overlapping crops. Reduced-fidelity 2 m sources may

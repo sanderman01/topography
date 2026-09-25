@@ -37,7 +37,7 @@ The broader contract coverage still planned includes:
   memory, runtime, and numeric/structural evaluations.
 - World revisions, source transforms, water surfaces, editable layers, locks,
   dependencies, and approvals.
-- Export coordinates, orientation, cell-to-vertex conversion, shared borders,
+- Export coordinates, orientation, texture layout and dimensions, shared borders,
   global height offset/scale, validity masks, and attribution.
 
 Keep tiny examples in `examples/manifests/`. Version contracts explicitly;

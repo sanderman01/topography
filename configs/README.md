@@ -64,6 +64,9 @@ origin and row orientation belong to future raster/world-revision contracts.
 `export.tile_cells` is exactly 1,024 in v1 and `sampling` must be
 `"shared_edge_vertices"`. Full sides contain 1,025 vertices; a partial side with
 N intervals contains N + 1. Only dimensions are calculated, not raster sampling.
+The master plan now calls for heightmap texture export with a configurable
+`shared_edge` or `power_of_two` layout; this preset field changes with the first
+exporter.
 
 | Preset | Extent at 1 m spacing | Export tile grid | Final corner vertices |
 | --- | --- | --- | --- |

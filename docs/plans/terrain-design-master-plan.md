@@ -12,7 +12,7 @@ Create a human-directed terrain workshop for a dirigible game: collect detailed 
 
 The central design decision is to separate the world's large-scale structure from its local detail. An editable base surface establishes mountain ranges, drainage, coastlines, and routes. Diffusion adds terrain conditioned on that surface and the biome layout. Human edits and accepted regions remain reproducible inputs to subsequent builds.
 
-Keep an authoritative elevation surface in floating-point metres throughout processing. Produce 16-bit heightmaps as controlled exports and optional training intermediates. A grayscale image is a storage representation of elevation, not the definition of the terrain.
+Keep an authoritative elevation surface in floating-point metres throughout processing. Produce 16-bit heightmap textures as controlled exports and optional training intermediates. A grayscale image is a storage representation of elevation, not the definition of the terrain.
 
 This plan covers acquisition, cleaning, labeling, training experiments, generation, editing, validation, and export, including snow/ice classification and vegetation masks where available. Bevy integration, QuadTree subdivision, vegetation placement/rendering/growth, weather simulation, a complete flight model, and underwater bathymetry remain outside its scope. This is a solo project; every human checkpoint below is performed by the same person, so checkpoints are a workflow discipline, not a multi-role handoff.
 
@@ -229,9 +229,14 @@ Use Float32 GeoTIFF/COG in physical metres for prepared and generated elevation.
 
 Do not independently min/max normalize each tile. That would make a flat field and a mountain occupy the same intensity range and destroy cross-tile comparability. Training should use a documented fixed transform per model level, fitted on training data and frozen for validation. Record clipping rates. For residual generation, normalize the difference from the coarse surface with its own fixed physical scale and retain the coarse surface as an input.
 
-Define cell-center coordinates, north/south row orientation, horizontal axes, world origin, and elevation units in the export contract. Distinguish raster cells from mesh vertices: a future mesh with 1,024 intervals needs 1,025 edge-inclusive vertices. Future border/halo samples must be read from the same authoritative surface. This preserves a clean handoff without designing the QuadTree now.
+Define cell-center coordinates, north/south row orientation, horizontal axes, world origin, and elevation units in the export contract. The export delivers heightmap textures, not meshes or vertex data; the game's own quadtree LOD renderer builds geometry from them. This preserves a clean handoff without designing the renderer here.
 
-The master mosaic and all internal processing stay cell-center rasters (§5's cell counts, e.g. 32,768² for the full extent). The export layer is a separate, explicit conversion: each delivered tile is a shared-edge vertex grid, storing 1,025 × 1,025 edge-inclusive vertices for a 1,024 × 1,024-cell tile, with adjacent tiles required to share border vertices exactly (bit-identical, both read from the same authoritative cell-center surface). This resolves the cell/vertex distinction at the one boundary where it is otherwise easy to leave implicit.
+The master mosaic and all internal processing stay cell-center rasters (§5's cell counts, e.g. 32,768² for the full extent). Each texel is one master sample read directly from that surface, so export adds only height encoding, not resampling. Tiles span a configurable power-of-two number of intervals (1,024 by default) and use one of two configurable layouts:
+
+- **`shared_edge`**: 2ⁿ + 1 texels per full side (1,025²). Adjacent tiles repeat their border row/column bit-identically, so each tile is self-contained and seams close without neighbour access. This is the common heightfield convention (Unity terrain; Microsoft Flight Simulator's DEM tiles are 257² quadtree tiles).
+- **`power_of_two`**: 2ⁿ texels per full side (1,024²) with no duplication; the renderer reads the closing row/column from the neighbouring tile. Dimensions suit texture arrays, atlases, and GPU block compression (which needs multiples of four).
+
+Both layouts use the same global sample lattice and encoding, so switching layout never changes a height value. World-edge and partial-tile behavior is defined explicitly with the first exporter.
 
 ## 6. Build the training dataset and controls
 
@@ -339,12 +344,12 @@ Before promoting a world revision, verify:
 - No nodata leaks, clipping plateaus, unexplained spikes, or visible grid patterns.
 - Height/slope agreement at seams, continuous named ridges and routes, and consistent water levels and connections.
 - Preserved locked regions and human review of the composed terrain.
-- Export quantization within half the chosen encoding step when there is no clipping; agreement between tiled and master elevation values.
+- Export quantization within half the chosen encoding step when there is no clipping; agreement between texel and master elevation values; bit-identical duplicated borders in the `shared_edge` layout.
 - Complete provenance, versioned controls, source attribution, and a reproducible build manifest.
 
 Keep exact invariants, such as untouched pixels outside an edit domain, separate from the owner's visual judgment of the terrain. The implementer handles technical data, numeric and export checks; human review does not require a gameplay suitability checklist or calibrated terrain-acceptance thresholds.
 
-Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit height tiles, biome/water/validity masks, snow/ice masks wherever present, available vegetation masks, explicit absence/availability declarations, encoding and coordinate metadata, review overviews, and the world manifest. Keep cover masks categorical at their declared cell grid; the height cell-to-vertex conversion must not average them into invented classes. Export tiles are packaging units; they must not determine how the world was trained or generated.
+Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit heightmap texture tiles, biome/water/validity mask textures, snow/ice masks wherever present, available vegetation masks, explicit absence/availability declarations, encoding and coordinate metadata, review overviews, and the world manifest. Keep cover masks categorical at their declared cell grid and tile them with the same layout as heights; never average them into invented classes. Export tiles are packaging units; they must not determine how the world was trained or generated.
 
 ## 11. Proposed implementation sequence
 
