@@ -1,0 +1,36 @@
+training/src/topography_training/diffusion/__init__.py
+  s_8a3239663527df::t_6a326599636dd3 1-4
+training/src/topography_training/diffusion/generate.py
+  s_8a3239663527df::t_949fc93d74b2af 1-105
+docs/workflows/terrain-diffusion.md
+  s_8a3239663527df::t_ad91245cb85103 1-57
+training/README.md
+  s_8a3239663527df::t_f87c37eb91513c 3-4,48-64
+training/src/topography_training/diffusion/data.py
+  s_8a3239663527df::t_6e9b4db28b18e7 1-225
+training/src/topography_training/diffusion/train.py
+  s_8a3239663527df::t_da9879152dc93d 1-185
+training/src/topography_training/diffusion/model.py
+  s_8a3239663527df::t_2d600a93d3c829 106-107
+  s_8a3239663527df::t_6fd1c354eea340 1-105,108-133
+training/src/topography_training/diffusion/evaluate.py
+  s_8a3239663527df::t_29f9e0fab5764e 1-210
+training/pyproject.toml
+  s_8a3239663527df::t_d279d8df378b77 15-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4281a4d5f4d5a1442ac5b4f2562bb48cf625b9b1",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
