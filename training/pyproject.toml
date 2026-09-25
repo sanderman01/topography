@@ -12,6 +12,8 @@ dependencies = ["numpy==2.3.5"]
 
 [project.optional-dependencies]
 codec = ["diffusers==0.36.0", "safetensors==0.7.0"]
+# Torch comes from the ROCm/CUDA index first; see README.
+diffusion = ["diffusers==0.36.0", "safetensors==0.7.0", "pillow"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

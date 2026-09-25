@@ -1,6 +1,7 @@
 # Training and evaluation
 
-The Python package now implements a bounded CPU numeric evaluation worker. It
+The Python package implements a bounded CPU numeric evaluation worker and the
+GPU [terrain diffusion pilot](#terrain-diffusion). It
 loads scalar Float32 metre elevations and separate masks from a versioned Rust
 request, then measures Float32/Float16 normalization error on real terrain and
 synthetic features. A separate bounded CPU experiment evaluates a pinned image
@@ -44,3 +45,20 @@ The [scalar fitting workflow](../docs/workflows/scalar-codec-fitting.md) reuses 
 CPU environment under a separate `representation_fit_only` release. It retains
 initial/final weights, native scalar outputs and a fixed 200-step loss history.
 Normal checks include tiny fitting checks when the optional environment exists.
+
+## Terrain diffusion
+
+`topography_training.diffusion` trains a pixel-space residual denoiser on a
+training release and generates terrain for world inputs; see the
+[plan](../docs/plans/terrain-diffusion-v1.md) and
+[workflow](../docs/workflows/terrain-diffusion.md). It needs a GPU PyTorch in its
+own environment. For AMD RDNA4 (RX 9060 XT, gfx1200) use the ROCm 7.2 wheels:
+
+```sh
+python3 -m venv data/models/diffusion-env-v1/.venv
+data/models/diffusion-env-v1/.venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/rocm7.2
+data/models/diffusion-env-v1/.venv/bin/python -m pip install -e './training[diffusion]'
+```
+
+The wheel bundles its ROCm runtime; only the `amdgpu` kernel driver and access to
+`/dev/kfd` and `/dev/dri/renderD*` are required.
