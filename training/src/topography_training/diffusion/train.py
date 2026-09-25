@@ -36,6 +36,7 @@ def _parse(argv):
     p.add_argument("--save-every", type=int, default=2000)
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--no-checkpointing", action="store_true", help="faster, ~2x VRAM")
     return p.parse_args(argv)
 
 
@@ -88,6 +89,8 @@ def main(argv=None) -> int:
     print(f"tiles={len(tiles)} train_positions={len(train.positions)} val_positions={len(val.positions)} scale={scale} m", flush=True)
 
     model = Denoiser(config["arch"]).to(device)
+    if not args.no_checkpointing:
+        model.unet.enable_gradient_checkpointing()
     ema = copy.deepcopy(model).eval().requires_grad_(False)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
     step = 0
