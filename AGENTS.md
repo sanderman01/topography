@@ -140,7 +140,8 @@ commands, and consistency with implementation and the master plan.
   Give each agent a bounded scope and distinct file ownership; keep dependent
   work and integration coordinated by the primary agent. Verify returned work
   before relying on it. Serialize shared catalog writes and integrity scans.
-  Do not use Git worktrees.
+  Do not use Git worktrees or separate workspaces, even for subagents: all
+  agents work in this checkout and the shared `target/` directory.
 - Prefer simple, robust, maintainable implementations. Keep domain logic in the
   core library; use GDAL/PROJ and PDAL for established geospatial algorithms.
 - Add dependencies and abstractions for concrete consumers. Do not preselect an
