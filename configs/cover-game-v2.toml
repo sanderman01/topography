@@ -1,13 +1,15 @@
-# Game cover policy for automatic snow/ice and vegetation masks (game_cover_v1).
+# Game cover policy for automatic water, snow/ice and vegetation masks (game_cover_v2).
 # Judgment layers for a game, not measurements. Everything not present is absent.
+# Water wins: water cells are never snow/ice or vegetation.
 # Built into the binary; TOPOGRAPHY_COVER_POLICY may point at another copy.
-schema_version = 1
-policy = "game_cover_v1"
+schema_version = 2
+policy = "game_cover_v2"
 
 [worldcover]
 # Public COG, read by HTTPS range requests. A missing tile means outside coverage.
 url_template = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif"
 observed_at = "2021"
+water_present = [80]
 snow_ice_present = [70]
 vegetation_present = [10, 20, 30, 40, 90, 95, 100]
 license = "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)"
@@ -21,3 +23,15 @@ line_types = ["glac_bound"]
 ignore_before_year = 1900
 license = "GLIMS data are freely available; citation of the GLIMS Glacier Database is required"
 citation = "GLIMS Consortium (2005, updated 2018). GLIMS Glacier Database, Version 1. Boulder, Colorado USA. NSIDC: National Snow and Ice Data Center. doi:10.7265/N5V98602 (NSIDC-0272)"
+
+[osm]
+# Overpass bbox query: natural=water, water=*, waterway=riverbank areas and
+# river/stream/canal lines buffered to their numeric `width` tag or these defaults.
+endpoint = "https://overpass-api.de/api/interpreter"
+user_agent = "topography-terrain-workshop/0.1 (game terrain water masks)"
+timeout_s = 120
+river_width_m = 12.0
+canal_width_m = 8.0
+stream_width_m = 3.0
+license = "ODbL 1.0 (https://opendatacommons.org/licenses/odbl/1-0/)"
+attribution = "© OpenStreetMap contributors, ODbL"

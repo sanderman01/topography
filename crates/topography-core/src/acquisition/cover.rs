@@ -1,5 +1,5 @@
-//! Game cover masks (`game_cover_v1`) for one reviewed crop from public land cover.
-//! Technical layers only; never writes curation or creates a vote.
+//! Game cover masks (`game_cover_v2`) for one reviewed crop from public land cover
+//! and OpenStreetMap water. Technical layers only; never writes curation or creates a vote.
 
 use super::{
     AcquisitionError, Result, digest, ensure, http,
@@ -19,8 +19,8 @@ use std::{
     process::Command,
 };
 
-pub(crate) const POLICY: &str = "game_cover_v1";
-const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v1.toml");
+pub(crate) const POLICY: &str = "game_cover_v2";
+const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v2.toml");
 const ABSENT: u8 = 1;
 const PRESENT: u8 = 2;
 
@@ -31,6 +31,7 @@ struct Policy {
     policy: String,
     worldcover: WorldCover,
     glims: Glims,
+    osm: Osm,
 }
 
 #[derive(Deserialize)]
@@ -38,6 +39,7 @@ struct Policy {
 struct WorldCover {
     url_template: String,
     observed_at: String,
+    water_present: Vec<u8>,
     snow_ice_present: Vec<u8>,
     vegetation_present: Vec<u8>,
     license: String,
@@ -55,6 +57,19 @@ struct Glims {
     citation: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Osm {
+    endpoint: String,
+    user_agent: String,
+    timeout_s: u64,
+    river_width_m: f64,
+    canal_width_m: f64,
+    stream_width_m: f64,
+    license: String,
+    attribution: String,
+}
+
 /// Explicit path, else `TOPOGRAPHY_COVER_POLICY`, else the built-in policy.
 fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
     let path = path
@@ -70,17 +85,27 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
     )
     .map_err(|e| AcquisitionError::Invalid(format!("invalid cover policy: {e}")))?;
     let https = |url: &str| url.starts_with("https://") && !url.contains(['?', '#', ' ']);
-    let (w, g) = (&policy.worldcover, &policy.glims);
+    let (w, g, o) = (&policy.worldcover, &policy.glims, &policy.osm);
     ensure(
-        policy.schema_version == 1 && policy.policy == POLICY,
-        "cover policy must be schema 1, game_cover_v1",
+        policy.schema_version == 2 && policy.policy == POLICY,
+        "cover policy must be schema 2, game_cover_v2",
     )?;
     ensure(
         https(&w.url_template)
             && w.url_template.contains("{tile}")
             && !w.observed_at.trim().is_empty()
             && !w.snow_ice_present.is_empty()
+            && !w.water_present.is_empty()
             && https(&g.endpoint)
+            && https(&o.endpoint)
+            && (1..=600).contains(&o.timeout_s)
+            && [o.river_width_m, o.canal_width_m, o.stream_width_m]
+                .iter()
+                .all(|w| w.is_finite() && *w > 0.0 && *w <= 1000.0)
+            && !o.user_agent.trim().is_empty()
+            && o.user_agent
+                .bytes()
+                .all(|b| b.is_ascii_graphic() || b == b' ')
             && !g.line_types.is_empty()
             && !g.type_name.is_empty()
             && g.type_name
@@ -89,9 +114,16 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
         "invalid cover policy sources",
     )?;
     ensure(
-        [&w.license, &w.citation, &g.license, &g.citation]
-            .iter()
-            .all(|text| !text.trim().is_empty()),
+        [
+            &w.license,
+            &w.citation,
+            &g.license,
+            &g.citation,
+            &o.license,
+            &o.attribution,
+        ]
+        .iter()
+        .all(|text| !text.trim().is_empty()),
         "cover policy licenses and citations must be nonempty",
     )?;
     Ok((bytes, policy))
@@ -315,6 +347,24 @@ fn glims(p: &Glims, bbox: [f64; 4], grid: &Grid, scratch: &Path) -> Result<(Vec<
         }
     }
     let raster = scratch.join("glims.tif");
+    blank(grid, &raster)?;
+    let geometries: Vec<Value> = latest
+        .values()
+        .map(|(_, _, f)| f["geometry"].clone())
+        .collect();
+    burn(&geometries, &scratch.join("glims.geojson"), false, &raster)?;
+    let glaciers: Vec<Value> = latest
+        .iter()
+        .map(|(id, (date, analysis, _))| json!({"glac_id":id,"anlys_id":analysis,"src_date":date}))
+        .collect();
+    Ok((
+        review::band(&raster, scratch, "glims", grid.cells(), false)?,
+        json!({"url":url,"glaciers":glaciers,"ignored_outlines":ignored,"license":p.license,"citation":p.citation}),
+    ))
+}
+
+/// Zero Byte raster on the crop grid.
+fn blank(grid: &Grid, path: &Path) -> Result<()> {
     let e = grid.extent();
     run(command("gdal_create")
         .args([
@@ -327,33 +377,238 @@ fn glims(p: &Glims, bbox: [f64; 4], grid: &Grid, scratch: &Path) -> Result<(Vec<
         ])
         .args(["-a_srs", &grid.wkt, "-a_ullr"])
         .args([e[0], e[3], e[2], e[1]].map(|v| v.to_string()))
-        .arg(&raster))?;
-    if !latest.is_empty() {
-        let vector = scratch.join("glims.geojson");
-        let features: Vec<Value> = latest
-            .values()
-            .map(|(_, _, f)| json!({"type":"Feature","properties":{},"geometry":f["geometry"]}))
-            .collect();
-        fs::write(
-            &vector,
-            serde_json::to_vec(&json!({"type":"FeatureCollection","features":features}))?,
-        )
-        .map_err(|e| AcquisitionError::Io {
-            context: "write GLIMS outlines".into(),
-            source: e,
-        })?;
-        run(command("gdal_rasterize")
-            .args(["-q", "-burn", "1"])
-            .arg(&vector)
-            .arg(&raster))?;
+        .arg(path))?;
+    Ok(())
+}
+
+/// Burn lon/lat geometries as 1; gdal_rasterize reprojects onto the raster CRS.
+fn burn(geometries: &[Value], vector: &Path, all_touched: bool, raster: &Path) -> Result<()> {
+    if geometries.is_empty() {
+        return Ok(());
     }
-    let glaciers: Vec<Value> = latest
+    let features: Vec<Value> = geometries
         .iter()
-        .map(|(id, (date, analysis, _))| json!({"glac_id":id,"anlys_id":analysis,"src_date":date}))
+        .map(|g| json!({"type":"Feature","properties":{},"geometry":g}))
         .collect();
+    fs::write(
+        vector,
+        serde_json::to_vec(&json!({"type":"FeatureCollection","features":features}))?,
+    )
+    .map_err(|e| AcquisitionError::Io {
+        context: "write cover vectors".into(),
+        source: e,
+    })?;
+    let mut c = command("gdal_rasterize");
+    c.args(["-q", "-burn", "1"]);
+    if all_touched {
+        c.arg("-at");
+    }
+    run(c.arg(vector).arg(raster))?;
+    Ok(())
+}
+
+fn percent(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+type Point = [f64; 2];
+
+fn points(geometry: &Value) -> Vec<Point> {
+    geometry
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| Some([p["lon"].as_f64()?, p["lat"].as_f64()?]))
+        .filter(|[lon, lat]| lon.is_finite() && lat.is_finite())
+        .collect()
+}
+
+fn closed(ring: &[Point]) -> bool {
+    ring.len() >= 4 && ring.first() == ring.last()
+}
+
+/// Join multipolygon member ways end to end into closed rings; open chains are dropped.
+fn rings(mut pending: Vec<Vec<Point>>) -> (Vec<Vec<Point>>, usize) {
+    pending.retain(|w| w.len() >= 2);
+    let (mut done, mut open) = (Vec::new(), 0);
+    while let Some(mut ring) = pending.pop() {
+        let mut reversed = false;
+        loop {
+            if closed(&ring) {
+                done.push(ring);
+                break;
+            }
+            let end = *ring.last().expect("nonempty ring");
+            if let Some(i) = pending
+                .iter()
+                .position(|w| w.first() == Some(&end) || w.last() == Some(&end))
+            {
+                let mut next = pending.swap_remove(i);
+                if next.first() != Some(&end) {
+                    next.reverse();
+                }
+                ring.extend_from_slice(&next[1..]);
+            } else if !reversed {
+                ring.reverse();
+                reversed = true;
+            } else {
+                open += 1;
+                break;
+            }
+        }
+    }
+    (done, open)
+}
+
+/// Rectangles around each segment, extended by half the width to cover joints.
+fn buffered(line: &[Point], width_m: f64) -> Vec<Value> {
+    let half = width_m / 2.0;
+    line.windows(2)
+        .filter_map(|pair| {
+            let [a, b] = [pair[0], pair[1]];
+            let kx = 111_320.0 * ((a[1] + b[1]) / 2.0).to_radians().cos();
+            let ky = 110_540.0;
+            let (dx, dy) = ((b[0] - a[0]) * kx, (b[1] - a[1]) * ky);
+            let length = dx.hypot(dy);
+            if length == 0.0 || kx <= 0.0 {
+                return None;
+            }
+            let (ux, uy) = (dx / length * half, dy / length * half);
+            let corner = |p: Point, along: f64, side: f64| {
+                json!([
+                    p[0] + (ux * along - uy * side) / kx,
+                    p[1] + (uy * along + ux * side) / ky
+                ])
+            };
+            let ring = [
+                corner(a, -1.0, 1.0),
+                corner(b, 1.0, 1.0),
+                corner(b, 1.0, -1.0),
+                corner(a, -1.0, -1.0),
+                corner(a, -1.0, 1.0),
+            ];
+            Some(json!({"type":"Polygon","coordinates":[ring]}))
+        })
+        .collect()
+}
+
+/// Numeric `width` tag in metres (optionally suffixed "m"); anything else uses the default.
+fn width(tag: &Value, default: f64) -> f64 {
+    tag.as_str()
+        .map(|v| v.trim().trim_end_matches('m').trim())
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1000.0)
+        .unwrap_or(default)
+}
+
+fn water_area(tags: &Value) -> bool {
+    tags["natural"] == "water" || tags.get("water").is_some() || tags["waterway"] == "riverbank"
+}
+
+/// OpenStreetMap water on the crop grid from one cached Overpass bbox query.
+fn osm(
+    p: &Osm,
+    bbox: [f64; 4],
+    grid: &Grid,
+    scratch: &Path,
+    cache: Option<&Path>,
+) -> Result<(Vec<u8>, Value)> {
+    let [west, south, east, north] = bbox;
+    let b = format!(
+        "({},{},{},{})",
+        coord(south),
+        coord(west),
+        coord(north),
+        coord(east)
+    );
+    let mut query = format!("[out:json][timeout:{}];(", p.timeout_s);
+    for filter in [
+        "[\"natural\"=\"water\"]",
+        "[\"water\"]",
+        "[\"waterway\"=\"riverbank\"]",
+    ] {
+        query.push_str(&format!("way{filter}{b};relation{filter}{b};"));
+    }
+    query.push_str(&format!(
+        "way[\"waterway\"~\"^(river|stream|canal)$\"]{b};);out geom;"
+    ));
+    let url = format!("{}?data={}", p.endpoint, percent(&query));
+    let cached = cache.map(|d| d.join(format!("overpass-{}.json", digest(url.as_bytes()))));
+    let hit = cached.as_ref().filter(|path| path.is_file());
+    let bytes = match hit {
+        Some(path) => super::io_context("read cached Overpass response", fs::read(path))?,
+        None => http::query_large(&url, &p.user_agent, p.timeout_s + 60)?,
+    };
+    let body: Value = serde_json::from_slice(&bytes)?;
+    let elements = body["elements"]
+        .as_array()
+        .ok_or_else(|| AcquisitionError::Invalid("Overpass response has no elements".into()))?;
+    // Overpass reports timeouts and memory errors as a remark on a 200 response.
+    ensure(
+        body.get("remark").is_none(),
+        format!("Overpass response incomplete: {}", body["remark"]),
+    )?;
+    if let (None, Some(path)) = (hit, &cached) {
+        super::write_new(path, &bytes)?;
+    }
+    let (mut areas, mut lines) = (Vec::new(), Vec::new());
+    let (mut area_count, mut line_count, mut open) = (0, 0, 0);
+    for element in elements {
+        let tags = &element["tags"];
+        match element["type"].as_str() {
+            Some("way") => {
+                let geometry = points(&element["geometry"]);
+                let default = match tags["waterway"].as_str() {
+                    Some("river") => Some(p.river_width_m),
+                    Some("canal") => Some(p.canal_width_m),
+                    Some("stream") => Some(p.stream_width_m),
+                    _ => None,
+                };
+                if let Some(default) = default {
+                    lines.extend(buffered(&geometry, width(&tags["width"], default)));
+                    line_count += 1;
+                } else if water_area(tags) && closed(&geometry) {
+                    areas.push(json!({"type":"Polygon","coordinates":[geometry]}));
+                    area_count += 1;
+                }
+            }
+            Some("relation") if water_area(tags) => {
+                let members = element["members"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|m| m["type"] == "way" && m["role"] != "subarea")
+                    .map(|m| points(&m["geometry"]))
+                    .collect();
+                let (found, dropped) = rings(members);
+                open += dropped;
+                if !found.is_empty() {
+                    // One polygon of all rings; even-odd filling leaves inner islands dry.
+                    areas.push(json!({"type":"Polygon","coordinates":found}));
+                    area_count += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    let raster = scratch.join("osm.tif");
+    blank(grid, &raster)?;
+    burn(&areas, &scratch.join("osm-areas.geojson"), false, &raster)?;
+    burn(&lines, &scratch.join("osm-lines.geojson"), true, &raster)?;
     Ok((
-        review::band(&raster, scratch, "glims", grid.cells(), false)?,
-        json!({"url":url,"glaciers":glaciers,"ignored_outlines":ignored,"license":p.license,"citation":p.citation}),
+        review::band(&raster, scratch, "osm", grid.cells(), false)?,
+        json!({"endpoint":p.endpoint,"query":query,"response_sha256":digest(&bytes),
+            "areas":area_count,"lines":line_count,"open_rings_ignored":open,
+            "default_widths_m":{"river":p.river_width_m,"canal":p.canal_width_m,"stream":p.stream_width_m},
+            "license":p.license,"attribution":p.attribution}),
     ))
 }
 
@@ -364,17 +619,34 @@ pub(crate) struct Generated {
     pub(crate) observed_at: String,
 }
 
-/// Write `snow-ice.tif`, `vegetation.tif` and `cover.json` for one verified crop.
-/// Unreachable sources fail; a crop outside WorldCover coverage is absent.
-pub(crate) fn generate(bundle: &bundle::Bundle, review: &Path, output: &Path) -> Result<Generated> {
+/// Write `water.tif`, `snow-ice.tif`, `vegetation.tif` (1 absent / 2 present) and
+/// `cover.json` for one verified crop. `existing_water` (2 = water) joins the game
+/// water. Unreachable sources fail; a crop outside WorldCover coverage is absent.
+pub(crate) fn generate(
+    bundle: &bundle::Bundle,
+    review: &Path,
+    output: &Path,
+    existing_water: Option<&[u8]>,
+    cache: Option<&Path>,
+) -> Result<Generated> {
     let (policy_bytes, policy) = load_policy(None)?;
-    generate_with(bundle, review, output, &policy_bytes, &policy)
+    generate_with(
+        bundle,
+        review,
+        output,
+        existing_water,
+        cache,
+        &policy_bytes,
+        &policy,
+    )
 }
 
 fn generate_with(
     bundle: &bundle::Bundle,
     review: &Path,
     output: &Path,
+    existing_water: Option<&[u8]>,
+    cache: Option<&Path>,
     policy_bytes: &[u8],
     policy: &Policy,
 ) -> Result<Generated> {
@@ -390,48 +662,60 @@ fn generate_with(
             .ok_or_else(|| AcquisitionError::Invalid("review CRS WKT missing".into()))?
             .into(),
     };
+    if let Some(values) = existing_water {
+        ensure(
+            values.len() == grid.cells(),
+            "existing water mask differs from the review crop",
+        )?;
+    }
     let scratch = super::io_context("create cover scratch", tempfile::tempdir())?;
     let bbox = wgs84_bbox(review)?;
     let (classes, wc) = worldcover(&policy.worldcover, bbox, &grid, scratch.path())
         .map_err(|e| AcquisitionError::Invalid(format!("WorldCover unavailable: {e}")))?;
     let (glaciers, gl) = glims(&policy.glims, bbox, &grid, scratch.path())
         .map_err(|e| AcquisitionError::Invalid(format!("GLIMS unavailable: {e}")))?;
+    let (mapped, os) = osm(&policy.osm, bbox, &grid, scratch.path(), cache)
+        .map_err(|e| AcquisitionError::Invalid(format!("OpenStreetMap unavailable: {e}")))?;
     let w = &policy.worldcover;
-    let snow: Vec<u8> = classes
-        .iter()
-        .zip(&glaciers)
-        .map(|(c, g)| {
-            if w.snow_ice_present.contains(c) || *g == 1 {
-                PRESENT
-            } else {
-                ABSENT
-            }
-        })
-        .collect();
-    let vegetation: Vec<u8> = classes
-        .iter()
-        .map(|c| {
-            if w.vegetation_present.contains(c) {
-                PRESENT
-            } else {
-                ABSENT
-            }
-        })
-        .collect();
-    for (name, values) in [("snow-ice", &snow), ("vegetation", &vegetation)] {
+    let present = |yes: bool| if yes { PRESENT } else { ABSENT };
+    let (mut water, mut snow, mut vegetation) = (Vec::new(), Vec::new(), Vec::new());
+    let mut sources = [0usize; 3];
+    for i in 0..grid.cells() {
+        let layers = [
+            existing_water.is_some_and(|v| v[i] == PRESENT),
+            w.water_present.contains(&classes[i]),
+            mapped[i] == 1,
+        ];
+        for (count, hit) in sources.iter_mut().zip(layers) {
+            *count += usize::from(hit);
+        }
+        let wet = layers.contains(&true);
+        // Water wins: a water cell is neither snow/ice nor vegetation.
+        water.push(present(wet));
+        snow.push(present(
+            !wet && (w.snow_ice_present.contains(&classes[i]) || glaciers[i] == 1),
+        ));
+        vegetation.push(present(!wet && w.vegetation_present.contains(&classes[i])));
+    }
+    for (name, values) in [
+        ("water", &water),
+        ("snow-ice", &snow),
+        ("vegetation", &vegetation),
+    ] {
         automatic::write_crop_mask(&output.join(format!("{name}.tif")), info, values)?;
     }
     let count = |v: &[u8]| v.iter().filter(|x| **x == PRESENT).count();
     let mut note = format!(
-        "{POLICY}: snow/ice is WorldCover {} class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; everything else is absent. Nearest neighbour on the crop grid. Game judgment layers, not measurements.",
+        "{POLICY}: water is the tile's existing water mask, WorldCover {} class 80 and OpenStreetMap water areas plus rivers, streams and canals buffered to their width ({}); snow/ice is WorldCover class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; water cells are never snow/ice or vegetation; everything else is absent. Crop grid, nearest neighbour. Game judgment layers, not measurements.",
         w.observed_at,
+        policy.osm.attribution,
         gl["glaciers"].as_array().map_or(0, Vec::len)
     );
     if wc["urls"].as_array().is_some_and(Vec::is_empty) {
         note.push_str(" The crop lies outside WorldCover coverage; recorded as absent (judgment).");
     }
     let manifest = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "game_cover",
         "policy": POLICY,
         "policy_sha256": digest(policy_bytes),
@@ -440,8 +724,11 @@ fn generate_with(
         "review_sha256": digest(&read_small(review)?),
         "window_cells": bundle.manifest.window_cells,
         "wgs84_bbox": bbox,
-        "sources": {"worldcover": wc, "glims": gl},
-        "counts": {"cells": grid.cells(), "snow_ice_present": count(&snow), "vegetation_present": count(&vegetation)},
+        "sources": {"worldcover": wc, "glims": gl, "osm": os},
+        "attribution": [policy.osm.attribution, w.citation, policy.glims.citation],
+        "counts": {"cells": grid.cells(), "water_present": count(&water),
+            "water_sources": {"existing": sources[0], "worldcover": sources[1], "osm": sources[2]},
+            "snow_ice_present": count(&snow), "vegetation_present": count(&vegetation)},
         "note": note,
         "admission": "technical layers only; no curation, vote or acceptance",
     });
@@ -473,15 +760,25 @@ pub fn draft(
         .unwrap_or(Path::new("."));
     super::io_context("create cover parent", fs::create_dir_all(parent))?;
     let stage = super::io_context("stage cover draft", tempfile::tempdir_in(parent))?;
-    let generated = generate_with(&bundle, review, stage.path(), &policy_bytes, &policy)?;
+    let generated = generate_with(
+        &bundle,
+        review,
+        stage.path(),
+        None,
+        None,
+        &policy_bytes,
+        &policy,
+    )?;
     let body: Value = super::read_json(&generated.manifest)?;
     super::io_context("publish cover draft", fs::rename(stage.path(), output))?;
+    let counts = &body["counts"];
     Ok(format!(
-        "{}\nSnow/ice present {} and vegetation present {} of {} cells.\n{}",
+        "{}\nWater present {}, snow/ice present {} and vegetation present {} of {} cells.\n{}",
         output.join("cover.json").display(),
-        body["counts"]["snow_ice_present"],
-        body["counts"]["vegetation_present"],
-        body["counts"]["cells"],
+        counts["water_present"],
+        counts["snow_ice_present"],
+        counts["vegetation_present"],
+        counts["cells"],
         generated.note
     ))
 }

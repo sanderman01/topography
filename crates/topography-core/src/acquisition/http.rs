@@ -67,6 +67,37 @@ pub(super) fn query(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Fetch a public HTTPS query response of up to 64 MiB with retries and a User-Agent.
+pub(super) fn query_large(url: &str, user_agent: &str, max_time_s: u64) -> Result<Vec<u8>> {
+    ensure(
+        url.starts_with("https://")
+            && !url.contains('#')
+            && url.bytes().all(|b| b.is_ascii_graphic()),
+        "query URL must be HTTPS without fragments or whitespace",
+    )?;
+    let temp = io_context("stage query response", NamedTempFile::new())?;
+    let time = max_time_s.to_string();
+    run(curl()
+        .args([
+            "--max-filesize",
+            "67108864",
+            "--retry",
+            "4",
+            "--retry-delay",
+            "10",
+            "--max-time",
+            &time,
+            "--user-agent",
+            user_agent,
+            "--output",
+        ])
+        .arg(temp.path())
+        .args(["--url", url]))?;
+    let bytes = io_context("read query response", fs::read(temp.path()))?;
+    ensure(!bytes.is_empty(), "empty query response")?;
+    Ok(bytes)
+}
+
 /// HEAD an HTTPS object with retries: missing (403/404) is `false`, other failures are errors.
 pub(super) fn exists(url: &str) -> Result<bool> {
     validate_url(url)?;
