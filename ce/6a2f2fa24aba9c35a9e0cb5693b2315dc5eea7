@@ -1,0 +1,45 @@
+crates/topography-core/src/acquisition/cover.rs
+  s_f6c04b9d7eeb89::t_f3851b1f8817c0 1-2,5,7,22-23,53,58-71,73,75-76,82-84,88-89,92-95,97,100,109-114,117-120,137-141,148,165,191,198-204,207-212,216-219,229-231,233,240-242,245-246,252,262,265-266,268-284,295,309-314,317-318,328,331-335,337,339-344,346,350,352,354-357,360-364,367-371,374-375,378-391,393-402,411-412,421-428,430-431,435,437-441,443-446,448-454,457,466,468-469,474-486
+  s_f6c04b9d7eeb89::t_f0d15a24f2d5b7 144,192-197,220-228,235-236,300-306,321,325-326,403-404,406,408-409,413-415,417,458-463
+  s_f6c04b9d7eeb89::t_b99d73e7cac3cc 410
+crates/topography-core/src/catalog/curation/journal.rs
+  s_f6c04b9d7eeb89::t_59d3a374224e55 366-367,410,412-414
+crates/topography-cli/src/main.rs
+  s_f6c04b9d7eeb89::t_a8b60f0c25ee3b 25,47-48,162-163,169
+crates/topography-core/src/acquisition/http.rs
+  s_f6c04b9d7eeb89::t_f0d15a24f2d5b7 76-77
+  s_f6c04b9d7eeb89::t_826fed63176cb7 70-75,78-84
+crates/topography-core/src/preparation/automatic.rs
+  s_f6c04b9d7eeb89::t_1acec4da7b5931 1220-1285,1289-1291,1296-1299,1304-1365
+  s_f6c04b9d7eeb89::t_f0d15a24f2d5b7 447-452,986-989,1026,1286-1288,1292-1295,1300-1303
+  s_f6c04b9d7eeb89::t_392d351ce0827a 104-108,216-227,237,315
+  s_f6c04b9d7eeb89::t_db88dade8bb2a3 659-714,824,826,828-829,832,869
+  s_f6c04b9d7eeb89::t_2499ba3c34e1cf 453-473,475
+  s_f6c04b9d7eeb89::t_371fea35c03deb 732,917-920,961-962,964,984-985,1003-1025,1027-1029
+configs/cover-game-v1.toml
+  s_f6c04b9d7eeb89::t_942e2c6d8d1785 1-23
+crates/topography-core/src/review/preparation_worker.rs
+  s_f6c04b9d7eeb89::t_f0d15a24f2d5b7 309-312
+  s_f6c04b9d7eeb89::t_a8b60f0c25ee3b 287,291-308
+  s_f6c04b9d7eeb89::t_ba101ce850ea77 313
+crates/topography-core/src/catalog/curation/mod.rs
+  s_f6c04b9d7eeb89::t_3f646d552489f9 853-855
+  s_f6c04b9d7eeb89::t_f0d15a24f2d5b7 874-875,894-897,904-907,909-911,925-927,938-949
+  s_f6c04b9d7eeb89::t_59d3a374224e55 62-69,162,824-852,856-873,876-893,898-903,908,912-924,928-937,950-1000,1068-1069
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ce6a2f2fa24aba9c35a9e0cb5693b2315dc5eea7",
+  "prompts": {},
+  "sessions": {
+    "s_f6c04b9d7eeb89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bae888e-8bf2-4368-b4b6-87b6e40c4da7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
