@@ -72,18 +72,33 @@ snow/ice with unknown crop cells blocks qualification; unknown vegetation remain
 optional and does not remove valid ground.
 
 The descriptors are optional. When a profile (schema 1 or 2) has none, `stage`
-generates `game_cover_v1` masks on the crop grid, captures their `cover.json` as
-evidence `game-cover` and packages the tile as v2; see the
-[cover acquisition workflow](../workflows/cover-acquisition.md).
+generates `game_cover_v2` masks on the crop grid (profile water joins the game
+water), captures their `cover.json` as evidence `game-cover` and packages the
+tile as v2; see the [cover acquisition workflow](../workflows/cover-acquisition.md).
 
-Legacy tiles need no profile. When an accepted tile has a current v1 product
-from its current head, `automatic::upgrade` reuses that product's water,
-quality, repair and feature masks, adds game cover, reassesses the crop and
-appends a `game_cover_upgrade_v1` technical successor. The successor copies the
-head's vote, findings and confirmed permission, adds the new report and
-`cover.json` as evidence, and never creates permission. It then builds the v2
-product on the legacy grid. A head with a failed finding or unconfirmed
-permission is a technical exception. The v1 product stays on disk.
+Every accepted tile ends on a `game_cover_v2` product. When its current product
+is anything else (v1, strict-evidence v2 or `game_cover_v1`, read from the
+quality report's cover note), `automatic::upgrade` reuses that product's water,
+quality, repair and feature masks, adds game cover (water is the union),
+reassesses the crop and appends a `game_cover_upgrade_v2` technical successor.
+An accepted tile with neither product nor profile starts from all-supported
+quality with no repairs or features. The successor copies the head's vote,
+findings and confirmed permission, adds the new report and `cover.json` as
+evidence, and never creates permission. A head with a failed finding,
+unconfirmed permission or no measured coverage is a technical exception. Older
+products stay on disk.
+
+Metadata successors: when a gallery input tile's raw receipt leaves metadata
+unresolved and exactly one other receipt of the identical asset resolves a strict
+subset of those fields, `gallery build` crops the same window from it (once, as
+`<review-dir>.metadata-successor-<sha16>/` beside the original) and uses it only
+if `elevation.tif` and `validity.tif` are byte-identical. The tile records its
+`predecessor`. At service start the human vote is carried to the successor review
+in a record with `carried_from` (`metadata_successor_v1`): actor, decision,
+reason and class verbatim, so it is not a new vote. Failed findings about the old
+strict glacier/snow/ice assessment pass with that reason recorded; other failures
+stay. Permission comes from the successor source metadata when it confirms it
+(captured in the equivalence evidence), else it is kept.
 
 The v2 package and quality input retain both masks plus per-layer status, note,
 date and pinned evidence. Snow/ice is excluded from the ground denominator and

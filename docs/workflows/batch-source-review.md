@@ -73,8 +73,14 @@ prepares accepted tiles sequentially. **Yes saves immediately**. The gallery
 shows Checking, Awaiting acceptance, Preparing, Ready or Needs technical
 attention. No shows Not selected. Ready means verified native prepared terrain,
 not training admission. Existing prepared regions are recognized without profiles;
-accepted legacy (v1) products gain snow/ice and vegetation masks automatically
-(`game_cover_v1`, see [cover acquisition](cover-acquisition.md)) and become Ready.
+accepted tiles with older products gain game water, snow/ice and vegetation
+masks automatically (`game_cover_v2`, see [cover acquisition](cover-acquisition.md))
+and become Ready. A tile whose raw receipt has a metadata successor for the same
+asset is shown on the successor crop and keeps its vote.
+
+Tile details show the WGS84 centre and corners (5 decimals) and an
+*Open in Google Earth* link (new tab, range about 2.5 tile widths). `/api/tiles`
+includes the same data as `location`.
 
 A Ready tile (v2 product) offers optional **Water**, **Snow/ice** and
 **Vegetation** overlays on the overhead view. Solid colour marks present cells,
