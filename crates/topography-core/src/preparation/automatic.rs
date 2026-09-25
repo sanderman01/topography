@@ -1051,7 +1051,7 @@ pub(crate) fn verify_source_cover(
     ensure(
         info["driverShortName"] == "GTiff"
             && info["size"] == source["size"]
-            && info["geoTransform"] == source["geoTransform"]
+            && super::same_transform(&info["geoTransform"], &source["geoTransform"])
             && info["coordinateSystem"] == source["coordinateSystem"],
         format!("source {name} mask must match the exact source grid and CRS"),
     )?;

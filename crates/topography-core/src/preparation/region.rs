@@ -173,15 +173,17 @@ fn verify_grid(path: &Path, grid: &Grid, crs: &Value, float: bool) -> Result<()>
         info["driverShortName"] == "GTiff"
             && info["size"] == json!(grid.size)
             && info["coordinateSystem"] == *crs
-            && info["geoTransform"]
-                == json!([
+            && super::same_transform(
+                &info["geoTransform"],
+                &json!([
                     grid.origin[0],
                     grid.spacing_m[0],
                     0.0,
                     grid.origin[1],
                     0.0,
                     -grid.spacing_m[1]
-                ])
+                ]),
+            )
             && info["bands"].as_array().is_some_and(|b| {
                 b.len() == 1 && b[0]["type"] == if float { "Float32" } else { "Byte" }
             })

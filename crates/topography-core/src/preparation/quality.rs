@@ -171,7 +171,7 @@ fn inspect(path: &Path) -> Result<Value> {
 fn grid_matches(info: &Value, reference: &Value) -> bool {
     info["driverShortName"] == "GTiff"
         && info["size"] == reference["size"]
-        && info["geoTransform"] == reference["geoTransform"]
+        && super::same_transform(&info["geoTransform"], &reference["geoTransform"])
         && info["coordinateSystem"] == reference["coordinateSystem"]
 }
 
