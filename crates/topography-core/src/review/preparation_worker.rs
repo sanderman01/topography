@@ -51,7 +51,7 @@ impl Status {
     }
     fn ready(head: Option<String>, manifest: &Path) -> Result<Self> {
         let body: Value = read_json(manifest)?;
-        let mut result = if body["schema_version"] == 2 {
+        let mut result = if body["schema_version"] == 2 && automatic::current_cover(manifest) {
             Self::new(
                 head,
                 "ready",
@@ -61,7 +61,7 @@ impl Status {
             Self::new(
                 head,
                 "assessment_pending",
-                "Existing terrain is prepared. Snow/ice and vegetation assessment is pending; your choice is saved.",
+                "Existing terrain is prepared. Game water, snow/ice and vegetation are pending; your choice is saved.",
             )
         };
         result.value["manifest"] = json!(manifest);
@@ -281,42 +281,54 @@ fn work(
                 &status_path,
             );
             let result = (|| -> Result<Status> {
+                let cache = root.parent();
+                // Build the current game cover product from an older product (or none),
+                // keeping the accepted vote; then report the latest choice.
+                let upgrade = |legacy: Option<(PathBuf, String)>| -> Result<Status> {
+                    let (legacy, expected) = match legacy {
+                        Some((path, head)) => (Some(path), head),
+                        None => (None, head.clone().unwrap_or_default()),
+                    };
+                    let manifest = automatic::upgrade(
+                        runtime,
+                        &tile.raw,
+                        &tile.review,
+                        legacy.as_deref(),
+                        &expected,
+                        &root.join("cover-upgrade"),
+                        cache,
+                    )?;
+                    let latest =
+                        curation::selection(runtime, &tile.review_sha256, &snapshots[index])?;
+                    ensure(
+                        latest["decision"] == "accept",
+                        "Selection changed during preparation.",
+                    )?;
+                    Status::ready(latest["head"].as_str().map(str::to_owned), &manifest)
+                };
                 if accepted {
-                    if let Some(manifest) = automatic::existing(runtime, &tile.review_sha256)? {
-                        let status = Status::ready(head.clone(), &manifest)?;
-                        if status.value["state"] == "ready" {
-                            return Ok(status);
-                        }
-                    }
-                    // Legacy products gain game cover without a profile or a new vote.
-                    if let Some((legacy, legacy_head)) =
-                        automatic::legacy(runtime, &tile.review_sha256)?
+                    if let Some(manifest) = automatic::existing(runtime, &tile.review_sha256)?
+                        && automatic::current_cover(&manifest)
                     {
-                        let manifest = automatic::upgrade(
-                            runtime,
-                            &tile.raw,
-                            &tile.review,
-                            &legacy,
-                            &legacy_head,
-                            &root.join("cover-upgrade"),
-                        )?;
-                        let latest =
-                            curation::selection(runtime, &tile.review_sha256, &snapshots[index])?;
-                        ensure(
-                            latest["decision"] == "accept",
-                            "Selection changed during preparation.",
-                        )?;
-                        return Status::ready(
-                            latest["head"].as_str().map(str::to_owned),
-                            &manifest,
-                        );
+                        return Status::ready(head.clone(), &manifest);
+                    }
+                    // Older products gain game cover without a profile or a new vote.
+                    if let Some(legacy) = automatic::legacy(runtime, &tile.review_sha256)? {
+                        return upgrade(Some(legacy));
                     }
                 }
-                let profile = tile.preparation_profile.as_ref().ok_or_else(|| {
-                    crate::acquisition::AcquisitionError::Invalid(
+                let Some(profile) = tile.preparation_profile.as_ref() else {
+                    if accepted {
+                        return upgrade(None).map_err(|e| {
+                            crate::acquisition::AcquisitionError::Invalid(format!(
+                                "Source assessment is not configured for this tile: {e}"
+                            ))
+                        });
+                    }
+                    return Err(crate::acquisition::AcquisitionError::Invalid(
                         "Source assessment is not configured for this tile.".into(),
-                    )
-                })?;
+                    ));
+                };
                 ensure(
                     digest(&read_small(&profile.path)?) == profile.sha256,
                     "Source assessment changed; publish an updated gallery.",
@@ -331,6 +343,16 @@ fn work(
                 }
                 let manifest =
                     automatic::prepare(runtime, &package, legend, head.as_deref().unwrap_or(""))?;
+                if !automatic::current_cover(&manifest) {
+                    // A profile with its own cover assessment still gets game cover.
+                    let legacy =
+                        automatic::legacy(runtime, &tile.review_sha256)?.ok_or_else(|| {
+                            crate::acquisition::AcquisitionError::Invalid(
+                                "Prepared product has no game cover successor path.".into(),
+                            )
+                        })?;
+                    return upgrade(Some(legacy));
+                }
                 let latest = curation::selection(runtime, &tile.review_sha256, &snapshots[index])?;
                 ensure(
                     latest["decision"] == "accept",

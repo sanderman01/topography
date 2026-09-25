@@ -658,17 +658,29 @@ fn crop_cover_mask(
 
 const GAME_COVER_ID: &str = "game-cover";
 
-/// Generate game cover masks and evidence into a package stage.
+/// Generate game cover masks and evidence into a package stage. The staged
+/// profile water joins the game water, which replaces `water.tif`.
 fn game_cover(
     bundle: &bundle::Bundle,
     review: &Path,
     stage: &Path,
+    cache: Option<&Path>,
     evidence: &mut Vec<Evidence>,
     masks: &mut BTreeMap<String, FileRef>,
 ) -> Result<BTreeMap<String, PackageCover>> {
     let work = stage.join("game-cover");
     io_context("create game cover stage", fs::create_dir(&work))?;
-    let generated = crate::acquisition::cover::generate(bundle, review, &work)?;
+    let [_, _, width, height] = bundle.manifest.window_cells;
+    let scratch = io_context("stage profile water", tempfile::tempdir())?;
+    let existing = crate::review::band(
+        &stage.join("water.tif"),
+        scratch.path(),
+        "water",
+        width as usize * height as usize,
+        false,
+    )?;
+    let generated =
+        crate::acquisition::cover::generate(bundle, review, &work, Some(&existing), cache)?;
     let path = PathBuf::from(format!("evidence-{GAME_COVER_ID}"));
     io_context(
         "stage game cover evidence",
@@ -685,7 +697,7 @@ fn game_cover(
         source_url: None,
     });
     let mut metadata = BTreeMap::new();
-    for name in ["snow-ice", "vegetation"] {
+    for name in ["water", "snow-ice", "vegetation"] {
         let file = PathBuf::from(format!("{name}.tif"));
         io_context(
             "stage game cover mask",
@@ -698,6 +710,9 @@ fn game_cover(
                 path: file,
             },
         );
+        if name == "water" {
+            continue;
+        }
         metadata.insert(
             name.into(),
             PackageCover {
@@ -713,6 +728,7 @@ fn game_cover(
 }
 
 /// Validate a source assessment and publish immutable preflight masks. No curation is written.
+/// Game cover caches its OpenStreetMap response in the parent of `output`.
 pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> Result<PathBuf> {
     let bundle = bundle::verify(raw, review)?;
     let receipt = crate::acquisition::verify(raw)?;
@@ -823,7 +839,14 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
         }
         metadata
     } else {
-        game_cover(&bundle, review, temp.path(), &mut evidence, &mut masks)?
+        game_cover(
+            &bundle,
+            review,
+            temp.path(),
+            output.parent(),
+            &mut evidence,
+            &mut masks,
+        )?
     };
     let surface_cover = Some(surface_cover);
     let schema_version = 2;
@@ -1218,84 +1241,147 @@ pub fn existing(runtime: &Path, review: &str) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-/// Find a legacy (v1) product of this review whose parent record is the current head,
-/// or the head an interrupted game cover upgrade replaced. Returns the product and that head.
+/// Game cover policy a prepared product was built with, from its quality report.
+pub(crate) fn cover_policy(product: &Path) -> Option<String> {
+    let report: Value = read_json(&product.parent()?.join("quality-0.json")).ok()?;
+    let note = report["surface_cover"]["snow-ice"]["note"].as_str()?;
+    let (policy, _) = note.split_once(':')?;
+    policy.starts_with("game_cover_").then(|| policy.to_owned())
+}
+
+/// Whether a product carries the current game cover policy.
+pub(crate) fn current_cover(product: &Path) -> bool {
+    cover_policy(product).as_deref() == Some(crate::acquisition::cover::POLICY)
+}
+
+/// Find a single-crop product of this review that predates the current game cover and
+/// whose parent record is the current head, or the head an interrupted upgrade replaced.
+/// Returns the product and that head.
 pub fn legacy(runtime: &Path, review: &str) -> Result<Option<(PathBuf, String)>> {
     ensure(valid_digest(review), "invalid review digest")?;
     let Some(head) = curation::current_head(runtime, review)? else {
         return Ok(None);
     };
-    let mut heads = vec![head.clone()];
+    let mut heads = vec![head];
     heads.extend(curation::upgrade_predecessor(runtime, review)?);
-    for path in curation::prepared_for_review(runtime, review)? {
-        let product: Value = read_json(&path)?;
-        let parent = product["parents"]
-            .as_array()
-            .and_then(|parents| parents.iter().find(|p| p["review_sha256"] == review));
-        let Some(record) = parent.and_then(|p| p["curation_record_sha256"].as_str()) else {
-            continue;
-        };
-        if product["schema_version"] == 1 && heads.iter().any(|h| h == record) {
-            preparation::verify_files(&path)?;
-            return Ok(Some((path, record.into())));
+    let products = curation::prepared_for_review(runtime, review)?;
+    for head in heads {
+        for path in &products {
+            let product: Value = read_json(path)?;
+            let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
+            if matches!(product["schema_version"].as_u64(), Some(1 | 2))
+                && parents.len() == 1
+                && parents[0]["review_sha256"] == review
+                && parents[0]["curation_record_sha256"] == head.as_str()
+                && !current_cover(path)
+            {
+                preparation::verify_files(path)?;
+                return Ok(Some((path.clone(), head)));
+            }
         }
     }
     Ok(None)
 }
 
-/// Build the v2 successor of a legacy single-crop product from its masks plus game cover.
-/// The appended technical record keeps the accepted human vote and permission verbatim.
+/// Build the current game cover product of an accepted single crop. With `legacy`,
+/// its masks are kept (water joins the game water); without, the crop starts from
+/// all-supported quality and no repairs or features. The appended technical record
+/// keeps the accepted human vote and permission verbatim. Overpass responses are
+/// cached in `cache`.
 pub fn upgrade(
     runtime: &Path,
     raw: &Path,
     review: &Path,
-    legacy: &Path,
-    legacy_head: &str,
+    legacy: Option<&Path>,
+    expected_head: &str,
     root: &Path,
+    cache: Option<&Path>,
 ) -> Result<PathBuf> {
     let bundle = bundle::verify(raw, review)?;
     let review_sha = digest(&read_small(review)?);
-    let product: Value = read_json(legacy)?;
+    curation::check_cover_upgrade(runtime, &review_sha, expected_head)?;
     let [_, _, width, height] = bundle.manifest.window_cells;
-    let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
-    ensure(
-        product["schema_version"] == 1
-            && parents.len() == 1
-            && parents[0]["review_sha256"] == review_sha.as_str()
-            && parents[0]["curation_record_sha256"] == legacy_head
-            && parents[0]["destination_window"] == json!([0, 0, width, height])
-            && product["grid"]["size"] == json!([width, height]),
-        "legacy product is not the single-crop v1 product of this review",
-    )?;
-    let base = legacy.parent().unwrap_or(Path::new("."));
     let cells = width as usize * height as usize;
     io_context("create upgrade root", fs::create_dir_all(root))?;
     let temp = io_context("stage cover upgrade", tempfile::tempdir_in(root))?;
     let scratch = io_context("stage legacy masks", tempfile::tempdir())?;
-    let mut masks = serde_json::Map::new();
-    for name in ["water", "quality", "repairs", "features"] {
-        let mut values = crate::review::band(
-            &base.join(format!("{name}.tif")),
-            scratch.path(),
-            name,
-            cells,
-            false,
+    let mut values = BTreeMap::new();
+    let (grid, fill, old_counts, basis) = if let Some(legacy) = legacy {
+        let product: Value = read_json(legacy)?;
+        let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
+        ensure(
+            matches!(product["schema_version"].as_u64(), Some(1 | 2))
+                && parents.len() == 1
+                && parents[0]["review_sha256"] == review_sha.as_str()
+                && parents[0]["curation_record_sha256"] == expected_head
+                && parents[0]["destination_window"] == json!([0, 0, width, height])
+                && product["grid"]["size"] == json!([width, height]),
+            "legacy product is not a single-crop product of this review",
         )?;
-        if name == "water" {
-            // Prepared water is 255 water / 0 terrestrial; quality masks use 2 / 1.
-            values
-                .iter_mut()
-                .for_each(|v| *v = if *v == 255 { 2 } else { 1 });
+        let base = legacy.parent().unwrap_or(Path::new("."));
+        for name in ["water", "quality", "repairs", "features"] {
+            let mut mask = crate::review::band(
+                &base.join(format!("{name}.tif")),
+                scratch.path(),
+                name,
+                cells,
+                false,
+            )?;
+            if name == "water" {
+                // Prepared water is 255 water / 0 terrestrial; quality masks use 2 / 1.
+                mask.iter_mut()
+                    .for_each(|v| *v = if *v == 255 { 2 } else { 1 });
+            }
+            values.insert(name, mask);
         }
-        let file = temp.path().join(format!("{name}.tif"));
-        write_crop_mask(&file, &bundle.inspection, &values)?;
-        masks.insert(
-            name.into(),
-            json!({"path":format!("{name}.tif"),"sha256":hash_file(&file)?.0}),
-        );
+        let old: Value = read_json(&base.join("quality-0.json"))?;
+        (
+            product["grid"].clone(),
+            product["masked_fill_m"].clone(),
+            Some(old["counts"].clone()),
+            Some(digest(&read_small(legacy)?)),
+        )
+    } else {
+        preflight_source(&bundle)?;
+        let t: [f64; 6] = serde_json::from_value(bundle.inspection["geoTransform"].clone())?;
+        for (name, value) in [
+            ("water", 1),
+            ("quality", 1),
+            ("repairs", 0),
+            ("features", 0),
+        ] {
+            values.insert(name, vec![value; cells]);
+        }
+        (
+            json!({"origin":[t[0],t[3]],"size":[width,height],"spacing_m":[t[1],-t[5]]}),
+            json!(0.0),
+            None,
+            None,
+        )
+    };
+    let mut masks = serde_json::Map::new();
+    for name in ["quality", "repairs", "features"] {
+        write_crop_mask(
+            &temp.path().join(format!("{name}.tif")),
+            &bundle.inspection,
+            &values[name],
+        )?;
     }
-    let cover = crate::acquisition::cover::generate(&bundle, review, temp.path())?;
-    for name in ["snow-ice", "vegetation"] {
+    let cover = crate::acquisition::cover::generate(
+        &bundle,
+        review,
+        temp.path(),
+        Some(&values["water"]),
+        cache,
+    )?;
+    for name in [
+        "water",
+        "quality",
+        "repairs",
+        "features",
+        "snow-ice",
+        "vegetation",
+    ] {
         let file = temp.path().join(format!("{name}.tif"));
         masks.insert(
             name.into(),
@@ -1337,20 +1423,23 @@ pub fn upgrade(
         report["blockers"].as_array().is_some_and(Vec::is_empty),
         format!("cover upgrade blocked: {}", report["blockers"]),
     )?;
-    let old: Value = read_json(&base.join("quality-0.json"))?;
-    ensure(
-        report["counts"]["water_cells"] == old["counts"]["water_cells"]
-            && report["counts"]["repaired_cells"] == old["counts"]["repaired_cells"],
-        "legacy masks were not reproduced",
-    )?;
+    if let Some(old) = &old_counts {
+        ensure(
+            report["counts"]["repaired_cells"] == old["repaired_cells"]
+                && report["counts"]["water_cells"].as_u64() >= old["water_cells"].as_u64(),
+            "legacy masks were not reproduced",
+        )?;
+    }
+    let cover_bytes = read_small(&dir.join("cover.json"))?;
+    let basis = basis.unwrap_or_else(|| digest(&cover_bytes));
     let head = curation::qualify_cover_upgrade(
         runtime,
-        legacy_head,
+        expected_head,
         &bundle,
         &report_bytes,
         &report,
-        &read_small(&dir.join("cover.json"))?,
-        &digest(&read_small(legacy)?),
+        &cover_bytes,
+        &basis,
     )?;
     let request = dir.join(format!("request-{head}.json"));
     if !request.exists() {
@@ -1358,7 +1447,7 @@ pub fn upgrade(
             &request,
             &serde_json::to_vec_pretty(&json!({"schema_version":2,
                 "inputs":[{"quality_path":input_path,"curation_record_sha256":head}],
-                "grid":product["grid"],"masked_fill_m":product["masked_fill_m"]}))?,
+                "grid":grid,"masked_fill_m":fill}))?,
         )?;
     }
     region::build(runtime, &request)

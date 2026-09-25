@@ -56,6 +56,17 @@ pub(crate) struct Tile {
     pub thumbnail_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preparation_profile: Option<ProfileRef>,
+    /// Input crop this tile replaces with its metadata-only successor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor: Option<Predecessor>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Predecessor {
+    pub raw: PathBuf,
+    pub raw_sha256: String,
+    pub review: PathBuf,
+    pub review_sha256: String,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,7 +126,23 @@ pub fn build(input: &Path, legend: &Path, output: &Path) -> Result<PathBuf> {
         if !raw_cache.contains_key(&raw) {
             raw_cache.insert(raw.clone(), crate::acquisition::verify(&raw)?);
         }
-        let bundle = super::bundle::verify_with_raw(&raw, &review, &raw_cache[&raw])?;
+        let mut bundle = super::bundle::verify_with_raw(&raw, &review, &raw_cache[&raw])?;
+        let (mut raw, mut review, mut predecessor) = (raw, review, None);
+        if let Some((next_raw, next_review)) =
+            metadata_successor(&raw, &raw_cache[&raw], &review, &bundle)?
+        {
+            if !raw_cache.contains_key(&next_raw) {
+                raw_cache.insert(next_raw.clone(), crate::acquisition::verify(&next_raw)?);
+            }
+            bundle =
+                super::bundle::verify_with_raw(&next_raw, &next_review, &raw_cache[&next_raw])?;
+            predecessor = Some(Predecessor {
+                raw_sha256: digest(&read_small(&raw)?),
+                review_sha256: digest(&read_small(&review)?),
+                raw: std::mem::replace(&mut raw, next_raw),
+                review: std::mem::replace(&mut review, next_review),
+            });
+        }
         let review_sha256 = digest(&read_small(&review)?);
         ensure(
             subjects.insert(review_sha256.clone()),
@@ -193,6 +220,7 @@ pub fn build(input: &Path, legend: &Path, output: &Path) -> Result<PathBuf> {
                     Ok::<_, crate::acquisition::AcquisitionError>(ProfileRef { sha256, path })
                 })
                 .transpose()?,
+            predecessor,
         });
     }
     let legend_bytes = read_small(legend)?;
@@ -212,6 +240,91 @@ pub fn build(input: &Path, legend: &Path, output: &Path) -> Result<PathBuf> {
     write_new(&stage.path().join("gallery.json"), &manifest)?;
     io_context("publish gallery", fs::rename(stage.path(), output))?;
     Ok(output.join("gallery.json"))
+}
+
+fn same_terrain(a: &super::bundle::Bundle, b: &super::bundle::Bundle) -> bool {
+    let sha = |bundle: &super::bundle::Bundle, name: &str| {
+        bundle
+            .manifest
+            .artifacts
+            .iter()
+            .find(|a| a.path == name)
+            .map(|a| a.sha256.clone())
+    };
+    a.manifest.asset_sha256 == b.manifest.asset_sha256
+        && a.manifest.window_cells == b.manifest.window_cells
+        && ["elevation.tif", "validity.tif"]
+            .iter()
+            .all(|name| sha(a, name).is_some() && sha(a, name) == sha(b, name))
+}
+
+/// A receipt for the identical asset that resolves more metadata (a strict subset of
+/// the unresolved fields) supersedes an incomplete one. Its crop of the same window is made once beside the original review and used
+/// only when the terrain is byte-identical. Ambiguous successors are ignored.
+fn metadata_successor(
+    raw: &Path,
+    receipt: &crate::acquisition::RawReceipt,
+    review: &Path,
+    bundle: &super::bundle::Bundle,
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    if receipt.unresolved_metadata.is_empty() {
+        return Ok(None);
+    }
+    let records = raw.parent().unwrap_or(Path::new("."));
+    let mut found = Vec::new();
+    for entry in io_context("list raw receipts", fs::read_dir(records))? {
+        let path = io_context("read raw receipt entry", entry)?.path();
+        if path == raw || path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        if let Ok(other) = read_json::<crate::acquisition::RawReceipt>(&path)
+            && other.asset_sha256 == receipt.asset_sha256
+            && other.inspection_sha256 == receipt.inspection_sha256
+            && other.unresolved_metadata.len() < receipt.unresolved_metadata.len()
+            && other
+                .unresolved_metadata
+                .iter()
+                .all(|field| receipt.unresolved_metadata.contains(field))
+        {
+            found.push((other.unresolved_metadata.len(), path));
+        }
+    }
+    found.sort();
+    let successor = match found.as_slice() {
+        [(_, only)] => only,
+        [(best, only), (next, _), ..] if best < next => only,
+        _ => return Ok(None),
+    };
+    let sha = digest(&read_small(successor)?);
+    let directory = review.parent().unwrap_or(Path::new("."));
+    let name = directory
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("review");
+    let target = directory.with_file_name(format!("{name}.metadata-successor-{}", &sha[..16]));
+    if !target.exists() {
+        let stage = io_context(
+            "stage successor review",
+            tempfile::tempdir_in(target.parent().unwrap_or(Path::new("."))),
+        )?;
+        let made = crate::acquisition::create_review(
+            successor,
+            &stage.path().join("review"),
+            bundle.manifest.window_cells,
+        )?;
+        if !same_terrain(bundle, &super::bundle::verify(successor, &made)?) {
+            return Ok(None);
+        }
+        io_context(
+            "publish successor review",
+            fs::rename(stage.path().join("review"), &target),
+        )?;
+    }
+    let manifest = target.join("review.json");
+    if !same_terrain(bundle, &super::bundle::verify(successor, &manifest)?) {
+        return Ok(None);
+    }
+    Ok(Some((successor.clone(), manifest)))
 }
 
 pub(crate) fn load(path: &Path) -> Result<(Gallery, String, Vec<super::bundle::Bundle>)> {
@@ -240,7 +353,11 @@ pub(crate) fn load(path: &Path) -> Result<(Gallery, String, Vec<super::bundle::B
         }
         ensure(
             digest(&read_small(&tile.raw)?) == tile.raw_sha256
-                && digest(&read_small(&tile.review)?) == tile.review_sha256,
+                && digest(&read_small(&tile.review)?) == tile.review_sha256
+                && tile.predecessor.as_ref().is_none_or(|p| {
+                    digest(&read_small(&p.raw).unwrap_or_default()) == p.raw_sha256
+                        && digest(&read_small(&p.review).unwrap_or_default()) == p.review_sha256
+                }),
             "gallery input identity mismatch",
         )?;
         if !raw_cache.contains_key(&tile.raw) {

@@ -151,6 +151,51 @@ pub(crate) fn metric_grid(info: &Value, source: &SourceRecord, transform: &[f64]
         && transform[4] == 0.0
 }
 
+/// WGS84 centre and corners (degrees, 5 decimals) of a review crop from its
+/// georeferenced elevation, plus a Google Earth view about 2.5 tile widths away.
+pub(crate) fn location(review: &Path, bundle: &bundle::Bundle) -> Result<Value> {
+    let elevation = review
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("elevation.tif");
+    let info: Value = serde_json::from_slice(&run(command("gdalinfo")
+        .args(["-json", "-nomd"])
+        .arg(&elevation))?)?;
+    // gdalinfo lists the transformed corners as upper left, lower left, lower right, upper right.
+    let ring: Vec<[f64; 2]> = info["wgs84Extent"]["coordinates"][0]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(4)
+        .filter_map(|p| Some([p[1].as_f64()?, p[0].as_f64()?]))
+        .collect();
+    ensure(ring.len() == 4, "review crop has no WGS84 corners")?;
+    let round = |v: f64| (v * 1e5).round() / 1e5;
+    let point = |p: [f64; 2]| json!([round(p[0]), round(p[1])]);
+    let centre = [
+        ring.iter().map(|p| p[0]).sum::<f64>() / 4.0,
+        ring.iter().map(|p| p[1]).sum::<f64>() / 4.0,
+    ];
+    let transform: Vec<f64> =
+        serde_json::from_value(bundle.inspection["geoTransform"].clone()).unwrap_or_default();
+    let width_m = bundle.manifest.window_cells[2] as f64 * transform.get(1).copied().unwrap_or(1.0);
+    let metrics = bundle.metrics.as_ref();
+    let ground = match metrics.map(|m| (m["minimum_native"].as_f64(), m["maximum_native"].as_f64()))
+    {
+        Some((Some(low), Some(high))) => ((low + high) / 2.0).round(),
+        _ => 0.0,
+    };
+    let url = format!(
+        "https://earth.google.com/web/@{:.5},{:.5},{ground}a,{:.0}d,35y,0h,60t,0r",
+        centre[0],
+        centre[1],
+        width_m * 2.5
+    );
+    Ok(json!({"centre": point(centre),
+        "corners": {"nw": point(ring[0]), "sw": point(ring[1]), "se": point(ring[2]), "ne": point(ring[3])},
+        "width_m": width_m, "google_earth": url}))
+}
+
 /// Native samples and provider-mask counts for inspection, never admission.
 /// The browser uses a CPU heightfield preview; no model or GPU job is launched.
 pub(crate) fn write_preview(directory: &Path, info: &Value, source: &SourceRecord) -> Result<()> {

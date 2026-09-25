@@ -129,6 +129,7 @@ struct Session {
     gallery: Arc<Gallery>,
     snapshots: Arc<Vec<super::bundle::Bundle>>,
     preparation: super::preparation_worker::Worker,
+    locations: Vec<Value>,
     id: String,
     root: PathBuf,
     runtime: PathBuf,
@@ -162,7 +163,7 @@ impl Session {
         for (index, tile) in self.gallery.tiles.iter().enumerate() {
             let state = &selections[index];
             let preparation = self.preparation.state(index, state, &heads);
-            tiles.push(json!({"index":index,"title":tile.title,"id":tile.id,"primary_class_id":tile.primary_class_id,"review_sha256":tile.review_sha256,"head":state["head"],"decision":state["decision"],"preparation":preparation}));
+            tiles.push(json!({"index":index,"title":tile.title,"id":tile.id,"primary_class_id":tile.primary_class_id,"review_sha256":tile.review_sha256,"head":state["head"],"decision":state["decision"],"preparation":preparation,"location":self.locations[index]}));
         }
         Ok(json!({"title":self.gallery.title,"gallery_sha256":self.id,"tiles":tiles}))
     }
@@ -342,9 +343,30 @@ pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
     )?;
     let gallery = Arc::new(gallery);
     let snapshots = Arc::new(snapshots);
+    for tile in &gallery.tiles {
+        if let Some(previous) = &tile.predecessor {
+            // Identical terrain under complete metadata keeps the earlier vote.
+            if let Err(error) = curation::carry_metadata_successor(
+                runtime,
+                &previous.raw,
+                &previous.review,
+                &tile.raw,
+                &tile.review,
+            ) {
+                eprintln!("Metadata successor {}: {error}", tile.id);
+            }
+        }
+    }
     for (tile, snapshot) in gallery.tiles.iter().zip(snapshots.iter()) {
         curation::selection(runtime, &tile.review_sha256, snapshot)?;
     }
+    // Coordinates are display aids; a failure leaves them out.
+    let locations = gallery
+        .tiles
+        .iter()
+        .zip(snapshots.iter())
+        .map(|(tile, snapshot)| super::location(&tile.review, snapshot).unwrap_or(Value::Null))
+        .collect();
     let root = manifest.parent().unwrap_or(Path::new("."));
     let preparation = super::preparation_worker::start(
         runtime,
@@ -356,6 +378,7 @@ pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
         gallery,
         snapshots,
         preparation,
+        locations,
         id,
         root: root.into(),
         runtime: runtime.into(),

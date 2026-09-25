@@ -60,12 +60,15 @@ struct Finding {
 }
 
 /// Technical successors that preserve an accepted human vote.
-const AUTOMATION_KINDS: [&str; 3] = [
+const AUTOMATION_KINDS: [&str; 4] = [
     "supplier_qa_qualification_v1",
     "supplier_qa_qualification_v2",
+    "game_cover_upgrade_v1",
     UPGRADE_KIND,
 ];
-const UPGRADE_KIND: &str = "game_cover_upgrade_v1";
+const UPGRADE_KIND: &str = "game_cover_upgrade_v2";
+/// A human vote carried to a metadata-only successor of the identical terrain.
+const SUCCESSOR_KIND: &str = "metadata_successor_v1";
 
 const FINDINGS: [&str; 6] = [
     "coordinates",
@@ -152,6 +155,18 @@ struct Record {
     topography_version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     automation: Option<Automation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    carried_from: Option<Carried>,
+}
+
+/// Provenance of a vote carried from another review of byte-identical terrain.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Carried {
+    kind: String,
+    review_sha256: String,
+    record_sha256: String,
+    equivalence_sha256: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -159,7 +174,8 @@ struct Record {
 struct Automation {
     kind: String,
     inherited_human_record_sha256: String,
-    /// Source profile, or for `game_cover_upgrade_v1` the legacy prepared manifest.
+    /// Source profile, or for game cover upgrades the legacy prepared manifest
+    /// (the captured cover document when there was no product).
     profile_sha256: String,
     quality_report_sha256: String,
 }
@@ -592,6 +608,7 @@ pub fn record(path: &Path, runtime: &Path) -> Result<String> {
         admission: "not admitted".into(),
         topography_version: env!("CARGO_PKG_VERSION").into(),
         automation: None,
+        carried_from: None,
     };
     journal::Store::locate(runtime)?.append(&record, &objects, &raw_path, &review_path)
 }
@@ -815,6 +832,7 @@ pub(crate) fn qualify_automatic(
             profile_sha256: package.profile_sha256.clone(),
             quality_report_sha256: report_sha,
         }),
+        carried_from: None,
     };
     let raw_path = store.record_locator(head, true)?;
     let review_path = store.record_locator(head, false)?;
@@ -836,6 +854,56 @@ pub(crate) fn upgrade_predecessor(runtime: &Path, review: &str) -> Result<Option
         .automation
         .filter(|a| a.kind == UPGRADE_KIND)
         .and(record.previous_record_sha256))
+}
+
+/// The current record can take a game cover upgrade: a qualified human Yes with
+/// confirmed permission, all findings passing and measured coverage.
+fn upgradable(head: &str, current: &Record, expected: &str) -> Result<()> {
+    ensure(
+        head == expected,
+        "stale decision; the legacy product no longer matches the current choice",
+    )?;
+    ensure(
+        current.claims.actor.kind == ActorKind::Human
+            && current.claims.decision == Decision::Accept,
+        "cover upgrade requires a current human Yes",
+    )?;
+    ensure(
+        matches!(
+            current.claims.license.training_permission,
+            TrainingPermission::Confirmed
+        ),
+        "the accepted record does not confirm training permission",
+    )?;
+    for (name, finding) in &current.claims.findings {
+        ensure(
+            finding.state == FindingState::Pass,
+            format!("accepted record finding {name} does not pass"),
+        )?;
+    }
+    ensure(
+        current.claims.coverage.is_some(),
+        "accepted record lacks coverage",
+    )
+}
+
+/// Check before any source download that a cover upgrade from `expected` can be recorded
+/// (or already was, by an interrupted upgrade).
+pub(crate) fn check_cover_upgrade(runtime: &Path, review: &str, expected: &str) -> Result<()> {
+    let history = journal::Store::locate(runtime)?.history(review)?;
+    let (head, bytes) = history
+        .last()
+        .ok_or_else(|| AcquisitionError::Invalid("crop has no curation records".into()))?;
+    let current: Record = serde_json::from_slice(bytes)?;
+    if current
+        .automation
+        .as_ref()
+        .is_some_and(|a| a.kind == UPGRADE_KIND)
+        && current.previous_record_sha256.as_deref() == Some(expected)
+    {
+        return Ok(());
+    }
+    upgradable(head, &current, expected)
 }
 
 /// Append the technical successor of a legacy accepted record: its claims, vote and
@@ -866,22 +934,7 @@ pub(crate) fn qualify_cover_upgrade(
     {
         return Ok(head.clone());
     }
-    ensure(
-        head == expected,
-        "stale decision; the legacy product no longer matches the current choice",
-    )?;
-    ensure(
-        current.claims.actor.kind == ActorKind::Human
-            && current.claims.decision == Decision::Accept,
-        "cover upgrade requires a current human Yes",
-    )?;
-    ensure(
-        matches!(
-            current.claims.license.training_permission,
-            TrainingPermission::Confirmed
-        ),
-        "the accepted record does not confirm training permission",
-    )?;
+    upgradable(head, &current, expected)?;
     let inherited = match &current.automation {
         Some(a) => a.inherited_human_record_sha256.clone(),
         None => head.clone(),
@@ -895,10 +948,6 @@ pub(crate) fn qualify_cover_upgrade(
             .findings
             .get_mut(name)
             .expect("validated record finding");
-        ensure(
-            finding.state == FindingState::Pass,
-            format!("accepted record finding {name} does not pass"),
-        )?;
         if matches!(
             name,
             "ground_support"
@@ -910,7 +959,7 @@ pub(crate) fn qualify_cover_upgrade(
                 .evidence_ids
                 .extend([report_id.clone(), cover_id.clone()]);
             finding.note.push_str(
-                " Game cover v1 upgrade (technical, no new vote): unchanged masks reassessed with snow/ice excluded from ground; vegetation is informational.",
+                " Game cover v2 upgrade (technical, no new vote): masks reassessed with game water added and snow/ice excluded from ground; vegetation is informational.",
             );
         }
     }
@@ -928,7 +977,7 @@ pub(crate) fn qualify_cover_upgrade(
     coverage.evidence_ids.push(report_id.clone());
     coverage
         .note
-        .push_str(" Game cover v1: ground excludes water and snow/ice.");
+        .push_str(" Game cover v2: ground excludes water and snow/ice.");
     let mut evidence = current.evidence;
     let mut objects = BTreeMap::new();
     for item in &evidence {
@@ -939,13 +988,13 @@ pub(crate) fn qualify_cover_upgrade(
             report_id,
             report_sha.clone(),
             report_bytes,
-            "Native v2 quality assessment of the legacy masks with game cover",
+            "Native v2 quality assessment of the tile masks with game cover",
         ),
         (
             cover_id,
             cover_sha,
             cover_bytes,
-            "game_cover_v1 snow/ice and vegetation sources, licences, rules and counts",
+            "game_cover_v2 water, snow/ice and vegetation sources, licences, rules and counts",
         ),
     ] {
         objects.insert(sha.clone(), body.to_vec());
@@ -992,10 +1041,186 @@ pub(crate) fn qualify_cover_upgrade(
             profile_sha256: legacy_product_sha256.into(),
             quality_report_sha256: report_sha,
         }),
+        carried_from: None,
     };
     let raw_path = store.record_locator(head, true)?;
     let review_path = store.record_locator(head, false)?;
     store.append(&record, &objects, &raw_path, &review_path)
+}
+
+/// Whether a failed finding concerned the strict snow/ice evidence assessment.
+fn snow_ice_finding(note: &str) -> bool {
+    note.to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .any(|word| matches!(word, "glacier" | "glaciers" | "glacial" | "snow" | "ice"))
+}
+
+/// Carry the current human vote on `predecessor_review` to its metadata-only successor
+/// review of the byte-identical terrain window: the vote is copied verbatim, not recast.
+/// Failed findings about the strict snow/ice assessment, which game cover replaces, pass
+/// with that reason recorded; other failures stay. Permission comes from the successor
+/// source metadata when it confirms it, else it is kept. No-op when the successor
+/// already has history or the predecessor has no human vote.
+pub(crate) fn carry_metadata_successor(
+    runtime: &Path,
+    predecessor_raw: &Path,
+    predecessor_review: &Path,
+    raw: &Path,
+    review: &Path,
+) -> Result<Option<String>> {
+    let store = journal::Store::locate(runtime)?;
+    if !store.db.exists() {
+        return Ok(None);
+    }
+    let review_sha = digest(&read_small(review)?);
+    if store.head(&review_sha)?.is_some() {
+        return Ok(None);
+    }
+    let old_review = digest(&read_small(predecessor_review)?);
+    let history = store.history(&old_review)?;
+    let Some((old_head, old_bytes)) = history.last() else {
+        return Ok(None);
+    };
+    let old: Record = serde_json::from_slice(old_bytes)?;
+    if old.claims.actor.kind != ActorKind::Human || old.claims.decision == Decision::Annotate {
+        return Ok(None);
+    }
+    let before = bundle::verify(predecessor_raw, predecessor_review)?;
+    let after = bundle::verify(raw, review)?;
+    let artifact = |b: &bundle::Bundle, name: &str| {
+        b.manifest
+            .artifacts
+            .iter()
+            .find(|a| a.path == name)
+            .map(|a| a.sha256.clone())
+    };
+    let identical = ["elevation.tif", "validity.tif"].iter().all(|name| {
+        artifact(&before, name).is_some() && artifact(&before, name) == artifact(&after, name)
+    });
+    ensure(
+        identical
+            && before.manifest.asset_sha256 == after.manifest.asset_sha256
+            && before.manifest.window_cells == after.manifest.window_cells
+            && old.asset_sha256 == after.manifest.asset_sha256
+            && old.window_cells == after.manifest.window_cells,
+        "metadata successor terrain differs from the voted crop",
+    )?;
+    let equivalence_id = "metadata-successor-equivalence";
+    let mut claims = old.claims;
+    let mut cleared = Vec::new();
+    if claims.decision == Decision::Accept {
+        for (name, finding) in claims.findings.iter_mut() {
+            if finding.state == FindingState::Fail && snow_ice_finding(&finding.note) {
+                cleared.push(serde_json::json!({"finding":name,"earlier_note":finding.note}));
+                finding.state = FindingState::Pass;
+                finding.note = format!(
+                    "Metadata successor (technical, no new vote): the earlier failure concerned the strict snow/ice evidence assessment, which {} replaces by excluding snow/ice cells from ground with deterministic fill. Earlier note: {}",
+                    crate::acquisition::cover::POLICY,
+                    finding.note
+                );
+                finding.evidence_ids.push(equivalence_id.into());
+            }
+        }
+    }
+    let successor: License = serde_json::from_value(serde_json::to_value(&after.source.license)?)?;
+    let permission = if !matches!(
+        claims.license.training_permission,
+        TrainingPermission::Restricted | TrainingPermission::Prohibited
+    ) && matches!(successor.training_permission, TrainingPermission::Confirmed)
+    {
+        claims.license = successor;
+        claims.permission_evidence_ids.push(equivalence_id.into());
+        "confirmed by the successor source metadata (captured in this document)"
+    } else {
+        "kept from the carried record"
+    };
+    let source_path = raw
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| AcquisitionError::Invalid("raw receipt needs storage root".into()))?
+        .join("objects")
+        .join(&crate::acquisition::verify(raw)?.source_sha256);
+    let document = serde_json::to_vec_pretty(&serde_json::json!({
+        "schema_version": 1,
+        "kind": "metadata_successor_equivalence",
+        "predecessor": {"raw_receipt_sha256": old.target.raw_receipt_sha256,
+            "review_sha256": old_review, "record_sha256": old_head},
+        "successor": {"raw_receipt_sha256": digest(&read_small(raw)?), "review_sha256": review_sha},
+        "asset_sha256": after.manifest.asset_sha256,
+        "window_cells": after.manifest.window_cells,
+        "identical_artifacts": {"elevation.tif": artifact(&after, "elevation.tif"),
+            "validity.tif": artifact(&after, "validity.tif")},
+        "vote": "The human vote is carried verbatim: the terrain is byte-identical, so this is not a new vote.",
+        "cleared_findings": cleared,
+        "permission": permission,
+        "successor_source_toml": String::from_utf8_lossy(&read_small(&source_path)?),
+    }))?;
+    let mut evidence = old.evidence;
+    let mut objects = BTreeMap::new();
+    for item in &evidence {
+        objects.insert(item.sha256.clone(), store.object(&item.sha256)?);
+    }
+    let equivalence_sha = digest(&document);
+    objects.insert(equivalence_sha.clone(), document);
+    evidence.push(Evidence {
+        id: equivalence_id.into(),
+        description: "Metadata-only successor: identical asset, window and terrain; carried vote, cleared snow/ice findings and permission basis".into(),
+        source_url: None,
+        sha256: equivalence_sha.clone(),
+    });
+    let target = Target {
+        raw_receipt_sha256: digest(&read_small(raw)?),
+        review_sha256: review_sha,
+        legend_sha256: old.target.legend_sha256,
+    };
+    for sha in [
+        &target.raw_receipt_sha256,
+        &target.review_sha256,
+        &target.legend_sha256,
+    ] {
+        let bytes = if *sha == target.legend_sha256 {
+            store.object(sha)?
+        } else if *sha == target.raw_receipt_sha256 {
+            read_small(raw)?
+        } else {
+            read_small(review)?
+        };
+        objects.insert(sha.clone(), bytes);
+    }
+    let legend_temp = io_context("stage captured legend", tempfile::tempdir())?;
+    let legend_path = legend_temp.path().join("legend.toml");
+    write_new(&legend_path, &objects[&target.legend_sha256])?;
+    let [_, _, w, h] = old.window_cells;
+    validate_claims(
+        &claims,
+        &evidence,
+        &inspect_legend(&legend_path)?.classes,
+        u64::from(w) * u64::from(h),
+    )?;
+    let record = Record {
+        schema_version: 1,
+        kind: "crop_curation".into(),
+        target,
+        previous_record_sha256: None,
+        asset_sha256: old.asset_sha256,
+        window_cells: old.window_cells,
+        legend_version: old.legend_version,
+        preparation_blockers: blockers(&claims, &after),
+        claims,
+        evidence,
+        admission: "not admitted".into(),
+        topography_version: env!("CARGO_PKG_VERSION").into(),
+        automation: None,
+        carried_from: Some(Carried {
+            kind: SUCCESSOR_KIND.into(),
+            review_sha256: old_review,
+            record_sha256: old_head.clone(),
+            equivalence_sha256: equivalence_sha,
+        }),
+    };
+    store
+        .append(&record, &objects, &absolute(raw)?, &absolute(review)?)
+        .map(Some)
 }
 
 pub(crate) fn prepared_for_review(runtime: &Path, review: &str) -> Result<Vec<PathBuf>> {
@@ -1184,6 +1409,7 @@ pub(crate) fn select(
         admission: "not admitted".into(),
         topography_version: env!("CARGO_PKG_VERSION").into(),
         automation: None,
+        carried_from: None,
     };
     let id = store.append_snapshot(&record, &objects, &input.raw, &input.review, snapshot)?;
     Ok(serde_json::json!({"head":id,"decision":decision}))

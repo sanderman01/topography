@@ -447,6 +447,40 @@ impl Store {
                 )?;
             }
         }
+        if let Some(carried) = &record.carried_from {
+            ensure(
+                carried.kind == super::SUCCESSOR_KIND
+                    && record.automation.is_none()
+                    && valid_digest(&carried.review_sha256)
+                    && valid_digest(&carried.record_sha256)
+                    && carried.review_sha256 != record.target.review_sha256,
+                "invalid carried vote provenance",
+            )?;
+            let (source_body, source_review): (Vec<u8>, String) = db.query_row(
+                "SELECT body,review_id FROM records WHERE id=?1",
+                [&carried.record_sha256],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let source: Record = serde_json::from_slice(&source_body)?;
+            ensure(
+                digest(&source_body) == carried.record_sha256
+                    && source_review == carried.review_sha256
+                    && source.claims.actor.kind == ActorKind::Human
+                    && serde_json::to_vec(&source.claims.actor)?
+                        == serde_json::to_vec(&record.claims.actor)?
+                    && source.claims.decision == record.claims.decision
+                    && source.claims.reason == record.claims.reason
+                    && source.claims.primary_class_id == record.claims.primary_class_id
+                    && source.asset_sha256 == record.asset_sha256
+                    && source.window_cells == record.window_cells
+                    && source.target.legend_sha256 == record.target.legend_sha256
+                    && record
+                        .evidence
+                        .iter()
+                        .any(|e| e.sha256 == carried.equivalence_sha256),
+                "carried vote differs from its source record",
+            )?;
+        }
         // Policy output is versioned with the record; do not silently reinterpret history.
         ensure(
             !record.preparation_blockers.is_empty(),
