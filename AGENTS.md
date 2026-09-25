@@ -55,6 +55,10 @@ exists. Consult upstream documentation for the versions actually selected.
 
 ## Essential constraints
 
+- This is terrain for a game, not science. Aim for plausible, good-looking 1 m
+  terrain. Prefer tool defaults and judgment calls over evidence hunting,
+  forensic analysis or sub-metre accuracy work. Ask the user only for terrain
+  Yes/No and genuine direction changes.
 - Use only source data publicly available for download. Do not request private
   deliveries or commission measurements. Never send emails or prepare email
   drafts, and do not ask the user to contact people or institutions for data.
@@ -69,11 +73,10 @@ exists. Consult upstream documentation for the versions actually selected.
   separate from successful processing. Preserve accepted outputs and edits.
 - Keep water masks and authored surface levels separate from ground elevation.
   Underwater cells use deterministic masked fill; bathymetry is outside scope.
-- Treat snow/ice and vegetation as independent assessed layers in version-2
-  contracts. Record each layer as unknown, assessed absent or present; never
-  infer absence from missing data. Snow/ice present requires a native-aligned
-  provenance-backed mask before revised ground qualification. Vegetation
-  classification is best effort and does not block valid bare-earth preparation.
+- Snow/ice, vegetation and water masks are game layers from coarse public land
+  cover (about 10 m is enough). Mark snow/ice where the area commonly has it;
+  ignore seasonality and survey dates. Missing or ambiguous cover is resolved by
+  a recorded judgment call, never left as a blocker.
 - Split training data geographically before overlapping crops. Admit source data
   only under the master plan's quality and documented training-permission gates.
 - Keep the 16 GB VRAM ceiling. Establish real-terrain and numeric-precision
@@ -120,7 +123,18 @@ when requested; follow [the verification guide](docs/best-practices/validation-a
 for their placement and terrain invariants. For documentation, verify links,
 commands, and consistency with implementation and the master plan.
 
-## Change discipline
+## Efficiency
+
+- Per-tile work belongs in the tooling. If a tile needs hand-written scripts,
+  profiles or manual CLI chains, fix the tool instead. Accepted tiles should
+  reach Ready through the gallery worker without agent involvement.
+- Read only the plan sections and guides relevant to the change.
+- Keep verification proportional: `bash scripts/check.sh`, the real workflow
+  and `topography curate check`. Skip byte-level preservation proofs, catalog
+  diffs and independent raster re-verification unless investigating a bug.
+- Use few subagents with tight scopes; don't have several agents rediscover
+  the same workflow.
+
 
 - Delegate suitable independent tasks to Sol subagents (`gpt-5.6-sol`) by default.
   Give each agent a bounded scope and distinct file ownership; keep dependent
