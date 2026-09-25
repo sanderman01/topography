@@ -1,0 +1,44 @@
+crates/topography-core/src/review/gallery.html
+  s_f6c04b9d7eeb89::t_760763db42ee14 4,8,27-30
+crates/topography-core/src/preparation/automatic.rs
+  s_f6c04b9d7eeb89::t_e05074754b800e 661-662,667,673,675-676,679-683,700,713-715,731,842-849
+  s_f6c04b9d7eeb89::t_33eed6464e3742 1347-1352
+  s_f6c04b9d7eeb89::t_4986f02962e25f 674,677-678
+  s_f6c04b9d7eeb89::t_bea41e0141b32e 1244-1259,1265,1267-1280,1286-1290,1295-1296,1298,1302,1308-1319,1321-1335,1337-1346,1353-1368,1370-1384,1426-1434,1437,1441-1442,1450
+crates/topography-core/src/review/gallery_server.rs
+  s_f6c04b9d7eeb89::t_300156493b6e44 132,166,346-359,363-369,381
+crates/topography-core/src/catalog/curation/journal.rs
+  s_f6c04b9d7eeb89::t_2a7c0f16b64e8a 450-483
+crates/topography-core/src/review/gallery.rs
+  s_f6c04b9d7eeb89::t_6870fa0c7053c2 59-69,129-136,139-145,223,245-260,263-282,288,290-291,297-329,356-360
+  s_f6c04b9d7eeb89::t_33eed6464e3742 137-138
+  s_f6c04b9d7eeb89::t_ba84d1dc007684 261-262,283-287,289,292-296
+crates/topography-core/src/review/preparation_worker.rs
+  s_f6c04b9d7eeb89::t_33eed6464e3742 348-353
+  s_f6c04b9d7eeb89::t_f8d7a3c3f9481f 54,64,284-308,310-311,313-317,320-328,330-331,346-347,354-355
+crates/topography-core/src/review/mod.rs
+  s_f6c04b9d7eeb89::t_33eed6464e3742 183-184
+  s_f6c04b9d7eeb89::t_283e8d5dba1cd8 154-182,185-198
+crates/topography-core/src/catalog/curation/mod.rs
+  s_f6c04b9d7eeb89::t_b1a372787d8613 63,66,69-71,158-169,177-178,611,835,1044,1412
+  s_f6c04b9d7eeb89::t_badc3dff8b2ef6 859-908,937,962,980,991,997
+  s_f6c04b9d7eeb89::t_dc5a3b4b0f089f 1051-1096,1100-1124,1126-1224
+  s_f6c04b9d7eeb89::t_33eed6464e3742 1097-1099,1125
+  s_f6c04b9d7eeb89::t_927eaef24aba07 1225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4efcab3bd8b45ad950af10f7d9544d4700d09a48",
+  "prompts": {},
+  "sessions": {
+    "s_f6c04b9d7eeb89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bae888e-8bf2-4368-b4b6-87b6e40c4da7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
