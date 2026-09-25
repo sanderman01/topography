@@ -1,0 +1,40 @@
+scripts/check_surface_cover.py
+  s_f6c04b9d7eeb89::t_7c41649f777fdd 5,17-29,293-294,332-334,336-346,348
+  s_f6c04b9d7eeb89::t_d1cbfa0b120530 327-330,347
+  s_f6c04b9d7eeb89::t_8bd8256f90ee95 335
+  s_f6c04b9d7eeb89::t_0d3f150ea053ba 331
+  s_f6c04b9d7eeb89::t_2ec198aca58282 295
+crates/topography-core/src/review/overlay.rs
+  s_f6c04b9d7eeb89::t_ac8c896fd5ac20 1-90
+docs/workflows/batch-source-review.md
+  s_f6c04b9d7eeb89::t_8dca10f45ed245 77-84
+crates/topography-core/src/review/gallery_bridge.html
+  s_f6c04b9d7eeb89::t_7fff379996a5b5 10,21
+  s_f6c04b9d7eeb89::t_6d72af71691db3 1-9,11-20,22-31
+crates/topography-core/src/review/gallery.html
+  s_f6c04b9d7eeb89::t_7fff379996a5b5 9
+  s_f6c04b9d7eeb89::t_37dcd66015d70b 4,20-27,50,52
+crates/topography-core/src/review/gallery_server.rs
+  s_f6c04b9d7eeb89::t_8cb574c76fd08a 169-186,206-223,225-226,257-258
+  s_f6c04b9d7eeb89::t_1d1ddb6a824b90 224
+crates/topography-core/src/review/mod.rs
+  s_f6c04b9d7eeb89::t_db01a80727131c 6
+docs/design/automatic-preparation-v1.md
+  s_f6c04b9d7eeb89::t_139f8efd5dde31 118-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6cb258383237847cd35f75bde441acc380221fbd",
+  "prompts": {},
+  "sessions": {
+    "s_f6c04b9d7eeb89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7bae888e-8bf2-4368-b4b6-87b6e40c4da7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
