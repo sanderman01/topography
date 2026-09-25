@@ -24,16 +24,16 @@ Updated 2026-09-25. Follow the [master plan](plans/terrain-design-master-plan.md
 - **Snow/ice and vegetation masks (v2 contracts):** implemented and verified on
   synthetic cases. Unknown snow/ice blocks qualification; vegetation is optional.
   Legacy products show "Surface assessment pending".
-- **Game cover (2026-09-25):** `game_cover_v1` builds snow/ice (WorldCover 70 +
-  latest GLIMS outlines) and vegetation masks automatically. The gallery worker
-  upgrades legacy tiles without scripts or votes. Gallery v14: **32 of 33
-  accepted tiles Ready**; St. Helens crater rim waits on a source-metadata successor.
+- **Game cover v2 (2026-09-25):** snow/ice, vegetation and water masks are built
+  automatically (WorldCover, GLIMS, OpenStreetMap water; water wins). The worker
+  upgrades every accepted tile and carries votes to identical metadata-successor
+  crops. Tile details show coordinates and a Google Earth link.
+  Gallery v15: **all 33 accepted tiles Ready**, 33 Yes / 2 No.
 
 ## Next
 
-1. St. Helens crater rim: re-crop from the complete source receipt and vote Yes once.
-2. Broaden terrain families (six of about nine) with reusable source profiles.
-3. Later: label editing, cross-survey alignment, a 4 km pilot world, full extent,
+1. Broaden terrain families (six of about nine) with reusable source profiles.
+2. Later: label editing, cross-survey alignment, a 4 km pilot world, full extent,
    editing/rebuild and export.
 
 Details: [source coverage](reports/pilot-source-coverage-v1.md),
