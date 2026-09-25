@@ -1,0 +1,25 @@
+docs/progress.md
+  s_8a3239663527df::t_c1c32fe6e083e0 20-23
+  s_8a3239663527df::t_5e4f390becad2d 37-40
+docs/plans/terrain-diffusion-v1.md
+  s_8a3239663527df::t_04320fbd5fffce 62
+  s_8a3239663527df::t_4d05593b781a4c 1-61,63-135
+docs/plans/terrain-design-master-plan.md
+  s_8a3239663527df::t_c1c32fe6e083e0 289-290,401-404,457
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "897c816a431439fde547d77914812397e1b597a5",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
