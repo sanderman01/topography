@@ -24,18 +24,19 @@ Updated 2026-09-25. Follow the [master plan](plans/terrain-design-master-plan.md
 - **Snow/ice and vegetation masks (v2 contracts):** implemented and verified on
   synthetic cases. Unknown snow/ice blocks qualification; vegetation is optional.
   Legacy products show "Surface assessment pending".
+- **Cover backfill (2026-09-25):** [report](reports/surface-cover-backfill-v1.md).
+  `cover draft/merge` fetches WorldCover, GLIMS and Sentinel-2 evidence; the
+  gallery shows cover overlays. 15 tiles are v2 Ready (Río Abajo, dunes,
+  Grand Canyon, Badlands, Banks, one gorge); dunes striping qualified as a
+  sub-accuracy supplier artifact. Gallery v13: 33 Yes, 2 No; 45 prepared products.
 
 ## Next
 
-1. Backfill surface-cover evidence for existing tiles without repeat votes:
-   three Río Abajo drafts and the St. Helens crater (NOAA 9211 class-21 snow).
-2. Verify present, absent, partial, unknown and fully covered cases on real tiles,
-   including date/boundary uncertainty.
-3. Automate source-layer acquisition and add optional cover overlays in the gallery.
-4. Resolve the three technical exceptions: two dunes tiles with striping and the
-   St. Helens glacier tile.
-5. Broaden terrain families (six of about nine) with reusable source profiles.
-6. Later: label editing, cross-survey alignment, a 4 km pilot world, full extent,
+1. Decide how to fill Sentinel-2 seasonal-snow gaps (15 tiles: Puerto Rico,
+   Milford, Zion) and whether tiny unknown snow/ice fractions may pass
+   (St. Helens flanks). The crater stays blocked by unresolved glacier extent.
+2. Broaden terrain families (six of about nine) with reusable source profiles.
+3. Later: label editing, cross-survey alignment, a 4 km pilot world, full extent,
    editing/rebuild and export.
 
 Details: [source coverage](reports/pilot-source-coverage-v1.md),
