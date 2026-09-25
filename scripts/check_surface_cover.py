@@ -12,6 +12,7 @@ import tempfile
 
 from check_acquisition import FIXTURES, ROOT, run, runtime_file, sha, values
 from check_automatic_preparation import eventually, request, start_server, tiles, vote
+from cover_fixtures import CoverServer
 
 
 def overlay(authority, index=0, expected=200):
@@ -283,29 +284,38 @@ def automatic_checks(cli, directory):
     cover_profile = profile(directory / "profile-v2.json", receipt, evidence, version=2,
                             snow_mask=snow_mask)
     cover_gallery = gallery(cli, directory, raw, review, cover_profile, "cover-gallery")
-    process, authority, headers = start_server(cli, runtime, cover_gallery)
+    server = CoverServer(directory / "cover-server")
+    try:
+        strict_cover_upgrade(cli, runtime, cover_gallery, surface, directory, server.policy("grassland"))
+    finally:
+        server.close()
+
+
+def strict_cover_upgrade(cli, runtime, cover_gallery, surface, directory, env):
+    """A strict-evidence v2 product is replaced by its game cover successor."""
+    process, authority, headers = start_server(cli, runtime, cover_gallery, env=env)
     try:
         pending = eventually(authority, 0, {"awaiting_acceptance"})
         assert "error" in overlay(authority, expected=404)
         vote(authority, headers, sha(cover_gallery), 0, pending, "accept")
-        upgraded = eventually(authority, 0, {"ready"})
+        upgraded = eventually(authority, 0, {"ready"}, timeout=60)
         assert upgraded["decision"] == "accept"
         cover_manifest = Path(upgraded["preparation"]["manifest"])
         product = json.loads(cover_manifest.read_text())
         assert product["schema_version"] == 2
         assert values(cover_manifest.parent / "surface-elevation.tif") == surface
-        assert values(cover_manifest.parent / "elevation.tif") == [0.0, surface[1], 0.0] + surface[3:]
+        # Game cover replaces the strict snow mask; the grassland fixture has no snow.
+        assert values(cover_manifest.parent / "elevation.tif") == surface
         upgraded_status = json.loads(run(cli, "curate", "status", runtime, upgraded["review_sha256"]))
         assert upgraded_status["claims"]["actor"]["kind"] == "human"
-        assert upgraded_status["automation"]["kind"] == "supplier_qa_qualification_v2"
+        assert upgraded_status["automation"]["kind"] == "game_cover_upgrade_v2"
         def stored():
             return {str(p): sha(p) for name in ["catalog_db", "prepared"]
                     for p in (directory / name).rglob("*") if p.is_file()}
         before = stored()
         assert before
         layers = overlay_layers(overlay(authority))
-        assert layers == {"water": [1] * 16, "snow_ice": [2, 1, 2] + [1] * 13,
-                          "vegetation": [0] * 16}, layers
+        assert layers == {"water": [1] * 16, "snow_ice": [1] * 16, "vegetation": [2] * 16}, layers
         assert b"layer.id='cover-overlay'" in request(authority, "GET", "/preview/0")[1]
         assert request(authority, "GET", "/api/overlay/1")[0] == 404
         # A changed mask is refused, never rendered; overlays write nothing.
@@ -317,14 +327,14 @@ def automatic_checks(cli, directory):
             assert "integrity mismatch" in overlay(authority, expected=409)["error"]
         finally:
             snow.write_bytes(original)
-        assert overlay_layers(overlay(authority))["snow_ice"] == [2, 1, 2] + [1] * 13
+        assert overlay_layers(overlay(authority))["snow_ice"] == [1] * 16
         assert stored() == before
         assert json.loads(run(cli, "curate", "status", runtime, upgraded["review_sha256"])) == upgraded_status
     finally:
         process.terminate()
         process.wait(timeout=10)
 
-    process, authority, _headers = start_server(cli, runtime, cover_gallery)
+    process, authority, _headers = start_server(cli, runtime, cover_gallery, env=env)
     try:
         restarted = eventually(authority, 0, {"ready"})
         assert Path(restarted["preparation"]["manifest"]) == cover_manifest

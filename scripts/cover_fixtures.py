@@ -1,4 +1,4 @@
-"""Loopback HTTPS WorldCover/GLIMS fixtures for game cover checks (EPSG:32619 near x=700000)."""
+"""Loopback HTTPS WorldCover/GLIMS/Overpass fixtures for game cover checks (EPSG:32619 near x=700000)."""
 
 import functools
 import http.server
@@ -80,6 +80,20 @@ def outline(glac_id, anlys_id, date, box, line_type="glac_bound"):
                            "rec_status": "okay", "src_date": f"{date}T00:00:00Z"}}
 
 
+def osm_way(way_id, points, **tags):
+    """Overpass `out geom` way from EPSG:32619 points."""
+    return {"type": "way", "id": way_id, "tags": tags,
+            "geometry": [{"lat": lat, "lon": lon} for lon, lat in lonlat(points)]}
+
+
+def osm_relation(rel_id, members, **tags):
+    """Multipolygon relation from (role, points) member ways."""
+    return {"type": "relation", "id": rel_id, "tags": dict(tags, type="multipolygon"),
+            "members": [{"type": "way", "ref": i, "role": role,
+                         "geometry": [{"lat": lat, "lon": lon} for lon, lat in lonlat(points)]}
+                        for i, (role, points) in enumerate(members)]}
+
+
 def tile_name():
     (lon, lat), = lonlat([(LEFT + CELLS * 5, TOP - CELLS * 5)])
     la, lo = math.floor(lat / 3) * 3, math.floor(lon / 3) * 3
@@ -106,8 +120,9 @@ class CoverServer:
         self.env = dict(os.environ, CURL_CA_BUNDLE=str(cert), NO_PROXY="localhost,127.0.0.1",
                         no_proxy="localhost,127.0.0.1")
 
-    def policy(self, name, *, worldcover=lambda _x, _y: 30, glims=()):
-        """worldcover=None: no tile (outside coverage); glims=None: GLIMS returns 404."""
+    def policy(self, name, *, worldcover=lambda _x, _y: 30, glims=(), osm=()):
+        """worldcover=None: no tile (outside coverage); glims/osm=None: that source returns 404.
+        osm lists Overpass elements; the fixture ignores the query string."""
         folder = self.root / name
         folder.mkdir()
         if worldcover:
@@ -115,10 +130,13 @@ class CoverServer:
         if glims is not None:
             (folder / "ows").write_text(json.dumps({"type": "FeatureCollection", "features": list(glims),
                                                     "numberMatched": len(glims)}))
-        text = (ROOT / "configs/cover-game-v1.toml").read_text()
+        if osm is not None:
+            (folder / "interpreter").write_text(json.dumps({"version": 0.6, "elements": list(osm)}))
+        text = (ROOT / "configs/cover-game-v2.toml").read_text()
         config = tomllib.loads(text)
         for old, new in [(config["worldcover"]["url_template"], f"{self.base}/{name}/wc-{{tile}}.tif"),
-                         (config["glims"]["endpoint"], f"{self.base}/{name}/ows")]:
+                         (config["glims"]["endpoint"], f"{self.base}/{name}/ows"),
+                         (config["osm"]["endpoint"], f"{self.base}/{name}/interpreter")]:
             text = text.replace(f'"{old}"', f'"{new}"')
         path = self.root.parent / f"{name}-policy.toml"
         path.write_text(text)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise game cover (game_cover_v1) offline against loopback WorldCover/GLIMS fixtures."""
+"""Exercise game cover (game_cover_v2) offline against loopback WorldCover/GLIMS/Overpass fixtures."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ import tempfile
 
 from check_acquisition import FIXTURES, ROOT, run, runtime_file, sha, values
 from check_automatic_preparation import eventually, start_server, tiles, vote
-from cover_fixtures import CoverServer, outline
+from cover_fixtures import CoverServer, osm_relation, osm_way, outline
 
 X0, TOP, SIZE = 700000, 2000600, 600
 FINDINGS = ["coordinates", "ground_support", "artifacts_and_repairs", "feature_fidelity",
@@ -69,7 +69,23 @@ def same_grid(review, mask):
 def worldcover(x, y):
     if x >= 700350 and y >= 2000350:
         return 70
+    if 700200 <= x < 700230 and y >= 2000370:
+        return 80
     return 10 if x < 700300 else 60
+
+
+def box(x0, y0, x1, y1):
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+
+
+# A lake on WorldCover vegetation, a multipolygon (outer split in two ways) with an
+# island, a 6 m river across glacier G1 and a default-width stream.
+OSM = [osm_way(1, box(700240, 2000370, 700270, 2000390), natural="water"),
+       osm_relation(2, [("outer", [(700320, 2000300), (700390, 2000300), (700390, 2000340)]),
+                        ("outer", [(700320, 2000300), (700320, 2000340), (700390, 2000340)]),
+                        ("inner", box(700345, 2000310, 700365, 2000330))], natural="water"),
+       osm_way(3, [(700200, 2000250), (700290, 2000250)], waterway="river", width="6"),
+       osm_way(4, [(700290, 2000300), (700290, 2000360)], waterway="stream")]
 
 
 GLIMS = [outline("G1", 1, "2019-08-01", (700210, 2000210, 700260, 2000260)),
@@ -79,11 +95,14 @@ GLIMS = [outline("G1", 1, "2019-08-01", (700210, 2000210, 700260, 2000260)),
          outline("G3", 5, "2019-08-01", (700270, 2000300, 700290, 2000320), "intrnl_rock")]
 
 
-def profile(path, raw, evidence):
-    """Source profile without cover descriptors; the worker adds game cover."""
+def profile(path, raw, evidence, strict=False):
+    """Source profile; without cover descriptors the worker adds game cover directly."""
     receipt = json.loads(raw.read_text())
     finding = {"note": "Synthetic supplier assessment", "evidence_ids": ["supplier"]}
-    path.write_text(json.dumps({
+    absent = {"kind": "all_absent", "windows": [[0, 0, SIZE, SIZE]], "note": "Strict assessment",
+              "observed_at": None, "evidence_ids": ["supplier"]}
+    covers = {"snow_ice": absent, "vegetation": absent} if strict else {}
+    path.write_text(json.dumps({**covers,
         "schema_version": 2, "policy": "supplier_qa_cover_v1",
         "source_sha256": receipt["source_sha256"], "asset_sha256": receipt["asset_sha256"],
         "evidence": [{"id": "supplier", "path": evidence.name, "sha256": sha(evidence),
@@ -149,21 +168,32 @@ def gallery(cli, directory, name, entries):
 
 def draft_checks(cli, directory, server, raw):
     review = crop(cli, raw, directory, "review-draft", 200, 200)
-    env = server.policy("mixed", worldcover=worldcover, glims=GLIMS)
+    env = server.policy("mixed", worldcover=worldcover, glims=GLIMS, osm=OSM)
     out = directory / "cover-mixed"
     report = run(cli, "cover", "draft", raw, review, out, env=env)
-    assert "game_cover_v1" in report, report
+    assert "game_cover_v2" in report, report
     cover = json.loads((out / "cover.json").read_text())
-    assert cover["policy"] == "game_cover_v1" and cover["review_sha256"] == sha(review)
+    assert cover["policy"] == "game_cover_v2" and cover["review_sha256"] == sha(review)
+    assert "© OpenStreetMap contributors, ODbL" in cover["attribution"]
+    assert cover["sources"]["osm"]["areas"] == 2 and cover["sources"]["osm"]["lines"] == 2
     assert len(cover["sources"]["worldcover"]["urls"]) == 1
     glaciers = {g["glac_id"]: g["anlys_id"] for g in cover["sources"]["glims"]["glaciers"]}
     assert glaciers == {"G1": 1, "G2": 4}, glaciers
     assert cover["sources"]["glims"]["ignored_outlines"] == 1
-    for name in ["snow-ice.tif", "vegetation.tif"]:
+    for name in ["water.tif", "snow-ice.tif", "vegetation.tif"]:
         same_grid(review, out / name)
     snow, veg = cells(out / "snow-ice.tif"), cells(out / "vegetation.tif")
-    assert set(snow) == {1, 2} and set(veg) == {1, 2}
+    water = cells(out / "water.tif")
+    assert set(snow) == {1, 2} and set(veg) == {1, 2} and set(water) == {1, 2}
     point = lambda data, x, y: at(data, 700200, 2000400, x, y)
+    assert point(water, 700215, 2000385) == 2 and point(veg, 700215, 2000385) == 1  # WorldCover 80
+    assert point(water, 700255, 2000380) == 2 and point(veg, 700255, 2000380) == 1  # lake wins
+    assert point(water, 700330, 2000320) == 2 and point(water, 700355, 2000320) == 1  # island dry
+    assert point(water, 700235, 2000251) == 2 and point(snow, 700235, 2000251) == 1  # river on ice
+    assert point(water, 700250, 2000258) == 1                                         # 6 m wide
+    assert point(water, 700290, 2000330) == 2 and point(water, 700296, 2000330) == 1  # 3 m stream
+    assert not any(w == 2 and (v == 2 or i == 2) for w, v, i in zip(water, veg, snow))
+    assert cover["counts"]["water_present"] == water.count(2)
     assert point(snow, 700380, 2000380) == 2   # WorldCover 70
     assert point(snow, 700235, 2000235) == 2   # latest G1 outline
     assert point(snow, 700280, 2000280) == 1   # 1650 reconstruction ignored
@@ -180,6 +210,8 @@ def draft_checks(cli, directory, server, raw):
     cover = json.loads((out / "cover.json").read_text())
     assert "outside WorldCover coverage" in cover["note"]
     assert set(cells(out / "snow-ice.tif")) == {1} and set(cells(out / "vegetation.tif")) == {1}
+    run(cli, "cover", "draft", raw, review, directory / "cover-osm-failed",
+        env=server.policy("osm-missing", osm=None), expected=1, message="OpenStreetMap unavailable")
 
     # Unreachable GLIMS is a technical failure, not absence.
     failed = server.policy("glims-missing", glims=None)
@@ -194,13 +226,16 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
     evidence = directory / "supplier.txt"
     evidence.write_text("Synthetic supplier assessment\n")
     source_profile = profile(directory / "profile.json", raw, evidence)
+    strict_profile = profile(directory / "strict-profile.json", raw, evidence, strict=True)
     profiled = crop(cli, raw, directory, "review-profiled", 200, 200)
     legacy = crop(cli, raw, directory, "review-legacy", 300, 300)
+    strict = crop(cli, raw, directory, "review-strict", 0, 300)
     human_head, legacy_manifest = legacy_product(cli, directory, runtime, raw, legacy, 700300, 2000300)
     human = json.loads(run(cli, "curate", "status", runtime, sha(legacy)))
     manifest = gallery(cli, directory, "gallery", [
         {"raw": str(raw), "review": str(profiled), "preparation_profile": str(source_profile)},
-        {"raw": str(raw), "review": str(legacy)}])
+        {"raw": str(raw), "review": str(legacy)},
+        {"raw": str(raw), "review": str(strict), "preparation_profile": str(strict_profile)}])
     env = server.policy("gallery", worldcover=worldcover, glims=GLIMS)
     process, authority, headers = start_server(cli, runtime, manifest, env=env)
     try:
@@ -214,6 +249,20 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
         assert snow[int(2000400 - 2000235) * 200 + 35] == 2 and set(snow) == {1, 2}
         status = json.loads(run(cli, "curate", "status", runtime, ready["review_sha256"]))
         assert status["automation"]["kind"] == "supplier_qa_qualification_v2"
+        assert current_cover(product)
+        location = tiles(authority)[0]["location"]
+        assert set(location["corners"]) == {"nw", "ne", "se", "sw"}
+        lat, lon = location["centre"]
+        assert 17 < lat < 19 and -68 < lon < -66, location
+        assert location["google_earth"].startswith(f"https://earth.google.com/web/@{lat:.5f},{lon:.5f},")
+
+        # Strict-evidence v2 product: replaced right away by a game cover successor.
+        vote(authority, headers, sha(manifest), 2, eventually(authority, 2, {"awaiting_acceptance"},
+                                                            timeout=60), "accept")
+        strict_ready = eventually(authority, 2, {"ready"}, timeout=90)
+        assert current_cover(Path(strict_ready["preparation"]["manifest"]))
+        status = json.loads(run(cli, "curate", "status", runtime, strict_ready["review_sha256"]))
+        assert status["automation"]["kind"] == "game_cover_upgrade_v2"
 
         # Legacy v1 product, no profile: automatic v2 successor keeping the human Yes.
         upgraded = eventually(authority, 1, {"ready"}, timeout=60)
@@ -222,8 +271,9 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
         assert body["schema_version"] == 2 and product != legacy_manifest and legacy_manifest.exists()
         assert values(product.parent / "water.tif") == values(legacy_manifest.parent / "water.tif")
         assert set(values(product.parent / "snow-ice.tif")) == {1.0, 2.0}
+        assert current_cover(product)
         status = json.loads(run(cli, "curate", "status", runtime, upgraded["review_sha256"]))
-        assert status["automation"]["kind"] == "game_cover_upgrade_v1"
+        assert status["automation"]["kind"] == "game_cover_upgrade_v2"
         assert status["automation"]["inherited_human_record_sha256"] == human_head
         assert status["previous_record_sha256"] == human_head
         for key in ["actor", "decision", "reason", "primary_class_id", "license", "permission_evidence_ids"]:
@@ -263,6 +313,61 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
         process.wait(timeout=10)
 
 
+def current_cover(product):
+    report = json.loads((product.parent / "quality-0.json").read_text())
+    return report["surface_cover"]["snow-ice"]["note"].startswith("game_cover_v2:")
+
+
+def successor_checks(cli, directory, server, runtime, raw):
+    """A vote on an incomplete receipt carries to the complete receipt of the same asset."""
+    source = directory / "incomplete-source.toml"
+    source.write_text((directory / "source.toml").read_text()
+                      .replace('acquisition_dates = ["2020-06-15"]', "acquisition_dates = []")
+                      .replace('record_id = "synthetic-ramp"', 'record_id = "synthetic-ramp-incomplete"'))
+    incomplete = Path(run(cli, "import", source, directory / "surface.tif", runtime, 64 * 1024 * 1024))
+    assert json.loads(incomplete.read_text())["unresolved_metadata"]
+    review = crop(cli, incomplete, directory, "review-carried", 0, 400)
+    evidence = directory / "carried-evidence.txt"
+    evidence.write_text("Strict glacier assessment\n")
+    draft = directory / "carried-decision.json"
+    run(cli, "curate", "draft", runtime, incomplete, review, LEGEND, draft)
+    record = json.loads(draft.read_text())
+    record["claims"].update(actor={"kind": "human", "name": "Synthetic fixture owner"},
+                            decision="accept", reason="Crater Yes", primary_class_id=1)
+    record["evidence"] = [{"path": evidence.name, "evidence": {
+        "id": "strict", "description": "Strict assessment", "source_url": None, "sha256": sha(evidence)}}]
+    for finding in record["claims"]["findings"].values():
+        finding.update(state="pass", note="Technical qualification", evidence_ids=["strict"])
+    record["claims"]["findings"]["ground_support"].update(
+        state="fail", note="The crop includes a glacier; no measured ground beneath ice.")
+    record["claims"]["coverage"] = {"terrestrial_cells": 40000, "valid_terrestrial_cells": 0,
+                                    "note": "Strict exclusion", "evidence_ids": ["strict"]}
+    record["claims"]["permission_evidence_ids"] = ["strict"]
+    draft.write_text(json.dumps(record))
+    human_head = run(cli, "curate", "record", draft, runtime)
+    manifest = gallery(cli, directory, "successor-gallery", [{"raw": str(incomplete), "review": str(review)}])
+    tile = json.loads(manifest.read_text())["tiles"][0]
+    assert tile["raw"] == str(raw.resolve()) and tile["predecessor"]["review_sha256"] == sha(review)
+    process, authority, _headers = start_server(
+        cli, runtime, manifest, env=server.policy("successor", worldcover=worldcover, glims=GLIMS))
+    try:
+        ready = eventually(authority, 0, {"ready"}, timeout=90)
+        assert ready["decision"] == "accept" and current_cover(Path(ready["preparation"]["manifest"]))
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+    status = json.loads(run(cli, "curate", "status", runtime, tile["review_sha256"]))
+    assert status["automation"]["kind"] == "game_cover_upgrade_v2"
+    records = directory / "catalog_db.curation/records"
+    carried = json.loads((records / f"{status['previous_record_sha256']}.json").read_text())
+    assert carried["carried_from"]["kind"] == "metadata_successor_v1"
+    assert carried["carried_from"]["record_sha256"] == human_head
+    assert carried["claims"]["reason"] == "Crater Yes" and carried["claims"]["decision"] == "accept"
+    ground = carried["claims"]["findings"]["ground_support"]
+    assert ground["state"] == "pass" and "strict snow/ice" in ground["note"]
+    assert carried["claims"]["license"]["training_permission"] == "confirmed"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
@@ -280,6 +385,7 @@ def main():
             runtime, raw = fixture(cli, directory / "work")
             failed = draft_checks(cli, directory / "work", server, raw)
             gallery_checks(cli, directory / "work", server, runtime, raw, failed)
+            successor_checks(cli, directory / "work", server, runtime, raw)
         finally:
             server.close()
     print("Cover acquisition workflows passed.")
