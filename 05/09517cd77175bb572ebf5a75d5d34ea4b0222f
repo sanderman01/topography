@@ -1,0 +1,24 @@
+crates/topography-cli/src/main.rs
+  s_8a3239663527df::t_edd6f2de0ae6b8 35
+  s_8a3239663527df::t_788c9b5c21b7ad 267-270
+  s_8a3239663527df::t_6f67db31eab821 36,259-266,277-278
+  s_8a3239663527df::t_02b5f9ef72fdf4 271-274
+  s_8a3239663527df::t_aa3b6b3a9a83c4 37,232-256
+  s_8a3239663527df::t_7a1d48efa73449 257-258,275-276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0509517cd77175bb572ebf5a75d5d34ea4b0222f",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
