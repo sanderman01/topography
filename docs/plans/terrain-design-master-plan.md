@@ -292,7 +292,7 @@ Record model and dataset versions, normalization, seeds, scheduler, control stre
 
 ## 8. Compose, generate, and join the world
 
-Start by painting the current candidate-biome layout and sketching large ridges, water bodies, river outlets, caldera rims, and preferred routes. Create a coarse base surface from editable sculpting and selected DEM patches. Source placements retain crop, translation, rotation, scale, elevation offset, blend mask, and provenance. Keep Earth coordinates in the source library and explicit transforms into the fictional local world.
+Start by painting the current candidate-biome layout and sketching large ridges, water bodies, river outlets, caldera rims, and preferred routes. Create a coarse base surface from editable sculpting and selected DEM patches. **Planned (2026-09-25): a second, coarse-scale generative model** trained on global Copernicus GLO-30 (30 m, public, abundant) will generate original large-scale structure — ranges, valleys, drainage networks and coastlines — at about 32 m from the painted layout and sketches. Its output becomes the base the 1 m [residual detail model](terrain-diffusion-v1.md) refines. GLO-30 is a surface model; this is acceptable for coarse structure only (see §2), never as a fine-detail source. Until it exists, pilot bases are a GLO-30 crop of a real place or a sculpted surface. Source placements retain crop, translation, rotation, scale, elevation offset, blend mask, and provenance. Keep Earth coordinates in the source library and explicit transforms into the fictional local world.
 
 Resolve the large terrain structures at 16 m, refine at 4 m, and generate final detail at 1 m. At the recommended extent these grids are 2,048, 8,192, and 32,768 cells per side. Review each scale before using it as the constraint for the next. All source placements and residual layers use common elevation units; there is no per-window contrast adjustment.
 
@@ -455,6 +455,7 @@ products remain unchanged until new derived revisions have been verified.
 - [ ] Verify present, confirmed-absent, partial, unavailable, fully ice-covered and fully vegetated cases, including boundary/date uncertainty, missing artifacts, downstream mask propagation and zero-ground windows.
 - [x] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
 - [ ] Train and gate the [pixel-space residual diffusion pilot](terrain-diffusion-v1.md) (LoRA/ControlNet on an image VAE was rejected by the codec check); benchmark quality, memory, and runtime.
+- [ ] Train a coarse-scale (about 32 m) structure model on global GLO-30 to generate original base surfaces from the painted layout, feeding the 1 m detail model.
 - [ ] Build a 4,096 × 4,096 m pilot with several biome boundaries, a connected water feature, one protected landmark, and a demonstrably local rerun.
 - [ ] Expand to all finalized classes (nine as a working target, adjusted per §1's acquisition-driven exceptions) and test coherent coarse-to-fine generation at the full extent, with human review between scales.
 - [ ] Finalize editing, restart/rebuild behavior, export validation, provenance, and documentation.

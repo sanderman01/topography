@@ -124,6 +124,12 @@ explicitly (below).
 - Checkpoints: roughly 0.5–1 GB per run.
 - Generation time: estimated from smoke-run throughput, not assumed.
 
+## Follow-on: coarse structure model
+
+This pilot only adds 1 m detail to a given base. Original worlds need their
+large-scale structure generated too: a second model trained on global GLO-30 at
+about 32 m (master plan §8). It is planned after this pilot's gate.
+
 ## Open pilot choices
 
 - `s_r`, U-Net width, noise schedule and step counts are starting values to be
