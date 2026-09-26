@@ -1405,9 +1405,11 @@ fn preflight_source(bundle: &bundle::Bundle) -> Result<()> {
     let transform: [f64; 6] = serde_json::from_value(bundle.inspection["geoTransform"].clone())?;
     ensure(
         crate::review::metric_grid(&bundle.inspection, source, &transform)
-            && (0.5..=1.0).contains(&transform[1])
-            && (0.5..=1.0).contains(&-transform[5])
-            && source.spatial.native_spacing_m == Some([transform[1], -transform[5]]),
+            // Providers store spacings like 1.00000001 m; allow float noise.
+            && [transform[1], -transform[5]].iter().all(|v| (0.5 - 1e-6..=1.0 + 1e-6).contains(v))
+            && source.spatial.native_spacing_m.is_some_and(|[x, y]| {
+                (x - transform[1]).abs() < 1e-6 && (y + transform[5]).abs() < 1e-6
+            }),
         "native 0.5-1 m declared metric grid required",
     )?;
     Ok(())

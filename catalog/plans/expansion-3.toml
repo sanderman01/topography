@@ -1,0 +1,123 @@
+# Library expansion batch 3: more of the established classes plus top-ups.
+schema_version = 1
+crop_cells = 2048
+
+# 4 Volcanic calderas and craters
+[[areas]]
+name = "Mount St. Helens"
+provider = "usgs"
+bbox = [-122.30, 46.14, -122.10, 46.28]
+class = 4
+max_crops = 12
+
+[[areas]]
+name = "Kīlauea caldera"
+provider = "usgs"
+bbox = [-155.31, 19.38, -155.23, 19.44]
+class = 4
+max_crops = 5
+
+# 2 Gorges and canyons
+[[areas]]
+name = "Grand Canyon · Grandview"
+provider = "usgs"
+bbox = [-112.00, 35.97, -111.90, 36.05]
+class = 2
+max_crops = 6
+
+[[areas]]
+name = "Zion · Kolob"
+provider = "usgs"
+bbox = [-113.08, 37.40, -113.00, 37.47]
+class = 2
+max_crops = 5
+
+[[areas]]
+name = "Canyonlands · Island in the Sky"
+provider = "usgs"
+bbox = [-109.92, 38.35, -109.80, 38.45]
+class = 2
+max_crops = 5
+
+[[areas]]
+name = "Black Canyon of the Gunnison"
+provider = "usgs"
+bbox = [-107.76, 38.54, -107.66, 38.60]
+class = 2
+max_crops = 5
+
+[[areas]]
+name = "Columbia River Gorge"
+provider = "usgs"
+bbox = [-122.12, 45.54, -121.90, 45.62]
+class = 2
+max_crops = 5
+
+# 11 Volcanic cones and lava fields
+[[areas]]
+name = "Mono Craters"
+provider = "usgs"
+bbox = [-119.06, 37.86, -118.98, 37.93]
+class = 11
+max_crops = 5
+
+[[areas]]
+name = "SP Crater"
+provider = "usgs"
+bbox = [-111.67, 35.56, -111.59, 35.61]
+class = 11
+max_crops = 4
+
+# 12 Coastal cliffs and sea stacks
+[[areas]]
+name = "Cannon Beach"
+provider = "usgs"
+bbox = [-124.00, 45.86, -123.94, 45.93]
+class = 12
+max_crops = 4
+
+[[areas]]
+name = "Acadia · Otter Cliffs"
+provider = "usgs"
+bbox = [-68.24, 44.29, -68.17, 44.34]
+class = 12
+max_crops = 4
+
+# 5 Archipelagos and dissected coasts
+[[areas]]
+name = "Deer Isle"
+provider = "usgs"
+bbox = [-68.72, 44.14, -68.55, 44.25]
+class = 5
+max_crops = 5
+
+# 10 Glaciers and ice fields
+[[areas]]
+name = "North Cascades · Boston Glacier"
+provider = "usgs"
+bbox = [-121.10, 48.47, -120.98, 48.54]
+class = 10
+max_crops = 5
+
+[[areas]]
+name = "Mount Adams"
+provider = "usgs"
+bbox = [-121.54, 46.17, -121.44, 46.24]
+class = 10
+max_crops = 5
+
+# 9 Braided rivers
+[[areas]]
+name = "Rangitata River"
+provider = "linz"
+bbox = [171.30, -43.96, 171.52, -43.86]
+class = 9
+max_crops = 5
+
+# 1 Karst
+[[areas]]
+name = "Mammoth Cave sinkhole plain"
+provider = "usgs"
+bbox = [-86.12, 37.10, -85.96, 37.20]
+class = 1
+max_crops = 5

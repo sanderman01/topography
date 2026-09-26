@@ -423,8 +423,8 @@ fn claim_blockers(claims: &Claims, bundle: &bundle::Bundle) -> Vec<String> {
         serde_json::from_value(bundle.inspection["geoTransform"].clone()).unwrap_or_default();
     if transform.len() != 6
         || !crate::review::metric_grid(&bundle.inspection, source, &transform)
-        || !(0.5..=1.0).contains(&transform[1])
-        || !(0.5..=1.0).contains(&-transform[5])
+        || !(0.5 - 1e-6..=1.0 + 1e-6).contains(&transform[1])
+        || !(0.5 - 1e-6..=1.0 + 1e-6).contains(&-transform[5])
     {
         out.push(
             "native 0.5–1 m metric grid not established; no lower-fidelity exception implemented"

@@ -118,7 +118,7 @@ fn grid_valid(grid: &Grid) -> Result<()> {
             && grid
                 .spacing_m
                 .iter()
-                .all(|n| n.is_finite() && (0.5..=1.0).contains(n)),
+                .all(|n| n.is_finite() && (0.5 - 1e-6..=1.0 + 1e-6).contains(n)),
         "prepared grid requires finite origin and native 0.5–1 m spacing",
     )
 }
