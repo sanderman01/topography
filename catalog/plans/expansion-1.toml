@@ -1,0 +1,108 @@
+# Library expansion batch 1: classes with little or no source data.
+# Areas are rough boxes around each feature; crops nearest the centre are taken.
+schema_version = 1
+crop_cells = 2048
+
+# 6 Alpine ridges and cirques
+[[areas]]
+name = "Glacier National Park · Garden Wall"
+provider = "usgs"
+bbox = [-113.80, 48.66, -113.66, 48.76]
+class = 6
+max_crops = 6
+
+[[areas]]
+name = "Grand Teton"
+provider = "usgs"
+bbox = [-110.86, 43.70, -110.74, 43.79]
+class = 6
+max_crops = 6
+
+[[areas]]
+name = "Rocky Mountain NP · Longs Peak"
+provider = "usgs"
+bbox = [-105.66, 40.23, -105.58, 40.30]
+class = 6
+max_crops = 5
+
+# 10 Glaciers and ice fields
+[[areas]]
+name = "Mount Rainier"
+provider = "usgs"
+bbox = [-121.82, 46.82, -121.70, 46.89]
+class = 10
+max_crops = 7
+
+[[areas]]
+name = "Mount Baker"
+provider = "usgs"
+bbox = [-121.86, 48.74, -121.76, 48.81]
+class = 10
+max_crops = 5
+
+# 11 Volcanic cones and lava fields
+[[areas]]
+name = "Sunset Crater"
+provider = "usgs"
+bbox = [-111.54, 35.34, -111.46, 35.40]
+class = 11
+max_crops = 5
+
+[[areas]]
+name = "Craters of the Moon"
+provider = "usgs"
+bbox = [-113.60, 43.40, -113.50, 43.48]
+class = 11
+max_crops = 5
+
+[[areas]]
+name = "Lava Beds"
+provider = "usgs"
+bbox = [-121.58, 41.68, -121.46, 41.76]
+class = 11
+max_crops = 4
+
+# 12 Coastal cliffs and sea stacks
+[[areas]]
+name = "Point Reyes"
+provider = "usgs"
+bbox = [-123.04, 37.98, -122.94, 38.03]
+class = 12
+max_crops = 5
+
+[[areas]]
+name = "Big Sur"
+provider = "usgs"
+bbox = [-121.80, 36.20, -121.70, 36.30]
+class = 12
+max_crops = 5
+
+# 5 Archipelagos and dissected coasts
+[[areas]]
+name = "San Juan Islands"
+provider = "usgs"
+bbox = [-123.08, 48.50, -122.92, 48.62]
+class = 5
+max_crops = 5
+
+[[areas]]
+name = "Marlborough Sounds"
+provider = "linz"
+bbox = [174.00, -41.26, 174.14, -41.16]
+class = 5
+max_crops = 5
+
+# 9 Braided river basins and floodplains
+[[areas]]
+name = "Waimakariri River"
+provider = "linz"
+bbox = [172.25, -43.42, 172.45, -43.34]
+class = 9
+max_crops = 5
+
+[[areas]]
+name = "Rakaia River"
+provider = "linz"
+bbox = [171.95, -43.62, 172.15, -43.54]
+class = 9
+max_crops = 5

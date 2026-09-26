@@ -75,10 +75,17 @@ fn complete(record: &mut SourceRecord, dir: &Path, id: &str) -> Result<()> {
         .and_then(|rest| rest.split('/').next())
         .ok_or_else(|| AcquisitionError::Invalid("not a 3DEP project URL".into()))?
         .to_owned();
-    let xml_url = url
-        .replacen("/TIFF/", "/metadata/", 1)
-        .replace(".tif", ".xml");
-    let xml_bytes = http::query(&xml_url)?;
+    // Newer projects name tile metadata `<tile>.xml`, older ones `<tile>_meta.xml`.
+    let base = url.replacen("/TIFF/", "/metadata/", 1);
+    let mut xml_bytes = None;
+    for suffix in [".xml", "_meta.xml"] {
+        xml_bytes = http::query_optional(&base.replace(".tif", suffix))?;
+        if xml_bytes.is_some() {
+            break;
+        }
+    }
+    let xml_bytes =
+        xml_bytes.ok_or_else(|| AcquisitionError::Invalid("tile metadata XML not found".into()))?;
     let xml = String::from_utf8_lossy(&xml_bytes).into_owned();
     ensure(
         xml.contains("U.S. Geological Survey"),
@@ -159,13 +166,26 @@ pub fn discover_usgs(
     io_context("create discovery parent", fs::create_dir_all(parent))?;
     let stage = io_context("stage discovery", tempfile::tempdir_in(parent))?;
     let response = stage.path().join("response.json");
-    if let Some(saved) = saved_response {
+    let products: Products = if let Some(saved) = saved_response {
         write_new(&response, &read_small(saved)?)?;
+        serde_json::from_slice(&read_small(&response)?)?
     } else {
-        http::discover(bounds, limit, &response)?;
-    }
-    let bytes = read_small(&response)?;
-    let products: Products = serde_json::from_slice(&bytes)?;
+        // TNM sometimes answers with an error document; wait and ask again.
+        let mut attempt = 0;
+        loop {
+            let _ = fs::remove_file(&response);
+            http::discover(bounds, limit, &response)?;
+            match serde_json::from_slice(&read_small(&response)?) {
+                Ok(products) => break products,
+                Err(error) if attempt < 3 => {
+                    attempt += 1;
+                    eprintln!("USGS search returned no product list ({error}); retrying in 30 s");
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    };
     ensure(
         products.items.len() <= limit as usize && products.total >= products.items.len() as u64,
         "USGS response exceeds the requested limit or has inconsistent counts",

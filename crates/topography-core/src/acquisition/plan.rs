@@ -85,16 +85,20 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
     let mut summary = Vec::new();
     for area in &plan.areas {
         let dir = output.join("discovery").join(slug(&area.name));
-        let files: Vec<PathBuf> = match area.provider.as_str() {
-            "usgs" => super::discover_usgs(area.bbox, 100, &dir, None)?.source_files,
-            "linz" => {
-                super::discover_linz(area.bbox, 100, &dir, Path::new("data/cache/linz-stac"))?
-                    .source_files
-            }
-            other => {
-                return Err(AcquisitionError::Invalid(format!(
-                    "unknown provider {other}"
-                )));
+        let discovered = match area.provider.as_str() {
+            "usgs" => super::discover_usgs(area.bbox, 100, &dir, None).map(|s| s.source_files),
+            "linz" => super::discover_linz(area.bbox, 100, &dir, Path::new("data/cache/linz-stac"))
+                .map(|s| s.source_files),
+            other => Err(AcquisitionError::Invalid(format!(
+                "unknown provider {other}"
+            ))),
+        };
+        let files = match discovered {
+            Ok(files) => files,
+            Err(error) => {
+                eprintln!("{}: discovery failed, area skipped: {error}", area.name);
+                summary.push(json!({"area": area.name, "error": error.to_string()}));
+                continue;
             }
         };
         let (cx, cy) = (
@@ -115,11 +119,18 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
                 continue; // incomplete declaration: cannot place crops
             };
             http::pace(url);
-            let info: Value = serde_json::from_slice(&raster::run(
+            let header = raster::run(
                 raster::command("gdalinfo")
                     .args(["-json", "-nomd", "-norat", "-noct"])
                     .arg(format!("/vsicurl/{url}")),
-            )?)?;
+            );
+            let info: Value = match header {
+                Ok(bytes) => serde_json::from_slice(&bytes)?,
+                Err(error) => {
+                    eprintln!("{}: skipped, header unreadable: {error}", path.display());
+                    continue;
+                }
+            };
             let t: Vec<f64> = serde_json::from_value(info["geoTransform"].clone())?;
             let [w, h]: [u32; 2] = serde_json::from_value(info["size"].clone())?;
             let corners = [

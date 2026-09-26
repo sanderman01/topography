@@ -98,7 +98,13 @@ See [AGENTS.md](AGENTS.md) for repository working instructions and the topic
 guides in [docs/best-practices](docs/best-practices/).
 
 Acquisition/review requires curl and GDAL command-line tools; they are not needed
-to build Rust or validate contracts. Use QGIS to inspect review rasters. The
+to build Rust or validate contracts. LINZ (New Zealand) DEMs are LERC-compressed,
+which needs a GDAL built with internal libtiff and LERC. If your distribution's
+GDAL lacks it (`gdalinfo` reports "missing codec LERC"), build GDAL from source with
+`cmake -DGDAL_USE_LERC_INTERNAL=ON -DGDAL_USE_TIFF_INTERNAL=ON
+-DGDAL_USE_GEOTIFF_INTERNAL=ON -DCMAKE_INSTALL_PREFIX=$HOME/.local/opt/gdal-lerc
+-DCMAKE_INSTALL_RPATH=$HOME/.local/opt/gdal-lerc/lib`, install it, and run
+`topography` with `PATH=$HOME/.local/opt/gdal-lerc/bin:$PATH`. Use QGIS to inspect review rasters. The
 optional ground-support probe uses PDAL. Training dependencies and GPU settings will be selected during the feasibility pilot,
 within the plan's 16 GB VRAM limit.
 
