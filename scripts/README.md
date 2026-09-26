@@ -86,7 +86,7 @@ terrain and human declarations clearly marked as fixtures; no real human accepta
 
 `python3 scripts/check_quality.py target/debug/topography` checks whole-crop
 categorical masks, exact grid/type/hash requirements, unknown classifications,
-the 99.5% coverage boundary, defining-feature gaps, repairs, water exclusion,
+the 50% valid-ground boundary, defining-feature gaps, repairs, water exclusion,
 nonfinite water, CRS declaration mismatches, pinned assessment evidence,
 coverage disagreements and stale/superseded decisions. It exercises both eligible
 and excluded outcomes in temporary synthetic catalogs. The eligibility fixture

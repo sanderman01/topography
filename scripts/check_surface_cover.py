@@ -147,7 +147,7 @@ def quality_checks(cli, directory, *, runtime=None, west=700000):
     all_ice["masks"]["snow-ice"] = pinned(path)
     frozen = assess(cli, directory, quality, all_ice, "all-ice-report")
     assert frozen["counts"]["ground_cells"] == 0
-    assert any("99.5%" in value for value in frozen["blockers"])
+    assert any("50%" in value for value in frozen["blockers"])
 
     unavailable = v2_input(directory, legacy, snow=[1] * 16, vegetation=None,
                            vegetation_status="unavailable", x=west)

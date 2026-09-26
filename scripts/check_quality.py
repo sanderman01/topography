@@ -66,16 +66,18 @@ def check(cli, directory, synthetic=True, declared_crs="EPSG:32619"):
     run(cli, "quality", "assess", inputs, report, expected=1, message="already exists")
 
     # Numeric regressions change observable counts/blockers, not implementation details.
-    for number, (mask, index, value, expected_blocker) in enumerate([
-        ("quality", 1, 2, "99.5%"),
-        ("quality", 199, 0, "99.5%"),
-        ("water", 1, 0, "water classification"),
-        ("repairs", 1, 1, "repairs"),
-        ("features", 0, 1, "defining features"),
+    # Coverage cases flip over half the ground (floor: 50% valid ground).
+    for number, (mask, indices, value, expected_blocker) in enumerate([
+        ("quality", range(1, 102), 2, "50%"),
+        ("quality", range(99, 200), 0, "50%"),
+        ("water", [1], 0, "water classification"),
+        ("repairs", [1], 1, "repairs"),
+        ("features", [0], 1, "defining features"),
     ]):
         changed = copy.deepcopy(draft)
         samples = masks[mask].copy()
-        samples[index] = value
+        for index in indices:
+            samples[index] = value
         path = raster(directory, f"case-{number}", samples)
         changed["masks"][mask] = {"path": path.name, "sha256": sha(path)}
         inputs.write_text(json.dumps(changed))
