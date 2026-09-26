@@ -1,0 +1,40 @@
+# Provider licence policy for automatic qualification (provider_licences_v1).
+# A source qualifies automatically when every asset URL starts with one of a
+# provider's prefixes and its pinned original metadata contains every listed
+# marker. The policy text and that metadata become the permission evidence.
+# Built into the binary; add providers here, never per tile.
+schema_version = 1
+policy = "provider_licences_v1"
+
+[[providers]]
+id = "usgs-3dep"
+url_prefixes = ["https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/", "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/"]
+metadata_markers = ["U.S. Geological Survey"]
+license_name = "United States public domain (USGS 3DEP)"
+license_url = "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits"
+attribution = "U.S. Geological Survey, 3D Elevation Program"
+statement = "USGS-authored or produced data and information are in the public domain and may be used, transferred or reproduced without copyright restrictions."
+edited_map_reuse = "Allowed without restriction; credit USGS as a courtesy."
+redistribution = "Allowed without restriction."
+
+[[providers]]
+id = "noaa-coastal-lidar"
+url_prefixes = ["https://noaa-nos-coastal-lidar-pds.s3.amazonaws.com/"]
+metadata_markers = []
+license_name = "United States public domain (NOAA Office for Coastal Management, NOAA Open Data Dissemination)"
+license_url = "https://registry.opendata.aws/noaa-coastal-lidar/"
+attribution = "NOAA Office for Coastal Management and the collection's survey partners"
+statement = "NOAA Open Data Dissemination: there are no restrictions on the use of this data."
+edited_map_reuse = "Allowed without restriction; credit NOAA OCM and survey partners as a courtesy."
+redistribution = "Allowed without restriction."
+
+[[providers]]
+id = "linz"
+url_prefixes = ["https://nz-elevation.s3.ap-southeast-2.amazonaws.com/"]
+metadata_markers = ["\"license\": \"CC-BY-4.0\""]
+license_name = "Creative Commons Attribution 4.0 International (CC BY 4.0)"
+license_url = "https://creativecommons.org/licenses/by/4.0/"
+attribution = "Toitū Te Whenua Land Information New Zealand (LINZ) and the collection's credited providers"
+statement = "LINZ publishes these elevation collections under CC BY 4.0, which allows any use, including training, with attribution."
+edited_map_reuse = "Allowed under CC BY 4.0 with attribution and an indication that changes were made."
+redistribution = "Allowed under CC BY 4.0 with attribution and the licence link."

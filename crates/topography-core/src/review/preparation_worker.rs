@@ -330,23 +330,32 @@ fn work(
                         return upgrade(Some(legacy));
                     }
                 }
-                let Some(profile) = tile.preparation_profile.as_ref() else {
-                    if accepted {
-                        return upgrade(None).map_err(|e| {
-                            crate::acquisition::AcquisitionError::Invalid(format!(
-                                "Source assessment is not configured for this tile: {e}"
-                            ))
-                        });
+                let profile_path = match tile.preparation_profile.as_ref() {
+                    Some(profile) => {
+                        ensure(
+                            digest(&read_small(&profile.path)?) == profile.sha256,
+                            "Source assessment changed; publish an updated gallery.",
+                        )?;
+                        profile.path.clone()
                     }
-                    return Err(crate::acquisition::AcquisitionError::Invalid(
-                        "Source assessment is not configured for this tile.".into(),
-                    ));
+                    // No hand-made profile: qualify from the provider licence policy.
+                    None => match automatic::auto_profile(
+                        &tile.raw,
+                        &tile.review,
+                        &root.join("automatic-profile"),
+                    ) {
+                        Ok(path) => path,
+                        Err(auto) if accepted => {
+                            return upgrade(None).map_err(|e| {
+                                crate::acquisition::AcquisitionError::Invalid(format!(
+                                    "Source is not qualified: {auto}; {e}"
+                                ))
+                            });
+                        }
+                        Err(auto) => return Err(auto),
+                    },
                 };
-                ensure(
-                    digest(&read_small(&profile.path)?) == profile.sha256,
-                    "Source assessment changed; publish an updated gallery.",
-                )?;
-                let package = automatic::stage(&tile.raw, &tile.review, &profile.path, &root)?;
+                let package = automatic::stage(&tile.raw, &tile.review, &profile_path, &root)?;
                 if !accepted {
                     return Ok(Status::new(
                         head.clone(),

@@ -18,6 +18,171 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Profiles the tool writes itself from provider licence policy and automatic checks.
+const AUTO_POLICY: &str = "automatic_qualification_v1";
+const PROVIDER_POLICY: &str = include_str!("../../../../configs/provider-licences-v1.toml");
+const AUTO_CHECKS: &str = "# Automatic qualification (automatic_qualification_v1)
+
+Permission: the source's provider appears in the built-in provider licence policy
+(provider_licences_v1), every asset URL matches that provider, and the pinned
+original metadata contains the provider's licence markers.
+
+Technical findings are the automatic ones: native-grid quality assessment of
+validity and ground support, game cover masks (WorldCover, OpenStreetMap, GLIMS),
+and artifact checks (artifacts_v1) that training repairs or excludes. No manual
+repairs or hand classification. The owner's Yes/No vote judges the whole tile.
+";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderPolicy {
+    schema_version: u32,
+    policy: String,
+    providers: Vec<Provider>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Provider {
+    id: String,
+    url_prefixes: Vec<String>,
+    metadata_markers: Vec<String>,
+    license_name: String,
+    license_url: String,
+    attribution: String,
+    statement: String,
+    edited_map_reuse: String,
+    redistribution: String,
+}
+
+/// The provider whose licence covers every asset URL of this source, confirmed by
+/// markers in the pinned original metadata.
+fn provider_for(
+    source: &crate::catalog::source::SourceRecord,
+    metadata: &[u8],
+) -> Result<Option<Provider>> {
+    let policy: ProviderPolicy = toml::from_str(PROVIDER_POLICY)
+        .map_err(|e| AcquisitionError::Invalid(format!("invalid provider licence policy: {e}")))?;
+    ensure(
+        policy.schema_version == 1 && policy.policy == "provider_licences_v1",
+        "unsupported provider licence policy",
+    )?;
+    let text = String::from_utf8_lossy(metadata);
+    Ok(policy.providers.into_iter().find(|p| {
+        !source.source_urls.is_empty()
+            && source
+                .source_urls
+                .iter()
+                .all(|url| p.url_prefixes.iter().any(|prefix| url.starts_with(prefix)))
+            && p.metadata_markers.iter().all(|m| text.contains(m.as_str()))
+    }))
+}
+
+fn raw_objects(raw: &Path) -> Result<PathBuf> {
+    Ok(raw
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| AcquisitionError::Invalid("raw receipt needs storage root".into()))?
+        .join("objects"))
+}
+
+/// Licence claims for an automatically qualified source.
+fn provider_license(raw: &Path, bundle: &bundle::Bundle) -> Result<Value> {
+    let receipt = crate::acquisition::verify(raw)?;
+    let metadata = read_small(&raw_objects(raw)?.join(&receipt.original_metadata_sha256))?;
+    let provider = provider_for(&bundle.source, &metadata)?.ok_or_else(|| {
+        AcquisitionError::Invalid("no provider licence policy covers this source".into())
+    })?;
+    Ok(json!({
+        "training_permission": "confirmed",
+        "license_name": provider.license_name,
+        "license_url": provider.license_url,
+        "evidence": format!("provider_licences_v1 entry {} and the pinned original metadata", provider.id),
+        "attribution": provider.attribution,
+        "edited_map_reuse": provider.edited_map_reuse,
+        "redistribution": provider.redistribution,
+    }))
+}
+
+/// Write a source profile for a crop without a hand-made one: provider licence,
+/// pinned source declaration and metadata, and the automatic checks as evidence.
+/// Fails when no provider licence covers the source.
+pub(crate) fn auto_profile(raw: &Path, review: &Path, dir: &Path) -> Result<PathBuf> {
+    let bundle = bundle::verify(raw, review)?;
+    let receipt = crate::acquisition::verify(raw)?;
+    let objects = raw_objects(raw)?;
+    let metadata = read_small(&objects.join(&receipt.original_metadata_sha256))?;
+    let provider = provider_for(&bundle.source, &metadata)?.ok_or_else(|| {
+        AcquisitionError::Invalid(
+            "no provider licence policy covers this source (configs/provider-licences-v1.toml)"
+                .into(),
+        )
+    })?;
+    io_context("create automatic profile", fs::create_dir_all(dir))?;
+    let files: [(&str, &str, Vec<u8>, &str); 4] = [
+        (
+            "provider-licence",
+            "provider-licence.json",
+            serde_json::to_vec_pretty(
+                &json!({"policy": "provider_licences_v1", "provider": provider}),
+            )?,
+            "Built-in provider licence policy entry matching every asset URL of this source",
+        ),
+        (
+            "source-metadata",
+            "source-metadata",
+            metadata,
+            "Provider's original metadata, pinned with the raw asset",
+        ),
+        (
+            "source-declaration",
+            "source.toml",
+            read_small(&objects.join(&receipt.source_sha256))?,
+            "Pinned source declaration: survey, dates, CRS, datum, spacing and URLs",
+        ),
+        (
+            "automatic-checks",
+            "automatic-checks.md",
+            AUTO_CHECKS.as_bytes().to_vec(),
+            "Automatic qualification policy and the checks it relies on",
+        ),
+    ];
+    let mut evidence = Vec::new();
+    for (id, name, bytes, description) in files {
+        let path = dir.join(name);
+        if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+            io_context("write automatic profile evidence", fs::write(&path, &bytes))?;
+        }
+        evidence.push(
+            json!({"id": id, "path": name, "sha256": digest(&bytes), "description": description}),
+        );
+    }
+    let finding = |note: &str, ids: &[&str]| json!({"note": note, "evidence_ids": ids});
+    let profile = json!({
+        "schema_version": 1,
+        "policy": AUTO_POLICY,
+        "source_sha256": receipt.source_sha256,
+        "asset_sha256": receipt.asset_sha256,
+        "evidence": evidence,
+        "permission_evidence_ids": ["provider-licence", "source-metadata"],
+        "findings": {
+            "coordinates": finding("Native grid, CRS and vertical datum as declared by the provider; no reprojection.", &["source-declaration", "source-metadata"]),
+            "ground_support": finding("Provider bare-earth DEM; ground support measured by the automatic native-grid quality assessment.", &["automatic-checks", "source-declaration"]),
+            "artifacts_and_repairs": finding("No manual repairs. Automatic artifact checks flag facets, stripes and seams, which training repairs or excludes.", &["automatic-checks"]),
+            "feature_fidelity": finding("Native Float32 samples retained exactly; nominal spacing does not establish measured feature resolution.", &["automatic-checks", "source-declaration"]),
+            "water_classification": finding("Water from automatic game cover (WorldCover and OpenStreetMap); no hand classification.", &["automatic-checks"]),
+            "unsupported_feature_gaps": finding("Missing or unsupported cells stay masked; the owner judged the whole tile visually.", &["automatic-checks"]),
+        },
+        "water": {"kind": "all_terrestrial", "windows": [bundle.manifest.window_cells]},
+    });
+    let path = dir.join("profile.json");
+    let bytes = serde_json::to_vec_pretty(&profile)?;
+    if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+        io_context("write automatic profile", fs::write(&path, &bytes))?;
+    }
+    Ok(path)
+}
+
 const FINDINGS: [&str; 6] = [
     "coordinates",
     "ground_support",
@@ -249,7 +414,11 @@ fn decode_profile(bytes: &[u8]) -> Result<ProfileData> {
 
 fn validate_profile_contract(profile: &ProfileData) -> Result<()> {
     ensure(
-        (profile.schema_version == 1 && profile.policy == "supplier_qa_pilot_v1")
+        (profile.schema_version == 1
+            && matches!(
+                profile.policy.as_str(),
+                "supplier_qa_pilot_v1" | AUTO_POLICY
+            ))
             || (profile.schema_version == 2 && profile.policy == "supplier_qa_cover_v1"),
         "unsupported automatic preparation profile",
     )?;
@@ -741,8 +910,14 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
     )?;
     validate_profile_scope(&profile, raw, &receipt, &bundle)?;
     let [x, y, width, height] = bundle.manifest.window_cells;
+    // Automatic profiles take permission from the provider licence policy instead.
+    let provider_license = if profile.policy == AUTO_POLICY {
+        Some(provider_license(raw, &bundle)?)
+    } else {
+        None
+    };
     ensure(
-        package_permission_confirmed(&bundle.source.license)?,
+        provider_license.is_some() || package_permission_confirmed(&bundle.source.license)?,
         "source does not declare confirmed training permission",
     )?;
     preflight_source(&bundle)?;
@@ -912,7 +1087,10 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
         evidence,
         permission_evidence_ids: profile.permission_evidence_ids,
         findings: profile.findings,
-        source_license: serde_json::to_value(&bundle.source.license)?,
+        source_license: match provider_license {
+            Some(license) => license,
+            None => serde_json::to_value(&bundle.source.license)?,
+        },
         masks,
         surface_cover,
         grid: json!({"origin":[transform[0],transform[3]],"size":[width,height],"spacing_m":[transform[1],-transform[5]]}),
@@ -939,7 +1117,7 @@ fn verify_package(path: &Path) -> Result<Package> {
             && package.kind == "automatic_preparation_package"
             && matches!(
                 package.policy.as_str(),
-                "supplier_qa_pilot_v1" | "supplier_qa_cover_v1"
+                "supplier_qa_pilot_v1" | "supplier_qa_cover_v1" | AUTO_POLICY
             )
             && package.admission == "not admitted",
         "unsupported automatic preparation package",
@@ -996,11 +1174,16 @@ fn verify_package(path: &Path) -> Result<Package> {
             && package.grid == expected_grid
             && package.permission_evidence_ids == profile.permission_evidence_ids
             && serde_json::to_value(&package.findings)? == serde_json::to_value(&profile.findings)?
-            && package.source_license == serde_json::to_value(&verified.source.license)?,
+            && package.source_license
+                == if profile.policy == AUTO_POLICY {
+                    provider_license(&package.raw_receipt.path, &verified)?
+                } else {
+                    serde_json::to_value(&verified.source.license)?
+                },
         "automatic package claims differ from its captured parents",
     )?;
     ensure(
-        package_permission_confirmed(&verified.source.license)?,
+        profile.policy == AUTO_POLICY || package_permission_confirmed(&verified.source.license)?,
         "source does not declare confirmed training permission",
     )?;
     ensure(

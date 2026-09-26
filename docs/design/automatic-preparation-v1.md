@@ -15,6 +15,18 @@ permission must already be declared by the source and backed by captured profile
 evidence. Unknown/restricted/prohibited permission cannot become confirmed by
 successful processing. Evidence is reusable by path/hash across profiles.
 
+**Automatic qualification (2026-09-26).** A tile without a hand-made profile gets
+one written by the tool (`policy: automatic_qualification_v1`) in its
+`automatic-preparation/<review>/unconfigured/automatic-profile/` directory. It
+applies when every asset URL matches a provider in the built-in
+[provider licence policy](../../configs/provider-licences-v1.toml) and the pinned
+original metadata contains that provider's licence markers (USGS 3DEP and NOAA:
+public domain; LINZ: CC BY 4.0). The policy entry and the metadata are the
+permission evidence; permission comes from the provider policy, not from the
+source declaration. Technical findings rest on the automatic checks (native-grid
+quality assessment, game cover, artifact checks). A human Yes then reaches Ready
+with no per-tile or per-source files. A new provider is one policy entry.
+
 Profile shape:
 
 Each evidence path is relative and contained beneath the profile directory. A public

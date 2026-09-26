@@ -198,7 +198,7 @@ Initial quality policy, adjustable per terrain family:
 | Artifacts | Flag stripes, terraces, spikes, pits, duplicate edges, vegetation remnants, buildings, and implausible survey-boundary steps. Compare against context before rejecting natural steepness. |
 | Feature fidelity | Human reviews the entire tile and chooses yes or no. The technical workflow assesses sampling and feature fidelity from available evidence, reporting concrete limitations without asking the human to label individual features. |
 | Traceability | Missing units, ambiguous surface type, or unresolved source provenance blocks admission until clarified. |
-| Licensing | Confirmed ML-training permission required for admission. A dataset that blocks or does not clearly permit training use is excluded outright, not deferred. |
+| Licensing | Confirmed ML-training permission required for admission. A dataset that blocks or does not clearly permit training use is excluded outright, not deferred. Permission is confirmed per provider by the built-in provider licence policy and the source's pinned metadata ([automatic qualification](../design/automatic-preparation-v1.md#source-assessment-and-scope)). |
 
 For the pilot, apply [supplier_qa_pilot_v1](../design/source-quality-pilot-v1.md)
 as the evidence basis for released native bare-earth DEMs. Trust documented
