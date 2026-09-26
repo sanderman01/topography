@@ -80,6 +80,7 @@ def main(argv=None) -> int:
     model = Denoiser(config["arch"]).to(device).eval()
     model.load_state_dict(load_file(str(weights), device=str(device)))
     scale, size = config["residual_scale_m"], config["crop"]
+    smooth_m = config.get("coarse_smooth_m", 0.0)
     tiles = data.load_release(Path(config["release"]))
     val = data.CropSampler(tiles, data.VALIDATION, size, stride=size, min_valid=0.8)
     train = data.CropSampler(tiles, data.TRAIN, size, stride=size // 2, min_valid=0.8)
@@ -101,7 +102,7 @@ def main(argv=None) -> int:
         ti, y, x = val.positions[idx]
         t = tiles[ti]
         sl = np.s_[y : y + size, x : x + size]
-        real, coarse, water = t.height[sl], t.coarse[sl], t.water[sl]
+        real, coarse, water = t.height[sl], data.crop_coarse(t.height, y, x, size, sigma=smooth_m), t.water[sl]
         cond = data.condition(coarse, water, np.full((size, size), t.class_id))
         out = sample_field(model, torch.from_numpy(cond)[None].to(device), steps=args.steps,
                            window=size, stride=size, seed=args.seed + n, guidance=args.guidance)
@@ -128,7 +129,7 @@ def main(argv=None) -> int:
     for i in bank_idx:
         ti, y, x = train.positions[i]
         tt = tiles[ti]
-        bank.append(small(tt.height[y : y + size, x : x + size] - tt.coarse[y : y + size, x : x + size]))
+        bank.append(small(tt.height[y : y + size, x : x + size] - data.crop_coarse(tt.height, y, x, size, sigma=smooth_m)))
     bank = np.stack(bank)
 
     def nearest(h, coarse):
@@ -137,11 +138,11 @@ def main(argv=None) -> int:
 
     for n, idx in enumerate(picks):
         ti, y, x = val.positions[idx]
-        c = tiles[ti].coarse[y : y + size, x : x + size]
+        c = data.crop_coarse(tiles[ti].height, y, x, size, sigma=smooth_m)
         stats[n]["nearest_train_rms_m"] = {"real": nearest(arrays[f"real_{n}"], c),
                                            "generated": nearest(arrays[f"gen_{n}"], c)}
 
-    seam = _seam_strip(model, tiles, train, size, scale, device, args, Image)
+    seam = _seam_strip(model, tiles, size, scale, smooth_m, device, args, Image)
     np.savez_compressed(args.out / "arrays.npz", **arrays)
 
     order = rng.permutation(len(items))
@@ -164,7 +165,7 @@ def main(argv=None) -> int:
     return 0
 
 
-def _seam_strip(model, tiles, sampler, size, scale, device, args, Image):
+def _seam_strip(model, tiles, size, scale, smooth_m, device, args, Image):
     """Generate a 2x4-window strip with MultiDiffusion; compare slopes on window joins."""
     import torch
 
@@ -177,7 +178,7 @@ def _seam_strip(model, tiles, sampler, size, scale, device, args, Image):
             break
     else:
         return None
-    coarse, water = t.coarse[:h, :w], t.water[:h, :w]
+    coarse, water = data.crop_coarse(t.height, 0, 0, (h, w), sigma=smooth_m), t.water[:h, :w]
     cond = data.condition(coarse, water, np.full((h, w), t.class_id))
     out = sample_field(model, torch.from_numpy(cond)[None].to(device), steps=args.steps,
                        window=size, stride=stride, seed=args.seed + 999, guidance=args.guidance)

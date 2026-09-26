@@ -14,6 +14,9 @@ from pathlib import Path
 import numpy as np
 
 COARSE_M = 32
+SMOOTH_M = 16.0  # Gaussian sigma applied after bicubic upsampling of the coarse blocks
+WATER_SMOOTH_M = 6.0  # rounds the 10 m land-cover steps in water masks
+MARGIN_M = 96  # context around a crop for its coarse surface
 BAND_M = 2048
 VALIDATION_M = 512
 BUFFER_M = 128
@@ -26,7 +29,6 @@ class Tile:
     name: str
     class_id: int
     height: np.ndarray  # float32 metres, NaN where not valid ground
-    coarse: np.ndarray  # float32 metres, 32 m surface upsampled to 1 m
     water: np.ndarray  # bool
     snow: np.ndarray  # int8
     vegetation: np.ndarray  # int8
@@ -102,6 +104,48 @@ def upsample_coarse(blocks: np.ndarray) -> np.ndarray:
     return up[0, 0].numpy().astype(np.float32)
 
 
+def smooth(a: np.ndarray, sigma: float) -> np.ndarray:
+    """Separable Gaussian blur with edge replication."""
+    import torch
+    import torch.nn.functional as F
+
+    r = int(3 * sigma)
+    k = torch.exp(-0.5 * (torch.arange(-r, r + 1, dtype=torch.float64) / sigma) ** 2)
+    k /= k.sum()
+    t = torch.from_numpy(a.astype(np.float64))[None, None]
+    t = F.conv2d(F.pad(t, (r, r, 0, 0), mode="replicate"), k.view(1, 1, 1, -1))
+    t = F.conv2d(F.pad(t, (0, 0, r, r), mode="replicate"), k.view(1, 1, -1, 1))
+    return t[0, 0].numpy().astype(np.float32)
+
+
+def coarse_surface(blocks: np.ndarray, sigma: float = SMOOTH_M) -> np.ndarray:
+    """1 m coarse surface from 32 m blocks, low-passed so block edges leave no trace."""
+    up = upsample_coarse(blocks)
+    return smooth(up, sigma) if sigma > 0 else up
+
+
+def smooth_mask(mask: np.ndarray, sigma: float = WATER_SMOOTH_M) -> np.ndarray:
+    return smooth(mask.astype(np.float32), sigma) > 0.5
+
+
+def crop_coarse(
+    height: np.ndarray, y: int, x: int, size: int | tuple[int, int], oy: int = 0, ox: int = 0, sigma: float = SMOOTH_M
+) -> np.ndarray:
+    """Coarse surface for one crop from a block grid shifted by (oy, ox) cells.
+
+    Random offsets keep the model from learning a fixed block alignment.
+    """
+    rows, cols = (size, size) if isinstance(size, int) else size
+    ny, nx = (-(-(k + 2 * MARGIN_M + COARSE_M) // COARSE_M) * COARSE_M for k in (rows, cols))
+    y0, x0 = y - MARGIN_M - oy, x - MARGIN_M - ox
+    region = np.full((ny, nx), np.nan, np.float32)
+    sy, sx = max(y0, 0), max(x0, 0)
+    ey, ex = min(y0 + ny, height.shape[0]), min(x0 + nx, height.shape[1])
+    region[sy - y0 : ey - y0, sx - x0 : ex - x0] = height[sy:ey, sx:ex]
+    up = coarse_surface(coarse_blocks(region), sigma)
+    return up[MARGIN_M + oy : MARGIN_M + oy + rows, MARGIN_M + ox : MARGIN_M + ox + cols]
+
+
 def split_mask(origin_y: float, rows: int, cols: int) -> np.ndarray:
     """Geographic split from absolute northing bands (see plan)."""
     northing = origin_y - (np.arange(rows) + 0.5)
@@ -133,13 +177,12 @@ def load_release(manifest_path: Path) -> list[Tile]:
             raise ValueError(f"unsupported spacing {spacing}")
         height = np.where(valid, height, np.nan).astype(np.float32)
         r, c = height.shape[0] // COARSE_M * COARSE_M, height.shape[1] // COARSE_M * COARSE_M
-        height, water, snow, veg = height[:r, :c], water[:r, :c], snow[:r, :c], veg[:r, :c]
+        height, water, snow, veg = height[:r, :c], smooth_mask(water[:r, :c]), snow[:r, :c], veg[:r, :c]
         tiles.append(
             Tile(
                 name=t["title"],
                 class_id=int(t["primary_class_id"]),
                 height=height,
-                coarse=upsample_coarse(coarse_blocks(height)),
                 water=water,
                 snow=snow,
                 vegetation=veg,
@@ -166,8 +209,10 @@ TARGET_CHANNELS = 3  # residual / scale, snow/ice, vegetation
 class CropSampler:
     """Random crops lying entirely inside one split with enough valid ground."""
 
-    def __init__(self, tiles: list[Tile], role: int, size: int, stride: int = 16, min_valid=0.5):
-        self.tiles, self.size = tiles, size
+    def __init__(
+        self, tiles: list[Tile], role: int, size: int, stride: int = 16, min_valid=0.5, smooth_m=SMOOTH_M
+    ):
+        self.tiles, self.size, self.smooth_m = tiles, size, smooth_m
         self.positions = []
         for i, t in enumerate(tiles):
             ok = _window_sum(t.split == role, size) == size * size
@@ -182,7 +227,8 @@ class CropSampler:
         i, y, x = self.positions[index]
         t, s = self.tiles[i], self.size
         sl = np.s_[y : y + s, x : x + s]
-        h, c = t.height[sl], t.coarse[sl]
+        oy, ox = rng.integers(COARSE_M, size=2)
+        h, c = t.height[sl], crop_coarse(t.height, y, x, s, int(oy), int(ox), self.smooth_m)
         valid = ~np.isnan(h) & ~t.water[sl]
         residual = np.where(valid, (h - c) / scale, 0.0)
         snow, veg = t.snow[sl], t.vegetation[sl]
@@ -218,8 +264,11 @@ def _window_sum(mask: np.ndarray, size: int) -> np.ndarray:
     return out
 
 
-def residual_scale(tiles: list[Tile]) -> float:
+def residual_scale(tiles: list[Tile], smooth_m: float = SMOOTH_M) -> float:
     """Fixed metre scale: twice the residual std on training ground, to 0.5 m."""
-    parts = [(t.height - t.coarse)[(t.split == TRAIN) & ~np.isnan(t.height) & ~t.water] for t in tiles]
+    parts = [
+        (t.height - coarse_surface(coarse_blocks(t.height), smooth_m))[(t.split == TRAIN) & ~np.isnan(t.height) & ~t.water]
+        for t in tiles
+    ]
     std = float(np.concatenate(parts).std())
     return max(0.5, round(2 * std * 2) / 2)

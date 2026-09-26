@@ -73,6 +73,9 @@ def main(argv=None) -> int:
             "release": str(args.release.resolve()),
             "residual_scale_m": data.residual_scale(tiles),
             "coarse_m": data.COARSE_M,
+            "coarse_smooth_m": data.SMOOTH_M,
+            "coarse_offset": "random per crop",
+            "water_smooth_m": data.WATER_SMOOTH_M,
             "crop": args.crop,
             "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")]},
             "class_dropout": args.class_dropout,
@@ -84,8 +87,9 @@ def main(argv=None) -> int:
         config_path.write_text(json.dumps(config, indent=2))
     scale = config["residual_scale_m"]
 
-    train = data.CropSampler(tiles, data.TRAIN, config["crop"])
-    val = data.CropSampler(tiles, data.VALIDATION, config["crop"])
+    smooth_m = config.get("coarse_smooth_m", 0.0)
+    train = data.CropSampler(tiles, data.TRAIN, config["crop"], smooth_m=smooth_m)
+    val = data.CropSampler(tiles, data.VALIDATION, config["crop"], smooth_m=smooth_m)
     print(f"tiles={len(tiles)} train_positions={len(train.positions)} val_positions={len(val.positions)} scale={scale} m", flush=True)
 
     model = Denoiser(config["arch"]).to(device)

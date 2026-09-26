@@ -67,7 +67,9 @@ def main(argv=None) -> int:
     model = Denoiser(config["arch"]).to(device).eval()
     model.load_state_dict(load_file(str(weights), device="cuda"))
 
-    coarse = data.upsample_coarse(coarse_blocks)
+    coarse = data.coarse_surface(coarse_blocks, config.get("coarse_smooth_m", 0.0))
+    if "water_smooth_m" in config:
+        water = data.smooth_mask(water, config["water_smooth_m"])
     class_map = np.repeat(np.repeat(classes, data.COARSE_M, 0), data.COARSE_M, 1).astype(np.int64)
     cond = torch.from_numpy(data.condition(coarse, water, class_map))[None].to(device)
     start = time.time()
