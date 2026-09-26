@@ -1,0 +1,28 @@
+training/src/topography_training/diffusion/generate.py
+  s_8a3239663527df::t_f9ebcc0d2ef1c0 70-72
+training/src/topography_training/diffusion/train.py
+  s_8a3239663527df::t_176a90f55de61d 76-78,90-92
+training/src/topography_training/diffusion/data.py
+  s_8a3239663527df::t_176a90f55de61d 121,123-124,131,133,145,212-215,231,267,270
+  s_8a3239663527df::t_a65b7600ee3281 132,138-139,141,143,146
+  s_8a3239663527df::t_2276067accaf9f 17-19,107-120,122,125-130,134-137,140,142,144,147-148,180,230,269,271-272
+training/src/topography_training/diffusion/evaluate.py
+  s_8a3239663527df::t_176a90f55de61d 105,132,141,145,168
+  s_8a3239663527df::t_a65b7600ee3281 83,181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3f55115c35fb4d98b29ce723911b644818c21764",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
