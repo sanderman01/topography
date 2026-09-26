@@ -1,0 +1,20 @@
+docs/plans/terrain-diffusion-v1.md
+  s_48e90516f22056::t_5eea43e0757c42 136-137
+  s_48e90516f22056::t_7f980282ce80dc 156-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "67e0f2457f7e6c2e54139a6eb98bfd1a9fa9c286",
+  "prompts": {},
+  "sessions": {
+    "s_48e90516f22056": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fd14e750-ec26-47a8-a9ed-8e5ad67dfb5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
