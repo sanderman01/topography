@@ -1,47 +1,103 @@
 #!/usr/bin/env python3
 """Merge published galleries and batch gallery inputs into one gallery input.
 
-usage: merge_gallery_inputs.py <new-input.json> <gallery.json|gallery-input.json>...
+usage: merge_gallery_inputs.py [--drop-overlaps --decided tiles.json] <new-input.json> <input>...
 
-Earlier inputs win on duplicate review paths, so existing library tiles keep their
-IDs and pinned profiles. Build the result with `topography gallery build`.
+Inputs are published gallery.json files or batch gallery-input.json files. Earlier
+inputs win on duplicate review paths, so library tiles keep their IDs and pinned
+profiles. With --drop-overlaps, tiles of the first input and tiles with a saved
+decision (from a gallery server's /api/tiles dump) are always kept; other tiles,
+newest survey first, are dropped when they cover more than a quarter of a kept
+tile's ground. Build the result with `topography gallery build`.
 """
 
+import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 FIELDS = ("id", "title", "raw", "review", "primary_class_id", "preparation_profile")
+OVERLAP = 0.25
+
+
+def footprint(review: Path):
+    ring = json.loads((review.parent / "inspection.json").read_text())["wgs84Extent"]["coordinates"][0]
+    xs, ys = [p[0] for p in ring], [p[1] for p in ring]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def overlap(a, b) -> float:
+    w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    h = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return w * h / smaller if smaller > 0 else 0.0
+
+
+def survey_end(raw: Path) -> str:
+    receipt = json.loads(raw.read_text())
+    source = (raw.parent.parent / "objects" / receipt["source_sha256"]).read_text()
+    for line in source.splitlines():
+        if line.startswith("acquisition_dates"):
+            return line.split("/")[-1]
+    return ""
 
 
 def main() -> int:
-    if len(sys.argv) < 3:
-        print(__doc__, file=sys.stderr)
-        return 2
-    output = Path(sys.argv[1])
-    if output.exists():
-        print(f"error: {output} exists", file=sys.stderr)
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--drop-overlaps", action="store_true")
+    parser.add_argument("--decided", type=Path, help="/api/tiles dump; decided tiles are kept")
+    parser.add_argument("output", type=Path)
+    parser.add_argument("inputs", nargs="+", type=Path)
+    args = parser.parse_args()
+    if args.output.exists():
+        print(f"error: {args.output} exists", file=sys.stderr)
         return 1
-    tiles, reviews, ids, titles = [], set(), set(), set()
-    for name in sys.argv[2:]:
-        for tile in json.loads(Path(name).read_text())["tiles"]:
-            review = str(Path(tile["review"]).resolve())
-            if review in reviews:
+    decided = set()
+    if args.decided:
+        decided = {t["review_sha256"] for t in json.loads(args.decided.read_text())["tiles"]
+                   if t["decision"] != "pending"}
+    candidates, reviews = [], set()
+    for position, name in enumerate(args.inputs):
+        for tile in json.loads(name.read_text())["tiles"]:
+            review = Path(tile["review"]).resolve()
+            if str(review) in reviews:
                 continue
+            reviews.add(str(review))
             entry = {k: tile[k] for k in FIELDS if tile.get(k) is not None}
-            entry["review"], entry["raw"] = review, str(Path(tile["raw"]).resolve())
-            base, n = entry["id"], 2
-            while entry["id"] in ids:
-                entry["id"], n = f"{base}-{n}", n + 1
-            title, n = entry["title"], 2
-            while entry["title"] in titles:
-                entry["title"], n = f"{title} #{n}", n + 1
-            titles.add(entry["title"])
-            reviews.add(review)
-            ids.add(entry["id"])
-            tiles.append(entry)
-    output.write_text(json.dumps({"schema_version": 1, "title": "Terrain library", "tiles": tiles}, indent=1))
-    print(f"{len(tiles)} tiles -> {output}")
+            entry["review"], entry["raw"] = str(review), str(Path(tile["raw"]).resolve())
+            keep = position == 0 or hashlib.sha256(review.read_bytes()).hexdigest() in decided
+            candidates.append((keep, entry))
+    kept, dropped = [], 0
+    if args.drop_overlaps:
+        order = [c for c in candidates if c[0]] + sorted(
+            (c for c in candidates if not c[0]),
+            key=lambda c: survey_end(Path(c[1]["raw"])), reverse=True)
+        boxes = []
+        for keep, entry in order:
+            box = footprint(Path(entry["review"]))
+            if not keep and any(overlap(box, other) > OVERLAP for other in boxes):
+                dropped += 1
+                continue
+            boxes.append(box)
+            kept.append(entry)
+        # Restore input order for a stable gallery.
+        rank = {c[1]["review"]: i for i, c in enumerate(candidates)}
+        kept.sort(key=lambda e: rank[e["review"]])
+    else:
+        kept = [c[1] for c in candidates]
+    ids, titles = set(), set()
+    for entry in kept:
+        base, n = entry["id"], 2
+        while entry["id"] in ids:
+            entry["id"], n = f"{base}-{n}", n + 1
+        title, n = entry["title"], 2
+        while entry["title"] in titles:
+            entry["title"], n = f"{title} #{n}", n + 1
+        ids.add(entry["id"])
+        titles.add(entry["title"])
+    args.output.write_text(json.dumps({"schema_version": 1, "title": "Terrain library", "tiles": kept}, indent=1))
+    print(f"{len(kept)} tiles, {dropped} overlapping dropped -> {args.output}")
     return 0
 
 

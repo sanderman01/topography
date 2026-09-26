@@ -36,8 +36,12 @@ struct Area {
 struct Window {
     source: usize,
     cells: [u32; 4],
+    /// Offset of the window centre from the area centre, metres.
+    offset: (f64, f64),
     distance_m: f64,
     bearing: &'static str,
+    /// Survey end date; newer surveys win overlapping windows.
+    survey_end: String,
 }
 
 fn slug(name: &str) -> String {
@@ -112,6 +116,11 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
             let record: Value =
                 toml::from_str(&String::from_utf8_lossy(&super::read_small(&path)?))
                     .map_err(|e| AcquisitionError::Invalid(format!("source: {e}")))?;
+            let survey_end = record["acquisition_dates"][0]
+                .as_str()
+                .and_then(|d| d.split('/').next_back())
+                .unwrap_or("")
+                .to_owned();
             let (Some(url), Some(crs)) = (
                 record["source_urls"][0].as_str(),
                 record["spatial"]["horizontal_crs"].as_str(),
@@ -171,16 +180,22 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
             while r < r1 {
                 let mut c = c0;
                 while c < c1 {
-                    // Windows stay whole inside the source grid.
-                    let (x, y) = (c.min(w - size), r.min(h - size));
+                    // Only whole windows: shifting edge windows inward duplicated neighbours.
+                    if c + size > w || r + size > h {
+                        c += size;
+                        continue;
+                    }
+                    let (x, y) = (c, r);
                     let mx = t[0] + (f64::from(x) + f64::from(size) / 2.0) * t[1];
                     let my = t[3] + (f64::from(y) + f64::from(size) / 2.0) * t[5];
                     let (dx, dy) = (mx - centre.0, my - centre.1);
                     windows.push(Window {
                         source: index,
                         cells: [x, y, size, size],
+                        offset: (dx, dy),
                         distance_m: dx.hypot(dy),
                         bearing: bearing(dx, dy),
+                        survey_end: survey_end.clone(),
                     });
                     added = true;
                     c += size;
@@ -196,9 +211,28 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
                 }));
             }
         }
-        windows.sort_by(|a, b| a.distance_m.total_cmp(&b.distance_m));
-        windows.dedup_by(|a, b| a.source == b.source && a.cells == b.cells);
-        let chosen: Vec<&Window> = windows.iter().take(area.max_crops).collect();
+        // Nearest first; at equal distance (to 100 m) the newer survey first.
+        windows.sort_by(|a, b| {
+            (a.distance_m / 100.0)
+                .round()
+                .total_cmp(&(b.distance_m / 100.0).round())
+                .then(b.survey_end.cmp(&a.survey_end))
+        });
+        // Overlapping surveys and neighbouring tiles cover the same ground: keep
+        // windows that overlap no chosen window by more than a quarter.
+        let limit = f64::from(size) * 0.5;
+        let mut chosen: Vec<&Window> = Vec::new();
+        for window in &windows {
+            if chosen.len() == area.max_crops {
+                break;
+            }
+            if chosen.iter().all(|c| {
+                (c.offset.0 - window.offset.0).abs() >= limit
+                    || (c.offset.1 - window.offset.1).abs() >= limit
+            }) {
+                chosen.push(window);
+            }
+        }
         for (n, window) in chosen.iter().enumerate() {
             let title = if window.bearing == "centre" {
                 format!("{} · centre", area.name)
