@@ -1,0 +1,23 @@
+scripts/README.md
+  s_fa852e40cdfce0::t_12f95a65ac319c 89
+scripts/check_quality.py
+  s_fa852e40cdfce0::t_0ae3f48535177a 69-75,79-80
+scripts/check_surface_cover.py
+  s_fa852e40cdfce0::t_12f95a65ac319c 150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "891a05bebf28f1b7f09826caaf08d0e0e27a57ab",
+  "prompts": {},
+  "sessions": {
+    "s_fa852e40cdfce0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d5e98cc-55af-466e-ab18-1539643a1b42",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
