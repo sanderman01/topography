@@ -1,0 +1,43 @@
+crates/topography-core/src/acquisition/mod.rs
+  s_fa852e40cdfce0::t_129518a3bc95db 9,15
+  s_fa852e40cdfce0::t_85137c8180853b 8,14
+crates/topography-core/src/acquisition/raster.rs
+  s_fa852e40cdfce0::t_f69653ea20388a 222-243
+crates/topography-core/src/world/input.rs
+  s_fa852e40cdfce0::t_da75b769a2355c 101
+crates/topography-core/src/acquisition/usgs.rs
+  s_fa852e40cdfce0::t_85137c8180853b 78-80,91-93,95-98
+  s_fa852e40cdfce0::t_a8de0c0c11f023 53-77,81-90,94,99-126,184,241-249
+crates/topography-core/src/acquisition/linz.rs
+  s_fa852e40cdfce0::t_a5d258c4c51400 1-7,9-111,116-137,144-190,193-252
+  s_fa852e40cdfce0::t_85137c8180853b 8,112-115,138-143,191-192
+crates/topography-cli/src/main.rs
+  s_fa852e40cdfce0::t_a8de0c0c11f023 12,97-102,122-123
+  s_fa852e40cdfce0::t_129518a3bc95db 14,92-96
+  s_fa852e40cdfce0::t_85137c8180853b 103-121
+crates/topography-core/src/acquisition/batch.rs
+  s_fa852e40cdfce0::t_129518a3bc95db 338,360-373,409,412,416-417,430-432
+  s_fa852e40cdfce0::t_a3e9fd8b467f24 433
+crates/topography-core/src/acquisition/http.rs
+  s_fa852e40cdfce0::t_dfdf3c16296c77 77-90
+  s_fa852e40cdfce0::t_a8de0c0c11f023 188
+crates/topography-core/src/acquisition/plan.rs
+  s_fa852e40cdfce0::t_afb909343f80b3 1-45,53,58-78,83-94,98-107,111-133,154-194,201-230
+  s_fa852e40cdfce0::t_129518a3bc95db 46-52,54-57,79-82,95-97,108-110,134-153,195-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e143df5af4ca1bd11e00824a9a0da692f5e2107e",
+  "prompts": {},
+  "sessions": {
+    "s_fa852e40cdfce0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d5e98cc-55af-466e-ab18-1539643a1b42",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
