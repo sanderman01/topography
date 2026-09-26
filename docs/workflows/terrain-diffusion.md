@@ -16,6 +16,11 @@ new directory with a hashed manifest. Overlapping products keep the larger one.
 Rebuild into a new directory after accepting more tiles. Loading the gallery
 verifies every raw asset, which takes a few minutes.
 
+Each tile also gets automatic artifact checks: an `artifacts.u8` layer
+(1 facet, 2 stripe, 4 seam), a per-tile summary in the manifest, and stripes
+removed from the training elevation. Open `report.html` in the release to see
+the share of each tile left out and the worst close-up before training.
+
 ## 2. Training (GPU; warn before running)
 
 ```sh

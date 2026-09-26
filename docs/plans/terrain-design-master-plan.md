@@ -148,6 +148,12 @@ Ready or Needs technical attention; retain the vote through technical exceptions
 without requesting repeat approval. Evidence interpretation remains a source-level
 technical task. Successful preparation does not create training admission.
 
+Source artifacts are a technical check, not a reason for rejection (2026-09-26).
+Automatic checks flag interpolated facets, periodic striping and straight seams
+before the vote. The library shows them as an overlay with a 1:1 detail view, and
+training releases filter out stripes and leave out the other flagged cells. The
+owner still votes on whole tiles; see the [diffusion pilot](terrain-diffusion-v1.md#data).
+
 ### Snow/ice and vegetation masks
 
 These are game layers, not scientific classifications (policy `game_cover_v2`,
