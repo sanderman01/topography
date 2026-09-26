@@ -940,6 +940,8 @@ pub(crate) fn qualify_cover_upgrade(
         Some(a) => a.inherited_human_record_sha256.clone(),
         None => head.clone(),
     };
+    // A vote carried across reject/accept may already hold identical cover evidence.
+    let known: BTreeSet<String> = current.evidence.iter().map(|e| e.id.clone()).collect();
     let mut claims = current.claims;
     let report_id = format!("game-cover-quality-{}", &report_sha[..16]);
     let cover_sha = digest(cover_bytes);
@@ -956,12 +958,15 @@ pub(crate) fn qualify_cover_upgrade(
                 | "water_classification"
                 | "unsupported_feature_gaps"
         ) {
-            finding
-                .evidence_ids
-                .extend([report_id.clone(), cover_id.clone()]);
-            finding.note.push_str(
-                " Game cover v2 upgrade (technical, no new vote): masks reassessed with game water added and snow/ice excluded from ground; vegetation is informational.",
-            );
+            for id in [&report_id, &cover_id] {
+                if !finding.evidence_ids.contains(id) {
+                    finding.evidence_ids.push(id.clone());
+                }
+            }
+            let note = " Game cover v2 upgrade (technical, no new vote): masks reassessed with game water added and snow/ice excluded from ground; vegetation is informational.";
+            if !finding.note.contains(note) {
+                finding.note.push_str(note);
+            }
         }
     }
     let counts = &report["counts"];
@@ -975,10 +980,13 @@ pub(crate) fn qualify_cover_upgrade(
     coverage.valid_terrestrial_cells = counts["valid_terrestrial_cells"]
         .as_u64()
         .ok_or_else(|| AcquisitionError::Invalid("quality report valid count missing".into()))?;
-    coverage.evidence_ids.push(report_id.clone());
-    coverage
-        .note
-        .push_str(" Game cover v2: ground excludes water and snow/ice.");
+    if !coverage.evidence_ids.contains(&report_id) {
+        coverage.evidence_ids.push(report_id.clone());
+    }
+    let note = " Game cover v2: ground excludes water and snow/ice.";
+    if !coverage.note.contains(note) {
+        coverage.note.push_str(note);
+    }
     let mut evidence = current.evidence;
     let mut objects = BTreeMap::new();
     for item in &evidence {
@@ -999,12 +1007,15 @@ pub(crate) fn qualify_cover_upgrade(
         ),
     ] {
         objects.insert(sha.clone(), body.to_vec());
-        evidence.push(Evidence {
-            id,
-            description: description.into(),
-            source_url: None,
-            sha256: sha,
-        });
+        // IDs are content-addressed, so a known ID holds these exact bytes.
+        if !known.contains(&id) {
+            evidence.push(Evidence {
+                id,
+                description: description.into(),
+                source_url: None,
+                sha256: sha,
+            });
+        }
     }
     for sha in [
         &current.target.raw_receipt_sha256,
