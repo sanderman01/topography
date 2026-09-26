@@ -1,0 +1,78 @@
+schema_version = 1
+legend_version = 2
+status = "candidate"
+retired_ids = []
+# Precedence is deliberately unset until pilot review.
+# Colors are display choices; integer IDs carry the labels.
+
+[[classes]]
+id = 1
+name = "Karst towers, pinnacles, and depressions"
+color_rgb = [128, 0, 128]
+flight_experience = "Repeated silhouettes, enclosed hollows, hidden exits between isolated hills"
+
+[[classes]]
+id = 2
+name = "Gorges and slot-like canyons"
+color_rgb = [255, 165, 0]
+flight_experience = "Blind bends, branching passages, constrictions, climb-out decisions"
+
+[[classes]]
+id = 3
+name = "Fjords and glacial troughs"
+color_rgb = [0, 255, 255]
+flight_experience = "Long corridors, side valleys, hanging valleys, enclosing walls"
+
+[[classes]]
+id = 4
+name = "Volcanic calderas and craters"
+color_rgb = [139, 0, 0]
+flight_experience = "Rim crossings, bowls, isolated cones, local roughness"
+
+[[classes]]
+id = 5
+name = "Archipelagos and dissected coasts"
+color_rgb = [0, 128, 128]
+flight_experience = "Similar channels, hidden landmarks, sparse height cues"
+
+[[classes]]
+id = 6
+name = "Alpine ridges and cirques"
+color_rgb = [255, 0, 0]
+flight_experience = "Saddles, ridge crossings, false passes, disconnected valleys"
+
+[[classes]]
+id = 7
+name = "Badlands, mesas, and eroded gullies"
+color_rgb = [165, 42, 42]
+flight_experience = "Branching routes, misleading parallel drainages, abrupt escarpments"
+
+[[classes]]
+id = 8
+name = "Dunes and sand ridges"
+color_rgb = [255, 255, 0]
+flight_experience = "Repeated forms, weak landmarks, distinctive ridges"
+
+[[classes]]
+id = 9
+name = "Braided river basins and floodplains"
+color_rgb = [0, 0, 255]
+flight_experience = "Channel choice, meanders, terrace edges, open recovery areas"
+
+[[classes]]
+id = 10
+name = "Glaciers and ice fields"
+color_rgb = [200, 230, 255]
+flight_experience = "Crevassed tongues, icefalls, nunataks, bright featureless snowfields"
+
+[[classes]]
+id = 11
+name = "Volcanic cones and lava fields"
+color_rgb = [255, 90, 40]
+flight_experience = "Isolated cones as landmarks, rough flow fronts, craters to circle"
+
+[[classes]]
+id = 12
+name = "Coastal cliffs and sea stacks"
+color_rgb = [120, 90, 200]
+flight_experience = "Sheer walls above water, stacks and arches, headlands to round"

@@ -83,8 +83,8 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
             continue;
         }
         ensure(
-            (1..=9).contains(&tile.primary_class_id),
-            "tile class must be a legend class 1..=9",
+            (1..=12).contains(&tile.primary_class_id),
+            "tile class must be a legend class 1..=12",
         )?;
         let (w, rows) = (grid.size[0] as usize, grid.size[1] as usize);
         let cells = w * rows;

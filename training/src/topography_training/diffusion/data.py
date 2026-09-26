@@ -20,7 +20,7 @@ MARGIN_M = 96  # context around a crop for its coarse surface
 BAND_M = 2048
 VALIDATION_M = 512
 BUFFER_M = 128
-NUM_CLASSES = 10  # 0 = unknown, 1..9 legend classes
+NUM_CLASSES = 13  # 0 = unknown, 1..12 legend classes (terrain legend v2)
 TRAIN, VALIDATION = 1, 2
 
 
