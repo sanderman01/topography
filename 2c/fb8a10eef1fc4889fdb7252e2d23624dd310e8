@@ -1,0 +1,49 @@
+crates/topography-core/src/review/gallery_server.rs
+  s_8a3239663527df::t_839f0baba8750f 356
+crates/topography-core/src/acquisition/geofabrik.rs
+  s_8a3239663527df::t_edbeacc8f12e6a 150
+  s_8a3239663527df::t_839f0baba8750f 50-60
+  s_8a3239663527df::t_7da5fe83290056 1-49,61-149,151-165,168-178,188-216,219-249
+  s_8a3239663527df::t_c5389d7b24b411 166-167
+  s_8a3239663527df::t_2cd2a070fd1a0d 179-187,217-218
+crates/topography-cli/src/main.rs
+  s_8a3239663527df::t_2cd2a070fd1a0d 36,261,263-268
+crates/topography-core/src/acquisition/http.rs
+  s_8a3239663527df::t_950a1415c13b53 5-12,179-183
+  s_8a3239663527df::t_0f778dd9cb5346 156,159,163-178,184-205,207-213
+  s_8a3239663527df::t_e4d72331a18feb 157-158,160-162
+  s_8a3239663527df::t_493224f97aca37 108-126
+crates/topography-core/src/acquisition/mod.rs
+  s_8a3239663527df::t_493224f97aca37 5
+crates/topography-core/src/world/input.rs
+  s_8a3239663527df::t_2cd2a070fd1a0d 85,87
+configs/cover-game-v3.toml
+  s_8a3239663527df::t_493224f97aca37 28-33
+docs/plans/terrain-diffusion-v1.md
+  s_8a3239663527df::t_2cd2a070fd1a0d 131
+crates/topography-core/src/acquisition/cover.rs
+  s_8a3239663527df::t_493224f97aca37 63-65,524-525,533-541,544-545,550-563,569-608,661-662,689-692
+  s_8a3239663527df::t_2cd2a070fd1a0d 542-543,546-549,564-568,609-613
+  s_8a3239663527df::t_0f778dd9cb5346 640
+scripts/cover_fixtures.py
+  s_8a3239663527df::t_493224f97aca37 141
+docs/workflows/cover-acquisition.md
+  s_8a3239663527df::t_a0994fc1cbf5d2 23-26
+  s_8a3239663527df::t_6b0109f0fd06a5 27-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2cfb8a10eef1fc4889fdb7252e2d23624dd310e8",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
