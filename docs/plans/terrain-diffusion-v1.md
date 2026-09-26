@@ -133,7 +133,8 @@ explicitly (below).
   water.
 - [ ] **Pilot world generation:** 1 m MultiDiffusion over 4,096² (about 1,000 windows
   of 256² at stride 128), writing Float32 elevation and masks with provenance. Then
-  a whole-world visual review.
+  a whole-world visual review. Check the mid scale specifically (see watch point
+  below); 256 m gate patches are too small to show it.
 - [x] **16-bit export:** `topography export heightmap <world-output> <dir>`; 257² `shared_edge` tiles and quadtree LOD levels, per master
   plan §5 and §10.
 
@@ -151,6 +152,16 @@ explicitly (below).
 This pilot only adds 1 m detail to a given base. Original worlds need their
 large-scale structure generated too: a second model trained on global GLO-30 at
 about 32 m (master plan §8). It is planned after this pilot's gate.
+
+## Watch point: the 32× scale gap
+
+One step from 32 m to 1 m is aggressive; cascades usually step 4–8× per stage. The
+1 m model must invent features of roughly 60–300 m wavelength (gullies, spurs, small
+ridges) with little guidance from the coarse surface. During review, look for detail
+that looks right close up but lacks structure at that scale: texture without
+drainage or ridge organisation between the coarse landforms. If it shows, add an
+intermediate level (e.g. 32 → 4 → 1 m) trained on the planned 4 m pyramid examples
+(master plan §5) instead of adding runs to this model.
 
 ## Open pilot choices
 
