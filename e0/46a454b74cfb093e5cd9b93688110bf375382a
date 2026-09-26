@@ -1,0 +1,19 @@
+crates/topography-core/src/catalog/curation/mod.rs
+  s_8a3239663527df::t_7df98345436e81 943-944,961-969,983-989,1010-1018
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e046a454b74cfb093e5cd9b93688110bf375382a",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
