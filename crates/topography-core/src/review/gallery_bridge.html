@@ -14,7 +14,7 @@ addEventListener('keydown',e=>{if(['y','n','ArrowLeft','ArrowRight'].includes(e.
   Object.assign(layer.style,{left:map.clientLeft+'px',top:map.clientTop+'px',width:map.clientWidth+'px',height:map.clientHeight+'px'});
   const ratio=devicePixelRatio||1;layer.width=Math.max(1,Math.round(map.clientWidth*ratio));layer.height=Math.max(1,Math.round(map.clientHeight*ratio));
   const ctx=layer.getContext('2d');ctx.clearRect(0,0,layer.width,layer.height);ctx.imageSmoothingEnabled=false;
-  if(!cells)return;
+  if(!cells){drawArtifacts(ctx);return;}
   const native=document.createElement('canvas');native.width=W;native.height=H;const n=native.getContext('2d');
   for(const name of ['water','vegetation','snow_ice']){if(!shown[name])continue;
    const present=n.createImageData(W,H),unknown=n.createImageData(W,H),[r,g,b]=colours[name];
@@ -23,9 +23,30 @@ addEventListener('keydown',e=>{if(['y','n','ArrowLeft','ArrowRight'].includes(e.
    const scaled=document.createElement('canvas');scaled.width=layer.width;scaled.height=layer.height;const s=scaled.getContext('2d');s.imageSmoothingEnabled=false;
    n.putImageData(unknown,0,0);s.drawImage(native,0,0,scaled.width,scaled.height);s.globalCompositeOperation='source-in';s.fillStyle=s.createPattern(hatch(colours[name],name==='snow_ice'),'repeat');s.fillRect(0,0,scaled.width,scaled.height);
    n.putImageData(present,0,0);ctx.drawImage(native,0,0,layer.width,layer.height);ctx.drawImage(scaled,0,0);}
+  drawArtifacts(ctx);
  }
+ // Automatic artifact checks: red is excluded from training (facets, seams), orange is striping (repaired).
+ let art=null,showArt=false;
+ const tint=v=>v&5?[255,70,70,150]:v&2?[255,170,40,90]:null;
+ function drawArtifacts(ctx){if(!art||!showArt)return;const c=document.createElement('canvas');c.width=W2;c.height=H2;const x=c.getContext('2d'),img=x.createImageData(W2,H2);
+  for(let i=0;i<art.length;i++){const t=tint(art[i]);if(t)img.data.set(t,i*4);}x.putImageData(img,0,0);ctx.imageSmoothingEnabled=false;ctx.drawImage(c,0,0,ctx.canvas.width,ctx.canvas.height);}
+ let W2=0,H2=0;
+ // 1:1 detail: 256 native cells around the observer at 2 screen pixels per cell.
+ const block=document.createElement('div');block.innerHTML='<h2 style="margin:14px 0 4px">Detail 1:1</h2><p class="muted" id="detail-caption" style="margin:0 0 6px"></p>';
+ const detail=document.createElement('canvas');detail.id='detail';detail.width=detail.height=512;detail.style.cssText='width:100%;max-width:512px;image-rendering:pixelated;cursor:crosshair';block.append(detail);wrap.after(block);
+ function drawDetail(){const GW=data.width,GH=data.height,S=Math.min(256,GW,GH),x0=Math.max(0,Math.min(GW-S,px-(S>>1))),y0=Math.max(0,Math.min(GH-S,py-(S>>1)));
+  const shade=shades[Number(document.getElementById('light').value)],c=document.createElement('canvas');c.width=c.height=S;const x=c.getContext('2d'),img=x.createImageData(S,S);
+  for(let r=0;r<S;r++)for(let q=0;q<S;q++){const i=(y0+r)*GW+x0+q,o=(r*S+q)*4,b=good(i)?Math.max(28,shade[i]):18;let rgb=[b,b,b];
+   const t=showArt&&art&&W2===GW?tint(art[i]):null;if(t){const a=t[3]/255*.45;rgb=rgb.map((v,k)=>Math.round(v*(1-a)+t[k]*a));}img.data.set([...rgb,255],o);}
+  x.putImageData(img,0,0);const d=detail.getContext('2d');d.imageSmoothingEnabled=false;d.drawImage(c,0,0,detail.width,detail.height);
+  const k=detail.width/S;d.strokeStyle='#ffc66b';d.strokeRect((px-x0)*k,(py-y0)*k,k,k);
+  const m=Math.abs(data.transform[1]||1)*S;document.getElementById('detail-caption').textContent=`${m.toFixed(0)} m across around cell ${px}, ${py}. Click the map to move; click here to recentre.`;
+  detail.onclick=e=>{const b=detail.getBoundingClientRect();px=Math.max(0,Math.min(GW-1,x0+Math.floor((e.clientX-b.left)/b.width*S)));py=Math.max(0,Math.min(GH-1,y0+Math.floor((e.clientY-b.top)/b.height*S)));render();drawDetail();};}
+ map.addEventListener('click',()=>drawDetail());document.getElementById('light').addEventListener('input',()=>drawDetail());drawDetail();
  addEventListener('message',e=>{const d=e.data;if(e.source!==parent||d?.index!==galleryIdentity.index||d?.review!==galleryIdentity.review)return;
   if(d.overlay){const text=atob(d.overlay.cells),bytes=new Uint8Array(text.length);for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);if(bytes.length!==d.overlay.width*d.overlay.height)return;cells=bytes;W=d.overlay.width;H=d.overlay.height;}
-  if(d.layers)shown={...d.layers};draw();});
+  if(d.artifacts){const text=atob(d.artifacts.cells),bytes=new Uint8Array(text.length);for(let i=0;i<text.length;i++)bytes[i]=text.charCodeAt(i);if(bytes.length===d.artifacts.width*d.artifacts.height){art=bytes;W2=d.artifacts.width;H2=d.artifacts.height;}}
+  if('showArtifacts' in d)showArt=!!d.showArtifacts;
+  if(d.layers)shown={...d.layers};draw();drawDetail();});
  new ResizeObserver(draw).observe(map);})();
 </script>

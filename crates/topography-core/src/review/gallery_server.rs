@@ -12,7 +12,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -125,10 +125,13 @@ struct Vote {
     previous_record_sha256: Option<String>,
     decision: String,
 }
+/// Per-tile artifact check results; None while pending.
+type ArtifactResults = Arc<Mutex<Vec<Option<std::result::Result<Value, String>>>>>;
 struct Session {
     gallery: Arc<Gallery>,
     snapshots: Arc<Vec<super::bundle::Bundle>>,
     preparation: super::preparation_worker::Worker,
+    artifacts: ArtifactResults,
     locations: Vec<Value>,
     id: String,
     root: PathBuf,
@@ -202,6 +205,25 @@ impl Session {
                     200,
                     "application/json",
                     &serde_json::to_vec(&self.state()?)?,
+                );
+            }
+            if let Some(index) = request
+                .path
+                .strip_prefix("/api/artifacts/")
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|i| *i < self.gallery.tiles.len())
+            {
+                let entry = self.artifacts.lock().ok().and_then(|a| a[index].clone());
+                let (code, body) = match entry {
+                    Some(Ok(value)) => (200, value),
+                    Some(Err(error)) => (409, json!({"error": error})),
+                    None => (202, json!({"pending": true})),
+                };
+                return respond(
+                    stream,
+                    code,
+                    "application/json",
+                    &serde_json::to_vec(&body)?,
                 );
             }
             if let Some(index) = request
@@ -374,10 +396,13 @@ pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
         gallery.clone(),
         snapshots.clone(),
     )?;
+    let artifacts = Arc::new(Mutex::new(vec![None; gallery.tiles.len()]));
+    start_artifact_checks(gallery.clone(), snapshots.clone(), artifacts.clone())?;
     let session = Session {
         gallery,
         snapshots,
         preparation,
+        artifacts,
         locations,
         id,
         root: root.into(),
@@ -402,4 +427,71 @@ pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Artifact checks of each review crop, computed once in the background (display aid).
+fn start_artifact_checks(
+    gallery: Arc<Gallery>,
+    snapshots: Arc<Vec<super::bundle::Bundle>>,
+    results: ArtifactResults,
+) -> Result<()> {
+    io_context(
+        "start artifact checks",
+        std::thread::Builder::new()
+            .name("terrain-artifacts".into())
+            .spawn(move || {
+                for (index, (tile, snapshot)) in
+                    gallery.tiles.iter().zip(snapshots.iter()).enumerate()
+                {
+                    let result =
+                        review_artifacts(&tile.review, snapshot).map_err(|e| e.to_string());
+                    if let Ok(mut results) = results.lock() {
+                        results[index] = Some(result);
+                    }
+                }
+            }),
+    )?;
+    Ok(())
+}
+
+fn review_artifacts(review: &Path, snapshot: &super::bundle::Bundle) -> Result<Value> {
+    let [_, _, w, h] = snapshot.manifest.window_cells;
+    let (w, h) = (w as usize, h as usize);
+    let dir = review.parent().unwrap_or(Path::new("."));
+    let scratch = io_context("stage artifact check", tempfile::tempdir())?;
+    let elevation = super::band(
+        &dir.join("elevation.tif"),
+        scratch.path(),
+        "elevation",
+        w * h,
+        true,
+    )?;
+    let validity = super::band(
+        &dir.join("validity.tif"),
+        scratch.path(),
+        "validity",
+        w * h,
+        false,
+    )?;
+    let height: Vec<f32> = elevation
+        .chunks_exact(4)
+        .zip(&validity)
+        .map(|(b, v)| {
+            let value = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            if *v != 0 { value } else { f32::NAN }
+        })
+        .collect();
+    let transform: Vec<f64> =
+        serde_json::from_value(snapshot.inspection["geoTransform"].clone()).unwrap_or_default();
+    let spacing = [
+        transform.get(1).copied().unwrap_or(1.0).abs(),
+        transform.get(5).copied().unwrap_or(-1.0).abs(),
+    ];
+    let detection = super::artifacts::detect_metre(&height, w, h, spacing[0]);
+    Ok(json!({
+        "width": w,
+        "height": h,
+        "cells": super::base64(&detection.mask),
+        "summary": super::artifacts::summary(&height, &detection, spacing),
+    }))
 }

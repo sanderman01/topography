@@ -7,6 +7,7 @@
 <main><aside><div class="filter"><label for="filter">Show</label><select id="filter"><option value="pending">To review</option><option value="all">All tiles</option><option value="accept">Accepted</option><option value="reject">Rejected</option></select></div><div id="tiles"></div><p id="empty" hidden>No tiles in this view.</p></aside>
 <article><div class="toolbar"><div class="identity"><h2 id="tile-title">Select a tile</h2><p id="tile-state"></p><p id="preparation-detail" aria-live="polite"></p><p id="location"></p></div><button id="previous" aria-label="Previous tile">←</button><button id="next" aria-label="Next tile">→</button><button id="no">No <kbd>N</kbd></button><button id="yes">Yes <kbd>Y</kbd></button></div>
 <div id="overlays" class="overlays" role="group" aria-label="Cover overlays" hidden>Overlay <button data-layer="water" aria-pressed="false"><i class="swatch" style="background:#2864ff"></i>Water</button><button data-layer="snow_ice" aria-pressed="false"><i class="swatch" style="background:#6ee6ff"></i>Snow/ice</button><button data-layer="vegetation" aria-pressed="false"><i class="swatch" style="background:#50cd5f"></i>Vegetation</button><span>Solid: present · <i class="swatch hatch"></i>unknown · clear: assessed absent. Read-only.</span></div>
+<div id="checks" class="overlays" role="group" aria-label="Artifact checks">Checks <button id="artifacts" aria-pressed="false"><i class="swatch" style="background:#ff4646"></i>Artifacts</button><span id="artifact-summary"></span></div>
 <iframe id="preview" title="Terrain inspector" sandbox="allow-scripts"></iframe>
 <footer><p id="message" role="status" aria-live="polite">Loading saved decisions…</p><p>Use the terrain view’s overhead, profile and perspective controls. Arrow keys browse; Y/N save and advance. Rejected data is kept.</p></footer></article></main>
 <script>
@@ -27,7 +28,17 @@ async function syncOverlay(){const tile=state.tiles.find(t=>t.index===active);co
 // WGS84 lat, lon from the review grid; the Google Earth view opens in a new tab.
 function place(tile){const out=byId('location');out.replaceChildren();const loc=tile?.location;if(!loc)return;const f=p=>`${p[0].toFixed(5)}, ${p[1].toFixed(5)}`;const c=loc.corners;
  out.append(`Centre ${f(loc.centre)} · NW ${f(c.nw)} · NE ${f(c.ne)} · SE ${f(c.se)} · SW ${f(c.sw)} · `);const a=document.createElement('a');a.href=loc.google_earth;a.target='_blank';a.rel='noopener noreferrer';a.textContent='Open in Google Earth';out.append(a);}
-function identity(){syncOverlay();const tile=state.tiles.find(t=>t.index===active);place(tile);if(!tile)return;byId('tile-state').textContent=`${tileLabel(tile)} · Tile ${tile.index+1} of ${state.tiles.length}`;byId('preparation-detail').textContent=tile.preparation?.message||'';}
+// Automatic artifact checks for every tile, before and after a vote (display only).
+let showArtifacts=false;const checks={};
+function pct(v){return `${(100*(v||0)).toFixed(1)}%`;}
+async function syncArtifacts(){const tile=state.tiles.find(t=>t.index===active);const out=byId('artifact-summary');byId('artifacts').setAttribute('aria-pressed',String(showArtifacts));if(!tile)return;const index=tile.index;let c=checks[index];
+ if(!c||(c.pending&&!c.loading)){c=checks[index]={pending:true,loading:true};try{const response=await fetch(`/api/artifacts/${index}`,{cache:'no-store'});const body=await response.json();if(response.status===202){c.loading=false;setTimeout(()=>{if(active===index)syncArtifacts();},1500);}else if(!response.ok)checks[index]={error:body.error||'Artifact check failed.'};else checks[index]={data:body};}catch(error){checks[index]={error:error.message};}c=checks[index];}
+ if(active!==index)return;
+ if(c.pending){out.textContent='Checking for source artifacts…';return;}if(c.error){out.textContent=c.error;return;}
+ const s=c.data.summary,stripes=(s.stripes||[]).map(t=>`${t.period_m} m along ${t.axis}`).join(', ');
+ out.textContent=`Facets ${pct(s.facet_fraction)} · seams ${pct(s.seam_fraction)} · stripes ${stripes?stripes+' (filtered out in training)':'none'} · ${pct(s.excluded_fraction)} left out of training. Red: left out; orange: striped.`;
+ if(ready){const payload={index,review:tile.review_sha256,showArtifacts};if(!c.posted){payload.artifacts=c.data;c.posted=true;}frame.contentWindow?.postMessage(payload,'*');}}
+function identity(){syncOverlay();syncArtifacts();const tile=state.tiles.find(t=>t.index===active);place(tile);if(!tile)return;byId('tile-state').textContent=`${tileLabel(tile)} · Tile ${tile.index+1} of ${state.tiles.length}`;byId('preparation-detail').textContent=tile.preparation?.message||'';}
 function visible(){return state.tiles.filter(t=>filter.value==='all'||t.decision===filter.value);}
 function message(text,error=false){byId('message').textContent=text;byId('message').classList.toggle('error',error);}
 function controls(){for(const id of ['yes','no','previous','next'])byId(id).disabled=busy||active===null||(['yes','no'].includes(id)&&!ready);filter.disabled=busy;}
@@ -51,8 +62,9 @@ async function vote(decision){if(busy||active===null||!ready)return;const tile=s
 function key(event){if(event.repeat||event.ctrlKey||event.altKey||event.metaKey||['INPUT','TEXTAREA','SELECT'].includes(event.target?.tagName))return;const k=event.key.toLowerCase();if(['y','n','arrowleft','arrowright'].includes(k)){event.preventDefault();if(k==='y')vote('accept');else if(k==='n')vote('reject');else move(k==='arrowright'?1:-1);}}
 byId('yes').onclick=()=>vote('accept');byId('no').onclick=()=>vote('reject');byId('previous').onclick=()=>move(-1);byId('next').onclick=()=>move(1);
 for(const button of document.querySelectorAll('#overlays button'))button.onclick=()=>{layers[button.dataset.layer]=!layers[button.dataset.layer];overlay.failed=false;syncOverlay();};
+byId('artifacts').onclick=()=>{showArtifacts=!showArtifacts;syncArtifacts();};
 filter.onchange=()=>select(visible()[0]?.index??null);addEventListener('keydown',key);
-addEventListener('message',event=>{const tile=state.tiles.find(t=>t.index===active);if(event.source!==frame.contentWindow||event.origin!=='null'||!tile||event.data?.index!==active||event.data?.review!==tile.review_sha256)return;if(event.data.ready){ready=true;overlay.posted=false;controls();syncOverlay();}else if(ready&&typeof event.data.key==='string')key({key:event.data.key,preventDefault(){}});});
+addEventListener('message',event=>{const tile=state.tiles.find(t=>t.index===active);if(event.source!==frame.contentWindow||event.origin!=='null'||!tile||event.data?.index!==active||event.data?.review!==tile.review_sha256)return;if(event.data.ready){ready=true;overlay.posted=false;for(const c of Object.values(checks))c.posted=false;controls();syncOverlay();syncArtifacts();}else if(ready&&typeof event.data.key==='string')key({key:event.data.key,preventDefault(){}});});
 refresh(true).then(()=>message('Choices are saved in the local catalog. Accepted tiles prepare automatically.')).catch(error=>message(error.message,true));
 let polling=false;setInterval(async()=>{if(busy||polling||document.hidden)return;polling=true;try{await refresh();}catch{message('Could not refresh preparation status. Your saved choices are retained.',true);}finally{polling=false;}},2000);
 </script></body></html>
