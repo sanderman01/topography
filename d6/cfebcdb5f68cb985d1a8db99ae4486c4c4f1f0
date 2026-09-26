@@ -1,0 +1,23 @@
+docs/plans/terrain-design-master-plan.md
+  s_8a3239663527df::t_90c579cd117573 151-156
+docs/plans/terrain-diffusion-v1.md
+  s_8a3239663527df::t_90c579cd117573 75-91,113-116
+docs/workflows/terrain-diffusion.md
+  s_8a3239663527df::t_90c579cd117573 19-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d6cfebcdb5f68cb985d1a8db99ae4486c4c4f1f0",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
