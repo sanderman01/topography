@@ -1,0 +1,27 @@
+crates/topography-core/src/acquisition/usgs.rs
+  s_fa852e40cdfce0::t_d33b893df0bb36 78-88
+  s_fa852e40cdfce0::t_9f460bdfe7a6df 169,171,173-188
+crates/topography-core/src/acquisition/plan.rs
+  s_fa852e40cdfce0::t_9f460bdfe7a6df 88-101
+  s_fa852e40cdfce0::t_cc8d705325325e 122,126-133
+README.md
+  s_fa852e40cdfce0::t_85cd32b200d06b 101-107
+catalog/plans/expansion-1.toml
+  s_fa852e40cdfce0::t_f78882ab8456cf 1-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a50028106eac6bb443545d8984bd0ae249b95972",
+  "prompts": {},
+  "sessions": {
+    "s_fa852e40cdfce0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d5e98cc-55af-466e-ab18-1539643a1b42",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
