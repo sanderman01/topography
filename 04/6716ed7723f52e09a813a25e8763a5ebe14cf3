@@ -1,0 +1,38 @@
+crates/topography-core/src/review/gallery_server.rs
+  s_fa852e40cdfce0::t_ab5c8c1e6db505 407
+  s_fa852e40cdfce0::t_2234e6554dd27c 465-467
+  s_fa852e40cdfce0::t_7ae32061b8ee24 355-361
+  s_fa852e40cdfce0::t_7eba7542b8aaf2 461-464
+  s_fa852e40cdfce0::t_18ca08d90fa1d4 440-441,446,456-460,468-476
+  s_fa852e40cdfce0::t_0f1363108b1ceb 408
+crates/topography-core/src/acquisition/hash_memo.rs
+  s_fa852e40cdfce0::t_7ae32061b8ee24 1-97
+crates/topography-core/src/review/mod.rs
+  s_fa852e40cdfce0::t_9e31cedf277d03 158-169
+crates/topography-core/src/review/preparation_worker.rs
+  s_fa852e40cdfce0::t_ff9a822beca103 143-178,264,296-307
+  s_fa852e40cdfce0::t_6715c3c28d08f2 265-266,271-278,476,478-479
+  s_fa852e40cdfce0::t_ab5c8c1e6db505 24-32,39
+crates/topography-core/src/acquisition/mod.rs
+  s_fa852e40cdfce0::t_7ae32061b8ee24 7,168-172,184-186
+crates/topography-core/src/catalog/curation/mod.rs
+  s_fa852e40cdfce0::t_6715c3c28d08f2 736-751
+docs/workflows/batch-source-review.md
+  s_fa852e40cdfce0::t_4141167cf6d473 39-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "046716ed7723f52e09a813a25e8763a5ebe14cf3",
+  "prompts": {},
+  "sessions": {
+    "s_fa852e40cdfce0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d5e98cc-55af-466e-ab18-1539643a1b42",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
