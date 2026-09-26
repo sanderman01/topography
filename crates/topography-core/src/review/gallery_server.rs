@@ -351,8 +351,14 @@ impl Session {
 }
 /// Serve a gallery until interrupted. Port zero chooses an available loopback port.
 pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
-    let (gallery, id, snapshots) = gallery::load(manifest)?;
     crate::config::inspect_runtime(runtime)?;
+    // Unchanged files are not re-hashed on every start.
+    crate::acquisition::hash_memo::enable(
+        &super::preparation_worker::review_root(runtime)?.join("file-digests.json"),
+    );
+    let loaded = gallery::load(manifest);
+    crate::acquisition::hash_memo::save();
+    let (gallery, id, snapshots) = loaded?;
     crate::acquisition::geofabrik::use_runtime(runtime)?;
     let listener = io_context(
         "bind gallery loopback",
@@ -398,7 +404,8 @@ pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
         snapshots.clone(),
     )?;
     let artifacts = Arc::new(Mutex::new(vec![None; gallery.tiles.len()]));
-    start_artifact_checks(gallery.clone(), snapshots.clone(), artifacts.clone())?;
+    let cache = super::preparation_worker::review_root(runtime)?.join("artifact-checks");
+    start_artifact_checks(gallery.clone(), snapshots.clone(), artifacts.clone(), cache)?;
     let session = Session {
         gallery,
         snapshots,
@@ -430,11 +437,13 @@ pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
     Ok(())
 }
 
-/// Artifact checks of each review crop, computed once in the background (display aid).
+/// Artifact checks of each review crop, computed once in the background (display aid)
+/// and cached per review and detector version.
 fn start_artifact_checks(
     gallery: Arc<Gallery>,
     snapshots: Arc<Vec<super::bundle::Bundle>>,
     results: ArtifactResults,
+    cache: PathBuf,
 ) -> Result<()> {
     io_context(
         "start artifact checks",
@@ -444,8 +453,27 @@ fn start_artifact_checks(
                 for (index, (tile, snapshot)) in
                     gallery.tiles.iter().zip(snapshots.iter()).enumerate()
                 {
-                    let result =
-                        review_artifacts(&tile.review, snapshot).map_err(|e| e.to_string());
+                    let path = cache.join(format!(
+                        "{}-{}.json",
+                        tile.review_sha256,
+                        super::artifacts::CHECKS
+                    ));
+                    // Our own cache of a 2048² mask: larger than `read_small` allows.
+                    let cached = fs::read(&path)
+                        .ok()
+                        .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+                    let result = match cached {
+                        Some(cached) => Ok(cached),
+                        None => review_artifacts(&tile.review, snapshot).inspect(|value| {
+                            // The cache only saves time; a failed write is harmless.
+                            let _ = fs::create_dir_all(&cache).and_then(|()| {
+                                let mut temp = tempfile::NamedTempFile::new_in(&cache)?;
+                                temp.write_all(&serde_json::to_vec(value)?)?;
+                                temp.persist(&path).map(|_| ()).map_err(|e| e.error)
+                            });
+                        }),
+                    }
+                    .map_err(|e| e.to_string());
                     if let Ok(mut results) = results.lock() {
                         results[index] = Some(result);
                     }

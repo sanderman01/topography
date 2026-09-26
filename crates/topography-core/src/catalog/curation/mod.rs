@@ -733,6 +733,22 @@ pub fn curated_footprints(runtime: &Path) -> Result<Vec<[f64; 4]>> {
     Ok(boxes)
 }
 
+/// Changes whenever the curation catalog is written (database and its journal files).
+pub(crate) fn catalog_stamp(runtime: &Path) -> Option<Vec<(std::time::SystemTime, u64)>> {
+    let db = journal::Store::locate(runtime).ok()?.db;
+    ["", "-wal", "-journal"]
+        .iter()
+        .map(|suffix| {
+            let mut name = db.as_os_str().to_os_string();
+            name.push(suffix);
+            fs::metadata(PathBuf::from(name))
+                .ok()
+                .and_then(|m| Some((m.modified().ok()?, m.len())))
+                .or(Some((std::time::UNIX_EPOCH, 0)))
+        })
+        .collect()
+}
+
 /// Check indexed history and evidence, and report published records awaiting registration.
 pub fn check(runtime: &Path) -> Result<String> {
     journal::Store::locate(runtime)?.check()

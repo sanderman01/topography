@@ -21,18 +21,22 @@ use std::{
 };
 
 pub(crate) fn package_root(runtime: &Path, review: &str, profile: &str) -> Result<PathBuf> {
-    let root = config::inspect_runtime(runtime)?
+    Ok(review_root(runtime)?
+        .join("automatic-preparation")
+        .join(review)
+        .join(profile))
+}
+
+/// The runtime's review storage directory.
+pub(crate) fn review_root(runtime: &Path) -> Result<PathBuf> {
+    Ok(config::inspect_runtime(runtime)?
         .paths
         .into_iter()
         .find(|(key, _)| *key == "review")
         .ok_or_else(|| {
             crate::acquisition::AcquisitionError::Invalid("review storage missing".into())
         })?
-        .1;
-    Ok(root
-        .join("automatic-preparation")
-        .join(review)
-        .join(profile))
+        .1)
 }
 
 #[derive(Clone)]
@@ -136,6 +140,42 @@ fn parents_current(
     })
 }
 
+/// A Ready result saved by an earlier session, if nothing it depends on changed: same
+/// decision head, profile (part of the path), registered product, cover policy and
+/// parents. File integrity is left to `curate check`.
+fn saved_ready(
+    runtime: &Path,
+    tile: &super::gallery::Tile,
+    selection: &Value,
+    heads: &BTreeMap<String, Option<String>>,
+) -> Option<Status> {
+    if selection["decision"] != "accept" {
+        return None;
+    }
+    let profile = tile
+        .preparation_profile
+        .as_ref()
+        .map(|p| p.sha256.as_str())
+        .unwrap_or("unconfigured");
+    let root = package_root(runtime, &tile.review_sha256, profile).ok()?;
+    let saved: Value = read_json(&root.join("status.json")).ok()?;
+    let head = selection["head"].as_str()?;
+    if saved["head"] != head || saved["preparation"]["state"] != "ready" {
+        return None;
+    }
+    let manifest = fs::canonicalize(saved["preparation"]["manifest"].as_str()?).ok()?;
+    let registered = curation::prepared_for_review(runtime, &tile.review_sha256)
+        .ok()?
+        .iter()
+        .any(|p| fs::canonicalize(p).is_ok_and(|p| p == manifest));
+    if !registered || !automatic::current_cover(&manifest) {
+        return None;
+    }
+    let status = Status::ready(Some(head.to_owned()), &manifest).ok()?;
+    (status.value["state"] == "ready" && parents_current(runtime, &status.parents, heads))
+        .then_some(status)
+}
+
 fn publish(states: &Mutex<Vec<Status>>, index: usize, status: Status, path: &Path) {
     let bytes = serde_json::to_vec_pretty(
         &json!({"schema_version":1,"head":status.head,"preparation":status.value}),
@@ -221,9 +261,20 @@ fn work(
     let mut finished: Vec<Option<String>> = vec![None; gallery.tiles.len()];
     // Tiles that failed on an unavailable public service are retried after a pause.
     let mut retry_at: Vec<Option<std::time::Instant>> = vec![None; gallery.tiles.len()];
+    let mut resumed = false;
+    // Idle passes repeat only after a catalog write or a due retry.
+    let mut idle_stamp = None;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
+        }
+        let stamp = curation::catalog_stamp(runtime);
+        let retry_due = retry_at
+            .iter()
+            .any(|t| t.is_some_and(|t| t <= std::time::Instant::now()));
+        if idle_stamp.is_some() && idle_stamp == stamp && !retry_due {
+            thread::sleep(Duration::from_millis(500));
+            continue;
         }
         let selections = gallery
             .tiles
@@ -242,6 +293,18 @@ fn work(
                 )
             })
             .collect();
+        if !resumed {
+            resumed = true;
+            for (index, selection) in selections.iter().enumerate() {
+                if let Some(status) = saved_ready(runtime, &gallery.tiles[index], selection, &heads)
+                {
+                    if let Ok(mut states) = states.lock() {
+                        states[index] = status;
+                    }
+                    finished[index] = Some(serde_json::to_string(selection)?);
+                }
+            }
+        }
         let mut worked = false;
         // Accepted work takes priority over checks for undecided tiles.
         let mut order = (0..gallery.tiles.len()).collect::<Vec<_>>();
@@ -410,7 +473,10 @@ fn work(
             break;
         }
         if !worked {
+            idle_stamp = stamp;
             thread::sleep(Duration::from_millis(500));
+        } else {
+            idle_stamp = None;
         }
     }
 }

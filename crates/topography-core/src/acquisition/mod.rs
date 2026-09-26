@@ -4,6 +4,7 @@ pub mod batch;
 pub mod cover;
 pub mod geofabrik;
 pub(crate) mod glo30;
+pub mod hash_memo;
 mod http;
 mod linz;
 mod plan;
@@ -164,6 +165,11 @@ pub(crate) fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
 
 pub(crate) fn hash_file(path: &Path) -> Result<(String, u64)> {
     let mut file = io_context(format!("open {}", path.display()), fs::File::open(path))?;
+    // Identity is taken before reading, so a concurrent write invalidates the entry.
+    let meta = io_context("inspect file", file.metadata())?;
+    if let Some(known) = hash_memo::lookup(path, &meta) {
+        return Ok(known);
+    }
     let mut hasher = Sha256::new();
     let mut total = 0u64;
     let mut buffer = [0u8; 65536];
@@ -175,7 +181,9 @@ pub(crate) fn hash_file(path: &Path) -> Result<(String, u64)> {
         hasher.update(&buffer[..count]);
         total += count as u64;
     }
-    Ok((format!("{:x}", hasher.finalize()), total))
+    let sha = format!("{:x}", hasher.finalize());
+    hash_memo::remember(path, &meta, &sha, total);
+    Ok((sha, total))
 }
 
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {

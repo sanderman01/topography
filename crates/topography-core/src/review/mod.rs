@@ -155,13 +155,18 @@ pub(crate) fn metric_grid(info: &Value, source: &SourceRecord, transform: &[f64]
 /// WGS84 centre and corners (degrees, 5 decimals) of a review crop from its
 /// georeferenced elevation, plus a Google Earth view about 2.5 tile widths away.
 pub(crate) fn location(review: &Path, bundle: &bundle::Bundle) -> Result<Value> {
-    let elevation = review
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("elevation.tif");
-    let info: Value = serde_json::from_slice(&run(command("gdalinfo")
-        .args(["-json", "-nomd"])
-        .arg(&elevation))?)?;
+    // The verified inspection is gdalinfo of the same crop; older ones may lack corners.
+    let info = if bundle.inspection["wgs84Extent"].is_object() {
+        bundle.inspection.clone()
+    } else {
+        let elevation = review
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("elevation.tif");
+        serde_json::from_slice(&run(command("gdalinfo")
+            .args(["-json", "-nomd"])
+            .arg(&elevation))?)?
+    };
     // gdalinfo lists the transformed corners as upper left, lower left, lower right, upper right.
     let ring: Vec<[f64; 2]> = info["wgs84Extent"]["coordinates"][0]
         .as_array()

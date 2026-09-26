@@ -36,6 +36,12 @@ tiles. Choices survive browser reloads and server restarts. Existing selections
 are shown without requiring another vote. An error is shown if the catalog has
 changed since the page loaded; no choice is silently overwritten or retried.
 
+Restarts are quick. File digests are reused while a file's inode, size, mtime and
+ctime are unchanged (`<review>/file-digests.json`). Artifact checks are cached per
+review and detector version (`<review>/artifact-checks/`). A tile saved as Ready stays
+Ready without re-preparation unless its decision, profile, registered product, cover
+policy or parent records changed. `curate check` still re-reads every byte.
+
 The service runs until Ctrl-C and is available only on this machine. To resume,
 run the same `gallery serve` command. Nothing is uploaded. Only a deliberate
 Yes/No selection appends a human decision; terrain inspection never does.
