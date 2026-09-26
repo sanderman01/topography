@@ -866,7 +866,7 @@ fn game_cover(
         source_url: None,
     });
     let mut metadata = BTreeMap::new();
-    for name in ["water", "snow-ice", "vegetation"] {
+    for name in ["water", "snow-ice", "vegetation", "land-cover"] {
         let file = PathBuf::from(format!("{name}.tif"));
         io_context(
             "stage game cover mask",
@@ -879,7 +879,7 @@ fn game_cover(
                 path: file,
             },
         );
-        if name == "water" {
+        if matches!(name, "water" | "land-cover") {
             continue;
         }
         metadata.insert(
@@ -1024,7 +1024,8 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
         )?
     };
     let surface_cover = Some(surface_cover);
-    let schema_version = 2;
+    // Generated game cover adds the land-cover layer (v3); profile covers stay v2.
+    let schema_version = if profile.covers.is_none() { 3 } else { 2 };
     let quality_input = temp.path().join("preflight-input.json");
     let mut quality_value = json!({
         "schema_version":schema_version,
@@ -1053,6 +1054,7 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
         "water",
         "snow-ice",
         "vegetation",
+        "land-cover",
     ] {
         for extension in ["bin", "vrt"] {
             let path = temp.path().join(format!("{name}.{extension}"));
@@ -1113,7 +1115,7 @@ pub fn stage(raw: &Path, review: &Path, profile_path: &Path, output: &Path) -> R
 fn verify_package(path: &Path) -> Result<Package> {
     let package: Package = read_json(path)?;
     ensure(
-        matches!(package.schema_version, 1 | 2)
+        matches!(package.schema_version, 1..=3)
             && package.kind == "automatic_preparation_package"
             && matches!(
                 package.policy.as_str(),
@@ -1160,7 +1162,7 @@ fn verify_package(path: &Path) -> Result<Package> {
         "spacing_m":[transform[1],-transform[5]],
     });
     // Profiles without cover descriptors are packaged with generated game cover.
-    let game = profile.covers.is_none() && package.schema_version == 2;
+    let game = profile.covers.is_none() && package.schema_version >= 2;
     ensure(
         (profile.schema_version == package.schema_version || game)
             && profile.blockers.is_empty()
@@ -1233,22 +1235,17 @@ fn verify_package(path: &Path) -> Result<Package> {
             "automatic package surface-cover metadata differs from its captured profile",
         )?;
     }
+    let mut required = vec!["water", "quality", "repairs", "features"];
+    if package.schema_version >= 2 {
+        required.extend(["snow-ice", "vegetation"]);
+    }
+    if package.schema_version >= 3 {
+        required.push("land-cover");
+    }
     ensure(
-        package.masks.len() == if package.schema_version == 1 { 4 } else { 6 },
+        package.masks.len() == required.len(),
         "automatic package masks incomplete",
     )?;
-    let required = if package.schema_version == 1 {
-        vec!["water", "quality", "repairs", "features"]
-    } else {
-        vec![
-            "water",
-            "quality",
-            "repairs",
-            "features",
-            "snow-ice",
-            "vegetation",
-        ]
-    };
     for name in required {
         let f = package.masks.get(name).ok_or_else(|| {
             AcquisitionError::Invalid(format!("automatic package missing {name} mask"))
@@ -1454,7 +1451,7 @@ pub fn legacy(runtime: &Path, review: &str) -> Result<Option<(PathBuf, String)>>
         for path in &products {
             let product: Value = read_json(path)?;
             let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
-            if matches!(product["schema_version"].as_u64(), Some(1 | 2))
+            if matches!(product["schema_version"].as_u64(), Some(1..=3))
                 && parents.len() == 1
                 && parents[0]["review_sha256"] == review
                 && parents[0]["curation_record_sha256"] == head.as_str()
@@ -1495,7 +1492,7 @@ pub fn upgrade(
         let product: Value = read_json(legacy)?;
         let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
         ensure(
-            matches!(product["schema_version"].as_u64(), Some(1 | 2))
+            matches!(product["schema_version"].as_u64(), Some(1..=3))
                 && parents.len() == 1
                 && parents[0]["review_sha256"] == review_sha.as_str()
                 && parents[0]["curation_record_sha256"] == expected_head
@@ -1566,6 +1563,7 @@ pub fn upgrade(
         "features",
         "snow-ice",
         "vegetation",
+        "land-cover",
     ] {
         let file = temp.path().join(format!("{name}.tif"));
         masks.insert(
@@ -1582,7 +1580,7 @@ pub fn upgrade(
         })
     };
     let input = serde_json::to_vec_pretty(&json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "raw_receipt": {"path": canonical(raw)?, "sha256": digest(&read_small(raw)?)},
         "review": {"path": canonical(review)?, "sha256": review_sha},
         "masks": masks,
@@ -1630,7 +1628,7 @@ pub fn upgrade(
     if !request.exists() {
         write_new(
             &request,
-            &serde_json::to_vec_pretty(&json!({"schema_version":2,
+            &serde_json::to_vec_pretty(&json!({"schema_version":3,
                 "inputs":[{"quality_path":input_path,"curation_record_sha256":head}],
                 "grid":grid,"masked_fill_m":fill}))?,
         )?;

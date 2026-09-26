@@ -24,6 +24,23 @@ const MASK_NAMES_V2: [&str; 6] = [
     "snow-ice",
     "vegetation",
 ];
+const MASK_NAMES_V3: [&str; 7] = [
+    "water",
+    "quality",
+    "repairs",
+    "features",
+    "snow-ice",
+    "vegetation",
+    "land-cover",
+];
+
+fn mask_names(version: u32) -> &'static [&'static str] {
+    match version {
+        1 => &MASK_NAMES_V1,
+        2 => &MASK_NAMES_V2,
+        _ => &MASK_NAMES_V3,
+    }
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -210,10 +227,13 @@ fn mask_samples(
     } else {
         1
     };
+    let land_cover = crate::acquisition::cover::LAND_COVER_CLASSES;
     ensure(
         values.iter().all(|v| {
             if provider {
                 matches!(v, 0 | 255)
+            } else if name == "land-cover" {
+                land_cover.contains(v)
             } else {
                 *v <= max
             }
@@ -227,21 +247,17 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
     let input_bytes = read_small(path)?;
     let input: Input = serde_json::from_slice(&input_bytes)?;
     ensure(
-        matches!(input.schema_version, 1 | 2),
-        "only quality input versions 1 and 2 are supported",
+        matches!(input.schema_version, 1..=3),
+        "only quality input versions 1 to 3 are supported",
     )?;
-    let names: &[&str] = if input.schema_version == 1 {
-        &MASK_NAMES_V1
-    } else {
-        &MASK_NAMES_V2
-    };
+    let names = mask_names(input.schema_version);
     ensure(
         input.masks.len() == names.len() && names.iter().all(|n| input.masks.contains_key(*n)),
-        if input.schema_version == 1 {
-            "quality input v1 requires exactly water, quality, repairs and features masks"
-        } else {
-            "quality input v2 requires exactly water, quality, repairs, features, snow-ice and vegetation masks"
-        },
+        format!(
+            "quality input v{} requires exactly the masks {}",
+            input.schema_version,
+            names.join(", ")
+        ),
     )?;
     let base = path.parent().unwrap_or(Path::new("."));
     let raw = verify_input(base, &input.raw_receipt, 1024 * 1024)?;
@@ -264,7 +280,7 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
     } else {
         let cover = input.surface_cover.as_ref().ok_or_else(|| {
             crate::acquisition::AcquisitionError::Invalid(
-                "quality input v2 requires surface_cover provenance".into(),
+                "quality input v2 and v3 require surface_cover provenance".into(),
             )
         })?;
         ensure(
@@ -342,14 +358,14 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
             );
         } else {
             masks.insert(name.into(), None);
-            if !(input.schema_version == 2 && name == "vegetation") {
+            if !(input.schema_version >= 2 && name == "vegetation") {
                 blockers.push(format!(
                     "{name} mask missing; whole-crop classification unresolved"
                 ));
             }
         }
     }
-    if input.schema_version == 2 && !samples.contains_key("vegetation") {
+    if input.schema_version >= 2 && !samples.contains_key("vegetation") {
         samples.insert("vegetation", vec![0; cells]);
     }
     let counts = if names.iter().all(|name| samples.contains_key(*name)) {
@@ -381,7 +397,7 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
             let finite = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).is_finite();
             let water = samples["water"][i];
             let quality = samples["quality"][i];
-            let snow_ice = if input.schema_version == 2 {
+            let snow_ice = if input.schema_version >= 2 {
                 samples["snow-ice"][i]
             } else {
                 1
@@ -404,7 +420,7 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
             counts.repaired_cells += u64::from(samples["repairs"][i] == 1);
             counts.defining_feature_cells += u64::from(samples["features"][i] == 1);
             counts.unsupported_feature_cells += u64::from(samples["features"][i] == 1 && !valid);
-            if input.schema_version == 2 {
+            if input.schema_version >= 2 {
                 *counts.ground_cells.get_or_insert(0) += u64::from(ground);
                 *counts.snow_ice_cells.get_or_insert(0) += u64::from(snow_ice == 2);
                 *counts.unknown_snow_ice_cells.get_or_insert(0) += u64::from(snow_ice == 0);
@@ -417,7 +433,7 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
         if counts.unclassified_water_cells > 0 {
             blockers.push("water classification incomplete".into());
         }
-        if input.schema_version == 2 && counts.unknown_snow_ice_cells.unwrap_or(0) > 0 {
+        if input.schema_version >= 2 && counts.unknown_snow_ice_cells.unwrap_or(0) > 0 {
             blockers.push("snow/ice classification incomplete".into());
         }
         let denominator = counts.ground_cells.unwrap_or(counts.terrestrial_cells);
@@ -458,10 +474,10 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
     let report = Assessment {
         schema_version: input.schema_version,
         kind: "regional_quality_assessment",
-        policy: if input.schema_version == 1 {
-            "native_quality_v2"
-        } else {
-            "native_quality_cover_v1"
+        policy: match input.schema_version {
+            1 => "native_quality_v2",
+            2 => "native_quality_cover_v1",
+            _ => "native_quality_cover_v2",
         },
         raw_receipt_sha256: input.raw_receipt.sha256,
         review_sha256: input.review.sha256,
@@ -569,12 +585,7 @@ pub(super) fn ready(runtime: &Path, path: &Path, record: &str) -> Result<Ready> 
         false,
     )?;
     let mut masks = BTreeMap::new();
-    let names: &[&str] = if input.schema_version == 1 {
-        &MASK_NAMES_V1
-    } else {
-        &MASK_NAMES_V2
-    };
-    for &name in names {
+    for &name in mask_names(input.schema_version) {
         if let Some(file) = input.masks[name].as_ref() {
             let mask = verify_input(base, file, 128 * 1024 * 1024)?;
             masks.insert(
@@ -582,7 +593,7 @@ pub(super) fn ready(runtime: &Path, path: &Path, record: &str) -> Result<Ready> 
                 band(&mask, scratch.path(), name, cells, false)?,
             );
             verify_input(base, file, 128 * 1024 * 1024)?;
-        } else if input.schema_version == 2 && name == "vegetation" {
+        } else if input.schema_version >= 2 && name == "vegetation" {
             masks.insert(name.into(), vec![0; cells]);
         } else {
             return Err(crate::acquisition::AcquisitionError::Invalid(

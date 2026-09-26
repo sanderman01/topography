@@ -216,8 +216,11 @@ fn members(runtime: &Path, selection: &Selection) -> Result<Vec<Member>> {
             let bytes = read_small(&path)?;
             ensure(digest(&bytes) == *id, "prepared parent identity changed")?;
             let manifest: Value = serde_json::from_slice(&bytes)?;
+            // v3 products add only the land-cover layer, which v2 selections ignore.
+            let version = manifest["schema_version"].as_u64();
             ensure(
-                manifest["schema_version"] == selection.schema_version,
+                version == Some(u64::from(selection.schema_version))
+                    || (selection.schema_version == 2 && version == Some(3)),
                 "dataset selection and prepared surface-cover contract versions differ",
             )?;
             let grid: Grid = serde_json::from_value(manifest["grid"].clone())?;

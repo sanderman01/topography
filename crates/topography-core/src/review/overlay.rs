@@ -25,10 +25,13 @@ pub(crate) fn render(manifest: &Path, review_sha256: &str, size: [u32; 2]) -> Re
         .ok_or_else(|| AcquisitionError::Invalid("prepared manifest integrity mismatch".into()))?;
     let body: Value = serde_json::from_slice(&bytes)?;
     ensure(
-        body["schema_version"] == 2
+        matches!(body["schema_version"].as_u64(), Some(2 | 3))
             && body["kind"] == "prepared_native_region"
-            && body["policy"] == "native_ground_cover_v1",
-        "cover overlays require a v2 prepared product",
+            && matches!(
+                body["policy"].as_str(),
+                Some("native_ground_cover_v1" | "native_ground_cover_v2")
+            ),
+        "cover overlays require a v2 or v3 prepared product",
     )?;
     let parents: Vec<&Value> = body["parents"]
         .as_array()

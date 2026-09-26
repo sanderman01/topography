@@ -11,12 +11,13 @@ use std::fs;
 
 const REPORT_WINDOW: usize = 256;
 
-const LAYERS: [(&str, bool); 5] = [
+const LAYERS: [(&str, bool); 6] = [
     ("elevation", true),
     ("validity", false),
     ("water", false),
     ("snow-ice", false),
     ("vegetation", false),
+    ("land-cover", false),
 ];
 
 fn footprint(grid: &Grid) -> [f64; 4] {
@@ -178,6 +179,7 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
             "water": "255 water, 0 not water",
             "snow-ice": "2 present, 1 absent, 0 unknown",
             "vegetation": "2 present, 1 absent, 0 unknown",
+            "land-cover": "ESA WorldCover v200 class (10 tree, 20 shrub, 30 grass, 40 crop, 50 built-up, 60 bare/sparse, 70 snow/ice, 80 water, 90 wetland, 95 mangrove, 100 moss/lichen), 0 outside coverage",
             "artifacts": "bit flags: 1 interpolated facet (smoothed), 2 periodic stripe (filtered), 4 straight seam (excluded from training)",
         },
         "artifact_checks": artifacts::CHECKS,

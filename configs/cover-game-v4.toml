@@ -1,9 +1,10 @@
-# Game cover policy for automatic water, snow/ice and vegetation masks (game_cover_v3).
+# Game cover policy for automatic water, snow/ice and vegetation masks plus the full
+# WorldCover class layer (game_cover_v4).
 # Judgment layers for a game, not measurements. Everything not present is absent.
 # Water wins: water cells are never snow/ice or vegetation.
 # Built into the binary; TOPOGRAPHY_COVER_POLICY may point at another copy.
 schema_version = 2
-policy = "game_cover_v3"
+policy = "game_cover_v4"
 
 [worldcover]
 # Public COG, read by HTTPS range requests. A missing tile means outside coverage.

@@ -92,7 +92,7 @@ shows Checking, Awaiting acceptance, Preparing, Ready or Needs technical
 attention. No shows Not selected. Ready means verified native prepared terrain,
 not training admission. Existing prepared regions are recognized without profiles;
 accepted tiles with older products gain game water, snow/ice and vegetation
-masks automatically (`game_cover_v3`, see [cover acquisition](cover-acquisition.md))
+masks automatically (`game_cover_v4`, see [cover acquisition](cover-acquisition.md))
 and become Ready. A tile whose raw receipt has a metadata successor for the same
 asset is shown on the successor crop and keeps its vote.
 

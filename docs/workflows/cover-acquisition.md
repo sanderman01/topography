@@ -1,7 +1,7 @@
 # Cover acquisition
 
-Water, snow/ice and vegetation are game layers under policy `game_cover_v3`
-([`configs/cover-game-v3.toml`](../../configs/cover-game-v3.toml), built into
+Water, snow/ice, vegetation and land cover are game layers under policy
+`game_cover_v4` ([`configs/cover-game-v4.toml`](../../configs/cover-game-v4.toml), built into
 the binary). The gallery worker generates them for every accepted tile; no
 profile descriptors, dates or scripts are needed. `topography cover draft`
 writes the same layers for one crop so you can inspect them:
@@ -17,7 +17,8 @@ used by the checks. Nothing here writes curation or records a vote.
 ## Rules
 
 Masks lie on the review crop grid (1 absent, 2 present, no unknown cells) and
-are placed by nearest neighbour.
+are placed by nearest neighbour. `land-cover.tif` keeps the raw WorldCover
+class of each cell (0 outside coverage) so renderers can choose materials.
 
 - Water present: the tile's existing water mask (provider or assessed), or
   WorldCover class 80, or OpenStreetMap water. OSM comes from the smallest
@@ -62,7 +63,7 @@ more than one degree or crossing the antimeridian are refused.
 
 Products built earlier (v1 terrain, strict-evidence v2 or `game_cover_v1`)
 stay on disk, but the worker replaces them for accepted tiles with a
-`game_cover_v3` successor; see the
+`game_cover_v4` successor; see the
 [automatic-preparation design](../design/automatic-preparation-v1.md).
 
 Verification: `scripts/check_cover_acquisition.py` (run by `scripts/check.sh`)

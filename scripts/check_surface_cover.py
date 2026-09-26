@@ -302,7 +302,7 @@ def strict_cover_upgrade(cli, runtime, cover_gallery, surface, directory, env):
         assert upgraded["decision"] == "accept"
         cover_manifest = Path(upgraded["preparation"]["manifest"])
         product = json.loads(cover_manifest.read_text())
-        assert product["schema_version"] == 2
+        assert product["schema_version"] == 3
         assert values(cover_manifest.parent / "surface-elevation.tif") == surface
         # Game cover replaces the strict snow mask; the grassland fixture has no snow.
         assert values(cover_manifest.parent / "elevation.tif") == surface

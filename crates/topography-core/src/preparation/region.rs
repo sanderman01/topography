@@ -39,8 +39,34 @@ const LAYERS_V2: [&str; 10] = [
     "vegetation",
 ];
 
+const LAYERS_V3: [&str; 11] = [
+    "elevation",
+    "surface-elevation",
+    "validity",
+    "provider-validity",
+    "water",
+    "quality",
+    "repairs",
+    "features",
+    "snow-ice",
+    "vegetation",
+    "land-cover",
+];
+
 fn layers(version: u32) -> &'static [&'static str] {
-    if version == 1 { &LAYERS_V1 } else { &LAYERS_V2 }
+    match version {
+        1 => &LAYERS_V1,
+        2 => &LAYERS_V2,
+        _ => &LAYERS_V3,
+    }
+}
+
+fn policy(version: u32) -> &'static str {
+    match version {
+        1 => "native_preparation_v1",
+        2 => "native_ground_cover_v1",
+        _ => "native_ground_cover_v2",
+    }
 }
 
 #[derive(Deserialize)]
@@ -283,10 +309,10 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
     let request_bytes = read_small(request_path)?;
     let request: Request = serde_json::from_slice(&request_bytes)?;
     ensure(
-        matches!(request.schema_version, 1 | 2)
+        matches!(request.schema_version, 1..=3)
             && !request.inputs.is_empty()
             && request.inputs.len() <= 16,
-        "prepared request v1/v2 requires 1..=16 inputs",
+        "prepared request v1 to v3 requires 1..=16 inputs",
     )?;
     grid_valid(&request.grid)?;
     ensure(
@@ -354,30 +380,17 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
                 sample.copy_from_slice(&request.masked_fill_m.to_le_bytes());
             }
         }
-        let bytes: Vec<&Vec<u8>> = if request.schema_version == 1 {
-            vec![
-                &heights,
-                &validity,
-                &item.provider,
-                &water,
-                &item.masks["quality"],
-                &item.masks["repairs"],
-                &item.masks["features"],
-            ]
-        } else {
-            vec![
-                &heights,
-                &surface_heights,
-                &validity,
-                &item.provider,
-                &water,
-                &item.masks["quality"],
-                &item.masks["repairs"],
-                &item.masks["features"],
-                &item.masks["snow-ice"],
-                &item.masks["vegetation"],
-            ]
-        };
+        let bytes: Vec<&Vec<u8>> = layer_names
+            .iter()
+            .map(|name| match *name {
+                "elevation" => &heights,
+                "surface-elevation" => &surface_heights,
+                "validity" => &validity,
+                "provider-validity" => &item.provider,
+                "water" => &water,
+                mask => &item.masks[mask],
+            })
+            .collect();
         for (layer, values) in bytes.into_iter().enumerate() {
             band_sources[layer].push(write_band(
                 scratch.path(),
@@ -477,12 +490,7 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
     let manifest = Manifest {
         schema_version: request.schema_version,
         kind: "prepared_native_region".into(),
-        policy: if request.schema_version == 1 {
-            "native_preparation_v1"
-        } else {
-            "native_ground_cover_v1"
-        }
-        .into(),
+        policy: policy(request.schema_version).into(),
         grid: request.grid,
         coordinate_system: first.inspection["coordinateSystem"].clone(),
         vertical_datum: first
@@ -558,10 +566,9 @@ pub(crate) fn verify_files(path: &Path) -> Result<()> {
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
     grid_valid(&manifest.grid)?;
     ensure(
-        matches!(manifest.schema_version, 1 | 2)
+        matches!(manifest.schema_version, 1..=3)
             && manifest.kind == "prepared_native_region"
-            && ((manifest.schema_version == 1 && manifest.policy == "native_preparation_v1")
-                || (manifest.schema_version == 2 && manifest.policy == "native_ground_cover_v1"))
+            && manifest.policy == policy(manifest.schema_version)
             && manifest.resampling == "none"
             && manifest.review_state == "unreviewed"
             && manifest.training_admission == "not admitted"

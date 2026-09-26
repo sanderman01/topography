@@ -156,9 +156,10 @@ owner still votes on whole tiles; see the [diffusion pilot](terrain-diffusion-v1
 
 ### Snow/ice and vegetation masks
 
-These are game layers, not scientific classifications (policy `game_cover_v3`,
+These are game layers, not scientific classifications (policy `game_cover_v4`,
 2026-09-25, superseding the stricter evidence rules first planned here; v3 on
-2026-09-26 adds tidal flats to water).
+2026-09-26 adds tidal flats to water; v4 keeps the full WorldCover class raster
+as a `land-cover` layer for render materials).
 
 - Derive snow/ice and vegetation automatically from coarse public land cover:
   ESA WorldCover 10 m (class 70 snow/ice; vegetated classes) plus current GLIMS
@@ -176,7 +177,7 @@ These are game layers, not scientific classifications (policy `game_cover_v3`,
   measured surface is kept separately. Vegetation never excludes ground.
 - The gallery worker produces cover masks and the v2 product for every
   accepted tile, including legacy tiles, without per-tile profiles or votes.
-- Earlier products stay on disk; accepted tiles move to `game_cover_v3`
+- Earlier products stay on disk; accepted tiles move to `game_cover_v4`
   successors automatically.
 
 Process each real-world survey region in its appropriate projected metric CRS. Resolve horizontal units, vertical units and datum, axis orientation, nodata, and pixel alignment explicitly. Use an available verified vertical transformation when joining surveys that need one; otherwise isolate the incompatible surveys and flag the uncertainty. Do not silently treat ellipsoidal and sea-level heights as interchangeable.
@@ -193,7 +194,7 @@ Initial quality policy, adjustable per terrain family:
 | --- | --- |
 | Effective resolution | Prefer native 0.5–1 m ground data. Admit other nominal products only after checking actual spacing and feature preservation. Keep 2 m data in an explicitly approved secondary tier; exclude 5–30 m originals from fine-detail training. |
 | Missing ground | Require at least 50% valid terrestrial ground cells (99.5% until 2026-09-26; lowered on the owner's direction because missing cells stay masked in training). Under the planned mask contract above, mapped water and snow/ice are separate excluded domains. Vegetated bare ground remains eligible. Evaluate support automatically; optional annotated landmarks or passages must have no unsupported ground gaps. Do not require manual feature annotations. |
-| Cover masks | Generate snow/ice and vegetation masks automatically under `game_cover_v3`; they never block qualification. |
+| Cover masks | Generate snow/ice and vegetation masks automatically under `game_cover_v4`; they never block qualification. |
 | Interpolation | Permit small, reviewed repairs with a repair mask. Large voids, invisible canyon floors, or interpolated pillar fields trigger exclusion or another source search. |
 | Artifacts | Flag stripes, terraces, spikes, pits, duplicate edges, vegetation remnants, buildings, and implausible survey-boundary steps. Compare against context before rejecting natural steepness. |
 | Feature fidelity | Human reviews the entire tile and chooses yes or no. The technical workflow assesses sampling and feature fidelity from available evidence, reporting concrete limitations without asking the human to label individual features. |

@@ -252,7 +252,7 @@ def check(cli, directory, cover_env):
         assert ready["decision"] == "accept" and ready["preparation"]["manifest"]
         ready_manifest = Path(ready["preparation"]["manifest"])
         product = json.loads(ready_manifest.read_text())
-        assert product["review_state"] == "unreviewed" and product["schema_version"] == 2
+        assert product["review_state"] == "unreviewed" and product["schema_version"] == 3
         assert values(ready_manifest.parent / "vegetation.tif") == [2] * 8
         first_crop = [samples[index] for index in [0, 1, 12, 13, 24, 25, 36, 37]]
         assert values(ready_manifest.parent / "elevation.tif") == first_crop

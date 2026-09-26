@@ -817,7 +817,7 @@ pub(crate) fn qualify_automatic(
             return Ok(head.clone());
         }
         ensure(
-            package.schema_version() == 2 && current.claims.decision == Decision::Accept,
+            package.schema_version() >= 2 && current.claims.decision == Decision::Accept,
             "current automatic qualification differs",
         )?;
         automation.inherited_human_record_sha256.clone()
@@ -953,7 +953,11 @@ pub(crate) fn qualify_automatic(
         admission: "not admitted".into(),
         topography_version: env!("CARGO_PKG_VERSION").into(),
         automation: Some(Automation {
-            kind: format!("supplier_qa_qualification_v{}", package.schema_version()),
+            // The land-cover layer (package v3) does not change qualification rules.
+            kind: format!(
+                "supplier_qa_qualification_v{}",
+                package.schema_version().min(2)
+            ),
             inherited_human_record_sha256: inherited_human,
             profile_sha256: package.profile_sha256.clone(),
             quality_report_sha256: report_sha,

@@ -1,5 +1,5 @@
-//! Game cover masks (`game_cover_v3`) for one reviewed crop from public land cover
-//! and OpenStreetMap water. Technical layers only; never writes curation or creates a vote.
+//! Game cover masks (`game_cover_v4`) for one reviewed crop from public land cover
+//! and OpenStreetMap water, plus the WorldCover class layer. Technical layers only; never writes curation or creates a vote.
 
 use super::{
     AcquisitionError, Result, digest, ensure, http,
@@ -19,8 +19,10 @@ use std::{
     process::Command,
 };
 
-pub(crate) const POLICY: &str = "game_cover_v3";
-const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v3.toml");
+pub(crate) const POLICY: &str = "game_cover_v4";
+const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v4.toml");
+/// ESA WorldCover v200 class codes; 0 marks cells outside WorldCover coverage.
+pub(crate) const LAND_COVER_CLASSES: [u8; 12] = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
 const ABSENT: u8 = 1;
 const PRESENT: u8 = 2;
 
@@ -91,7 +93,7 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
     let (w, g, o) = (&policy.worldcover, &policy.glims, &policy.osm);
     ensure(
         policy.schema_version == 2 && policy.policy == POLICY,
-        "cover policy must be schema 2, game_cover_v3",
+        "cover policy must be schema 2, game_cover_v4",
     )?;
     ensure(
         https(&w.url_template)
@@ -700,8 +702,8 @@ pub(crate) struct Generated {
     pub(crate) observed_at: String,
 }
 
-/// Write `water.tif`, `snow-ice.tif`, `vegetation.tif` (1 absent / 2 present) and
-/// `cover.json` for one verified crop. `existing_water` (2 = water) joins the game
+/// Write `water.tif`, `snow-ice.tif`, `vegetation.tif` (1 absent / 2 present),
+/// `land-cover.tif` (WorldCover classes) and `cover.json` for one verified crop. `existing_water` (2 = water) joins the game
 /// water. Unreachable sources fail; a crop outside WorldCover coverage is absent.
 pub(crate) fn generate(
     bundle: &bundle::Bundle,
@@ -785,9 +787,15 @@ fn generate_with(
     ] {
         automatic::write_crop_mask(&output.join(format!("{name}.tif")), info, values)?;
     }
+    // Raw classes, not overridden by game water; renderers pick materials from them.
+    automatic::write_crop_mask(&output.join("land-cover.tif"), info, &classes)?;
+    let mut land_cover = BTreeMap::new();
+    for class in &classes {
+        *land_cover.entry(class.to_string()).or_insert(0usize) += 1;
+    }
     let count = |v: &[u8]| v.iter().filter(|x| **x == PRESENT).count();
     let mut note = format!(
-        "{POLICY}: water is the tile's existing water mask, WorldCover {} class 80 and OpenStreetMap water areas and tidal flats (natural=mud, wetland=tidalflat) plus rivers, streams and canals buffered to their width ({}); snow/ice is WorldCover class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; water cells are never snow/ice or vegetation; everything else is absent. Crop grid, nearest neighbour. Game judgment layers, not measurements.",
+        "{POLICY}: water is the tile's existing water mask, WorldCover {} class 80 and OpenStreetMap water areas and tidal flats (natural=mud, wetland=tidalflat) plus rivers, streams and canals buffered to their width ({}); snow/ice is WorldCover class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; water cells are never snow/ice or vegetation; everything else is absent. land-cover keeps the WorldCover class of every cell (0 outside coverage). Crop grid, nearest neighbour. Game judgment layers, not measurements.",
         w.observed_at,
         policy.osm.attribution,
         gl["glaciers"].as_array().map_or(0, Vec::len)
@@ -809,7 +817,8 @@ fn generate_with(
         "attribution": [policy.osm.attribution, w.citation, policy.glims.citation],
         "counts": {"cells": grid.cells(), "water_present": count(&water),
             "water_sources": {"existing": sources[0], "worldcover": sources[1], "osm": sources[2]},
-            "snow_ice_present": count(&snow), "vegetation_present": count(&vegetation)},
+            "snow_ice_present": count(&snow), "vegetation_present": count(&vegetation),
+            "land_cover_classes": land_cover},
         "note": note,
         "admission": "technical layers only; no curation, vote or acceptance",
     });

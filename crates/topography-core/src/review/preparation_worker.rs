@@ -55,7 +55,7 @@ impl Status {
     }
     fn ready(head: Option<String>, manifest: &Path) -> Result<Self> {
         let body: Value = read_json(manifest)?;
-        let mut result = if body["schema_version"] == 2 && automatic::current_cover(manifest) {
+        let mut result = if body["schema_version"] == 3 && automatic::current_cover(manifest) {
             Self::new(
                 head,
                 "ready",
@@ -65,7 +65,7 @@ impl Status {
             Self::new(
                 head,
                 "assessment_pending",
-                "Existing terrain is prepared. Game water, snow/ice and vegetation are pending; your choice is saved.",
+                "Existing terrain is prepared. Game water, snow/ice, vegetation and land cover are pending; your choice is saved.",
             )
         };
         result.value["manifest"] = json!(manifest);

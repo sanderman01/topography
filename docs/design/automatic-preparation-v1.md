@@ -84,11 +84,11 @@ snow/ice with unknown crop cells blocks qualification; unknown vegetation remain
 optional and does not remove valid ground.
 
 The descriptors are optional. When a profile (schema 1 or 2) has none, `stage`
-generates `game_cover_v3` masks on the crop grid (profile water joins the game
+generates `game_cover_v4` masks on the crop grid (profile water joins the game
 water), captures their `cover.json` as evidence `game-cover` and packages the
 tile as v2; see the [cover acquisition workflow](../workflows/cover-acquisition.md).
 
-Every accepted tile ends on a `game_cover_v3` product. When its current product
+Every accepted tile ends on a `game_cover_v4` product. When its current product
 is anything else (v1, strict-evidence v2 or `game_cover_v1`, read from the
 quality report's cover note), `automatic::upgrade` reuses that product's water,
 quality, repair and feature masks, adds game cover (water is the union),

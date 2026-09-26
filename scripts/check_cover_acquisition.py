@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise game cover (game_cover_v3) offline against loopback WorldCover/GLIMS/Overpass fixtures."""
+"""Exercise game cover (game_cover_v4) offline against loopback WorldCover/GLIMS/Overpass fixtures."""
 
 import argparse
 import json
@@ -171,16 +171,16 @@ def draft_checks(cli, directory, server, raw):
     env = server.policy("mixed", worldcover=worldcover, glims=GLIMS, osm=OSM)
     out = directory / "cover-mixed"
     report = run(cli, "cover", "draft", raw, review, out, env=env)
-    assert "game_cover_v3" in report, report
+    assert "game_cover_v4" in report, report
     cover = json.loads((out / "cover.json").read_text())
-    assert cover["policy"] == "game_cover_v3" and cover["review_sha256"] == sha(review)
+    assert cover["policy"] == "game_cover_v4" and cover["review_sha256"] == sha(review)
     assert "© OpenStreetMap contributors, ODbL" in cover["attribution"]
     assert cover["sources"]["osm"]["areas"] == 2 and cover["sources"]["osm"]["lines"] == 2
     assert len(cover["sources"]["worldcover"]["urls"]) == 1
     glaciers = {g["glac_id"]: g["anlys_id"] for g in cover["sources"]["glims"]["glaciers"]}
     assert glaciers == {"G1": 1, "G2": 4}, glaciers
     assert cover["sources"]["glims"]["ignored_outlines"] == 1
-    for name in ["water.tif", "snow-ice.tif", "vegetation.tif"]:
+    for name in ["water.tif", "snow-ice.tif", "vegetation.tif", "land-cover.tif"]:
         same_grid(review, out / name)
     snow, veg = cells(out / "snow-ice.tif"), cells(out / "vegetation.tif")
     water = cells(out / "water.tif")
@@ -203,6 +203,11 @@ def draft_checks(cli, directory, server, raw):
     assert point(veg, 700250, 2000350) == 2 and point(veg, 700320, 2000300) == 1
     assert point(veg, 700380, 2000380) == 1
     assert cover["counts"]["snow_ice_present"] == snow.count(2)
+    land = cells(out / "land-cover.tif")
+    assert point(land, 700215, 2000385) == 80 and point(land, 700380, 2000380) == 70
+    assert point(land, 700255, 2000380) == 10  # raw class under OSM lake water
+    assert point(land, 700320, 2000300) == 60
+    assert cover["counts"]["land_cover_classes"] == {str(c): land.count(c) for c in set(land)}
 
     # Outside WorldCover coverage: a recorded judgment, all absent.
     out = directory / "cover-outside"
@@ -210,6 +215,7 @@ def draft_checks(cli, directory, server, raw):
     cover = json.loads((out / "cover.json").read_text())
     assert "outside WorldCover coverage" in cover["note"]
     assert set(cells(out / "snow-ice.tif")) == {1} and set(cells(out / "vegetation.tif")) == {1}
+    assert set(cells(out / "land-cover.tif")) == {0}
     run(cli, "cover", "draft", raw, review, directory / "cover-osm-failed",
         env=server.policy("osm-missing", osm=None), expected=1, message="OpenStreetMap unavailable")
 
@@ -239,12 +245,13 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
     env = server.policy("gallery", worldcover=worldcover, glims=GLIMS)
     process, authority, headers = start_server(cli, runtime, manifest, env=env)
     try:
-        # Profile without cover descriptors: game cover, then v2 after the Yes.
+        # Profile without cover descriptors: game cover, then v3 after the Yes.
         pending = eventually(authority, 0, {"awaiting_acceptance"}, timeout=60)
         vote(authority, headers, sha(manifest), 0, pending, "accept")
         ready = eventually(authority, 0, {"ready"}, timeout=60)
         product = Path(ready["preparation"]["manifest"])
-        assert json.loads(product.read_text())["schema_version"] == 2
+        assert json.loads(product.read_text())["schema_version"] == 3
+        assert set(values(product.parent / "land-cover.tif")) <= {10.0, 60.0, 70.0, 80.0}
         snow = [int(v) for v in values(product.parent / "snow-ice.tif")]
         assert snow[int(2000400 - 2000235) * 200 + 35] == 2 and set(snow) == {1, 2}
         status = json.loads(run(cli, "curate", "status", runtime, ready["review_sha256"]))
@@ -264,11 +271,11 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
         status = json.loads(run(cli, "curate", "status", runtime, strict_ready["review_sha256"]))
         assert status["automation"]["kind"] == "game_cover_upgrade_v2"
 
-        # Legacy v1 product, no profile: automatic v2 successor keeping the human Yes.
+        # Legacy v1 product, no profile: automatic v3 successor keeping the human Yes.
         upgraded = eventually(authority, 1, {"ready"}, timeout=60)
         product = Path(upgraded["preparation"]["manifest"])
         body = json.loads(product.read_text())
-        assert body["schema_version"] == 2 and product != legacy_manifest and legacy_manifest.exists()
+        assert body["schema_version"] == 3 and product != legacy_manifest and legacy_manifest.exists()
         assert values(product.parent / "water.tif") == values(legacy_manifest.parent / "water.tif")
         assert set(values(product.parent / "snow-ice.tif")) == {1.0, 2.0}
         assert current_cover(product)
@@ -315,7 +322,7 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
 
 def current_cover(product):
     report = json.loads((product.parent / "quality-0.json").read_text())
-    return report["surface_cover"]["snow-ice"]["note"].startswith("game_cover_v3:")
+    return report["surface_cover"]["snow-ice"]["note"].startswith("game_cover_v4:")
 
 
 def successor_checks(cli, directory, server, runtime, raw):
