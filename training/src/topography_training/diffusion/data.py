@@ -110,12 +110,14 @@ def smooth(a: np.ndarray, sigma: float) -> np.ndarray:
     import torch.nn.functional as F
 
     r = int(3 * sigma)
-    k = torch.exp(-0.5 * (torch.arange(-r, r + 1, dtype=torch.float64) / sigma) ** 2)
+    k = torch.exp(-0.5 * (torch.arange(-r, r + 1, dtype=torch.float32) / sigma) ** 2)
     k /= k.sum()
-    t = torch.from_numpy(a.astype(np.float64))[None, None]
+    # float64 convolution is ~20x slower on CPU; centring keeps float32 precise.
+    mean = float(a.mean())
+    t = torch.from_numpy((a - mean).astype(np.float32))[None, None]
     t = F.conv2d(F.pad(t, (r, r, 0, 0), mode="replicate"), k.view(1, 1, 1, -1))
     t = F.conv2d(F.pad(t, (0, 0, r, r), mode="replicate"), k.view(1, 1, -1, 1))
-    return t[0, 0].numpy().astype(np.float32)
+    return (t[0, 0].numpy() + mean).astype(np.float32)
 
 
 def coarse_surface(blocks: np.ndarray, sigma: float = SMOOTH_M) -> np.ndarray:
