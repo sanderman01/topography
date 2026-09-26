@@ -25,9 +25,9 @@ addEventListener('keydown',e=>{if(['y','n','ArrowLeft','ArrowRight'].includes(e.
    n.putImageData(present,0,0);ctx.drawImage(native,0,0,layer.width,layer.height);ctx.drawImage(scaled,0,0);}
   drawArtifacts(ctx);
  }
- // Automatic artifact checks: red is excluded from training (facets, seams), orange is striping (repaired).
+ // Automatic artifact checks: violet facets and orange stripes are repaired for training; red seams are left out.
  let art=null,showArt=false;
- const tint=v=>v&5?[255,70,70,150]:v&2?[255,170,40,90]:null;
+ const tint=v=>v&4?[255,60,60,170]:v&1?[190,90,255,130]:v&2?[255,170,40,90]:null;
  function drawArtifacts(ctx){if(!art||!showArt)return;const c=document.createElement('canvas');c.width=W2;c.height=H2;const x=c.getContext('2d'),img=x.createImageData(W2,H2);
   for(let i=0;i<art.length;i++){const t=tint(art[i]);if(t)img.data.set(t,i*4);}x.putImageData(img,0,0);ctx.imageSmoothingEnabled=false;ctx.drawImage(c,0,0,ctx.canvas.width,ctx.canvas.height);}
  let W2=0,H2=0;

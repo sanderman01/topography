@@ -171,8 +171,8 @@ def load_release(manifest_path: Path) -> list[Tile]:
         layers = {k: _read(release, v, (rows, cols)) for k, v in t["layers"].items()}
         valid = layers["validity"] == 255
         if "artifacts" in layers:
-            # Facets (1) and seams (4) are left out like missing ground; stripes are already filtered.
-            valid &= (layers["artifacts"] & 5) == 0
+            # Seams (4) are left out like missing ground; stripes and facets are already repaired.
+            valid &= (layers["artifacts"] & 4) == 0
         height = layers["elevation"].astype(np.float32)
         water = layers["water"] == 255
         snow, veg = _cover(layers["snow-ice"]), _cover(layers["vegetation"])

@@ -78,15 +78,17 @@ triangle facets (New Zealand LINZ and parts of Puerto Rico), periodic scan strip
 (St. Helens 2 m, Great Sand Dunes 5 m) and straight seams. Automatic checks
 (`artifacts_v1`, run at about 1 m) now handle them without rejecting tiles:
 
-- **Facets:** exactly planar cells on sloping ground, spread over 8–16 m. They are
-  left out of training like missing ground.
+- **Facets:** exactly planar cells on sloping ground, spread over 8–16 m. The
+  training copy smooths them (a local mean, sigma about 2.5 m, at most 2 m change
+  per cell) so the triangle edges vanish. Forest-covered slopes such as Milford
+  are triangulated almost everywhere, and leaving them out halved the fjord data.
 - **Stripes:** one strong periodic peak per axis between 2 and 8 m. The training
   copy has that frequency removed with a narrow notch filter.
 - **Seams:** cross-axis curvature that keeps its sign along a grid line for at
   least 192 m. These are left out of training.
 
-The library shows the same checks before a vote (an Artifacts overlay, the share
-left out, and a 1:1 detail view). Each release writes an `artifacts.u8` layer and a
+The library shows the same checks before a vote (an Artifacts overlay, the shares
+affected, and a 1:1 detail view). Each release writes an `artifacts.u8` layer and a
 `report.html` with the worst close-up per tile, to glance at before training.
 
 Split before cropping, by world coordinates: cells in the southernmost 512 m of

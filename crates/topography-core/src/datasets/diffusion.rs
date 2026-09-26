@@ -114,6 +114,7 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
         let detection = artifacts::detect_metre(&height, w, rows, grid.spacing_m[0]);
         let original = height.clone();
         artifacts::destripe(&mut height, w, rows, &detection.stripes);
+        artifacts::defacet(&mut height, &detection.mask, w, rows, grid.spacing_m[0]);
         let summary = artifacts::summary(&original, &detection, grid.spacing_m);
         let elevation: Vec<u8> = raw["elevation"]
             .chunks_exact(4)
@@ -157,7 +158,7 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
             "grid": grid,
             "masked_fill_m": manifest["masked_fill_m"],
             "artifacts": summary,
-            "stripe_repair": if detection.stripes.is_empty() { Value::Null } else { json!("fir_notch_v1: elevation.f32 has the listed stripe periods removed") },
+            "repairs": "elevation.f32 has listed stripe periods removed (fir_notch_v1) and facet cells smoothed (box3_blend_v1)",
             "layers": layers,
         }));
         kept.push((manifest["coordinate_system"].clone(), extent));
@@ -177,7 +178,7 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
             "water": "255 water, 0 not water",
             "snow-ice": "2 present, 1 absent, 0 unknown",
             "vegetation": "2 present, 1 absent, 0 unknown",
-            "artifacts": "bit flags: 1 interpolated facet, 2 periodic stripe (repaired), 4 straight seam; 1 and 4 are excluded from training",
+            "artifacts": "bit flags: 1 interpolated facet (smoothed), 2 periodic stripe (filtered), 4 straight seam (excluded from training)",
         },
         "artifact_checks": artifacts::CHECKS,
         "report": "report.html",
@@ -228,8 +229,8 @@ fn hillshade(height: &[f32], mask: &[u8], w: usize, x0: usize, y0: usize, size: 
                 _ => 12.0,
             };
             let m = mask[y * w + x];
-            // Stripes are repaired, so only excluded cells are tinted.
-            let tint = if m & (artifacts::FACET | artifacts::SEAM) != 0 {
+            // Stripes and facets are repaired, so only excluded seams are tinted.
+            let tint = if m & artifacts::SEAM != 0 {
                 [1.0, 0.45, 0.45]
             } else {
                 [1.0, 1.0, 1.0]
@@ -337,7 +338,7 @@ fn report_page(entries: &[Value]) -> String {
         ));
         if let [source, training] = e["images"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
             shots.push_str(&format!(
-                "<figure><figcaption>{title} · worst {size} m window at cell {x}, {y}</figcaption><img src=\"{}\" alt=\"source\"><img src=\"{}\" alt=\"training\"><p>Left: source. Right: training copy (stripes removed). Red: excluded from training (facets, seams).</p></figure>",
+                "<figure><figcaption>{title} · worst {size} m window at cell {x}, {y}</figcaption><img src=\"{}\" alt=\"source\"><img src=\"{}\" alt=\"training\"><p>Left: source. Right: training copy (stripes filtered, facets smoothed). Red: seams excluded from training.</p></figure>",
                 source.as_str().unwrap_or(""),
                 training.as_str().unwrap_or(""),
                 size = e["window"][2],
@@ -347,7 +348,7 @@ fn report_page(entries: &[Value]) -> String {
         }
     }
     format!(
-        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Release artifacts</title><style>:root{{color-scheme:dark;background:#111917;color:#e6eee8;font:15px system-ui,sans-serif}}body{{max-width:1100px;margin:auto;padding:16px}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #34453d;padding:6px;text-align:left}}figure{{margin:24px 0}}img{{width:min(49%,512px);image-rendering:pixelated;margin-right:1%}}p{{color:#a0b2a7}}</style><h1>Release artifact report</h1><p>Automatic checks ({}) on each tile's native grid. Excluded cells are left out of training; stripes are filtered out of the training copy.</p><table><tr><th>Tile</th><th>Facets</th><th>Seams</th><th>Stripes</th><th>Excluded</th></tr>{rows}</table>{shots}</html>",
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Release artifacts</title><style>:root{{color-scheme:dark;background:#111917;color:#e6eee8;font:15px system-ui,sans-serif}}body{{max-width:1100px;margin:auto;padding:16px}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #34453d;padding:6px;text-align:left}}figure{{margin:24px 0}}img{{width:min(49%,512px);image-rendering:pixelated;margin-right:1%}}p{{color:#a0b2a7}}</style><h1>Release artifact report</h1><p>Automatic checks ({}) on each tile's native grid. The training copy has stripes filtered out and facets smoothed; seam cells are left out of training.</p><table><tr><th>Tile</th><th>Facets (smoothed)</th><th>Seams</th><th>Stripes</th><th>Excluded</th></tr>{rows}</table>{shots}</html>",
         artifacts::CHECKS
     )
 }

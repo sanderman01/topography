@@ -36,7 +36,7 @@ async function syncArtifacts(){const tile=state.tiles.find(t=>t.index===active);
  if(active!==index)return;
  if(c.pending){out.textContent='Checking for source artifacts…';return;}if(c.error){out.textContent=c.error;return;}
  const s=c.data.summary,stripes=(s.stripes||[]).map(t=>`${t.period_m} m along ${t.axis}`).join(', ');
- out.textContent=`Facets ${pct(s.facet_fraction)} · seams ${pct(s.seam_fraction)} · stripes ${stripes?stripes+' (filtered out in training)':'none'} · ${pct(s.excluded_fraction)} left out of training. Red: left out; orange: striped.`;
+ out.textContent=`Facets ${pct(s.facet_fraction)} (smoothed in training) · stripes ${stripes?stripes+' (filtered in training)':'none'} · seams ${pct(s.seam_fraction)} (left out). Violet: facets; orange: stripes; red: seams.`;
  if(ready){const payload={index,review:tile.review_sha256,showArtifacts};if(!c.posted){payload.artifacts=c.data;c.posted=true;}frame.contentWindow?.postMessage(payload,'*');}}
 function identity(){syncOverlay();syncArtifacts();const tile=state.tiles.find(t=>t.index===active);place(tile);if(!tile)return;byId('tile-state').textContent=`${tileLabel(tile)} · Tile ${tile.index+1} of ${state.tiles.length}`;byId('preparation-detail').textContent=tile.preparation?.message||'';}
 function visible(){return state.tiles.filter(t=>filter.value==='all'||t.decision===filter.value);}

@@ -2,8 +2,8 @@
 //!
 //! Heights are row-major, north-up, NaN where not valid. Mask bits: FACET marks
 //! interpolated triangles (exactly planar cells), STRIPE periodic axis-aligned striping,
-//! SEAM long straight axis-aligned lines. Stripes are repairable with [`destripe`];
-//! facets and seams are excluded from training.
+//! SEAM long straight axis-aligned lines. Stripes are removed with [`destripe`] and
+//! facets smoothed with [`defacet`]; seams are excluded from training.
 
 use serde_json::{Value, json};
 
@@ -284,6 +284,48 @@ fn mark_stripe(g: &Grid, stripe: &Stripe, mask: &mut [u8]) {
     }
 }
 
+/// Smooth interpolated facets so their crease lines vanish: blend towards a local
+/// mean of three box passes (sigma about 2.5 m) with a soft edge around the mask,
+/// changing no cell by more than 2 m.
+pub(crate) fn defacet(height: &mut [f32], mask: &[u8], w: usize, rows: usize, spacing_m: f64) {
+    if !mask.iter().any(|m| m & FACET != 0) {
+        return;
+    }
+    let r = ((2.0 / spacing_m).round() as usize).max(1);
+    let blur = |a: &[f32]| box_mean(&box_mean(&box_mean(a, w, rows, r), w, rows, r), w, rows, r);
+    let finite: Vec<f32> = height.iter().copied().filter(|h| h.is_finite()).collect();
+    let level = finite.iter().map(|h| f64::from(*h)).sum::<f64>() / finite.len().max(1) as f64;
+    // Centred values keep the float32 box sums precise.
+    let centred: Vec<f32> = height
+        .iter()
+        .map(|h| {
+            if h.is_finite() {
+                (f64::from(*h) - level) as f32
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let valid: Vec<f32> = height
+        .iter()
+        .map(|h| f32::from(u8::from(h.is_finite())))
+        .collect();
+    let facet: Vec<f32> = mask
+        .iter()
+        .map(|m| f32::from(u8::from(m & FACET != 0)))
+        .collect();
+    let (sum, count, weight) = (blur(&centred), blur(&valid), blur(&facet));
+    for i in 0..height.len() {
+        if height[i].is_finite() && count[i] > 0.5 && weight[i] > 0.0 {
+            let smooth = f64::from(sum[i] / count[i]) + level;
+            let h = f64::from(height[i]);
+            // Facet creases are small; the cap keeps cliffs and crests in place.
+            let change = (f64::from(weight[i]) * (smooth - h)).clamp(-2.0, 2.0);
+            height[i] = (h + change) as f32;
+        }
+    }
+}
+
 /// Remove each stripe frequency with a narrow FIR notch along its axis. Cells whose
 /// filter window leaves the grid or touches invalid samples are kept as they are.
 pub(crate) fn destripe(height: &mut [f32], w: usize, rows: usize, stripes: &[Stripe]) {
@@ -397,7 +439,8 @@ pub(crate) fn summary(height: &[f32], detection: &Detection, spacing_m: [f64; 2]
         "facet_fraction": fraction(FACET),
         "stripe_fraction": fraction(STRIPE),
         "seam_fraction": fraction(SEAM),
-        "excluded_fraction": fraction(FACET | SEAM),
+        "smoothed_fraction": fraction(FACET),
+        "excluded_fraction": fraction(SEAM),
         "stripes": stripes,
     })
 }
