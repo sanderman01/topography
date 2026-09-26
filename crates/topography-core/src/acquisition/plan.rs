@@ -58,7 +58,7 @@ fn slug(name: &str) -> String {
 }
 
 fn bearing(dx: f64, dy: f64) -> &'static str {
-    if dx.hypot(dy) < 500.0 {
+    if dx.hypot(dy) < 150.0 {
         return "centre";
     }
     let names = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];

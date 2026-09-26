@@ -192,7 +192,7 @@ Initial quality policy, adjustable per terrain family:
 | Gate | Proposed decision |
 | --- | --- |
 | Effective resolution | Prefer native 0.5–1 m ground data. Admit other nominal products only after checking actual spacing and feature preservation. Keep 2 m data in an explicitly approved secondary tier; exclude 5–30 m originals from fine-detail training. |
-| Missing ground | Require at least 99.5% valid terrestrial ground cells for the initial training pool. Under the planned mask contract above, mapped water and snow/ice are separate excluded domains. Vegetated bare ground remains eligible. Evaluate support automatically; optional annotated landmarks or passages must have no unsupported ground gaps. Do not require manual feature annotations. |
+| Missing ground | Require at least 50% valid terrestrial ground cells (99.5% until 2026-09-26; lowered on the owner's direction because missing cells stay masked in training). Under the planned mask contract above, mapped water and snow/ice are separate excluded domains. Vegetated bare ground remains eligible. Evaluate support automatically; optional annotated landmarks or passages must have no unsupported ground gaps. Do not require manual feature annotations. |
 | Cover masks | Generate snow/ice and vegetation masks automatically under `game_cover_v3`; they never block qualification. |
 | Interpolation | Permit small, reviewed repairs with a repair mask. Large voids, invisible canyon floors, or interpolated pillar fields trigger exclusion or another source search. |
 | Artifacts | Flag stripes, terraces, spikes, pits, duplicate edges, vegetation remnants, buildings, and implausible survey-boundary steps. Compare against context before rejecting natural steepness. |

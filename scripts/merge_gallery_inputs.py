@@ -22,7 +22,7 @@ def main() -> int:
     if output.exists():
         print(f"error: {output} exists", file=sys.stderr)
         return 1
-    tiles, reviews, ids = [], set(), set()
+    tiles, reviews, ids, titles = [], set(), set(), set()
     for name in sys.argv[2:]:
         for tile in json.loads(Path(name).read_text())["tiles"]:
             review = str(Path(tile["review"]).resolve())
@@ -33,6 +33,10 @@ def main() -> int:
             base, n = entry["id"], 2
             while entry["id"] in ids:
                 entry["id"], n = f"{base}-{n}", n + 1
+            title, n = entry["title"], 2
+            while entry["title"] in titles:
+                entry["title"], n = f"{title} #{n}", n + 1
+            titles.add(entry["title"])
             reviews.add(review)
             ids.add(entry["id"])
             tiles.append(entry)

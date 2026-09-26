@@ -1,5 +1,9 @@
 //! Regional quality assessment and preparation eligibility.
 
+/// Minimum valid share of ground cells, per mille. Missing cells stay masked in
+/// training, so partial tiles remain useful game terrain (owner, 2026-09-26).
+pub(crate) const MIN_VALID_GROUND_PERMILLE: u64 = 500;
+
 pub mod automatic;
 mod quality;
 mod region;

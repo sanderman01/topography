@@ -406,12 +406,11 @@ fn claim_blockers(claims: &Claims, bundle: &bundle::Bundle) -> Vec<String> {
             out.push(format!("{name}: {:?}", finding.state).to_lowercase());
         }
     }
-    if !claims
-        .coverage
-        .as_ref()
-        .is_some_and(|c| c.valid_terrestrial_cells * 1000 >= c.terrestrial_cells * 995)
-    {
-        out.push("at least 99.5% valid terrestrial coverage not established".into());
+    if !claims.coverage.as_ref().is_some_and(|c| {
+        c.valid_terrestrial_cells * 1000
+            >= c.terrestrial_cells * crate::preparation::MIN_VALID_GROUND_PERMILLE
+    }) {
+        out.push("at least 50% valid terrestrial coverage not established".into());
     }
     let source = &bundle.source;
     if source.survey_id.is_none()

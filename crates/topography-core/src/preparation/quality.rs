@@ -421,8 +421,11 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
             blockers.push("snow/ice classification incomplete".into());
         }
         let denominator = counts.ground_cells.unwrap_or(counts.terrestrial_cells);
-        if denominator == 0 || counts.valid_terrestrial_cells * 1000 < denominator * 995 {
-            blockers.push("at least 99.5% valid terrestrial coverage not established".into());
+        if denominator == 0
+            || counts.valid_terrestrial_cells * 1000
+                < denominator * crate::preparation::MIN_VALID_GROUND_PERMILLE
+        {
+            blockers.push("at least 50% valid terrestrial coverage not established".into());
         }
         if counts.nonfinite_terrestrial_cells > 0 {
             blockers.push("nonfinite provider-valid terrestrial elevation".into());
