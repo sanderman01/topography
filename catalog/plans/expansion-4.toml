@@ -1,0 +1,80 @@
+# Library expansion batch 4: top-up of the thinnest classes after overlap pruning.
+schema_version = 1
+crop_cells = 2048
+
+[[areas]]
+name = "Akaroa Harbour"
+provider = "linz"
+bbox = [172.88, -43.87, 173.00, -43.77]
+class = 5
+max_crops = 5
+
+[[areas]]
+name = "Cranberry Isles"
+provider = "usgs"
+bbox = [-68.32, 44.22, -68.18, 44.29]
+class = 5
+max_crops = 4
+
+[[areas]]
+name = "Oregon Dunes"
+provider = "usgs"
+bbox = [-124.19, 43.62, -124.10, 43.72]
+class = 8
+max_crops = 5
+
+[[areas]]
+name = "Monahans Sandhills"
+provider = "usgs"
+bbox = [-102.86, 31.60, -102.75, 31.67]
+class = 8
+max_crops = 4
+
+[[areas]]
+name = "Mount Olympus"
+provider = "usgs"
+bbox = [-123.76, 47.77, -123.64, 47.84]
+class = 10
+max_crops = 5
+
+[[areas]]
+name = "Mount Shuksan"
+provider = "usgs"
+bbox = [-121.64, 48.80, -121.55, 48.86]
+class = 10
+max_crops = 4
+
+[[areas]]
+name = "Utuado karst"
+provider = "usgs"
+bbox = [-66.70, 18.30, -66.62, 18.36]
+class = 1
+max_crops = 5
+
+[[areas]]
+name = "Pennyroyal sinkhole plain"
+provider = "usgs"
+bbox = [-86.50, 36.95, -86.38, 37.03]
+class = 1
+max_crops = 4
+
+[[areas]]
+name = "Sawtooth Range"
+provider = "usgs"
+bbox = [-115.03, 44.05, -114.93, 44.13]
+class = 6
+max_crops = 5
+
+[[areas]]
+name = "Wind River Range · Cirque of the Towers"
+provider = "usgs"
+bbox = [-109.22, 42.76, -109.12, 42.82]
+class = 6
+max_crops = 4
+
+[[areas]]
+name = "Tasman River"
+provider = "linz"
+bbox = [170.10, -43.90, 170.25, -43.78]
+class = 9
+max_crops = 5
