@@ -1,4 +1,4 @@
-//! Game cover masks (`game_cover_v2`) for one reviewed crop from public land cover
+//! Game cover masks (`game_cover_v3`) for one reviewed crop from public land cover
 //! and OpenStreetMap water. Technical layers only; never writes curation or creates a vote.
 
 use super::{
@@ -19,8 +19,8 @@ use std::{
     process::Command,
 };
 
-pub(crate) const POLICY: &str = "game_cover_v2";
-const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v2.toml");
+pub(crate) const POLICY: &str = "game_cover_v3";
+const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v3.toml");
 const ABSENT: u8 = 1;
 const PRESENT: u8 = 2;
 
@@ -88,7 +88,7 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
     let (w, g, o) = (&policy.worldcover, &policy.glims, &policy.osm);
     ensure(
         policy.schema_version == 2 && policy.policy == POLICY,
-        "cover policy must be schema 2, game_cover_v2",
+        "cover policy must be schema 2, game_cover_v3",
     )?;
     ensure(
         https(&w.url_template)
@@ -509,8 +509,27 @@ fn width(tag: &Value, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
+/// Water areas, plus tidal flats: under water at high tide, which is how players see them.
 fn water_area(tags: &Value) -> bool {
-    tags["natural"] == "water" || tags.get("water").is_some() || tags["waterway"] == "riverbank"
+    tags["natural"] == "water"
+        || tags.get("water").is_some()
+        || tags["waterway"] == "riverbank"
+        || tags["natural"] == "mud"
+        || tags["wetland"] == "tidalflat"
+}
+
+/// Space Overpass queries at least 10 s apart; the public server rate-limits bursts.
+fn overpass_pace() {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    if let Ok(mut last) = LAST.lock() {
+        if let Some(previous) = *last {
+            let gap = std::time::Duration::from_secs(10);
+            if let Some(wait) = gap.checked_sub(previous.elapsed()) {
+                std::thread::sleep(wait);
+            }
+        }
+        *last = Some(std::time::Instant::now());
+    }
 }
 
 /// OpenStreetMap water on the crop grid from one cached Overpass bbox query.
@@ -534,6 +553,8 @@ fn osm(
         "[\"natural\"=\"water\"]",
         "[\"water\"]",
         "[\"waterway\"=\"riverbank\"]",
+        "[\"natural\"=\"mud\"]",
+        "[\"wetland\"=\"tidalflat\"]",
     ] {
         query.push_str(&format!("way{filter}{b};relation{filter}{b};"));
     }
@@ -545,7 +566,10 @@ fn osm(
     let hit = cached.as_ref().filter(|path| path.is_file());
     let bytes = match hit {
         Some(path) => super::io_context("read cached Overpass response", fs::read(path))?,
-        None => http::query_large(&url, &p.user_agent, p.timeout_s + 60)?,
+        None => {
+            overpass_pace();
+            http::query_large(&url, &p.user_agent, p.timeout_s + 60)?
+        }
     };
     let body: Value = serde_json::from_slice(&bytes)?;
     let elements = body["elements"]
@@ -706,7 +730,7 @@ fn generate_with(
     }
     let count = |v: &[u8]| v.iter().filter(|x| **x == PRESENT).count();
     let mut note = format!(
-        "{POLICY}: water is the tile's existing water mask, WorldCover {} class 80 and OpenStreetMap water areas plus rivers, streams and canals buffered to their width ({}); snow/ice is WorldCover class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; water cells are never snow/ice or vegetation; everything else is absent. Crop grid, nearest neighbour. Game judgment layers, not measurements.",
+        "{POLICY}: water is the tile's existing water mask, WorldCover {} class 80 and OpenStreetMap water areas and tidal flats (natural=mud, wetland=tidalflat) plus rivers, streams and canals buffered to their width ({}); snow/ice is WorldCover class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; water cells are never snow/ice or vegetation; everything else is absent. Crop grid, nearest neighbour. Game judgment layers, not measurements.",
         w.observed_at,
         policy.osm.attribution,
         gl["glaciers"].as_array().map_or(0, Vec::len)

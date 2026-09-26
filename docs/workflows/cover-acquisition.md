@@ -1,7 +1,7 @@
 # Cover acquisition
 
-Water, snow/ice and vegetation are game layers under policy `game_cover_v2`
-([`configs/cover-game-v2.toml`](../../configs/cover-game-v2.toml), built into
+Water, snow/ice and vegetation are game layers under policy `game_cover_v3`
+([`configs/cover-game-v3.toml`](../../configs/cover-game-v3.toml), built into
 the binary). The gallery worker generates them for every accepted tile; no
 profile descriptors, dates or scripts are needed. `topography cover draft`
 writes the same layers for one crop so you can inspect them:
@@ -21,7 +21,7 @@ are placed by nearest neighbour.
 
 - Water present: the tile's existing water mask (provider or assessed), or
   WorldCover class 80, or OpenStreetMap water. OSM comes from one Overpass bbox
-  query per crop (`natural=water`, `water=*`, `waterway=riverbank` areas and
+  query per crop (`natural=water`, `water=*`, `waterway=riverbank` areas, tidal flats `natural=mud` and `wetland=tidalflat`, and
   multipolygons; `waterway=river|stream|canal` lines buffered to a numeric
   `width` tag, else 12 / 3 / 8 m). Lines burn all touched cells. The response
   is cached as `overpass-<digest>.json` in the tile's
@@ -58,7 +58,7 @@ more than one degree or crossing the antimeridian are refused.
 
 Products built earlier (v1 terrain, strict-evidence v2 or `game_cover_v1`)
 stay on disk, but the worker replaces them for accepted tiles with a
-`game_cover_v2` successor; see the
+`game_cover_v3` successor; see the
 [automatic-preparation design](../design/automatic-preparation-v1.md).
 
 Verification: `scripts/check_cover_acquisition.py` (run by `scripts/check.sh`)

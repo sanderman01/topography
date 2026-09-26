@@ -963,7 +963,10 @@ pub(crate) fn qualify_cover_upgrade(
                     finding.evidence_ids.push(id.clone());
                 }
             }
-            let note = " Game cover v2 upgrade (technical, no new vote): masks reassessed with game water added and snow/ice excluded from ground; vegetation is informational.";
+            let note = &format!(
+                " Game cover upgrade to {} (technical, no new vote): masks reassessed with game water added and snow/ice excluded from ground; vegetation is informational.",
+                crate::acquisition::cover::POLICY
+            );
             if !finding.note.contains(note) {
                 finding.note.push_str(note);
             }
@@ -983,7 +986,10 @@ pub(crate) fn qualify_cover_upgrade(
     if !coverage.evidence_ids.contains(&report_id) {
         coverage.evidence_ids.push(report_id.clone());
     }
-    let note = " Game cover v2: ground excludes water and snow/ice.";
+    let note = &format!(
+        " {}: ground excludes water and snow/ice.",
+        crate::acquisition::cover::POLICY
+    );
     if !coverage.note.contains(note) {
         coverage.note.push_str(note);
     }
@@ -1003,7 +1009,7 @@ pub(crate) fn qualify_cover_upgrade(
             cover_id,
             cover_sha,
             cover_bytes,
-            "game_cover_v2 water, snow/ice and vegetation sources, licences, rules and counts",
+            "game cover water, snow/ice and vegetation sources, licences, rules and counts",
         ),
     ] {
         objects.insert(sha.clone(), body.to_vec());

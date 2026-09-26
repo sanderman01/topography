@@ -81,10 +81,10 @@ pub(super) fn query_large(url: &str, user_agent: &str, max_time_s: u64) -> Resul
         .args([
             "--max-filesize",
             "67108864",
+            // Exponential backoff (honouring Retry-After) rides out rate limits.
             "--retry",
-            "4",
-            "--retry-delay",
-            "10",
+            "8",
+            "--retry-connrefused",
             "--max-time",
             &time,
             "--user-agent",
