@@ -185,17 +185,24 @@ pub(crate) fn start(
         thread::Builder::new()
             .name("terrain-preparation".into())
             .spawn(move || {
-                let result = work(&runtime, &legend, &gallery, &snapshots, &states, &stop);
-                if let Err(error) = result {
-                    eprintln!("Preparation worker: {error}");
+                // Errors such as a full temp directory can be transient: report, then retry.
+                while let Err(error) = work(&runtime, &legend, &gallery, &snapshots, &states, &stop)
+                {
+                    eprintln!("Preparation worker: {error}; retrying in 30 s");
                     if let Ok(mut states) = states.lock() {
                         for state in states.iter_mut() {
                             *state = Status::new(
                                 state.head.clone(),
                                 "needs_attention",
-                                &error.to_string(),
+                                &format!("{error} (retrying)"),
                             );
                         }
+                    }
+                    for _ in 0..60 {
+                        if stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(500));
                     }
                 }
             }),
