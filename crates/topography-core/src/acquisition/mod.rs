@@ -2,6 +2,7 @@
 
 pub mod batch;
 pub mod cover;
+pub mod geofabrik;
 pub(crate) mod glo30;
 mod http;
 pub(crate) mod raster;

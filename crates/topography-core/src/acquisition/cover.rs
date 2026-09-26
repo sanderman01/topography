@@ -60,6 +60,9 @@ struct Glims {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Osm {
+    /// "geofabrik" (regional extracts) or "overpass" (per-crop API queries).
+    source: String,
+    index_url: String,
     endpoint: String,
     user_agent: String,
     timeout_s: u64,
@@ -518,21 +521,8 @@ fn water_area(tags: &Value) -> bool {
         || tags["wetland"] == "tidalflat"
 }
 
-/// Space Overpass queries at least 10 s apart; the public server rate-limits bursts.
-fn overpass_pace() {
-    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
-    if let Ok(mut last) = LAST.lock() {
-        if let Some(previous) = *last {
-            let gap = std::time::Duration::from_secs(10);
-            if let Some(wait) = gap.checked_sub(previous.elapsed()) {
-                std::thread::sleep(wait);
-            }
-        }
-        *last = Some(std::time::Instant::now());
-    }
-}
-
-/// OpenStreetMap water on the crop grid from one cached Overpass bbox query.
+/// OpenStreetMap water on the crop grid, from a Geofabrik regional extract or one
+/// cached Overpass bbox query, as the policy's `source` says.
 fn osm(
     p: &Osm,
     bbox: [f64; 4],
@@ -540,6 +530,87 @@ fn osm(
     scratch: &Path,
     cache: Option<&Path>,
 ) -> Result<(Vec<u8>, Value)> {
+    let (areas, lines, sources) = match p.source.as_str() {
+        "geofabrik" => extract_water(p, bbox, scratch)?,
+        _ => overpass_water(p, bbox, cache)?,
+    };
+    let raster = scratch.join("osm.tif");
+    blank(grid, &raster)?;
+    burn(&areas, &scratch.join("osm-areas.geojson"), false, &raster)?;
+    burn(&lines, &scratch.join("osm-lines.geojson"), true, &raster)?;
+    let mut sources = sources;
+    sources["default_widths_m"] =
+        json!({"river":p.river_width_m,"canal":p.canal_width_m,"stream":p.stream_width_m});
+    sources["license"] = json!(p.license);
+    sources["attribution"] = json!(p.attribution);
+    Ok((
+        review::band(&raster, scratch, "osm", grid.cells(), false)?,
+        sources,
+    ))
+}
+
+/// Buffered line width for a river, canal or stream way; None for other lines.
+fn line_width(p: &Osm, tags: &Value) -> Option<f64> {
+    let default = match tags["waterway"].as_str() {
+        Some("river") => p.river_width_m,
+        Some("canal") => p.canal_width_m,
+        Some("stream") => p.stream_width_m,
+        _ => return None,
+    };
+    Some(width(&tags["width"], default))
+}
+
+/// Water areas and buffered lines from the local extract of the crop's region.
+fn extract_water(
+    p: &Osm,
+    bbox: [f64; 4],
+    scratch: &Path,
+) -> Result<(Vec<Value>, Vec<Value>, Value)> {
+    let (area_features, line_features, extract) =
+        super::geofabrik::water(&p.index_url, &p.user_agent, bbox, scratch)?;
+    let features = |c: &Value| c["features"].as_array().cloned().unwrap_or_default();
+    let areas: Vec<Value> = features(&area_features)
+        .into_iter()
+        .filter(|f| water_area(&f["properties"]))
+        .map(|f| f["geometry"].clone())
+        .collect();
+    let mut lines = Vec::new();
+    let mut line_count = 0;
+    for f in features(&line_features) {
+        let Some(width_m) = line_width(p, &f["properties"]) else {
+            continue;
+        };
+        let g = &f["geometry"];
+        let parts: Vec<Value> = match g["type"].as_str() {
+            Some("LineString") => vec![g["coordinates"].clone()],
+            Some("MultiLineString") => g["coordinates"].as_array().cloned().unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for part in parts {
+            let line: Vec<Point> = part
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| Some([c[0].as_f64()?, c[1].as_f64()?]))
+                .collect();
+            lines.extend(buffered(&line, width_m));
+        }
+        line_count += 1;
+    }
+    let area_count = areas.len();
+    Ok((
+        areas,
+        lines,
+        json!({"source": "geofabrik", "extract": extract, "areas": area_count, "lines": line_count}),
+    ))
+}
+
+/// Water areas and buffered lines from one cached Overpass bbox query.
+fn overpass_water(
+    p: &Osm,
+    bbox: [f64; 4],
+    cache: Option<&Path>,
+) -> Result<(Vec<Value>, Vec<Value>, Value)> {
     let [west, south, east, north] = bbox;
     let b = format!(
         "({},{},{},{})",
@@ -566,10 +637,7 @@ fn osm(
     let hit = cached.as_ref().filter(|path| path.is_file());
     let bytes = match hit {
         Some(path) => super::io_context("read cached Overpass response", fs::read(path))?,
-        None => {
-            overpass_pace();
-            http::query_large(&url, &p.user_agent, p.timeout_s + 60)?
-        }
+        None => http::query_large(&url, &p.user_agent, p.timeout_s + 60)?,
     };
     let body: Value = serde_json::from_slice(&bytes)?;
     let elements = body["elements"]
@@ -590,14 +658,8 @@ fn osm(
         match element["type"].as_str() {
             Some("way") => {
                 let geometry = points(&element["geometry"]);
-                let default = match tags["waterway"].as_str() {
-                    Some("river") => Some(p.river_width_m),
-                    Some("canal") => Some(p.canal_width_m),
-                    Some("stream") => Some(p.stream_width_m),
-                    _ => None,
-                };
-                if let Some(default) = default {
-                    lines.extend(buffered(&geometry, width(&tags["width"], default)));
+                if let Some(width_m) = line_width(p, tags) {
+                    lines.extend(buffered(&geometry, width_m));
                     line_count += 1;
                 } else if water_area(tags) && closed(&geometry) {
                     areas.push(json!({"type":"Polygon","coordinates":[geometry]}));
@@ -623,16 +685,11 @@ fn osm(
             _ => {}
         }
     }
-    let raster = scratch.join("osm.tif");
-    blank(grid, &raster)?;
-    burn(&areas, &scratch.join("osm-areas.geojson"), false, &raster)?;
-    burn(&lines, &scratch.join("osm-lines.geojson"), true, &raster)?;
     Ok((
-        review::band(&raster, scratch, "osm", grid.cells(), false)?,
-        json!({"endpoint":p.endpoint,"query":query,"response_sha256":digest(&bytes),
-            "areas":area_count,"lines":line_count,"open_rings_ignored":open,
-            "default_widths_m":{"river":p.river_width_m,"canal":p.canal_width_m,"stream":p.stream_width_m},
-            "license":p.license,"attribution":p.attribution}),
+        areas,
+        lines,
+        json!({"source":"overpass","endpoint":p.endpoint,"query":query,"response_sha256":digest(&bytes),
+            "areas":area_count,"lines":line_count,"open_rings_ignored":open}),
     ))
 }
 

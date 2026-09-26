@@ -20,12 +20,16 @@ Masks lie on the review crop grid (1 absent, 2 present, no unknown cells) and
 are placed by nearest neighbour.
 
 - Water present: the tile's existing water mask (provider or assessed), or
-  WorldCover class 80, or OpenStreetMap water. OSM comes from one Overpass bbox
-  query per crop (`natural=water`, `water=*`, `waterway=riverbank` areas, tidal flats `natural=mud` and `wetland=tidalflat`, and
-  multipolygons; `waterway=river|stream|canal` lines buffered to a numeric
-  `width` tag, else 12 / 3 / 8 m). Lines burn all touched cells. The response
-  is cached as `overpass-<digest>.json` in the tile's
-  `automatic-preparation/<review>/` directory.
+  WorldCover class 80, or OpenStreetMap water. OSM comes from the smallest
+  Geofabrik regional extract containing the crop, downloaded once and reduced to
+  `<runtime cache>/osm-extracts/<region>.water.gpkg` (refreshed after 180 days;
+  `source = "overpass"` uses one cached Overpass bbox query per crop instead).
+  Features: `natural=water`, `water=*`, `waterway=riverbank` and tidal flats
+  (`natural=mud`, `wetland=tidalflat`) as areas and multipolygons;
+  `waterway=river|stream|canal` lines buffered to a numeric `width` tag, else
+  12 / 3 / 8 m. Lines burn all touched cells.
+- HTTP requests are spaced per host (Overpass 10 s, S3 0.1 s, others 1 s) across
+  all topography processes, and rate limits are retried with backoff.
 - Water wins: water cells are never snow/ice or vegetation. Under water the
   ground uses the deterministic masked fill.
 - Snow/ice present: ESA WorldCover 2021 class 70, or inside the most recent

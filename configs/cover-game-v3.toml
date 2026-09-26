@@ -25,7 +25,12 @@ license = "GLIMS data are freely available; citation of the GLIMS Glacier Databa
 citation = "GLIMS Consortium (2005, updated 2018). GLIMS Glacier Database, Version 1. Boulder, Colorado USA. NSIDC: National Snow and Ice Data Center. doi:10.7265/N5V98602 (NSIDC-0272)"
 
 [osm]
-# Overpass bbox query: natural=water, water=*, waterway=riverbank areas, tidal flats
+# Source: "geofabrik" downloads the smallest Geofabrik regional extract containing the
+# crop once, keeps its water features in <runtime cache>/osm-extracts/<region>.water.gpkg
+# and reads crops locally. "overpass" queries the endpoint per crop (fixtures use it).
+source = "geofabrik"
+index_url = "https://download.geofabrik.de/index-v1.json"
+# Water features: natural=water, water=*, waterway=riverbank areas, tidal flats
 # (natural=mud, wetland=tidalflat; under water at high tide) and
 # river/stream/canal lines buffered to their numeric `width` tag or these defaults.
 endpoint = "https://overpass-api.de/api/interpreter"

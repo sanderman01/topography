@@ -33,7 +33,7 @@ Usage: topography [--help | --version]
        topography dataset fit-build <runtime.toml> <evaluation-manifest.json> <approval.json>
        topography dataset fit-verify <runtime.toml> <fitting-manifest.json>
        topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>
-       topography world input <world.toml> <new-output-dir>
+       topography world input <runtime.toml> <world.toml> <new-output-dir>
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
@@ -258,10 +258,14 @@ fn main() -> ExitCode {
                 .map(|p| p.display().to_string()),
             );
         }
-        [command, action, config, output] if command == "world" && action == "input" => {
+        [command, action, runtime, config, output] if command == "world" && action == "input" => {
             return workflow_result(
-                topography_core::world::build_input(Path::new(config), Path::new(output))
-                    .map(|p| p.display().to_string()),
+                topography_core::world::build_input(
+                    Path::new(runtime),
+                    Path::new(config),
+                    Path::new(output),
+                )
+                .map(|p| p.display().to_string()),
             );
         }
         [command, action, runtime, gallery, output]

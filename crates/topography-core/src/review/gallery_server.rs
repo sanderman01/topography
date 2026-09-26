@@ -353,6 +353,7 @@ impl Session {
 pub fn serve(runtime: &Path, manifest: &Path, port: u16) -> Result<()> {
     let (gallery, id, snapshots) = gallery::load(manifest)?;
     crate::config::inspect_runtime(runtime)?;
+    crate::acquisition::geofabrik::use_runtime(runtime)?;
     let listener = io_context(
         "bind gallery loopback",
         TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)),

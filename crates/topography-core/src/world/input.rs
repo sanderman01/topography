@@ -82,8 +82,9 @@ fn unproject(srs: &str, x: f64, y: f64) -> Result<(f64, f64)> {
 }
 
 /// Build `world.json`, `coarse.f32`, `classes.u8` and `water.u8` in a new directory.
-pub fn build_input(config_path: &Path, output: &Path) -> Result<PathBuf> {
+pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<PathBuf> {
     ensure(!output.exists(), "world input output already exists")?;
+    crate::acquisition::geofabrik::use_runtime(runtime)?;
     let text = read_small(config_path)?;
     let config: WorldConfig = toml::from_str(&String::from_utf8_lossy(&text))
         .map_err(|e| AcquisitionError::Invalid(format!("world config: {e}")))?;

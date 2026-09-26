@@ -138,6 +138,7 @@ class CoverServer:
                          (config["glims"]["endpoint"], f"{self.base}/{name}/ows"),
                          (config["osm"]["endpoint"], f"{self.base}/{name}/interpreter")]:
             text = text.replace(f'"{old}"', f'"{new}"')
+        text = text.replace('source = "geofabrik"', 'source = "overpass"')
         path = self.root.parent / f"{name}-policy.toml"
         path.write_text(text)
         return dict(self.env, TOPOGRAPHY_COVER_POLICY=str(path))

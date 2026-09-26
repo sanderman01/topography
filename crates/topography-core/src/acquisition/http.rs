@@ -2,7 +2,14 @@ use super::{
     AcquisitionError, Result, digest, ensure, hash_file, io_context, read_json, write_new,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::Path, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::Path,
+    process::Command,
+    sync::Mutex,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tempfile::NamedTempFile;
 
 const CHUNK_BYTES: u64 = 8 * 1024 * 1024;
@@ -98,6 +105,25 @@ pub(super) fn query_large(url: &str, user_agent: &str, max_time_s: u64) -> Resul
     Ok(bytes)
 }
 
+/// Final HTTPS URL after redirects, for example a dated file behind a "latest" link.
+pub(super) fn resolve(url: &str) -> Result<String> {
+    validate_url(url)?;
+    let out = run(curl().args([
+        "--head",
+        "--retry",
+        "3",
+        "--output",
+        "/dev/null",
+        "--write-out",
+        "%{url_effective}",
+        "--url",
+        url,
+    ]))?;
+    let resolved = String::from_utf8_lossy(&out).trim().to_owned();
+    validate_url(&resolved)?;
+    Ok(resolved)
+}
+
 /// HEAD an HTTPS object with retries: missing (403/404) is `false`, other failures are errors.
 pub(super) fn exists(url: &str) -> Result<bool> {
     validate_url(url)?;
@@ -127,7 +153,64 @@ pub(super) fn validate_url(url: &str) -> Result<()> {
     )
 }
 
+/// Minimum spacing between requests to one host. Overpass is a shared volunteer
+/// service that bans bursts; S3 buckets serve range requests at scale; loopback
+/// test servers need none.
+fn min_interval(host: &str) -> Duration {
+    if host == "localhost" || host.starts_with("127.") {
+        Duration::ZERO
+    } else if host.contains("overpass") {
+        Duration::from_secs(10)
+    } else if host.ends_with(".amazonaws.com") {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_secs(1)
+    }
+}
+
+/// Wait until this host's minimum interval has passed since the last request by any
+/// topography process (a timestamp file per host in the temp directory; the rare
+/// race between processes only costs one early request).
+fn pace(url: &str) {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let Some(host) = url
+        .strip_prefix("https://")
+        .and_then(|u| u.split(['/', '?', ':']).next())
+        .filter(|h| {
+            !h.is_empty()
+                && h.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-.".contains(&b))
+        })
+    else {
+        return;
+    };
+    let _guard = LOCK.lock();
+    let dir = std::env::temp_dir().join("topography-http-pace");
+    let file = dir.join(host);
+    let now = || {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64)
+    };
+    let last = fs::read_to_string(&file)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let wait = (last + min_interval(host).as_millis() as u64).saturating_sub(now());
+    if wait > 0 {
+        std::thread::sleep(Duration::from_millis(wait.min(60_000)));
+    }
+    let _ = fs::create_dir_all(&dir).and_then(|_| fs::write(&file, now().to_string()));
+}
+
 fn run(command: &mut Command) -> Result<Vec<u8>> {
+    if let Some(url) = command
+        .get_args()
+        .filter_map(|a| a.to_str())
+        .find(|a| a.starts_with("https://"))
+    {
+        pace(url);
+    }
     let output = super::bounded_output(command)?;
     if !output.status.success() {
         let status = headers(&output.stdout)
