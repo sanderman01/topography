@@ -219,6 +219,8 @@ fn work(
     stop: &AtomicBool,
 ) -> Result<()> {
     let mut finished: Vec<Option<String>> = vec![None; gallery.tiles.len()];
+    // Tiles that failed on an unavailable public service are retried after a pause.
+    let mut retry_at: Vec<Option<std::time::Instant>> = vec![None; gallery.tiles.len()];
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
@@ -256,6 +258,10 @@ fn work(
                 .lock()
                 .map(|s| parents_current(runtime, &s[index].parents, &heads))
                 .unwrap_or(false);
+            if retry_at[index].is_some_and(|t| t <= std::time::Instant::now()) {
+                retry_at[index] = None;
+                finished[index] = None;
+            }
             if finished[index].as_deref() == Some(&key) && parents_current {
                 continue;
             }
@@ -380,7 +386,14 @@ fn work(
                     "not_selected",
                     "Rejected; source data is preserved.",
                 ),
-                Err(error) => Status::new(latest_head, "needs_attention", &error.to_string()),
+                Err(error) => {
+                    let text = error.to_string();
+                    if text.contains("unavailable") {
+                        retry_at[index] =
+                            Some(std::time::Instant::now() + Duration::from_secs(300));
+                    }
+                    Status::new(latest_head, "needs_attention", &text)
+                }
             };
             publish(states, index, status, &status_path);
             finished[index] = Some(serde_json::to_string(&latest)?);
