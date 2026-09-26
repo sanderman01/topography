@@ -316,12 +316,24 @@ Prevent broad elevation drift through the coarse surface and height anchors. Kee
 Carry snow/ice and available vegetation layers through source placement, joins
 and local edits using categorical rules and the same spatial transforms as the
 terrain. Keep overlapping cover layers independent; do not average their IDs or
-infer vegetation from a biome. A mask for a generated or edited area must be
+infer vegetation from the biome label alone. A mask for a generated or edited area must be
 authored or derived with recorded provenance; do not retain stale Earth-source
 labels after changes that invalidate them. Worlds that intentionally have no
 snow/ice or vegetation record that absence explicitly. Any retained snow/ice
 surface is a separate surface layer, with no claim to ground beneath it. Mask
 support does not add vegetation placement/rendering or seasonal simulation.
+
+**Land cover for generated terrain (direction, 2026-09-26).** Generated
+heights have no WorldCover source, and per-tile biome labels are too coarse
+for surface materials. Learn simple per-biome statistics from the library's
+per-cell `land-cover` layer as a function of terrain derivatives (slope,
+relative altitude, curvature), then apply them to generated heights to derive
+land cover, and from it the snow/ice and vegetation masks. Water comes from
+the authored water masks. This is CPU work and needs no photos or model
+training. It is recorded as a derivation with provenance. Renderers pick
+materials and albedo per cell from land cover, slope and the biome palette.
+Diffusion output of cover channels remains a fallback only if these
+statistics look implausible.
 
 Final join repair can use constrained local blending, boundary-conditioned inpainting, or a gradient-domain correction within a marked seam band. It must preserve locked heights and named landmarks. Recheck water connections and nearby passages afterward; a visually invisible seam can still block a river or erase a saddle.
 
@@ -362,7 +374,7 @@ Before promoting a world revision, verify:
 
 Keep exact invariants, such as untouched pixels outside an edit domain, separate from the owner's visual judgment of the terrain. The implementer handles technical data, numeric and export checks; human review does not require a gameplay suitability checklist or calibrated terrain-acceptance thresholds.
 
-Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit heightmap texture tiles with coarser quadtree LOD levels, biome/water/validity mask textures, snow/ice masks wherever present, available vegetation masks, explicit absence/availability declarations, encoding and coordinate metadata, review overviews, and the world manifest. Keep cover masks categorical at their declared cell grid and tile them with the same layout as heights; never average them into invented classes. Export tiles are packaging units; they must not determine how the world was trained or generated.
+Deliver a Float32 master mosaic or equivalent indexed tile collection, configurable 16-bit heightmap texture tiles with coarser quadtree LOD levels, biome/water/validity mask textures, snow/ice masks wherever present, available vegetation masks, the categorical land-cover layer, explicit absence/availability declarations, encoding and coordinate metadata, review overviews, and the world manifest. Keep cover masks categorical at their declared cell grid and tile them with the same layout as heights; never average them into invented classes. Export tiles are packaging units; they must not determine how the world was trained or generated.
 
 ## 11. Proposed implementation sequence
 
