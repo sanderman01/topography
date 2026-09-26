@@ -1,0 +1,23 @@
+crates/topography-core/src/datasets/diffusion.rs
+  s_fa852e40cdfce0::t_53e99e117a5217 86-87
+training/src/topography_training/diffusion/data.py
+  s_fa852e40cdfce0::t_53e99e117a5217 23
+catalog/labels/terrain-v2.toml
+  s_fa852e40cdfce0::t_53e99e117a5217 1-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "955716b2a8c1e7280a205a2c5631cc7b6f00b225",
+  "prompts": {},
+  "sessions": {
+    "s_fa852e40cdfce0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d5e98cc-55af-466e-ab18-1539643a1b42",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
