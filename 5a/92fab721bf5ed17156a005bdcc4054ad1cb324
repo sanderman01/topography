@@ -1,0 +1,19 @@
+crates/topography-core/src/review/preparation_worker.rs
+  s_8a3239663527df::t_581ae1943f55c6 222-223,261-264,389-396
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5a92fab721bf5ed17156a005bdcc4054ad1cb324",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
