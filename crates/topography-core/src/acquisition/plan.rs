@@ -5,6 +5,7 @@ use super::{AcquisitionError, Result, ensure, http, io_context, raster, write_ne
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -70,9 +71,17 @@ fn bearing(dx: f64, dy: f64) -> &'static str {
     names[((angle + 22.5) / 45.0) as usize % 8]
 }
 
+fn overlap_share(a: [f64; 4], b: [f64; 4]) -> f64 {
+    let w = (a[2].min(b[2]) - a[0].max(b[0])).max(0.0);
+    let h = (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+    let smaller = ((a[2] - a[0]) * (a[3] - a[1])).min((b[2] - b[0]) * (b[3] - b[1]));
+    if smaller > 0.0 { w * h / smaller } else { 0.0 }
+}
+
 /// Discover sources for every area and write `queue.json` with crop windows nearest
-/// each area's centre. Returns the queue path.
-pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
+/// each area's centre. Ground already curated (accepted or rejected) is skipped.
+/// Returns the queue path.
+pub fn plan(plan_path: &Path, runtime: &Path, output: &Path) -> Result<PathBuf> {
     let plan: Plan = toml::from_str(&String::from_utf8_lossy(&super::read_small(plan_path)?))
         .map_err(|e| AcquisitionError::Invalid(format!("invalid plan: {e}")))?;
     ensure(
@@ -85,6 +94,8 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
         fs::create_dir_all(output.join("discovery")),
     )?;
     let size = plan.crop_cells;
+    let curated = crate::catalog::curation::curated_footprints(runtime)
+        .map_err(|e| AcquisitionError::Invalid(format!("curated footprints: {e}")))?;
     let mut sources: Vec<Value> = Vec::new();
     let mut summary = Vec::new();
     for area in &plan.areas {
@@ -109,6 +120,13 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
             (area.bbox[0] + area.bbox[2]) / 2.0,
             (area.bbox[1] + area.bbox[3]) / 2.0,
         );
+        let near: Vec<[f64; 4]> = curated
+            .iter()
+            .filter(|b| overlap_share(**b, area.bbox) > 0.0)
+            .copied()
+            .collect();
+        // Curated footprints projected per source CRS.
+        let mut taken: HashMap<String, Vec<[f64; 4]>> = HashMap::new();
         let mut windows = Vec::new();
         let first_source = sources.len();
         for file in &files {
@@ -174,6 +192,26 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
             if w < size || h < size || c1 <= c0 || r1 <= r0 {
                 continue;
             }
+            if !taken.contains_key(crs) {
+                let mut boxes = Vec::new();
+                for b in &near {
+                    let corners = [
+                        raster::project(crs, b[0], b[1])?,
+                        raster::project(crs, b[0], b[3])?,
+                        raster::project(crs, b[2], b[1])?,
+                        raster::project(crs, b[2], b[3])?,
+                    ];
+                    boxes.push(
+                        corners
+                            .iter()
+                            .fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |a, c| {
+                                [a[0].min(c.0), a[1].min(c.1), a[2].max(c.0), a[3].max(c.1)]
+                            }),
+                    );
+                }
+                taken.insert(crs.to_owned(), boxes);
+            }
+            let taken = &taken[crs];
             let index = sources.len();
             let mut added = false;
             let mut r = r0;
@@ -186,6 +224,13 @@ pub fn plan(plan_path: &Path, output: &Path) -> Result<PathBuf> {
                         continue;
                     }
                     let (x, y) = (c, r);
+                    let (x0, y0) = (t[0] + f64::from(x) * t[1], t[3] + f64::from(y) * t[5]);
+                    let (x1, y1) = (x0 + f64::from(size) * t[1], y0 + f64::from(size) * t[5]);
+                    let footprint = [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)];
+                    if taken.iter().any(|b| overlap_share(*b, footprint) > 0.25) {
+                        c += size;
+                        continue;
+                    }
                     let mx = t[0] + (f64::from(x) + f64::from(size) / 2.0) * t[1];
                     let my = t[3] + (f64::from(y) + f64::from(size) / 2.0) * t[5];
                     let (dx, dy) = (mx - centre.0, my - centre.1);

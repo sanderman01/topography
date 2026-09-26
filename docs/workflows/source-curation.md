@@ -48,6 +48,7 @@ clouds through reports containing their checksums; retain those artifacts separa
 topography curate record data/review/candidate/decision.json configs/runtime.example.toml
 topography curate status configs/runtime.example.toml REVIEW_SHA256
 topography curate check configs/runtime.example.toml
+topography curate purge-rejected configs/runtime.example.toml
 topography curate export configs/runtime.example.toml REVIEW_SHA256 data/exports/candidate-curation
 ```
 
@@ -57,6 +58,14 @@ file's SHA-256 for `REVIEW_SHA256`, also present in the draft's `target` object.
 `check` verifies all indexed records, objects, raw parents and review artifacts.
 It reports published but unregistered records and unreferenced evidence objects.
 It never accepts, repairs or deletes data.
+
+`purge-rejected` is the explicit housekeeping step. For every crop whose head
+decision is reject it deletes the review rasters and preview, then deletes raw
+assets that no remaining crop uses. The decision history, `review.json`,
+`inspection.json`, `metrics.json`, raw receipts and source declarations stay.
+`batch plan` uses those footprints to skip the ground, and `check` verifies purged
+crops from metadata only. A purged crop's head is frozen: it cannot take new
+decisions. The first purge migrates the database to schema 3.
 
 ## Findings and limits
 
@@ -130,7 +139,7 @@ an incomplete export directory remain identifiable and are not completion record
 
 The first prepared-region registration transactionally migrates database schema
 1 to 2, adding the prepared registry while preserving curation record bytes.
-Current code reads both versions. `curate check` also checks registered prepared
+Current code reads versions 1 to 3. `curate check` also checks registered prepared
 files; its orphan lists concern curation files only.
 
 Version 1 limits a catalog to 4,096 decisions. Export writes a new directory with

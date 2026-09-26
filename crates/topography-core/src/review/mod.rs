@@ -293,3 +293,68 @@ pub(crate) fn write_preview(directory: &Path, info: &Value, source: &SourceRecor
     let html = include_str!("preview.html").replace("__TERRAIN_DATA__", &encoded);
     write_new(&directory.join("preview.html"), html.as_bytes())
 }
+
+/// Share of valid ground with slope under 3 degrees, measured on 4 m block means so
+/// micro-relief does not count. Near 1 for floodplains, water and flat fields.
+pub(crate) fn flat_share(review: &Path, bundle: &bundle::Bundle) -> Result<f64> {
+    let [_, _, w, h] = bundle.manifest.window_cells;
+    let (w, h) = (w as usize, h as usize);
+    let dir = review.parent().unwrap_or(Path::new("."));
+    let scratch = io_context("stage flatness check", tempfile::tempdir())?;
+    let elevation = band(
+        &dir.join("elevation.tif"),
+        scratch.path(),
+        "elevation",
+        w * h,
+        true,
+    )?;
+    let validity = band(
+        &dir.join("validity.tif"),
+        scratch.path(),
+        "validity",
+        w * h,
+        false,
+    )?;
+    let transform: Vec<f64> =
+        serde_json::from_value(bundle.inspection["geoTransform"].clone()).unwrap_or_default();
+    let spacing = transform.get(1).copied().unwrap_or(1.0).abs();
+    let k = (4.0 / spacing).round().max(1.0) as usize;
+    let step = k as f64 * spacing;
+    let (bw, bh) = (w / k, h / k);
+    let mut coarse = vec![f64::NAN; bw * bh];
+    for by in 0..bh {
+        for bx in 0..bw {
+            let mut sum = 0.0;
+            let mut ok = true;
+            for y in by * k..(by + 1) * k {
+                for x in bx * k..(bx + 1) * k {
+                    let i = y * w + x;
+                    let b = &elevation[i * 4..i * 4 + 4];
+                    let v = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                    ok &= validity[i] != 0 && v.is_finite();
+                    sum += f64::from(v);
+                }
+            }
+            if ok {
+                coarse[by * bw + bx] = sum / (k * k) as f64;
+            }
+        }
+    }
+    let limit = 3f64.to_radians().tan() * 2.0 * step;
+    let (mut flat, mut total) = (0usize, 0usize);
+    for y in 1..bh.saturating_sub(1) {
+        for x in 1..bw.saturating_sub(1) {
+            let dx = coarse[y * bw + x + 1] - coarse[y * bw + x - 1];
+            let dy = coarse[(y + 1) * bw + x] - coarse[(y - 1) * bw + x];
+            if dx.is_finite() && dy.is_finite() {
+                total += 1;
+                flat += usize::from(dx.hypot(dy) < limit);
+            }
+        }
+    }
+    Ok(if total == 0 {
+        1.0
+    } else {
+        flat as f64 / total as f64
+    })
+}

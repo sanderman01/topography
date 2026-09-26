@@ -11,7 +11,7 @@ Usage: topography [--help | --version]
        topography discover usgs <west,south,east,north> <max-items> <output-dir> [saved-response.json]
        topography discover linz <west,south,east,north> <max-items> <output-dir>
        topography acquire <source.toml> <runtime.toml> <max-bytes>
-       topography batch plan <plan.toml> <new-run-dir>
+       topography batch plan <plan.toml> <runtime.toml> <new-run-dir>
        topography batch validate <queue.json>
        topography batch <download|review> <queue.json> <runtime.toml> <run-dir>
        topography gallery build <tiles.json> <legend.toml> <new-output-dir>
@@ -23,6 +23,7 @@ Usage: topography [--help | --version]
        topography curate record <draft.json> <runtime.toml>
        topography curate status <runtime.toml> <review-sha256>
        topography curate check <runtime.toml>
+       topography curate purge-rejected <runtime.toml>
        topography curate export <runtime.toml> <review-sha256> <new-output-dir>
        topography cover draft <raw-receipt.json> <review.json> <new-output-dir> [cover-policy.toml]
        topography quality draft <raw-receipt.json> <review.json> <quality.json>
@@ -89,9 +90,9 @@ fn main() -> ExitCode {
                     summary.known_download_bytes, summary.unknown_size_assets, Path::new(output).display())
             }));
         }
-        [command, action, plan, output] if command == "batch" && action == "plan" => {
+        [command, action, plan, runtime, output] if command == "batch" && action == "plan" => {
             return workflow_result(
-                acquisition::plan(Path::new(plan), Path::new(output))
+                acquisition::plan(Path::new(plan), Path::new(runtime), Path::new(output))
                     .map(|p| p.display().to_string()),
             );
         }
@@ -371,6 +372,9 @@ fn main() -> ExitCode {
         }
         [command, action, runtime] if command == "curate" && action == "check" => {
             return workflow_result(catalog::curation::check(Path::new(runtime)));
+        }
+        [command, action, runtime] if command == "curate" && action == "purge-rejected" => {
+            return workflow_result(catalog::curation::purge_rejected(Path::new(runtime)));
         }
         [command, action, runtime, review, output] if command == "curate" && action == "export" => {
             let Some(review) = review.to_str() else {

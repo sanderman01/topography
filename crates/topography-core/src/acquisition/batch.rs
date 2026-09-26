@@ -327,6 +327,9 @@ pub fn download(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, St
     }
     report(output, "download", count, errors)
 }
+/// Crops whose valid ground is mostly under 3 degrees slope (see `flat_share`).
+const MAX_FLAT_SHARE: f64 = 0.88;
+
 /// Generate native crops from completed downloads. Reuse requires exact verified inputs.
 pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, String)> {
     let queue = initialize(queue, runtime, output)?;
@@ -357,7 +360,7 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
                     verified.manifest.window_cells == crop.window_cells,
                     "existing review window differs",
                 )?;
-                // Mostly empty (sea, outside coverage) or dead-flat crops never reach a vote.
+                // Mostly empty (sea, outside coverage) or flat crops never reach a vote.
                 let m = verified.metrics.as_ref();
                 let valid = m
                     .and_then(|m| m["finite_valid_cells"].as_f64())
@@ -369,6 +372,10 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
                     })
                     .unwrap_or(0.0);
                 if valid < 0.5 * cells || relief < 10.0 {
+                    return Ok(None);
+                }
+                // Owner votes rejected every crop above this share as dull.
+                if crate::review::flat_share(&manifest, &verified)? > MAX_FLAT_SHARE {
                     return Ok(None);
                 }
                 let review = io_context("resolve review", fs::canonicalize(manifest))?;
@@ -414,7 +421,7 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
                     tiles.push(tile)
                 }
                 Ok(None) => skipped
-                    .push(json!({"id":id,"reason":"under 50% valid cells or under 10 m relief"})),
+                    .push(json!({"id":id,"reason":"under 50% valid cells, under 10 m relief or over 88% flat ground"})),
                 Err(e) => errors.push(json!({"id":id,"error":e.to_string()})),
             }
         }

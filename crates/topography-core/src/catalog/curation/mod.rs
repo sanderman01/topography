@@ -623,6 +623,116 @@ pub fn status(runtime: &Path, review_sha256: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
+/// Review files a purge keeps: enough to show where the crop was and why it went.
+const PURGE_KEEPS: [&str; 3] = ["review.json", "inspection.json", "metrics.json"];
+
+/// Delete the rasters of every rejected crop, and raw assets no remaining crop uses.
+/// Decision records, review manifests, footprints and source declarations stay, so
+/// planning skips the ground and the history still verifies.
+pub fn purge_rejected(runtime: &Path) -> Result<String> {
+    let store = journal::Store::locate(runtime)?;
+    let heads = store.heads()?;
+    let mut live_assets = BTreeSet::new();
+    let mut rejected = Vec::new();
+    for head in heads {
+        let record: Record = serde_json::from_slice(&head.body)?;
+        if head.purged || record.claims.decision == Decision::Reject {
+            rejected.push((head, record));
+        } else {
+            live_assets.insert(record.asset_sha256.clone());
+        }
+    }
+    // Verify every history before deleting anything; crops can share a raw asset.
+    // An asset already removed by an earlier purge cannot be re-verified.
+    let gone: BTreeSet<&String> = rejected
+        .iter()
+        .filter(|(head, _)| head.purged)
+        .map(|(_, record)| &record.asset_sha256)
+        .collect();
+    for (head, record) in &rejected {
+        if !head.purged && !gone.contains(&record.asset_sha256) {
+            store.history(&head.review)?;
+        }
+    }
+    let (mut crops, mut files, mut bytes, mut assets) = (0, 0, 0u64, BTreeSet::new());
+    for (head, record) in &rejected {
+        let manifest: bundle::Manifest = read_json(&head.review_path)?;
+        let dir = head.review_path.parent().unwrap_or(Path::new("."));
+        let removed: Vec<&str> = manifest
+            .artifacts
+            .iter()
+            .map(|a| a.path.as_str())
+            .filter(|p| !PURGE_KEEPS.contains(p))
+            .collect();
+        let body = json(&serde_json::json!({
+            "schema_version": 1,
+            "kind": "rejected_crop_purge",
+            "record_sha256": head.id,
+            "removed_artifacts": removed,
+            "raw_asset_sha256": record.asset_sha256,
+        }))?;
+        store.record_purge(&head.review, &head.id, &body)?;
+        for name in removed {
+            let path = dir.join(name);
+            if let Ok(meta) = fs::symlink_metadata(&path) {
+                io_context(format!("remove {}", path.display()), fs::remove_file(&path))?;
+                files += 1;
+                bytes += meta.len();
+            }
+        }
+        crops += 1;
+        if !live_assets.contains(&record.asset_sha256) {
+            let objects = head
+                .raw_path
+                .parent()
+                .and_then(Path::parent)
+                .map(|root| root.join("objects").join(&record.asset_sha256));
+            if let Some(path) = objects
+                && let Ok(meta) = fs::symlink_metadata(&path)
+            {
+                io_context(format!("remove {}", path.display()), fs::remove_file(&path))?;
+                bytes += meta.len();
+                assets.insert(record.asset_sha256.clone());
+            }
+        }
+    }
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "schema_version": 1,
+        "purged_crops": crops,
+        "removed_review_files": files,
+        "removed_raw_assets": assets.len(),
+        "freed_bytes": bytes,
+    }))?)
+}
+
+/// WGS84 bounds (west, south, east, north) of every curated crop, rejected or not.
+pub fn curated_footprints(runtime: &Path) -> Result<Vec<[f64; 4]>> {
+    let store = journal::Store::locate(runtime)?;
+    if !store.db.exists() {
+        return Ok(Vec::new());
+    }
+    let mut boxes = Vec::new();
+    for head in store.heads()? {
+        let dir = head.review_path.parent().unwrap_or(Path::new("."));
+        let inspection: serde_json::Value = read_json(&dir.join("inspection.json"))?;
+        let ring = inspection["wgs84Extent"]["coordinates"][0]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
+        for point in &ring {
+            let (Some(x), Some(y)) = (point[0].as_f64(), point[1].as_f64()) else {
+                continue;
+            };
+            b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+        }
+        if b[0] < b[2] && b[1] < b[3] {
+            boxes.push(b);
+        }
+    }
+    Ok(boxes)
+}
+
 /// Check indexed history and evidence, and report published records awaiting registration.
 pub fn check(runtime: &Path) -> Result<String> {
     journal::Store::locate(runtime)?.check()

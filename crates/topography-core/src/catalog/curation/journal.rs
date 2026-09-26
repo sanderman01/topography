@@ -5,6 +5,15 @@ use std::time::Duration;
 const APPLICATION_ID: i64 = 0x544f504f;
 const MAX_RECORDS: usize = 4096;
 
+pub(super) struct Head {
+    pub review: String,
+    pub id: String,
+    pub body: Vec<u8>,
+    pub raw_path: PathBuf,
+    pub review_path: PathBuf,
+    pub purged: bool,
+}
+
 pub(super) struct Store {
     pub db: PathBuf,
     root: PathBuf,
@@ -58,7 +67,7 @@ impl Store {
                     PRAGMA application_id=1414484047; PRAGMA user_version=1;")?;
             } else {
                 ensure(
-                    app == APPLICATION_ID && matches!(version, 1 | 2),
+                    app == APPLICATION_ID && matches!(version, 1..=3),
                     "unsupported or unrelated catalog database",
                 )?;
             }
@@ -70,7 +79,7 @@ impl Store {
                 == APPLICATION_ID
                 && matches!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))?,
-                    1 | 2
+                    1..=3
                 ),
             "unsupported or unrelated catalog database",
         )?;
@@ -160,6 +169,69 @@ impl Store {
             .optional()?)
     }
 
+    /// Head record at purge time, if the crop's rasters were purged.
+    fn purged_in(db: &Connection, review: &str) -> Result<Option<String>> {
+        if db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))? < 3 {
+            return Ok(None);
+        }
+        Ok(db
+            .query_row(
+                "SELECT record_id FROM purged WHERE review_id=?1",
+                [review],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Current heads with their record body, locators and purge state.
+    pub fn heads(&self) -> Result<Vec<Head>> {
+        let db = self.open(false)?;
+        let mut statement = db.prepare(
+            "SELECT h.review_id, h.record_id, r.body, r.raw_path, r.review_path FROM heads h JOIN records r ON r.id=h.record_id ORDER BY h.review_id",
+        )?;
+        let rows = statement
+            .query_map([], |r| {
+                Ok(Head {
+                    review: r.get(0)?,
+                    id: r.get(1)?,
+                    body: r.get(2)?,
+                    raw_path: PathBuf::from(r.get::<_, String>(3)?),
+                    review_path: PathBuf::from(r.get::<_, String>(4)?),
+                    purged: false,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|mut head| {
+                head.purged = Self::purged_in(&db, &head.review)?.is_some();
+                Ok(head)
+            })
+            .collect()
+    }
+
+    /// Record that a rejected crop's rasters are being deleted. Its head is frozen.
+    pub fn record_purge(&self, review: &str, head: &str, body: &[u8]) -> Result<()> {
+        let mut db = self.open(true)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version == 1 {
+            tx.execute_batch("CREATE TABLE prepared_regions (id TEXT PRIMARY KEY, body BLOB NOT NULL, manifest_path TEXT NOT NULL);")?;
+        }
+        if version < 3 {
+            tx.execute_batch("CREATE TABLE purged (review_id TEXT PRIMARY KEY REFERENCES heads(review_id), record_id TEXT NOT NULL REFERENCES records(id), body BLOB NOT NULL); PRAGMA user_version=3;")?;
+        }
+        ensure(
+            Self::head_in(&tx, review)?.as_deref() == Some(head),
+            "stale head during purge",
+        )?;
+        tx.execute(
+            "INSERT INTO purged (review_id, record_id, body) VALUES (?1, ?2, ?3) ON CONFLICT(review_id) DO NOTHING",
+            params![review, head, body],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn append(
         &self,
         record: &Record,
@@ -232,6 +304,10 @@ impl Store {
             Self::head_in(&tx, &record.target.review_sha256)? == record.previous_record_sha256,
             "stale decision: head changed during publication; record remains unregistered",
         )?;
+        ensure(
+            Self::purged_in(&tx, &record.target.review_sha256)?.is_none(),
+            "crop rasters were purged after rejection; it cannot take new decisions",
+        )?;
         tx.execute("INSERT INTO records (id,review_id,previous_id,body,raw_path,review_path) VALUES (?1,?2,?3,?4,?5,?6)",
             params![id, record.target.review_sha256, record.previous_record_sha256, bytes, raw, review])?;
         tx.execute("INSERT INTO heads (review_id,record_id) VALUES (?1,?2) ON CONFLICT(review_id) DO UPDATE SET record_id=excluded.record_id",
@@ -289,6 +365,7 @@ impl Store {
         id: &str,
         review: &str,
         snapshot: Option<&bundle::Bundle>,
+        purged: bool,
     ) -> Result<(Record, Vec<u8>)> {
         ensure(valid_digest(id), "invalid indexed record digest")?;
         let (body, raw_path, review_path, previous, subject): (
@@ -330,17 +407,33 @@ impl Store {
                 && digest(&read_small(Path::new(&review_path))?) == record.target.review_sha256,
             "local target digest mismatch",
         )?;
-        let verified;
-        let bundle = if let Some(snapshot) = snapshot {
-            snapshot
+        // Purged rejects keep only metadata; their rasters and raw asset are gone.
+        let identity = if purged {
+            let manifest: bundle::Manifest = read_json(Path::new(&review_path))?;
+            (
+                manifest.window_cells,
+                manifest.asset_sha256,
+                manifest.raw_receipt_sha256,
+            )
         } else {
-            verified = bundle::verify(Path::new(&raw_path), Path::new(&review_path))?;
-            &verified
+            let verified;
+            let bundle = match snapshot {
+                Some(snapshot) => snapshot,
+                None => {
+                    verified = bundle::verify(Path::new(&raw_path), Path::new(&review_path))?;
+                    &verified
+                }
+            };
+            (
+                bundle.manifest.window_cells,
+                bundle.manifest.asset_sha256.clone(),
+                bundle.manifest.raw_receipt_sha256.clone(),
+            )
         };
         ensure(
-            record.window_cells == bundle.manifest.window_cells
-                && record.asset_sha256 == bundle.manifest.asset_sha256
-                && record.target.raw_receipt_sha256 == bundle.manifest.raw_receipt_sha256,
+            record.window_cells == identity.0
+                && record.asset_sha256 == identity.1
+                && record.target.raw_receipt_sha256 == identity.2,
             "curation crop identity mismatch",
         )?;
         let temp = io_context("stage captured legend", tempfile::tempdir())?;
@@ -510,6 +603,11 @@ impl Store {
         let mut db = self.open(false)?;
         let tx = db.transaction()?;
         let mut next = Self::head_in(&tx, review)?;
+        let purged = Self::purged_in(&tx, review)?;
+        ensure(
+            purged.is_none() || purged == next,
+            "purged crop has newer curation records",
+        )?;
         let mut visited = BTreeSet::new();
         let mut records = Vec::new();
         while let Some(id) = next {
@@ -517,7 +615,8 @@ impl Store {
                 records.len() < MAX_RECORDS && visited.insert(id.clone()),
                 "history cycle or record limit exceeded",
             )?;
-            let (record, body) = self.verified_record(&tx, &id, review, snapshot)?;
+            let (record, body) =
+                self.verified_record(&tx, &id, review, snapshot, purged.is_some())?;
             next = record.previous_record_sha256;
             records.push((id, body));
         }
@@ -608,7 +707,7 @@ impl Store {
         }
         unreferenced.sort();
         let mut prepared_regions = 0;
-        if db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))? == 2 {
+        if db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))? >= 2 {
             let mut stmt =
                 db.prepare("SELECT id, body, manifest_path FROM prepared_regions LIMIT 4097")?;
             let rows = stmt.query_map([], |r| {

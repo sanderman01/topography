@@ -13,6 +13,18 @@ target/debug/topography gallery build data/review/source-batch/gallery-input.jso
 target/debug/topography gallery serve configs/runtime.example.toml data/review/source-gallery/gallery.json 8765
 ```
 
+A plan TOML (see `catalog/plans/`) names areas with a provider, bounding box,
+terrain class and crop count. `batch plan` discovers sources and writes the queue,
+skipping ground that already has a curation decision, accepted or rejected:
+
+```sh
+target/release/topography batch plan catalog/plans/expansion-4.toml configs/runtime.example.toml data/review/expansion-5
+```
+
+`batch review` leaves out crops with under 50% valid cells, under 10 m relief, or
+over 88% of the ground under 3° slope at 4 m (floodplains, water, flat fields); they
+are listed in `skipped-crops.json`.
+
 For real source batches, build the optimized CLI once with
 `cargo build --release --locked --offline` and use `target/release/topography`
 in these commands. This substantially reduces repeated source hashing time.

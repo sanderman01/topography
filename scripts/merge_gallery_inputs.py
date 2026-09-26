@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Merge published galleries and batch gallery inputs into one gallery input.
 
-usage: merge_gallery_inputs.py [--drop-overlaps --decided tiles.json] <new-input.json> <input>...
+usage: merge_gallery_inputs.py [--drop-overlaps] [--drop-rejected] [--decided tiles.json] <new-input.json> <input>...
 
 Inputs are published gallery.json files or batch gallery-input.json files. Earlier
 inputs win on duplicate review paths, so library tiles keep their IDs and pinned
 profiles. With --drop-overlaps, tiles of the first input and tiles with a saved
 decision (from a gallery server's /api/tiles dump) are always kept; other tiles,
 newest survey first, are dropped when they cover more than a quarter of a kept
-tile's ground. Build the result with `topography gallery build`.
+tile's ground. With --drop-rejected, tiles the dump marks rejected are left out
+(`topography curate purge-rejected` deletes their rasters). Build the result with `topography gallery build`.
 """
 
 import argparse
@@ -46,6 +47,7 @@ def survey_end(raw: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--drop-overlaps", action="store_true")
+    parser.add_argument("--drop-rejected", action="store_true")
     parser.add_argument("--decided", type=Path, help="/api/tiles dump; decided tiles are kept")
     parser.add_argument("output", type=Path)
     parser.add_argument("inputs", nargs="+", type=Path)
@@ -53,10 +55,14 @@ def main() -> int:
     if args.output.exists():
         print(f"error: {args.output} exists", file=sys.stderr)
         return 1
-    decided = set()
+    decided, rejected = set(), set()
     if args.decided:
-        decided = {t["review_sha256"] for t in json.loads(args.decided.read_text())["tiles"]
-                   if t["decision"] != "pending"}
+        dump = json.loads(args.decided.read_text())["tiles"]
+        decided = {t["review_sha256"] for t in dump if t["decision"] != "pending"}
+        rejected = {t["review_sha256"] for t in dump if t["decision"] == "reject"}
+    if args.drop_rejected and not args.decided:
+        print("error: --drop-rejected needs --decided", file=sys.stderr)
+        return 1
     candidates, reviews = [], set()
     for position, name in enumerate(args.inputs):
         for tile in json.loads(name.read_text())["tiles"]:
@@ -66,8 +72,10 @@ def main() -> int:
             reviews.add(str(review))
             entry = {k: tile[k] for k in FIELDS if tile.get(k) is not None}
             entry["review"], entry["raw"] = str(review), str(Path(tile["raw"]).resolve())
-            keep = position == 0 or hashlib.sha256(review.read_bytes()).hexdigest() in decided
-            candidates.append((keep, entry))
+            sha = hashlib.sha256(review.read_bytes()).hexdigest()
+            if args.drop_rejected and sha in rejected:
+                continue
+            candidates.append((position == 0 or sha in decided, entry))
     kept, dropped = [], 0
     if args.drop_overlaps:
         order = [c for c in candidates if c[0]] + sorted(
