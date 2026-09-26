@@ -176,9 +176,10 @@ def load_release(manifest_path: Path) -> list[Tile]:
         height = layers["elevation"].astype(np.float32)
         water = layers["water"] == 255
         snow, veg = _cover(layers["snow-ice"]), _cover(layers["vegetation"])
-        if spacing == [0.5, 0.5]:
+        # Source transforms carry float noise (e.g. 1.0000000000003).
+        if np.allclose(spacing, 0.5, rtol=0, atol=1e-6):
             height, valid, water, snow, veg = _halve(height, valid, water, snow, veg)
-        elif spacing != [1.0, 1.0]:
+        elif not np.allclose(spacing, 1.0, rtol=0, atol=1e-6):
             raise ValueError(f"unsupported spacing {spacing}")
         height = np.where(valid, height, np.nan).astype(np.float32)
         r, c = height.shape[0] // COARSE_M * COARSE_M, height.shape[1] // COARSE_M * COARSE_M
