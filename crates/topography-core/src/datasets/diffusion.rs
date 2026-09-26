@@ -5,9 +5,11 @@ use crate::{
     acquisition::io_context,
     catalog::curation,
     preparation::automatic,
-    review::{band, gallery},
+    review::{artifacts, band, gallery},
 };
 use std::fs;
+
+const REPORT_WINDOW: usize = 256;
 
 const LAYERS: [(&str, bool); 5] = [
     ("elevation", true),
@@ -70,6 +72,7 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
     let stage = io_context("stage release", tempfile::tempdir_in(parent))?;
     let scratch = io_context("release scratch", tempfile::tempdir())?;
     let mut tiles = Vec::new();
+    let mut report = Vec::new();
     for (tile, id, path, manifest, grid) in candidates {
         let extent = footprint(&grid);
         if kept
@@ -83,8 +86,9 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
             (1..=9).contains(&tile.primary_class_id),
             "tile class must be a legend class 1..=9",
         )?;
-        let cells = grid.size[0] as usize * grid.size[1] as usize;
-        let mut layers = serde_json::Map::new();
+        let (w, rows) = (grid.size[0] as usize, grid.size[1] as usize);
+        let cells = w * rows;
+        let mut raw = BTreeMap::new();
         for (layer, float) in LAYERS {
             let bytes = band(
                 &path.with_file_name(format!("{layer}.tif")),
@@ -93,11 +97,54 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
                 cells,
                 float,
             )?;
+            raw.insert(layer, bytes);
+        }
+        // Artifact checks on valid ground; stripes are repaired, the rest is masked.
+        let mut height: Vec<f32> = raw["elevation"]
+            .chunks_exact(4)
+            .zip(&raw["validity"])
+            .map(|(b, v)| {
+                if *v == 255 {
+                    f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                } else {
+                    f32::NAN
+                }
+            })
+            .collect();
+        let detection = artifacts::detect_metre(&height, w, rows, grid.spacing_m[0]);
+        let original = height.clone();
+        artifacts::destripe(&mut height, w, rows, &detection.stripes);
+        let summary = artifacts::summary(&original, &detection, grid.spacing_m);
+        let elevation: Vec<u8> = raw["elevation"]
+            .chunks_exact(4)
+            .zip(&height)
+            .flat_map(|(b, h)| {
+                if h.is_finite() {
+                    h.to_le_bytes()
+                } else {
+                    [b[0], b[1], b[2], b[3]]
+                }
+            })
+            .collect();
+        raw.insert("elevation", elevation);
+        raw.insert("artifacts", detection.mask.clone());
+        report.push(report_entry(
+            stage.path(),
+            &id,
+            tile.title.as_str(),
+            &summary,
+            (&original, &height, &detection.mask),
+            w,
+            rows,
+        )?);
+        let mut layers = serde_json::Map::new();
+        for (layer, float) in LAYERS.into_iter().chain([("artifacts", false)]) {
+            let bytes = &raw[layer];
             let name = format!("{id}/{layer}.{}", if float { "f32" } else { "u8" });
-            write_new(&stage.path().join(&name), &bytes)?;
+            write_new(&stage.path().join(&name), bytes)?;
             layers.insert(
                 layer.into(),
-                json!({"path": name, "sha256": digest(&bytes), "dtype": if float {"float32_le"} else {"uint8"}}),
+                json!({"path": name, "sha256": digest(bytes), "dtype": if float {"float32_le"} else {"uint8"}}),
             );
         }
         tiles.push(json!({
@@ -109,13 +156,19 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
             "coordinate_system": manifest["coordinate_system"],
             "grid": grid,
             "masked_fill_m": manifest["masked_fill_m"],
+            "artifacts": summary,
+            "stripe_repair": if detection.stripes.is_empty() { Value::Null } else { json!("fir_notch_v1: elevation.f32 has the listed stripe periods removed") },
             "layers": layers,
         }));
         kept.push((manifest["coordinate_system"].clone(), extent));
     }
     ensure(!tiles.is_empty(), "no accepted Ready tiles in this gallery")?;
+    write_new(
+        &stage.path().join("report.html"),
+        report_page(&report).as_bytes(),
+    )?;
     let release = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "diffusion_training_release",
         "gallery_sha256": gallery_sha256,
         "topography_version": env!("CARGO_PKG_VERSION"),
@@ -124,7 +177,10 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
             "water": "255 water, 0 not water",
             "snow-ice": "2 present, 1 absent, 0 unknown",
             "vegetation": "2 present, 1 absent, 0 unknown",
+            "artifacts": "bit flags: 1 interpolated facet, 2 periodic stripe (repaired), 4 straight seam; 1 and 4 are excluded from training",
         },
+        "artifact_checks": artifacts::CHECKS,
+        "report": "report.html",
         "tiles": tiles,
         "skipped": skipped,
     });
@@ -134,4 +190,164 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
     )?;
     io_context("publish release", fs::rename(stage.path(), output))?;
     Ok(output.join("manifest.json"))
+}
+
+/// Grey hillshade (light from the north-west) of one window, artifact cells tinted.
+fn hillshade(height: &[f32], mask: &[u8], w: usize, x0: usize, y0: usize, size: usize) -> Vec<u8> {
+    let at = |x: usize, y: usize| {
+        let v = height[y * w + x];
+        if v.is_finite() {
+            Some(f64::from(v))
+        } else {
+            None
+        }
+    };
+    let mut rgb = Vec::with_capacity(size * size * 3);
+    for y in y0..y0 + size {
+        for x in x0..x0 + size {
+            let (xl, xr, yu, yd) = (
+                x.saturating_sub(1),
+                (x + 1).min(w - 1),
+                y.saturating_sub(1),
+                y + 1,
+            );
+            let shade = match (
+                at(xl, y),
+                at(xr, y),
+                at(x, yu),
+                at(x, yd.min(height.len() / w - 1)),
+            ) {
+                (Some(l), Some(r), Some(u), Some(d)) => {
+                    let (gx, gy) = ((r - l) / 2.0, (d - u) / 2.0);
+                    let n = (gx * gx + gy * gy + 1.0).sqrt();
+                    // Normal (-gx, -gy, 1) against light from the north-west at 45 degrees.
+                    ((0.5 * gx + 0.5 * gy + std::f64::consts::FRAC_1_SQRT_2) / n).clamp(0.0, 1.0)
+                        * 235.0
+                        + 20.0
+                }
+                _ => 12.0,
+            };
+            let m = mask[y * w + x];
+            // Stripes are repaired, so only excluded cells are tinted.
+            let tint = if m & (artifacts::FACET | artifacts::SEAM) != 0 {
+                [1.0, 0.45, 0.45]
+            } else {
+                [1.0, 1.0, 1.0]
+            };
+            rgb.extend(tint.map(|t| (shade * t) as u8));
+        }
+    }
+    rgb
+}
+
+fn write_png(path: &Path, size: usize, rgb: &[u8]) -> Result<()> {
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, size as u32, size as u32);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| AcquisitionError::Invalid(format!("png: {e}")))?;
+        writer
+            .write_image_data(rgb)
+            .map_err(|e| AcquisitionError::Invalid(format!("png: {e}")))?;
+    }
+    write_new(path, &out)
+}
+
+/// Close-up of the window with the most flagged cells: source and training versions.
+fn report_entry(
+    stage: &Path,
+    id: &str,
+    title: &str,
+    summary: &Value,
+    (original, repaired, mask): (&[f32], &[f32], &[u8]),
+    w: usize,
+    rows: usize,
+) -> Result<Value> {
+    let size = REPORT_WINDOW.min(w).min(rows);
+    let (mut best, mut at) = (0usize, (0usize, 0usize));
+    for y0 in (0..=rows - size).step_by(64) {
+        for x0 in (0..=w - size).step_by(64) {
+            let n = (y0..y0 + size)
+                .map(|y| {
+                    mask[y * w + x0..y * w + x0 + size]
+                        .iter()
+                        .filter(|m| **m != 0)
+                        .count()
+                })
+                .sum::<usize>();
+            if n > best {
+                (best, at) = (n, (x0, y0));
+            }
+        }
+    }
+    let mut images = Vec::new();
+    if best > 0 {
+        io_context("create report", fs::create_dir_all(stage.join("report")))?;
+        for (name, data) in [("source", original), ("training", repaired)] {
+            let file = format!("report/{id}-{name}.png");
+            write_png(
+                &stage.join(&file),
+                size,
+                &hillshade(data, mask, w, at.0, at.1, size),
+            )?;
+            images.push(file);
+        }
+    }
+    Ok(json!({"title": title, "summary": summary, "window": [at.0, at.1, size], "images": images}))
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn report_page(entries: &[Value]) -> String {
+    let pct = |v: &Value| format!("{:.1}%", v.as_f64().unwrap_or(0.0) * 100.0);
+    let mut rows = String::new();
+    let mut shots = String::new();
+    for e in entries {
+        let s = &e["summary"];
+        let stripes: Vec<String> = s["stripes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|t| {
+                format!(
+                    "{} m along {}",
+                    t["period_m"],
+                    t["axis"].as_str().unwrap_or("")
+                )
+            })
+            .collect();
+        let title = escape(e["title"].as_str().unwrap_or(""));
+        rows.push_str(&format!(
+            "<tr><td>{title}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            pct(&s["facet_fraction"]),
+            pct(&s["seam_fraction"]),
+            if stripes.is_empty() {
+                "none".into()
+            } else {
+                format!("{} (repaired)", stripes.join(", "))
+            },
+            pct(&s["excluded_fraction"]),
+        ));
+        if let [source, training] = e["images"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
+            shots.push_str(&format!(
+                "<figure><figcaption>{title} · worst {size} m window at cell {x}, {y}</figcaption><img src=\"{}\" alt=\"source\"><img src=\"{}\" alt=\"training\"><p>Left: source. Right: training copy (stripes removed). Red: excluded from training (facets, seams).</p></figure>",
+                source.as_str().unwrap_or(""),
+                training.as_str().unwrap_or(""),
+                size = e["window"][2],
+                x = e["window"][0],
+                y = e["window"][1],
+            ));
+        }
+    }
+    format!(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Release artifacts</title><style>:root{{color-scheme:dark;background:#111917;color:#e6eee8;font:15px system-ui,sans-serif}}body{{max-width:1100px;margin:auto;padding:16px}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #34453d;padding:6px;text-align:left}}figure{{margin:24px 0}}img{{width:min(49%,512px);image-rendering:pixelated;margin-right:1%}}p{{color:#a0b2a7}}</style><h1>Release artifact report</h1><p>Automatic checks ({}) on each tile's native grid. Excluded cells are left out of training; stripes are filtered out of the training copy.</p><table><tr><th>Tile</th><th>Facets</th><th>Seams</th><th>Stripes</th><th>Excluded</th></tr>{rows}</table>{shots}</html>",
+        artifacts::CHECKS
+    )
 }

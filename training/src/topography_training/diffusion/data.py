@@ -161,7 +161,7 @@ def split_mask(origin_y: float, rows: int, cols: int) -> np.ndarray:
 
 def load_release(manifest_path: Path) -> list[Tile]:
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("kind") != "diffusion_training_release" or manifest.get("schema_version") != 1:
+    if manifest.get("kind") != "diffusion_training_release" or manifest.get("schema_version") not in (1, 2):
         raise ValueError("unsupported training release")
     release = manifest_path.parent
     tiles = []
@@ -170,6 +170,9 @@ def load_release(manifest_path: Path) -> list[Tile]:
         spacing = t["grid"]["spacing_m"]
         layers = {k: _read(release, v, (rows, cols)) for k, v in t["layers"].items()}
         valid = layers["validity"] == 255
+        if "artifacts" in layers:
+            # Facets (1) and seams (4) are left out like missing ground; stripes are already filtered.
+            valid &= (layers["artifacts"] & 5) == 0
         height = layers["elevation"].astype(np.float32)
         water = layers["water"] == 255
         snow, veg = _cover(layers["snow-ice"]), _cover(layers["vegetation"])
