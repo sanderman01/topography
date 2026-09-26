@@ -74,6 +74,20 @@ pub(super) fn query(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Like [`query`], but a missing object (HTTP 403/404) is `None`.
+pub(super) fn query_optional(url: &str) -> Result<Option<Vec<u8>>> {
+    match query(url) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(AcquisitionError::Transfer { message, .. })
+            if message.contains("returned error: 404")
+                || message.contains("returned error: 403") =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Fetch a public HTTPS query response of up to 64 MiB with retries and a User-Agent.
 pub(super) fn query_large(url: &str, user_agent: &str, max_time_s: u64) -> Result<Vec<u8>> {
     ensure(
@@ -171,7 +185,7 @@ fn min_interval(host: &str) -> Duration {
 /// Wait until this host's minimum interval has passed since the last request by any
 /// topography process (a timestamp file per host in the temp directory; the rare
 /// race between processes only costs one early request).
-fn pace(url: &str) {
+pub(super) fn pace(url: &str) {
     static LOCK: Mutex<()> = Mutex::new(());
     let Some(host) = url
         .strip_prefix("https://")

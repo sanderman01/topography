@@ -5,10 +5,14 @@ pub mod cover;
 pub mod geofabrik;
 pub(crate) mod glo30;
 mod http;
+mod linz;
+mod plan;
 pub(crate) mod raster;
 mod store;
 mod usgs;
 
+pub use linz::{LinzDiscovery, discover_linz};
+pub use plan::plan;
 pub use raster::create_review;
 pub use store::{RawReceipt, acquire, import, verify};
 pub use usgs::{DiscoverySummary, discover_usgs};

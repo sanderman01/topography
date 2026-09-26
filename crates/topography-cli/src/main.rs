@@ -9,7 +9,9 @@ const HELP: &str = "Topography — terrain workshop
 Usage: topography [--help | --version]
        topography validate <world|runtime|legend|source> <path>
        topography discover usgs <west,south,east,north> <max-items> <output-dir> [saved-response.json]
+       topography discover linz <west,south,east,north> <max-items> <output-dir>
        topography acquire <source.toml> <runtime.toml> <max-bytes>
+       topography batch plan <plan.toml> <new-run-dir>
        topography batch validate <queue.json>
        topography batch <download|review> <queue.json> <runtime.toml> <run-dir>
        topography gallery build <tiles.json> <legend.toml> <new-output-dir>
@@ -86,6 +88,38 @@ fn main() -> ExitCode {
                     summary.returned, summary.total_matches, if summary.truncated { " (truncated; narrow the area)" } else { "" },
                     summary.known_download_bytes, summary.unknown_size_assets, Path::new(output).display())
             }));
+        }
+        [command, action, plan, output] if command == "batch" && action == "plan" => {
+            return workflow_result(
+                acquisition::plan(Path::new(plan), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, provider, bbox, limit, output] if command == "discover" && provider == "linz" => {
+            let (Some(bounds), Some(limit)) = (csv::<f64>(bbox), number::<u32>(limit)) else {
+                return usage_error();
+            };
+            return workflow_result(
+                acquisition::discover_linz(
+                    bounds,
+                    limit,
+                    Path::new(output),
+                    Path::new("data/cache/linz-stac"),
+                )
+                .map(|s| {
+                    format!(
+                        "Discovered {} of {} LINZ tiles{}.\nSources: {}",
+                        s.returned,
+                        s.tiles_in_bounds,
+                        if s.truncated {
+                            " (truncated; narrow the area)"
+                        } else {
+                            ""
+                        },
+                        Path::new(output).display()
+                    )
+                }),
+            );
         }
         [command, source, runtime, limit] if command == "acquire" => {
             let Some(limit) = number::<u64>(limit) else {

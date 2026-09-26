@@ -335,6 +335,7 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
     let mut errors = Vec::new();
     let mut tiles = Vec::new();
     let mut preparation = Vec::new();
+    let mut skipped = Vec::new();
     for item in &queue.sources {
         let raw = completed(
             item,
@@ -356,6 +357,20 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
                     verified.manifest.window_cells == crop.window_cells,
                     "existing review window differs",
                 )?;
+                // Mostly empty (sea, outside coverage) or dead-flat crops never reach a vote.
+                let m = verified.metrics.as_ref();
+                let valid = m
+                    .and_then(|m| m["finite_valid_cells"].as_f64())
+                    .unwrap_or(0.0);
+                let cells = m.and_then(|m| m["cells"].as_f64()).unwrap_or(1.0);
+                let relief = m
+                    .and_then(|m| {
+                        Some(m["maximum_native"].as_f64()? - m["minimum_native"].as_f64()?)
+                    })
+                    .unwrap_or(0.0);
+                if valid < 0.5 * cells || relief < 10.0 {
+                    return Ok(None);
+                }
                 let review = io_context("resolve review", fs::canonicalize(manifest))?;
                 let mut tile = json!({"id":id,"title":crop.title,"raw":raw,"review":review,"primary_class_id":crop.primary_class_id});
                 if let Some(profile) = &item.preparation_profile {
@@ -391,13 +406,15 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
                     };
                     preparation.push(state);
                 }
-                Ok::<_, super::AcquisitionError>(tile)
+                Ok::<_, super::AcquisitionError>(Some(tile))
             })();
             match result {
-                Ok(tile) => {
+                Ok(Some(tile)) => {
                     count += 1;
                     tiles.push(tile)
                 }
+                Ok(None) => skipped
+                    .push(json!({"id":id,"reason":"under 50% valid cells or under 10 m relief"})),
                 Err(e) => errors.push(json!({"id":id,"error":e.to_string()})),
             }
         }
@@ -409,6 +426,10 @@ pub fn review(queue: &Path, runtime: &Path, output: &Path) -> Result<(bool, Stri
     status(
         &output.join("preparation-status.json"),
         &json!({"schema_version":1,"tiles":preparation}),
+    )?;
+    status(
+        &output.join("skipped-crops.json"),
+        &json!({"schema_version":1,"crops":skipped}),
     )?;
     report(output, "review", count, errors)
 }

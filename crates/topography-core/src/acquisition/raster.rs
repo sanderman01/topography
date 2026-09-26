@@ -219,3 +219,25 @@ pub fn create_review(receipt_path: &Path, output: &Path, window: [u32; 4]) -> Re
     io_context("publish review", fs::rename(stage.path(), output))?;
     Ok(output.join("review.json"))
 }
+
+/// Project one lon/lat point into `srs` with gdaltransform.
+pub(crate) fn project(srs: &str, lon: f64, lat: f64) -> Result<(f64, f64)> {
+    let out = run(command("gdaltransform").args([
+        "-s_srs",
+        "EPSG:4326",
+        "-t_srs",
+        srs,
+        "-output_xy",
+        "-coord",
+        &lon.to_string(),
+        &lat.to_string(),
+    ]))?;
+    let text = String::from_utf8_lossy(&out);
+    let mut parts = text.split_whitespace().map(str::parse::<f64>);
+    match (parts.next(), parts.next()) {
+        (Some(Ok(x)), Some(Ok(y))) => Ok((x, y)),
+        _ => Err(super::AcquisitionError::Invalid(format!(
+            "unexpected gdaltransform output: {text}"
+        ))),
+    }
+}

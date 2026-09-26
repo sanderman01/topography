@@ -37,27 +37,6 @@ struct WorldConfig {
     regions: Vec<Region>,
 }
 
-fn project(srs: &str, lon: f64, lat: f64) -> Result<(f64, f64)> {
-    let out = raster::run(raster::command("gdaltransform").args([
-        "-s_srs",
-        "EPSG:4326",
-        "-t_srs",
-        srs,
-        "-output_xy",
-        "-coord",
-        &lon.to_string(),
-        &lat.to_string(),
-    ]))?;
-    let text = String::from_utf8_lossy(&out);
-    let mut parts = text.split_whitespace().map(str::parse::<f64>);
-    match (parts.next(), parts.next()) {
-        (Some(Ok(x)), Some(Ok(y))) => Ok((x, y)),
-        _ => Err(AcquisitionError::Invalid(format!(
-            "unexpected gdaltransform output: {text}"
-        ))),
-    }
-}
-
 fn unproject(srs: &str, x: f64, y: f64) -> Result<(f64, f64)> {
     let out = raster::run(raster::command("gdaltransform").args([
         "-s_srs",
@@ -119,7 +98,7 @@ pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<
         32700
     } + zone;
     let srs = format!("EPSG:{epsg}");
-    let (cx, cy) = project(&srs, config.center_lon, config.center_lat)?;
+    let (cx, cy) = raster::project(&srs, config.center_lon, config.center_lat)?;
     let half = f64::from(config.extent_m) / 2.0;
     let snap = |v: f64| (v / f64::from(BLOCK_M)).round() * f64::from(BLOCK_M);
     let (x0, top) = (snap(cx - half), snap(cy + half));
