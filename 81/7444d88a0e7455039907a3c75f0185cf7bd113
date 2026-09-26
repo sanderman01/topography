@@ -1,0 +1,35 @@
+crates/topography-core/src/review/artifacts.rs
+  s_8a3239663527df::t_148cd9471ed1b7 295,301-307,309-316
+  s_8a3239663527df::t_29be1fb4316df2 5-6,287,290-294,296-300,308,317-321,325-328,442-443
+  s_8a3239663527df::t_7d63346e041936 288-289,322-324
+configs/cover-game-v3.toml
+  s_8a3239663527df::t_4b009ca4e61adc 1-37
+crates/topography-core/src/review/gallery.html
+  s_8a3239663527df::t_29be1fb4316df2 39
+crates/topography-core/src/datasets/diffusion.rs
+  s_8a3239663527df::t_29be1fb4316df2 117,161,181,232-233,341,351
+crates/topography-core/src/review/gallery_bridge.html
+  s_8a3239663527df::t_29be1fb4316df2 28,30
+training/src/topography_training/diffusion/data.py
+  s_8a3239663527df::t_29be1fb4316df2 174-175
+docs/plans/terrain-diffusion-v1.md
+  s_8a3239663527df::t_7a5feca0f9a22e 81-84,90-91
+docs/workflows/terrain-diffusion.md
+  s_8a3239663527df::t_7a5feca0f9a22e 20-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "817444d88a0e7455039907a3c75f0185cf7bd113",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
