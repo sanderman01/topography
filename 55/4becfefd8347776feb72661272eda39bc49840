@@ -1,0 +1,19 @@
+training/src/topography_training/diffusion/data.py
+  s_2990aebbfb5b77::t_638ad4296740e2 179-180,182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "554becfefd8347776feb72661272eda39bc49840",
+  "prompts": {},
+  "sessions": {
+    "s_2990aebbfb5b77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f7cfa0f-82d6-4b28-81d7-b2df0cae0a3c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
