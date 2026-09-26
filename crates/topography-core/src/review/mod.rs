@@ -352,8 +352,9 @@ pub(crate) fn flat_share(review: &Path, bundle: &bundle::Bundle) -> Result<f64> 
             }
         }
     }
+    // Too small to measure is not evidence of flatness.
     Ok(if total == 0 {
-        1.0
+        0.0
     } else {
         flat as f64 / total as f64
     })
