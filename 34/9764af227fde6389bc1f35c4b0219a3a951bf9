@@ -1,0 +1,33 @@
+crates/topography-core/src/review/mod.rs
+  s_8a3239663527df::t_5b73498f22665d 3
+crates/topography-core/src/review/artifacts.rs
+  s_8a3239663527df::t_c25d02aabbb5ed 293-295,297-300
+  s_8a3239663527df::t_8e92c3e5b25d61 82-85,141-142,180-190,213-217,233-235,323-324
+  s_8a3239663527df::t_4e2116bcdcc14b 1-52,105-140,143,145-179,191-212,218-232,236-292,296,301-322,325-403
+  s_8a3239663527df::t_12865e0ae82e0b 53-81,86-104,144
+training/src/topography_training/diffusion/data.py
+  s_8a3239663527df::t_9f3866743b6d6c 164,173-175
+crates/topography-core/src/datasets/diffusion.rs
+  s_8a3239663527df::t_e457db864d1962 231,340
+  s_8a3239663527df::t_e1b0b62a7d1525 223,288
+  s_8a3239663527df::t_acda5a60700c19 224-226
+  s_8a3239663527df::t_12865e0ae82e0b 114
+  s_8a3239663527df::t_8e92c3e5b25d61 199-203,208-219,274-279,291-295,303-305,318-324,331-335
+  s_8a3239663527df::t_38ee97eb856157 8,12-13,75,89-91,100-113,115-142,144,147,159-160,166-169,171,180,182-183,194-198,204-207,220-222,227-230,232-273,280-287,289-290,296-302,306-317,325-330,336-339,341-353
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "349764af227fde6389bc1f35c4b0219a3a951bf9",
+  "prompts": {},
+  "sessions": {
+    "s_8a3239663527df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "822a6c90-2471-4d2f-9023-59f191168faf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
