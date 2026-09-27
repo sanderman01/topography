@@ -84,6 +84,10 @@ def main(argv=None) -> int:
     tiles = data.load_release(Path(config["release"]))
     val = data.CropSampler(tiles, data.VALIDATION, size, stride=size, min_valid=0.8)
     train = data.CropSampler(tiles, data.TRAIN, size, stride=size // 2, min_valid=0.8)
+    # Masked dry ground shows as grey holes that give real patches away in the blind review.
+    val.positions = [(ti, y, x) for ti, y, x in val.positions
+                     if (np.isnan(tiles[ti].height[y : y + size, x : x + size])
+                         & ~tiles[ti].water[y : y + size, x : x + size]).mean() <= 0.01]
 
     # Spread picks over tiles: round-robin through each tile's validation windows.
     by_tile: dict[int, list[int]] = {}
@@ -115,7 +119,11 @@ def main(argv=None) -> int:
         real_valid = ~np.isnan(real) & ~water
         stats.append({"tile": t.name, "class_id": t.class_id,
                       "real": terrain_stats(real, real_valid), "generated": terrain_stats(gen_h, gen_valid)})
-        for kind, h in (("real", real), ("generated", gen_h)):
+        # Show real water with the same outline as generated water; fill the few remaining gaps.
+        real_shown = np.where(water, np.nan, real)
+        if (np.isnan(real_shown) & ~water).any():
+            real_shown = np.where(water, np.nan, data.fill_nan(real_shown))
+        for kind, h in (("real", real_shown), ("generated", gen_h)):
             items.append({"kind": kind, "tile": t.name, "class_id": t.class_id, "img": hillshade(h, water)})
         print(f"{n + 1}/{len(picks)} {t.name}", flush=True)
 
