@@ -370,7 +370,6 @@ pub fn build(runtime: &Path, request_path: &Path) -> Result<PathBuf> {
             let finite =
                 f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]).is_finite();
             if item.masks["water"][i] == 1
-                && (request.schema_version == 1 || item.masks["snow-ice"][i] == 1)
                 && item.masks["quality"][i] == 1
                 && item.provider[i] == 255
                 && finite

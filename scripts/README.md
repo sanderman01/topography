@@ -54,7 +54,7 @@ These are CLI workflow checks; live provider availability and source fidelity
 require the separate [real-data workflow](../docs/workflows/dem-acquisition.md).
 
 `python3 scripts/check_cover_acquisition.py target/debug/topography` (run by
-`check.sh`) exercises `game_cover_v4` against a loopback HTTPS server with
+`check.sh`) exercises `game_cover_v5` against a loopback HTTPS server with
 synthetic WorldCover, GLIMS and Overpass fixtures (`cover_fixtures.py`). It checks
 WorldCover, OSM water (areas, multipolygon islands, buffered lines) and
 latest-outline glacier rules, water precedence, crops outside WorldCover coverage,
@@ -97,7 +97,7 @@ Run without Python's `-O` assertion bypass.
 `python3 scripts/check_surface_cover.py target/debug/topography` exercises the
 versioned snow/ice and vegetation contracts with tiny native-grid rasters. It
 checks legacy serialization, explicit unavailable versus assessed cover,
-snow/ice ground exclusion, exact surface preservation, malformed cover masks,
+snow/ice as ground, exact surface preservation, malformed cover masks,
 captured evidence, automatic preparation and restart behavior. All inputs and
 catalog records are isolated synthetic fixtures.
 

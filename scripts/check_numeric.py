@@ -76,7 +76,7 @@ def main():
                                 capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert (root / "out/result.json").is_file()
-        # Cover v2 preserves the measured ice surface but excludes it from ground metrics.
+        # A legacy product that excluded the measured ice surface from ground still loads.
         covered = copy.deepcopy(region)
         cover_arrays = {key: value.copy() for key, value in arrays.items()}
         cover_arrays["surface-elevation"] = height.copy()
@@ -103,7 +103,7 @@ def main():
         for key, index, value, message in [
             ("snow-ice", (0, 2), 0, "unknown snow"),
             ("vegetation", (0, 0), 3, "category"),
-            ("validity", (1, 1), 255, "validity"),
+            ("validity", (0, 2), 255, "validity"),  # a water cell
             ("surface-elevation", (1, 0), 999, "surface"),
         ]:
             previous = cover_arrays[key][index].copy()
@@ -125,7 +125,7 @@ def main():
         cover_metrics = json.loads((root / "cover-out/metrics.json").read_text())
         assert cover_metrics["schema_version"] == 2
         assert cover_metrics["regions"][0]["snow_ice_cells"] == 2
-        assert cover_metrics["regions"][0]["invalid_land_cells"] == 1
+        assert cover_metrics["regions"][0]["invalid_land_cells"] == 2  # masked ice counts as invalid land
         # Failure publishes neither a success result nor a partial output directory.
         job["schema_version"] = 3
         request.write_text(json.dumps(job))

@@ -130,7 +130,8 @@ def quality_checks(cli, directory, *, runtime=None, west=700000):
     assert report["blockers"] == []
     counts = report["counts"]
     assert counts["water_cells"] == 2 and counts["snow_ice_cells"] == 2
-    assert counts["ground_cells"] == counts["valid_terrestrial_cells"] == 13
+    # Snow/ice is ground under game cover; only water is excluded.
+    assert counts["ground_cells"] == counts["valid_terrestrial_cells"] == 14
     assert counts["vegetation_cells"] == counts["unknown_vegetation_cells"] == 1
     assert report["surface_cover"]["snow-ice"]["evidence"][0]["sha256"] == sha(directory / "cover-evidence.txt")
     assert "path" not in report["surface_cover"]["snow-ice"]["evidence"][0]
@@ -146,8 +147,7 @@ def quality_checks(cli, directory, *, runtime=None, west=700000):
     path = raster(directory, "all-ice", [2] * 16, x=west)
     all_ice["masks"]["snow-ice"] = pinned(path)
     frozen = assess(cli, directory, quality, all_ice, "all-ice-report")
-    assert frozen["counts"]["ground_cells"] == 0
-    assert any("50%" in value for value in frozen["blockers"])
+    assert frozen["counts"]["ground_cells"] == 14 and frozen["blockers"] == []
 
     unavailable = v2_input(directory, legacy, snow=[1] * 16, vegetation=None,
                            vegetation_status="unavailable", x=west)
@@ -222,9 +222,9 @@ def preparation_checks(cli, directory, *, runtime=None, west=700000):
     product = json.loads(manifest.read_text())
     assert product["schema_version"] == 2 and product["policy"] == "native_ground_cover_v1"
     assert values(manifest.parent / "surface-elevation.tif") == surface
-    expected_ground = [-12.5, -12.5, -12.5] + surface[3:]
+    expected_ground = [-12.5, -12.5] + surface[2:]
     assert values(manifest.parent / "elevation.tif") == expected_ground
-    assert values(manifest.parent / "validity.tif") == [0, 0, 0] + [255] * 13
+    assert values(manifest.parent / "validity.tif") == [0, 0] + [255] * 14
     assert values(manifest.parent / "provider-validity.tif") == [255] * 16
     assert values(manifest.parent / "water.tif") == [255, 255] + [0] * 14
     assert values(manifest.parent / "snow-ice.tif") == [2, 1, 2] + [1] * 13

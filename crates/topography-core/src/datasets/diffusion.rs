@@ -174,6 +174,8 @@ pub fn build_diffusion(runtime: &Path, gallery_path: &Path, output: &Path) -> Re
         "kind": "diffusion_training_release",
         "gallery_sha256": gallery_sha256,
         "topography_version": env!("CARGO_PKG_VERSION"),
+        // Every tile carries the current game cover; consumers read water smoothing from it.
+        "cover_policy": crate::acquisition::cover::POLICY,
         "mask_codes": {
             "validity": "255 valid ground, 0 masked",
             "water": "255 water, 0 not water",

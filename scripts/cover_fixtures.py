@@ -132,7 +132,7 @@ class CoverServer:
                                                     "numberMatched": len(glims)}))
         if osm is not None:
             (folder / "interpreter").write_text(json.dumps({"version": 0.6, "elements": list(osm)}))
-        text = (ROOT / "configs/cover-game-v4.toml").read_text()
+        text = (ROOT / "configs/cover-game-v5.toml").read_text()
         config = tomllib.loads(text)
         for old, new in [(config["worldcover"]["url_template"], f"{self.base}/{name}/wc-{{tile}}.tif"),
                          (config["glims"]["endpoint"], f"{self.base}/{name}/ows"),

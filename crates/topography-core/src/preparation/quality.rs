@@ -402,7 +402,8 @@ fn evaluate(path: &Path) -> Result<(Assessment, bundle::Bundle)> {
             } else {
                 1
             };
-            let ground = water == 1 && snow_ice == 1;
+            // Snow/ice is a game layer over measured ground, not an exclusion.
+            let ground = water == 1;
             let valid = ground && quality == 1 && provider[i] == 255 && finite;
             counts.water_cells += u64::from(water == 2);
             counts.unclassified_water_cells += u64::from(water == 0);

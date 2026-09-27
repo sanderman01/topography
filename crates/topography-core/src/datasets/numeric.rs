@@ -318,7 +318,6 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
         let mut layers = BTreeMap::new();
         let mut valid_cells = 0;
         let mut water_cells = 0;
-        let mut water_mask = Vec::new();
         let mut ice_mask = Vec::new();
         let layers_to_read = LAYERS.iter().chain(if version == 2 {
             COVER_LAYERS.iter()
@@ -337,7 +336,6 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
                 valid_cells = bytes.iter().filter(|&&value| value == 255).count() as u64;
             } else if layer == "water" {
                 water_cells = bytes.iter().filter(|&&value| value == 255).count() as u64;
-                water_mask.clone_from(&bytes);
             } else if layer == "snow-ice" {
                 ice_mask.clone_from(&bytes);
             }
@@ -358,13 +356,9 @@ pub fn evaluate(runtime: &Path, release: &Path, python: &Path, output: &Path) ->
         )?;
         let snow_ice_cells =
             (version == 2).then(|| ice_mask.iter().filter(|&&v| v == 2).count() as u64);
-        let ice_land_cells = ice_mask
-            .iter()
-            .zip(&water_mask)
-            .filter(|(ice, water)| **ice == 2 && **water == 0)
-            .count() as u64;
+        // Snow/ice is ground; products that predate game_cover_v5 count it as invalid land.
         let invalid_land_cells = (cells as u64)
-            .checked_sub(valid_cells + water_cells + ice_land_cells)
+            .checked_sub(valid_cells + water_cells)
             .ok_or_else(|| {
                 AcquisitionError::Invalid("overlapping ground and surface cover".into())
             })?;

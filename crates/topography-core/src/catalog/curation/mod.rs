@@ -1093,7 +1093,7 @@ pub(crate) fn qualify_cover_upgrade(
                 }
             }
             let note = &format!(
-                " Game cover upgrade to {} (technical, no new vote): masks reassessed with game water added and snow/ice excluded from ground; vegetation is informational.",
+                " Game cover upgrade to {} (technical, no new vote): masks reassessed with game water added; snow/ice counts as ground; vegetation is informational.",
                 crate::acquisition::cover::POLICY
             );
             if !finding.note.contains(note) {
@@ -1116,7 +1116,7 @@ pub(crate) fn qualify_cover_upgrade(
         coverage.evidence_ids.push(report_id.clone());
     }
     let note = &format!(
-        " {}: ground excludes water and snow/ice.",
+        " {}: ground excludes water; snow/ice counts as ground.",
         crate::acquisition::cover::POLICY
     );
     if !coverage.note.contains(note) {
@@ -1261,7 +1261,7 @@ pub(crate) fn carry_metadata_successor(
                 cleared.push(serde_json::json!({"finding":name,"earlier_note":finding.note}));
                 finding.state = FindingState::Pass;
                 finding.note = format!(
-                    "Metadata successor (technical, no new vote): the earlier failure concerned the strict snow/ice evidence assessment, which {} replaces by excluding snow/ice cells from ground with deterministic fill. Earlier note: {}",
+                    "Metadata successor (technical, no new vote): the earlier failure concerned the strict snow/ice evidence assessment, which {} replaces with an automatic snow/ice game layer over measured ground. Earlier note: {}",
                     crate::acquisition::cover::POLICY,
                     finding.note
                 );

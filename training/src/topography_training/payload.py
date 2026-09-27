@@ -100,9 +100,10 @@ def load_region(region: dict, directory: Path, *, version: int = 1) -> tuple[np.
                 raise ValueError(f"invalid {name} mask category")
         if np.any(arrays["snow-ice"] == 0):
             raise ValueError("unknown snow/ice classification")
-        expected &= arrays["snow-ice"] == 1
         expected &= np.isfinite(arrays["surface-elevation"])
-    if not np.array_equal(valid, expected) or np.any((arrays["features"] == 1) & ~valid):
+    # Products before game_cover_v5 also excluded snow/ice from ground.
+    legacy = expected & (arrays["snow-ice"] == 1) if version == 2 else expected
+    if not (np.array_equal(valid, expected) or np.array_equal(valid, legacy)) or np.any((arrays["features"] == 1) & ~valid):
         raise ValueError("inconsistent terrain validity/masks")
     if version == 2 and not np.array_equal(a[valid].view(np.uint32), arrays["surface-elevation"][valid].view(np.uint32)):
         raise ValueError("ground elevation differs from measured surface")

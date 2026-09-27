@@ -12,7 +12,7 @@ cargo run --locked --offline -p topography-cli -- validate runtime configs/runti
 - `worlds/pilot.toml`: the 4,096 m pilot world.
 - `worlds/standard.toml`: the recommended 32,768 m world.
 - `worlds/exact-32km.toml`: the alternative 32,000 m world.
-- `cover-game-v4.toml`: the `game_cover_v4` water, snow/ice, vegetation and land-cover policy,
+- `cover-game-v5.toml`: the `game_cover_v5` water, snow/ice, vegetation and land-cover policy,
   built into the binary ([workflow](../docs/workflows/cover-acquisition.md)).
 - `local/`: ignored machine-specific overrides and local paths.
 

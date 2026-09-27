@@ -1,4 +1,4 @@
-//! Game cover masks (`game_cover_v4`) for one reviewed crop from public land cover
+//! Game cover masks (`game_cover_v5`) for one reviewed crop from public land cover
 //! and OpenStreetMap water, plus the WorldCover class layer. Technical layers only; never writes curation or creates a vote.
 
 use super::{
@@ -19,8 +19,8 @@ use std::{
     process::Command,
 };
 
-pub(crate) const POLICY: &str = "game_cover_v4";
-const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v4.toml");
+pub(crate) const POLICY: &str = "game_cover_v5";
+const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v5.toml");
 /// ESA WorldCover v200 class codes; 0 marks cells outside WorldCover coverage.
 pub(crate) const LAND_COVER_CLASSES: [u8; 12] = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
 const ABSENT: u8 = 1;
@@ -42,6 +42,7 @@ struct WorldCover {
     url_template: String,
     observed_at: String,
     water_present: Vec<u8>,
+    water_smooth_m: f64,
     snow_ice_present: Vec<u8>,
     vegetation_present: Vec<u8>,
     license: String,
@@ -93,7 +94,7 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
     let (w, g, o) = (&policy.worldcover, &policy.glims, &policy.osm);
     ensure(
         policy.schema_version == 2 && policy.policy == POLICY,
-        "cover policy must be schema 2, game_cover_v4",
+        "cover policy must be schema 2, game_cover_v5",
     )?;
     ensure(
         https(&w.url_template)
@@ -101,6 +102,8 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
             && !w.observed_at.trim().is_empty()
             && !w.snow_ice_present.is_empty()
             && !w.water_present.is_empty()
+            && w.water_smooth_m.is_finite()
+            && (0.0..=50.0).contains(&w.water_smooth_m)
             && https(&g.endpoint)
             && https(&o.endpoint)
             && (1..=600).contains(&o.timeout_s)
@@ -157,6 +160,46 @@ impl Grid {
             t[3],
         ]
     }
+}
+
+/// WorldCover water on the crop grid with its 10 m steps rounded: a Gaussian blur of
+/// `sigma_m` (edges replicated) thresholded at one half.
+fn smooth_water(water: &[bool], grid: &Grid, sigma_m: f64) -> Vec<bool> {
+    let spacing = grid.transform[1].abs();
+    if sigma_m <= 0.0 || spacing <= 0.0 || !water.contains(&true) {
+        return water.to_vec();
+    }
+    let sigma = sigma_m / spacing;
+    let r = (3.0 * sigma) as isize;
+    let kernel: Vec<f32> = (-r..=r)
+        .map(|i| (-0.5 * (i as f64 / sigma).powi(2)).exp())
+        .map(|k| k as f32)
+        .collect();
+    let total: f32 = kernel.iter().sum();
+    let (w, h) = (grid.width as usize, grid.height as usize);
+    let blur = |src: &[f32], dst: &mut [f32], horizontal: bool| {
+        for y in 0..h {
+            for x in 0..w {
+                let mut sum = 0.0;
+                for (k, weight) in kernel.iter().enumerate() {
+                    let d = k as isize - r;
+                    let (sx, sy) = if horizontal {
+                        ((x as isize + d).clamp(0, w as isize - 1) as usize, y)
+                    } else {
+                        (x, (y as isize + d).clamp(0, h as isize - 1) as usize)
+                    };
+                    sum += weight * src[sy * w + sx];
+                }
+                dst[y * w + x] = sum / total;
+            }
+        }
+    };
+    let input: Vec<f32> = water.iter().map(|v| f32::from(u8::from(*v))).collect();
+    let mut pass = vec![0.0; input.len()];
+    let mut output = vec![0.0; input.len()];
+    blur(&input, &mut pass, true);
+    blur(&pass, &mut output, false);
+    output.iter().map(|v| *v > 0.5).collect()
 }
 
 /// GDAL command with bounded HTTP behaviour for public COG reads.
@@ -760,13 +803,18 @@ fn generate_with(
     let (mapped, os) = osm(&policy.osm, bbox, &grid, scratch.path(), cache)
         .map_err(|e| AcquisitionError::Invalid(format!("OpenStreetMap unavailable: {e}")))?;
     let w = &policy.worldcover;
+    let worldcover_water: Vec<bool> = classes
+        .iter()
+        .map(|c| w.water_present.contains(c))
+        .collect();
+    let worldcover_water = smooth_water(&worldcover_water, &grid, w.water_smooth_m);
     let present = |yes: bool| if yes { PRESENT } else { ABSENT };
     let (mut water, mut snow, mut vegetation) = (Vec::new(), Vec::new(), Vec::new());
     let mut sources = [0usize; 3];
     for i in 0..grid.cells() {
         let layers = [
             existing_water.is_some_and(|v| v[i] == PRESENT),
-            w.water_present.contains(&classes[i]),
+            worldcover_water[i],
             mapped[i] == 1,
         ];
         for (count, hit) in sources.iter_mut().zip(layers) {
@@ -795,8 +843,9 @@ fn generate_with(
     }
     let count = |v: &[u8]| v.iter().filter(|x| **x == PRESENT).count();
     let mut note = format!(
-        "{POLICY}: water is the tile's existing water mask, WorldCover {} class 80 and OpenStreetMap water areas and tidal flats (natural=mud, wetland=tidalflat) plus rivers, streams and canals buffered to their width ({}); snow/ice is WorldCover class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; water cells are never snow/ice or vegetation; everything else is absent. land-cover keeps the WorldCover class of every cell (0 outside coverage). Crop grid, nearest neighbour. Game judgment layers, not measurements.",
+        "{POLICY}: water is the tile's existing water mask, WorldCover {} class 80 (10 m steps rounded by a {} m Gaussian) and OpenStreetMap water areas and tidal flats (natural=mud, wetland=tidalflat) plus rivers, streams and canals buffered to their width ({}); snow/ice is WorldCover class 70 or inside the latest GLIMS outline per glacier ({} glaciers); vegetation is WorldCover tree, shrub, grass, crop, wetland, mangrove and moss classes; water cells are never snow/ice or vegetation; snow/ice is ground; everything else is absent. land-cover keeps the WorldCover class of every cell (0 outside coverage). Crop grid, nearest neighbour. Game judgment layers, not measurements.",
         w.observed_at,
+        w.water_smooth_m,
         policy.osm.attribution,
         gl["glaciers"].as_array().map_or(0, Vec::len)
     );
@@ -852,10 +901,15 @@ pub(crate) fn world_water(
         .map_err(|e| AcquisitionError::Invalid(format!("WorldCover unavailable: {e}")))?;
     let (mapped, os) = osm(&policy.osm, bbox, &grid, scratch.path(), None)
         .map_err(|e| AcquisitionError::Invalid(format!("OpenStreetMap unavailable: {e}")))?;
-    let water = classes
+    let worldcover_water: Vec<bool> = classes
+        .iter()
+        .map(|c| policy.worldcover.water_present.contains(c))
+        .collect();
+    let worldcover_water = smooth_water(&worldcover_water, &grid, policy.worldcover.water_smooth_m);
+    let water = worldcover_water
         .iter()
         .zip(&mapped)
-        .map(|(c, m)| u8::from(policy.worldcover.water_present.contains(c) || *m == 1))
+        .map(|(c, m)| u8::from(*c || *m == 1))
         .collect();
     Ok((
         water,

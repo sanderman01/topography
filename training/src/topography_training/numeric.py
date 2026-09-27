@@ -92,7 +92,6 @@ def execute(request_path: Path, output: Path) -> Path:
                 raise ValueError("snow/ice payload changed")
             ice = np.frombuffer(data, dtype="u1").reshape(height.shape) == 2
             row["snow_ice_cells"] = int(ice.sum())
-            row["invalid_land_cells"] = int((~valid & ~water & ~ice).sum())
         rows.append(row)
     metrics = {"schema_version": request["schema_version"], "kind": "numeric_representation_metrics", "regions": rows, "synthetic": synthetic_cases()}
     if read_document(request_path)[1] != request_bytes:

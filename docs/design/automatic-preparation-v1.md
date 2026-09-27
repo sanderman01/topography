@@ -84,11 +84,11 @@ snow/ice with unknown crop cells blocks qualification; unknown vegetation remain
 optional and does not remove valid ground.
 
 The descriptors are optional. When a profile (schema 1 or 2) has none, `stage`
-generates `game_cover_v4` masks on the crop grid (profile water joins the game
+generates `game_cover_v5` masks on the crop grid (profile water joins the game
 water), captures their `cover.json` as evidence `game-cover` and packages the
 tile as v2; see the [cover acquisition workflow](../workflows/cover-acquisition.md).
 
-Every accepted tile ends on a `game_cover_v4` product. When its current product
+Every accepted tile ends on a `game_cover_v5` product. When its current product
 is anything else (v1, strict-evidence v2 or `game_cover_v1`, read from the
 quality report's cover note), `automatic::upgrade` reuses that product's water,
 quality, repair and feature masks, adds game cover (water is the union),
@@ -113,8 +113,8 @@ stay. Permission comes from the successor source metadata when it confirms it
 (captured in the equivalence evidence), else it is kept.
 
 The v2 package and quality input retain both masks plus per-layer status, note,
-date and pinned evidence. Snow/ice is excluded from the ground denominator and
-ground output, while the measured provider surface remains separate. Existing v1
+date and pinned evidence. Under `game_cover_v5` snow/ice counts as ground (earlier
+policies excluded it); the measured provider surface remains separate. Existing v1
 package bytes, products, qualifications and human votes remain as legacy
 artifacts. Upgrades append an attributed technical successor to the existing
 human Yes and never clear a failed finding.

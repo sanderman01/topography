@@ -45,7 +45,7 @@ def check_cover(cli, directory, python=None):
         assert json.loads(completed.read_text())["schema_version"] == 2
         metrics = json.loads((completed.parent / "metrics.json").read_text())
         for region in metrics["regions"]:
-            assert region["snow_ice_cells"] == 2 and region["valid_cells"] == 13
+            assert region["snow_ice_cells"] == 2 and region["valid_cells"] == 14
             assert region["invalid_land_cells"] == 0
         payload = json.loads((completed.parent / "request.json").read_text())
         assert all({"snow-ice", "vegetation", "surface-elevation"} <= set(r["layers"])
