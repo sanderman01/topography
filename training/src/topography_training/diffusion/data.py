@@ -127,6 +127,8 @@ def coarse_surface(blocks: np.ndarray, sigma: float = SMOOTH_M) -> np.ndarray:
 
 
 def smooth_mask(mask: np.ndarray, sigma: float = WATER_SMOOTH_M) -> np.ndarray:
+    if sigma <= 0:
+        return mask
     return smooth(mask.astype(np.float32), sigma) > 0.5
 
 
@@ -159,10 +161,18 @@ def split_mask(origin_y: float, rows: int, cols: int) -> np.ndarray:
     return np.repeat(row[:, None], cols, axis=1)
 
 
+def release_water_smooth_m(manifest: dict) -> float:
+    """Water smoothing the loader applies; game_cover_v5 and later releases arrive smoothed."""
+    policy = manifest.get("cover_policy", "")
+    version = int(policy.removeprefix("game_cover_v")) if policy.startswith("game_cover_v") else 0
+    return 0.0 if version >= 5 else WATER_SMOOTH_M
+
+
 def load_release(manifest_path: Path) -> list[Tile]:
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("kind") != "diffusion_training_release" or manifest.get("schema_version") not in (1, 2):
         raise ValueError("unsupported training release")
+    water_smooth_m = release_water_smooth_m(manifest)
     release = manifest_path.parent
     tiles = []
     for t in manifest["tiles"]:
@@ -183,7 +193,7 @@ def load_release(manifest_path: Path) -> list[Tile]:
             raise ValueError(f"unsupported spacing {spacing}")
         height = np.where(valid, height, np.nan).astype(np.float32)
         r, c = height.shape[0] // COARSE_M * COARSE_M, height.shape[1] // COARSE_M * COARSE_M
-        height, water, snow, veg = height[:r, :c], smooth_mask(water[:r, :c]), snow[:r, :c], veg[:r, :c]
+        height, water, snow, veg = height[:r, :c], smooth_mask(water[:r, :c], water_smooth_m), snow[:r, :c], veg[:r, :c]
         tiles.append(
             Tile(
                 name=t["title"],

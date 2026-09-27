@@ -75,7 +75,7 @@ def main(argv=None) -> int:
             "coarse_m": data.COARSE_M,
             "coarse_smooth_m": data.SMOOTH_M,
             "coarse_offset": "random per crop",
-            "water_smooth_m": data.WATER_SMOOTH_M,
+            "water_smooth_m": data.release_water_smooth_m(json.loads(args.release.read_text())),
             "crop": args.crop,
             "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")]},
             "class_dropout": args.class_dropout,

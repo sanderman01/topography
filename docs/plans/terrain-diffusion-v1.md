@@ -115,7 +115,11 @@ explicitly (below).
   each, choosing between them on validation loss and samples. Run 1: 11/16
   generated patches got Yes, but grid artifacts (fixed coarse blocks), blocky water
   and learned source artifacts showed. Run 2 uses a smoothed coarse surface with a
-  random block offset, smoothed water and the artifact checks above.
+  random block offset, smoothed water and the artifact checks above. Run 2's
+  blind review showed real patches with grey 10 m blocks where glaciers and raw
+  WorldCover water were masked out. Run 3 trains on `game_cover_v5` products:
+  glaciers are ground and water edges are smoothed at the source, so the
+  release, the loader and world inputs share one outline.
 - [ ] **Evaluation:**
   - generate from the coarse surface, class and water of held-out validation
     windows;
