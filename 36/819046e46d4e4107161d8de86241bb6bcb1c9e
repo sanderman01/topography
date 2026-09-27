@@ -1,0 +1,23 @@
+configs/cover-game-v5.toml
+  s_2990aebbfb5b77::t_a67326ec4629bb 1-44
+training/src/topography_training/diffusion/evaluate.py
+  s_2990aebbfb5b77::t_9fb9c0ab7df697 87-88,90
+  s_2990aebbfb5b77::t_4e6adb6a88b7f7 122-126
+  s_2990aebbfb5b77::t_a7cc31b8aef5b0 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "36819046e46d4e4107161d8de86241bb6bcb1c9e",
+  "prompts": {},
+  "sessions": {
+    "s_2990aebbfb5b77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f7cfa0f-82d6-4b28-81d7-b2df0cae0a3c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
