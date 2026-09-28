@@ -1,0 +1,19 @@
+crates/topography-core/src/world/input.rs
+  s_2990aebbfb5b77::t_c5b4c58a1fd914 63-64,150,157-159,161,163,167-171,174-177,179,191-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "767bc67bf55807bfc124fcbfea74c5aba18a3fd5",
+  "prompts": {},
+  "sessions": {
+    "s_2990aebbfb5b77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f7cfa0f-82d6-4b28-81d7-b2df0cae0a3c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
