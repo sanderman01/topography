@@ -1,4 +1,4 @@
-//! Game cover masks (`game_cover_v5`) for one reviewed crop from public land cover
+//! Game cover masks (`game_cover_v6`) for one reviewed crop from public land cover
 //! and OpenStreetMap water, plus the WorldCover class layer. Technical layers only; never writes curation or creates a vote.
 
 use super::{
@@ -19,8 +19,8 @@ use std::{
     process::Command,
 };
 
-pub(crate) const POLICY: &str = "game_cover_v5";
-const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v5.toml");
+pub(crate) const POLICY: &str = "game_cover_v6";
+const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v6.toml");
 /// ESA WorldCover v200 class codes; 0 marks cells outside WorldCover coverage.
 pub(crate) const LAND_COVER_CLASSES: [u8; 12] = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
 const ABSENT: u8 = 1;
@@ -94,7 +94,7 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
     let (w, g, o) = (&policy.worldcover, &policy.glims, &policy.osm);
     ensure(
         policy.schema_version == 2 && policy.policy == POLICY,
-        "cover policy must be schema 2, game_cover_v5",
+        "cover policy must be schema 2, game_cover_v6",
     )?;
     ensure(
         https(&w.url_template)
@@ -738,6 +738,57 @@ fn overpass_water(
     ))
 }
 
+/// Game water, snow/ice and vegetation (1 absent / 2 present) and water cell counts
+/// per source (existing, WorldCover, OpenStreetMap).
+struct Masks {
+    water: Vec<u8>,
+    snow: Vec<u8>,
+    vegetation: Vec<u8>,
+    sources: [usize; 3],
+}
+
+fn combine(
+    w: &WorldCover,
+    grid: &Grid,
+    classes: &[u8],
+    glaciers: &[u8],
+    mapped: &[u8],
+    existing_water: Option<&[u8]>,
+) -> Masks {
+    let worldcover_water: Vec<bool> = classes
+        .iter()
+        .map(|c| w.water_present.contains(c))
+        .collect();
+    let worldcover_water = smooth_water(&worldcover_water, grid, w.water_smooth_m);
+    let present = |yes: bool| if yes { PRESENT } else { ABSENT };
+    let cells = grid.cells();
+    let mut m = Masks {
+        water: Vec::with_capacity(cells),
+        snow: Vec::with_capacity(cells),
+        vegetation: Vec::with_capacity(cells),
+        sources: [0; 3],
+    };
+    for i in 0..cells {
+        let layers = [
+            existing_water.is_some_and(|v| v[i] == PRESENT),
+            worldcover_water[i],
+            mapped[i] == 1,
+        ];
+        for (count, hit) in m.sources.iter_mut().zip(layers) {
+            *count += usize::from(hit);
+        }
+        let wet = layers.contains(&true);
+        // Water wins: a water cell is neither snow/ice nor vegetation.
+        m.water.push(present(wet));
+        m.snow.push(present(
+            !wet && (w.snow_ice_present.contains(&classes[i]) || glaciers[i] == 1),
+        ));
+        m.vegetation
+            .push(present(!wet && w.vegetation_present.contains(&classes[i])));
+    }
+    m
+}
+
 /// Generated crop-grid cover layers in a caller-owned directory.
 pub(crate) struct Generated {
     pub(crate) manifest: PathBuf,
@@ -803,31 +854,12 @@ fn generate_with(
     let (mapped, os) = osm(&policy.osm, bbox, &grid, scratch.path(), cache)
         .map_err(|e| AcquisitionError::Invalid(format!("OpenStreetMap unavailable: {e}")))?;
     let w = &policy.worldcover;
-    let worldcover_water: Vec<bool> = classes
-        .iter()
-        .map(|c| w.water_present.contains(c))
-        .collect();
-    let worldcover_water = smooth_water(&worldcover_water, &grid, w.water_smooth_m);
-    let present = |yes: bool| if yes { PRESENT } else { ABSENT };
-    let (mut water, mut snow, mut vegetation) = (Vec::new(), Vec::new(), Vec::new());
-    let mut sources = [0usize; 3];
-    for i in 0..grid.cells() {
-        let layers = [
-            existing_water.is_some_and(|v| v[i] == PRESENT),
-            worldcover_water[i],
-            mapped[i] == 1,
-        ];
-        for (count, hit) in sources.iter_mut().zip(layers) {
-            *count += usize::from(hit);
-        }
-        let wet = layers.contains(&true);
-        // Water wins: a water cell is neither snow/ice nor vegetation.
-        water.push(present(wet));
-        snow.push(present(
-            !wet && (w.snow_ice_present.contains(&classes[i]) || glaciers[i] == 1),
-        ));
-        vegetation.push(present(!wet && w.vegetation_present.contains(&classes[i])));
-    }
+    let Masks {
+        water,
+        snow,
+        vegetation,
+        sources,
+    } = combine(w, &grid, &classes, &glaciers, &mapped, existing_water);
     for (name, values) in [
         ("water", &water),
         ("snow-ice", &snow),
@@ -880,15 +912,23 @@ fn generate_with(
     })
 }
 
-/// Game water (WorldCover class 80 plus OpenStreetMap water) on an arbitrary metric grid.
-/// Returns one byte per cell (1 water, 0 dry) and source details.
-pub(crate) fn world_water(
+/// Game cover on an arbitrary metric grid: water, snow/ice and vegetation
+/// (1 absent / 2 present), WorldCover classes and source details.
+pub(crate) struct WorldCoverLayers {
+    pub(crate) water: Vec<u8>,
+    pub(crate) snow: Vec<u8>,
+    pub(crate) vegetation: Vec<u8>,
+    pub(crate) land_cover: Vec<u8>,
+    pub(crate) details: Value,
+}
+
+pub(crate) fn world_cover(
     width: u32,
     height: u32,
     transform: [f64; 6],
     wkt: &str,
     bbox: [f64; 4],
-) -> Result<(Vec<u8>, Value)> {
+) -> Result<WorldCoverLayers> {
     let (_, policy) = load_policy(None)?;
     let grid = Grid {
         width,
@@ -896,26 +936,29 @@ pub(crate) fn world_water(
         transform,
         wkt: wkt.into(),
     };
-    let scratch = super::io_context("create water scratch", tempfile::tempdir())?;
+    let scratch = super::io_context("create world cover scratch", tempfile::tempdir())?;
     let (classes, wc) = worldcover(&policy.worldcover, bbox, &grid, scratch.path())
         .map_err(|e| AcquisitionError::Invalid(format!("WorldCover unavailable: {e}")))?;
+    let (glaciers, gl) = glims(&policy.glims, bbox, &grid, scratch.path())
+        .map_err(|e| AcquisitionError::Invalid(format!("GLIMS unavailable: {e}")))?;
     let (mapped, os) = osm(&policy.osm, bbox, &grid, scratch.path(), None)
         .map_err(|e| AcquisitionError::Invalid(format!("OpenStreetMap unavailable: {e}")))?;
-    let worldcover_water: Vec<bool> = classes
-        .iter()
-        .map(|c| policy.worldcover.water_present.contains(c))
-        .collect();
-    let worldcover_water = smooth_water(&worldcover_water, &grid, policy.worldcover.water_smooth_m);
-    let water = worldcover_water
-        .iter()
-        .zip(&mapped)
-        .map(|(c, m)| u8::from(*c || *m == 1))
-        .collect();
-    Ok((
-        water,
-        json!({"policy": POLICY, "worldcover": wc, "osm": os,
-            "attribution": [policy.osm.attribution, policy.worldcover.citation]}),
-    ))
+    let m = combine(
+        &policy.worldcover,
+        &grid,
+        &classes,
+        &glaciers,
+        &mapped,
+        None,
+    );
+    Ok(WorldCoverLayers {
+        water: m.water,
+        snow: m.snow,
+        vegetation: m.vegetation,
+        land_cover: classes,
+        details: json!({"policy": POLICY, "worldcover": wc, "glims": gl, "osm": os,
+            "attribution": [policy.osm.attribution, policy.worldcover.citation, policy.glims.citation]}),
+    })
 }
 
 /// Write game cover for one reviewed crop into a new directory (inspection aid).

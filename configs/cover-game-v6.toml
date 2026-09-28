@@ -1,18 +1,18 @@
 # Game cover policy for automatic water, snow/ice and vegetation masks plus the full
-# WorldCover class layer (game_cover_v5).
+# WorldCover class layer (game_cover_v6).
 # Judgment layers for a game, not measurements. Everything not present is absent.
 # Water wins: water cells are never snow/ice or vegetation.
 # Built into the binary; TOPOGRAPHY_COVER_POLICY may point at another copy.
 schema_version = 2
-policy = "game_cover_v5"
+policy = "game_cover_v6"
 
 [worldcover]
 # Public COG, read by HTTPS range requests. A missing tile means outside coverage.
 url_template = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif"
 observed_at = "2021"
 water_present = [80]
-# Gaussian sigma that rounds the 10 m WorldCover water steps (0.5 threshold).
-water_smooth_m = 6.0
+# Gaussian sigma that rounds 10 m WorldCover water steps and drops fragments under ~20 m (0.5 threshold).
+water_smooth_m = 10.0
 snow_ice_present = [70]
 vegetation_present = [10, 20, 30, 40, 90, 95, 100]
 license = "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)"
