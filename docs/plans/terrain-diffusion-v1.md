@@ -23,26 +23,26 @@ relative to a coarse surface at a fixed physical scale.
 ## Approach
 
 **Pixel-space conditional diffusion of fine residuals.** The model generates the
-1 m detail that a coarse surface lacks, plus game cover masks:
+1 m detail that a coarse surface lacks, for given game cover (conditioning
+layout 2, run 4 onward; runs 1–3 used layout 1 and predicted the cover masks as
+extra target channels, so they never knew where ice or forest was):
 
 - Coarse surface `C`: ground elevation block-averaged to 32 m (valid cells only),
   then bicubically upsampled to 1 m. This matches both a low-passed survey and a
   public 30 m DEM, so the same model works on real training tiles and on a world
   base built from Copernicus GLO-30 or sculpting.
-- Target channels (1 m, 256² training crops):
-  1. residual `(H − C) / s_r`, with `s_r` a fixed metre scale fitted on training
-     cells and then frozen (initial guess 16 m; clip rate recorded);
-  2. snow/ice present (±1);
-  3. vegetation present (±1).
+- Target (1 m, 256² training crops): residual `(H − C) / s_r`, with `s_r` a
+  fixed metre scale fitted on training cells and then frozen.
 - Conditioning channels, concatenated to the input:
   - `(C − mean(C over crop)) / 256 m`: local coarse shape;
   - `C / 4,096 m`: absolute elevation, which snow depends on;
   - water mask (authored in worlds; water cells are not generated terrain);
+  - snow/ice and vegetation coverage, blurred with a 6 m Gaussian and scaled to
+    ±1, so the 10 m land-cover steps do not print as squares into the terrain;
   - per-pixel terrain class as a one-hot map over the nine legend classes plus
     "unknown". 10% class dropout during training enables classifier-free guidance.
-- Loss: EDM denoising loss (Karras et al. 2022). Height loss covers only valid,
-  non-water, non-snow-surface cells. Each mask channel's loss covers only cells
-  where that mask is known.
+- Loss: EDM denoising loss (Karras et al. 2022) over valid, non-water cells,
+  including glacier surfaces.
 - Network: a U-Net (diffusers `UNet2DModel`) of about 50–100 M parameters, with
   attention only at the two coarsest levels so it stays convolutional and works on
   any window size.
@@ -54,7 +54,7 @@ relative to a coarse surface at a fixed physical scale.
 
 Inference for large areas uses MultiDiffusion: overlapping windows share
 spatially consistent noise, and their predictions are averaged at every
-denoising step. Snow/ice and vegetation are thresholded at 0. Under water, the
+denoising step. The world's cover masks pass through to the output. Under water, the
 elevation gets the deterministic fill rule from the world contract.
 
 ## Data
@@ -119,7 +119,11 @@ explicitly (below).
   blind review showed real patches with grey 10 m blocks where glaciers and raw
   WorldCover water were masked out. Run 3 trains on `game_cover_v5` products:
   glaciers are ground and water edges are smoothed at the source, so the
-  release, the loader and world inputs share one outline.
+  release, the loader and world inputs share one outline. Run 3 still made
+  glaciers rocky (it was never told where ice is) and flats lumpy. Run 4 uses
+  conditioning layout 2 on `game_cover_v6` products (10 m water smoothing that
+  also removes small square WorldCover fragments). It is a fourth run beyond
+  the three planned, on the owner's direction (2026-09-28).
 - [ ] **Evaluation:**
   - generate from the coarse surface, class and water of held-out validation
     windows;

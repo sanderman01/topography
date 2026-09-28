@@ -1,7 +1,8 @@
 """Training release loading, coarse surfaces, geographic split and crop sampling.
 
 Arrays are row-major, north-up, 1 m cells. Heights are Float32 metres.
-Cover masks use int8: +1 present, -1 absent, 0 unknown.
+Tiles keep snow/ice and vegetation as soft uint8 coverage (0 absent .. 255 present),
+blurred so 10 m land-cover steps do not show up as squares in the terrain.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import numpy as np
 COARSE_M = 32
 SMOOTH_M = 16.0  # Gaussian sigma applied after bicubic upsampling of the coarse blocks
 WATER_SMOOTH_M = 6.0  # rounds the 10 m land-cover steps in water masks
+COVER_SOFT_M = 6.0  # Gaussian sigma of the soft snow/ice and vegetation inputs
 MARGIN_M = 96  # context around a crop for its coarse surface
 BAND_M = 2048
 VALIDATION_M = 512
@@ -30,8 +32,8 @@ class Tile:
     class_id: int
     height: np.ndarray  # float32 metres, NaN where not valid ground
     water: np.ndarray  # bool
-    snow: np.ndarray  # int8
-    vegetation: np.ndarray  # int8
+    snow: np.ndarray  # uint8 soft coverage
+    vegetation: np.ndarray  # uint8 soft coverage
     split: np.ndarray  # uint8: 0 buffer, 1 train, 2 validation
 
 
@@ -64,6 +66,13 @@ def _halve(height, valid, water, snow, veg):
         return np.where(known, np.where(s > 0, 1, -1), 0).astype(np.int8)
 
     return height2, valid2, water2, vote(snow), vote(veg)
+
+
+def soft_cover(present: np.ndarray, sigma: float = COVER_SOFT_M) -> np.ndarray:
+    """Blurred coverage of a boolean mask as uint8 (0 absent .. 255 present)."""
+    if not present.any():
+        return np.zeros(present.shape, np.uint8)
+    return np.rint(np.clip(smooth(present.astype(np.float32), sigma), 0, 1) * 255).astype(np.uint8)
 
 
 def fill_nan(a: np.ndarray) -> np.ndarray:
@@ -193,7 +202,8 @@ def load_release(manifest_path: Path) -> list[Tile]:
             raise ValueError(f"unsupported spacing {spacing}")
         height = np.where(valid, height, np.nan).astype(np.float32)
         r, c = height.shape[0] // COARSE_M * COARSE_M, height.shape[1] // COARSE_M * COARSE_M
-        height, water, snow, veg = height[:r, :c], smooth_mask(water[:r, :c], water_smooth_m), snow[:r, :c], veg[:r, :c]
+        height, water = height[:r, :c], smooth_mask(water[:r, :c], water_smooth_m)
+        snow, veg = soft_cover(snow[:r, :c] > 0), soft_cover(veg[:r, :c] > 0)
         tiles.append(
             Tile(
                 name=t["title"],
@@ -208,18 +218,36 @@ def load_release(manifest_path: Path) -> list[Tile]:
     return tiles
 
 
-def condition(coarse: np.ndarray, water: np.ndarray, classes: np.ndarray) -> np.ndarray:
-    """Conditioning channels [2 + 1 + NUM_CLASSES, H, W] for one window."""
+# Conditioning layouts. 1: coarse, water and class in; residual, snow/ice and vegetation
+# out. 2: soft snow/ice and vegetation also in; residual out.
+CONDITIONING = 2
+
+
+def channels(conditioning: int) -> tuple[int, int]:
+    """(conditioning, target) channel counts of a layout."""
+    return (3 + NUM_CLASSES, 3) if conditioning == 1 else (5 + NUM_CLASSES, 1)
+
+
+def class_start(cond) -> int:
+    """First class one-hot channel; the classes are always the last channels."""
+    return cond.shape[-3] - NUM_CLASSES
+
+
+def condition(
+    coarse: np.ndarray,
+    water: np.ndarray,
+    classes: np.ndarray,
+    snow: np.ndarray | None = None,
+    vegetation: np.ndarray | None = None,
+) -> np.ndarray:
+    """Conditioning channels for one window; layout 2 when soft cover is given."""
     rel = (coarse - coarse.mean()) / 256.0
     absolute = coarse / 4096.0
-    onehot = np.eye(NUM_CLASSES, dtype=np.float32)[classes].transpose(2, 0, 1)
-    return np.concatenate(
-        [rel[None], absolute[None], np.where(water, 1.0, -1.0)[None], onehot]
-    ).astype(np.float32)
-
-
-COND_CHANNELS = 3 + NUM_CLASSES
-TARGET_CHANNELS = 3  # residual / scale, snow/ice, vegetation
+    parts = [rel[None], absolute[None], np.where(water, 1.0, -1.0)[None]]
+    if snow is not None and vegetation is not None:
+        parts += [(snow / 127.5 - 1.0)[None], (vegetation / 127.5 - 1.0)[None]]
+    parts.append(np.eye(NUM_CLASSES, dtype=np.float32)[classes].transpose(2, 0, 1))
+    return np.concatenate(parts).astype(np.float32)
 
 
 class CropSampler:
@@ -239,19 +267,17 @@ class CropSampler:
             raise ValueError("no crops available for this split")
 
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
-        """Return (target [3,S,S], cond [C,S,S], loss mask [3,S,S])."""
+        """Return (target [1,S,S], cond [C,S,S], loss mask [1,S,S]) in layout 2."""
         i, y, x = self.positions[index]
         t, s = self.tiles[i], self.size
         sl = np.s_[y : y + s, x : x + s]
         oy, ox = rng.integers(COARSE_M, size=2)
         h, c = t.height[sl], crop_coarse(t.height, y, x, s, int(oy), int(ox), self.smooth_m)
         valid = ~np.isnan(h) & ~t.water[sl]
-        residual = np.where(valid, (h - c) / scale, 0.0)
-        snow, veg = t.snow[sl], t.vegetation[sl]
-        target = np.stack([residual, snow, veg]).astype(np.float32)
-        mask = np.stack([valid, snow != 0, veg != 0]).astype(np.float32)
+        target = np.where(valid, (h - c) / scale, 0.0)[None].astype(np.float32)
+        mask = valid[None].astype(np.float32)
         classes = np.full((s, s), t.class_id, np.int64)
-        cond = condition(c, t.water[sl], classes)
+        cond = condition(c, t.water[sl], classes, t.snow[sl], t.vegetation[sl])
         if augment:
             k, flip = rng.integers(4), rng.integers(2)
             target, cond, mask = (_dihedral(a, k, flip) for a in (target, cond, mask))

@@ -78,6 +78,8 @@ def main(argv=None) -> int:
             "water_smooth_m": data.release_water_smooth_m(json.loads(args.release.read_text())),
             "crop": args.crop,
             "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")]},
+            "conditioning": data.CONDITIONING,
+            "cover_soft_m": data.COVER_SOFT_M,
             "class_dropout": args.class_dropout,
             "seed": args.seed,
             "torch": torch.__version__,
@@ -92,7 +94,10 @@ def main(argv=None) -> int:
     val = data.CropSampler(tiles, data.VALIDATION, config["crop"], smooth_m=smooth_m)
     print(f"tiles={len(tiles)} train_positions={len(train.positions)} val_positions={len(val.positions)} scale={scale} m", flush=True)
 
-    model = Denoiser(config["arch"]).to(device)
+    if config.get("conditioning", 1) != data.CONDITIONING:
+        print("error: this run uses an older conditioning layout; start a new run", file=sys.stderr)
+        return 2
+    model = Denoiser(config["arch"], config["conditioning"]).to(device)
     if not args.no_checkpointing:
         model.unet.enable_gradient_checkpointing()
     ema = copy.deepcopy(model).eval().requires_grad_(False)
@@ -138,8 +143,9 @@ def main(argv=None) -> int:
     while step < args.steps and time.time() - start < args.hours * 3600:
         target, cond, mask = train.batch(args.batch, scale, rng)
         drop = rng.random(args.batch) < config["class_dropout"]
-        cond[drop, 3:] = 0
-        cond[drop, 3] = 1
+        k = data.class_start(cond)
+        cond[drop, k:] = 0
+        cond[drop, k] = 1
         target, cond, mask = (torch.from_numpy(a).to(device, non_blocking=True) for a in (target, cond, mask))
         for g in opt.param_groups:
             g["lr"] = args.lr * min(1.0, (step + 1) / args.warmup)

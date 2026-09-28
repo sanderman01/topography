@@ -77,7 +77,7 @@ def main(argv=None) -> int:
     config = json.loads((args.run_dir / "config.json").read_text())
     weights = args.weights or _latest(args.run_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Denoiser(config["arch"]).to(device).eval()
+    model = Denoiser(config["arch"], config.get("conditioning", 1)).to(device).eval()
     model.load_state_dict(load_file(str(weights), device=str(device)))
     scale, size = config["residual_scale_m"], config["crop"]
     smooth_m = config.get("coarse_smooth_m", 0.0)
@@ -107,7 +107,7 @@ def main(argv=None) -> int:
         t = tiles[ti]
         sl = np.s_[y : y + size, x : x + size]
         real, coarse, water = t.height[sl], data.crop_coarse(t.height, y, x, size, sigma=smooth_m), t.water[sl]
-        cond = data.condition(coarse, water, np.full((size, size), t.class_id))
+        cond = _condition(model, coarse, water, t, sl, (size, size))
         out = sample_field(model, torch.from_numpy(cond)[None].to(device), steps=args.steps,
                            window=size, stride=size, seed=args.seed + n, guidance=args.guidance)
         out = out[0].float().cpu().numpy()
@@ -115,7 +115,8 @@ def main(argv=None) -> int:
         gen_valid = ~water
         gen_h = np.where(gen_valid, gen, np.nan)
         arrays[f"real_{n}"], arrays[f"gen_{n}"] = real, gen_h
-        arrays[f"gen_snow_{n}"], arrays[f"gen_veg_{n}"] = out[1] > 0, out[2] > 0
+        if model.conditioning == 1:
+            arrays[f"gen_snow_{n}"], arrays[f"gen_veg_{n}"] = out[1] > 0, out[2] > 0
         real_valid = ~np.isnan(real) & ~water
         stats.append({"tile": t.name, "class_id": t.class_id,
                       "real": terrain_stats(real, real_valid), "generated": terrain_stats(gen_h, gen_valid)})
@@ -173,6 +174,16 @@ def main(argv=None) -> int:
     return 0
 
 
+def _condition(model, coarse, water, tile, sl, shape):
+    """Conditioning in the model's layout; layout 2 adds the tile's soft cover."""
+    from . import data
+
+    classes = np.full(shape, tile.class_id)
+    if model.conditioning == 1:
+        return data.condition(coarse, water, classes)
+    return data.condition(coarse, water, classes, tile.snow[sl], tile.vegetation[sl])
+
+
 def _seam_strip(model, tiles, size, scale, smooth_m, device, args, Image):
     """Generate a 2x4-window strip with MultiDiffusion; compare slopes on window joins."""
     import torch
@@ -187,7 +198,7 @@ def _seam_strip(model, tiles, size, scale, smooth_m, device, args, Image):
     else:
         return None
     coarse, water = data.crop_coarse(t.height, 0, 0, (h, w), sigma=smooth_m), t.water[:h, :w]
-    cond = data.condition(coarse, water, np.full((h, w), t.class_id))
+    cond = _condition(model, coarse, water, t, np.s_[:h, :w], (h, w))
     out = sample_field(model, torch.from_numpy(cond)[None].to(device), steps=args.steps,
                        window=size, stride=stride, seed=args.seed + 999, guidance=args.guidance)
     gen = coarse + out[0, 0].float().cpu().numpy() * scale

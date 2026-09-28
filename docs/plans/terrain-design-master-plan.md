@@ -156,11 +156,12 @@ owner still votes on whole tiles; see the [diffusion pilot](terrain-diffusion-v1
 
 ### Snow/ice and vegetation masks
 
-These are game layers, not scientific classifications (policy `game_cover_v5`,
+These are game layers, not scientific classifications (policy `game_cover_v6`,
 2026-09-25, superseding the stricter evidence rules first planned here; v3 on
 2026-09-26 adds tidal flats to water; v4 keeps the full WorldCover class raster
 as a `land-cover` layer for render materials; v5 on 2026-09-27 keeps snow/ice
-as ground and rounds the 10 m WorldCover water steps).
+as ground and rounds the 10 m WorldCover water steps; v6 on 2026-09-28 widens
+that rounding so WorldCover water fragments under about 20 m disappear).
 
 - Derive snow/ice and vegetation automatically from coarse public land cover:
   ESA WorldCover 10 m (class 70 snow/ice; vegetated classes) plus current GLIMS
@@ -172,15 +173,15 @@ as ground and rounds the 10 m WorldCover water steps).
   and OpenStreetMap water, including tidal flats (`natural=mud`,
   `wetland=tidalflat`), which players see under water at high tide (ODbL
   attribution recorded). Water wins: water cells are never snow/ice or vegetation.
-  WorldCover water is smoothed (6 m Gaussian, 0.5 threshold) so masks have no
-  10 m stair steps; OpenStreetMap water keeps its vector outline.
+  WorldCover water is smoothed (10 m Gaussian, 0.5 threshold) so masks have no
+  10 m stair steps or square fragments; OpenStreetMap water keeps its vector outline.
 - Masks follow the elevation crop grid by nearest-neighbour resampling and stay
   categorical; vegetation and snow may overlap.
 - Snow/ice and vegetation are layers over measured ground; neither excludes
   ground. Glacier surfaces are terrain the player sees and are trained on.
 - The gallery worker produces cover masks and the v2 product for every
   accepted tile, including legacy tiles, without per-tile profiles or votes.
-- Earlier products stay on disk; accepted tiles move to `game_cover_v5`
+- Earlier products stay on disk; accepted tiles move to `game_cover_v6`
   successors automatically.
 
 Process each real-world survey region in its appropriate projected metric CRS. Resolve horizontal units, vertical units and datum, axis orientation, nodata, and pixel alignment explicitly. Use an available verified vertical transformation when joining surveys that need one; otherwise isolate the incompatible surveys and flag the uncertainty. Do not silently treat ellipsoidal and sea-level heights as interchangeable.
@@ -197,7 +198,7 @@ Initial quality policy, adjustable per terrain family:
 | --- | --- |
 | Effective resolution | Prefer native 0.5–1 m ground data. Admit other nominal products only after checking actual spacing and feature preservation. Keep 2 m data in an explicitly approved secondary tier; exclude 5–30 m originals from fine-detail training. |
 | Missing ground | Require at least 50% valid terrestrial ground cells (99.5% until 2026-09-26; lowered on the owner's direction because missing cells stay masked in training). Mapped water is excluded; snow/ice counts as ground. Vegetated bare ground remains eligible. Evaluate support automatically; optional annotated landmarks or passages must have no unsupported ground gaps. Do not require manual feature annotations. |
-| Cover masks | Generate snow/ice and vegetation masks automatically under `game_cover_v5`; they never block qualification. |
+| Cover masks | Generate snow/ice and vegetation masks automatically under `game_cover_v6`; they never block qualification. |
 | Interpolation | Permit small, reviewed repairs with a repair mask. Large voids, invisible canyon floors, or interpolated pillar fields trigger exclusion or another source search. |
 | Artifacts | Flag stripes, terraces, spikes, pits, duplicate edges, vegetation remnants, buildings, and implausible survey-boundary steps. Compare against context before rejecting natural steepness. |
 | Feature fidelity | Human reviews the entire tile and chooses yes or no. The technical workflow assesses sampling and feature fidelity from available evidence, reporting concrete limitations without asking the human to label individual features. |
@@ -298,7 +299,7 @@ Compare generated output with a baseline assembled from real terrain patches and
 
 This baseline is a real fallback, not only a comparison point. If diffusion training does not clear its feasibility gate (numeric reconstruction, VRAM fit at acceptable precision, and human-judged terrain quality) within a bounded number of experiment iterations, build the world from curated real patches, sculpting, and blending instead — the implementation sequence (§11) should proceed on that basis rather than stall waiting for a diffusion architecture to work.
 
-**Current direction (2026-09-25).** The two representation checks above ran on CPU with absolute-height normalization and a 200-step fitting budget; they rejected those configurations, not learned terrain generation. The [terrain diffusion pilot](terrain-diffusion-v1.md) skips the autoencoder: pixel-space conditional diffusion on the GPU generates 1 m residuals relative to a 32 m coarse surface, together with snow/ice and vegetation masks, conditioned on terrain class and authored water. Its human gate is a blind Yes/No batch of real and generated patches, with at most three training runs before the fallback below applies.
+**Current direction (2026-09-25).** The two representation checks above ran on CPU with absolute-height normalization and a 200-step fitting budget; they rejected those configurations, not learned terrain generation. The [terrain diffusion pilot](terrain-diffusion-v1.md) skips the autoencoder: pixel-space conditional diffusion on the GPU generates 1 m residuals relative to a 32 m coarse surface, conditioned on terrain class, authored water and snow/ice and vegetation coverage (run 4 onward; runs 1–3 predicted the cover masks instead). Its human gate is a blind Yes/No batch of real and generated patches, with at most three training runs before the fallback below applies.
 
 Record model and dataset versions, normalization, seeds, scheduler, control strengths, training settings, checkpoints, GPU memory, runtime, and software versions. Use checkpointed experiments with identical evaluation layouts. Promote a model only after a human accepts examples and the defined numeric and structural checks pass.
 
@@ -326,17 +327,16 @@ snow/ice or vegetation record that absence explicitly. Any retained snow/ice
 surface is a separate surface layer, with no claim to ground beneath it. Mask
 support does not add vegetation placement/rendering or seasonal simulation.
 
-**Land cover for generated terrain (direction, 2026-09-26).** Generated
-heights have no WorldCover source, and per-tile biome labels are too coarse
-for surface materials. Learn simple per-biome statistics from the library's
-per-cell `land-cover` layer as a function of terrain derivatives (slope,
-relative altitude, curvature), then apply them to generated heights to derive
-land cover, and from it the snow/ice and vegetation masks. Water comes from
-the authored water masks. This is CPU work and needs no photos or model
-training. It is recorded as a derivation with provenance. Renderers pick
-materials and albedo per cell from land cover, slope and the biome palette.
-Diffusion output of cover channels remains a fallback only if these
-statistics look implausible.
+**Land cover conditions generation (direction, 2026-09-28; replaces the
+2026-09-26 derivation from generated heights).** Cover is an input the world
+author controls, like water: the world input carries 1 m water, snow/ice,
+vegetation and WorldCover `land-cover` layers, taken from WorldCover, GLIMS
+and OpenStreetMap around a real base and editable afterwards. The model is
+conditioned on soft (blurred) snow/ice and vegetation coverage per cell, so
+glaciers come out as ice surfaces and forests as forest ground, and the output
+masks are the input masks. Renderers pick materials and albedo per cell from
+land cover, slope and the biome palette. For sculpted areas without a real
+base, cover is authored or derived from terrain statistics before generation.
 
 Final join repair can use constrained local blending, boundary-conditioned inpainting, or a gradient-domain correction within a marked seam band. It must preserve locked heights and named landmarks. Recheck water connections and nearby passages afterward; a visually invisible seam can still block a river or erase a saddle.
 

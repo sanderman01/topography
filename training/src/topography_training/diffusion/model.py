@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from .data import COND_CHANNELS, TARGET_CHANNELS
+from .data import channels, class_start
 
 SIGMA_DATA = 0.5
 DEFAULT_ARCH = {
@@ -18,16 +18,18 @@ DEFAULT_ARCH = {
 class Denoiser(nn.Module):
     """D(x; sigma, cond) with EDM input/output/skip scaling."""
 
-    def __init__(self, arch: dict | None = None):
+    def __init__(self, arch: dict | None = None, conditioning: int = 1):
         super().__init__()
+        cond_channels, target_channels = channels(conditioning)
+        self.conditioning, self.target_channels = conditioning, target_channels
         from diffusers import UNet2DModel
 
         arch = {**DEFAULT_ARCH, **(arch or {})}
         levels = len(arch["block_out_channels"])
         attn = arch["attention_levels"]
         self.unet = UNet2DModel(
-            in_channels=TARGET_CHANNELS + COND_CHANNELS,
-            out_channels=TARGET_CHANNELS,
+            in_channels=target_channels + cond_channels,
+            out_channels=target_channels,
             block_out_channels=tuple(arch["block_out_channels"]),
             layers_per_block=arch["layers_per_block"],
             down_block_types=tuple(
@@ -100,9 +102,9 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0):
         with torch.autocast(x.device.type, dtype=torch.bfloat16, enabled=x.device.type == "cuda"):
             d = model(xs, sig, cs).float()
             if guidance != 1.0:
-                uncond = cs.clone()
-                uncond[:, 3:] = 0
-                uncond[:, 3] = 1
+                uncond, k = cs.clone(), class_start(cs)
+                uncond[:, k:] = 0
+                uncond[:, k] = 1
                 du = model(xs, sig, uncond).float()
                 d = du + guidance * (d - du)
         for j, (y, xx) in enumerate(part):
@@ -117,7 +119,7 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     gen = torch.Generator(device="cpu").manual_seed(seed)
     _, _, h, w = cond.shape
     sigmas = sigma_schedule(steps)
-    x = torch.randn((1, TARGET_CHANNELS, h, w), generator=gen).to(cond.device) * sigmas[0]
+    x = torch.randn((1, model.target_channels, h, w), generator=gen).to(cond.device) * sigmas[0]
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]
         d = (x - denoise_field(model, x, s, cond, window, stride, batch, guidance)) / s

@@ -59,5 +59,8 @@ $PY -m topography_training.diffusion.generate \
 ```
 
 The input format is documented in `generate.py`: a 32 m coarse surface, a 32 m
-class map and an optional 1 m water mask. The output is Float32 elevation plus
-masks. The 16-bit export is a later step.
+class map and 1 m water, snow/ice, vegetation and land-cover layers
+(`topography world input` writes them from WorldCover, GLIMS and OpenStreetMap).
+Runs from run 4 onward generate terrain for that cover; rebuild older world
+inputs that lack `snow-ice.u8`. The output is Float32 elevation plus masks. The
+16-bit export is a later step.
