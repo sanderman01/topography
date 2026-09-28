@@ -1465,6 +1465,38 @@ pub fn legacy(runtime: &Path, review: &str) -> Result<Option<(PathBuf, String)>>
     Ok(None)
 }
 
+/// Water (255 water / 0 terrestrial) of this review's single-crop product from before
+/// game cover, if one exists.
+fn source_water(
+    runtime: &Path,
+    review: &str,
+    width: u32,
+    height: u32,
+    scratch: &Path,
+) -> Result<Option<Vec<u8>>> {
+    for path in curation::prepared_for_review(runtime, review)? {
+        let product: Value = read_json(&path)?;
+        let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
+        if cover_policy(&path).is_none()
+            && parents.len() == 1
+            && parents[0]["review_sha256"] == review
+            && product["grid"]["size"] == json!([width, height])
+        {
+            preparation::verify_files(&path)?;
+            let base = path.parent().unwrap_or(Path::new("."));
+            let cells = width as usize * height as usize;
+            return Ok(Some(crate::review::band(
+                &base.join("water.tif"),
+                scratch,
+                "source-water",
+                cells,
+                false,
+            )?));
+        }
+    }
+    Ok(None)
+}
+
 /// Build the current game cover product of an accepted single crop. With `legacy`,
 /// its masks are kept (water joins the game water); without, the crop starts from
 /// all-supported quality and no repairs or features. The appended technical record
@@ -1510,6 +1542,15 @@ pub fn upgrade(
                 false,
             )?;
             if name == "water" {
+                // A game cover product's water already holds earlier game water; carrying
+                // it forward would keep superseded WorldCover water forever. Only source
+                // water from before game cover joins the new game water.
+                mask = if cover_policy(legacy).is_none() {
+                    mask
+                } else {
+                    source_water(runtime, &review_sha, width, height, scratch.path())?
+                        .unwrap_or_else(|| vec![0; cells])
+                };
                 // Prepared water is 255 water / 0 terrestrial; quality masks use 2 / 1.
                 mask.iter_mut()
                     .for_each(|v| *v = if *v == 255 { 2 } else { 1 });

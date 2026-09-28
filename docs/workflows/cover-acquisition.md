@@ -1,7 +1,7 @@
 # Cover acquisition
 
 Water, snow/ice, vegetation and land cover are game layers under policy
-`game_cover_v6` ([`configs/cover-game-v6.toml`](../../configs/cover-game-v6.toml), built into
+`game_cover_v7` ([`configs/cover-game-v7.toml`](../../configs/cover-game-v7.toml), built into
 the binary). The gallery worker generates them for every accepted tile; no
 profile descriptors, dates or scripts are needed. `topography cover draft`
 writes the same layers for one crop so you can inspect them:
@@ -63,7 +63,7 @@ more than one degree or crossing the antimeridian are refused.
 
 Products built earlier (v1 terrain, strict-evidence v2 or `game_cover_v1`)
 stay on disk, but the worker replaces them for accepted tiles with a
-`game_cover_v6` successor; see the
+`game_cover_v7` successor; see the
 [automatic-preparation design](../design/automatic-preparation-v1.md).
 
 Verification: `scripts/check_cover_acquisition.py` (run by `scripts/check.sh`)

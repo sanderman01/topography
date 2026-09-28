@@ -1,4 +1,4 @@
-//! Game cover masks (`game_cover_v6`) for one reviewed crop from public land cover
+//! Game cover masks (`game_cover_v7`) for one reviewed crop from public land cover
 //! and OpenStreetMap water, plus the WorldCover class layer. Technical layers only; never writes curation or creates a vote.
 
 use super::{
@@ -19,8 +19,8 @@ use std::{
     process::Command,
 };
 
-pub(crate) const POLICY: &str = "game_cover_v6";
-const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v6.toml");
+pub(crate) const POLICY: &str = "game_cover_v7";
+const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v7.toml");
 /// ESA WorldCover v200 class codes; 0 marks cells outside WorldCover coverage.
 pub(crate) const LAND_COVER_CLASSES: [u8; 12] = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
 const ABSENT: u8 = 1;
@@ -94,7 +94,7 @@ fn load_policy(path: Option<&Path>) -> Result<(Vec<u8>, Policy)> {
     let (w, g, o) = (&policy.worldcover, &policy.glims, &policy.osm);
     ensure(
         policy.schema_version == 2 && policy.policy == POLICY,
-        "cover policy must be schema 2, game_cover_v6",
+        "cover policy must be schema 2, game_cover_v7",
     )?;
     ensure(
         https(&w.url_template)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise game cover (game_cover_v6) offline against loopback WorldCover/GLIMS/Overpass fixtures."""
+"""Exercise game cover (game_cover_v7) offline against loopback WorldCover/GLIMS/Overpass fixtures."""
 
 import argparse
 import json
@@ -171,9 +171,9 @@ def draft_checks(cli, directory, server, raw):
     env = server.policy("mixed", worldcover=worldcover, glims=GLIMS, osm=OSM)
     out = directory / "cover-mixed"
     report = run(cli, "cover", "draft", raw, review, out, env=env)
-    assert "game_cover_v6" in report, report
+    assert "game_cover_v7" in report, report
     cover = json.loads((out / "cover.json").read_text())
-    assert cover["policy"] == "game_cover_v6" and cover["review_sha256"] == sha(review)
+    assert cover["policy"] == "game_cover_v7" and cover["review_sha256"] == sha(review)
     assert "© OpenStreetMap contributors, ODbL" in cover["attribution"]
     assert cover["sources"]["osm"]["areas"] == 2 and cover["sources"]["osm"]["lines"] == 2
     assert len(cover["sources"]["worldcover"]["urls"]) == 1
@@ -322,7 +322,7 @@ def gallery_checks(cli, directory, server, runtime, raw, failed_env):
 
 def current_cover(product):
     report = json.loads((product.parent / "quality-0.json").read_text())
-    return report["surface_cover"]["snow-ice"]["note"].startswith("game_cover_v6:")
+    return report["surface_cover"]["snow-ice"]["note"].startswith("game_cover_v7:")
 
 
 def successor_checks(cli, directory, server, runtime, raw):

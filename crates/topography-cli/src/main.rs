@@ -50,7 +50,7 @@ Import, acquire and review print their resulting manifest path. Curation records
 explicit actor declarations, evidence and crop decisions. Quality measures masks;
 prepare check reports current eligibility (exit 1 if blocked). Prepare build publishes
 eligible native regions; outputs remain unreviewed and excluded from training.
-Cover draft writes game_cover_v6 water, snow/ice and vegetation masks and the WorldCover
+Cover draft writes game_cover_v7 water, snow/ice and vegetation masks and the WorldCover
 land-cover class layer for a review crop; the gallery worker generates the same layers
 automatically.
 Processing never creates a human decision.

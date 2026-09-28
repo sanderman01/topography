@@ -121,7 +121,7 @@ explicitly (below).
   glaciers are ground and water edges are smoothed at the source, so the
   release, the loader and world inputs share one outline. Run 3 still made
   glaciers rocky (it was never told where ice is) and flats lumpy. Run 4 uses
-  conditioning layout 2 on `game_cover_v6` products (10 m water smoothing that
+  conditioning layout 2 on `game_cover_v7` products (10 m water smoothing that
   also removes small square WorldCover fragments). It is a fourth run beyond
   the three planned, on the owner's direction (2026-09-28).
 - [ ] **Evaluation:**
