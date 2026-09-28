@@ -60,7 +60,8 @@ fn unproject(srs: &str, x: f64, y: f64) -> Result<(f64, f64)> {
     Ok((v[0], v[1]))
 }
 
-/// Build `world.json`, `coarse.f32`, `classes.u8` and `water.u8` in a new directory.
+/// Build `world.json`, `coarse.f32`, `classes.u8` and the 1 m `water.u8`, `snow-ice.u8`,
+/// `vegetation.u8` and `land-cover.u8` in a new directory.
 pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<PathBuf> {
     ensure(!output.exists(), "world input output already exists")?;
     crate::acquisition::geofabrik::use_runtime(runtime)?;
@@ -146,26 +147,36 @@ pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<
     ]))?)
     .trim()
     .to_owned();
-    let (water, water_sources) = cover::world_water(
+    let cover = cover::world_cover(
         config.extent_m,
         config.extent_m,
         [x0, 1.0, 0.0, top, 0.0, -1.0],
         &wkt,
         bbox,
     )?;
-    let water: Vec<u8> = water
+    // Water keeps its 255 = water encoding; snow/ice and vegetation are 2 present / 1 absent.
+    let water: Vec<u8> = cover
+        .water
         .iter()
-        .map(|&w| if w == 1 { 255 } else { 0 })
+        .map(|&w| if w == 2 { 255 } else { 0 })
         .collect();
-    for (name, bytes) in [
+    let layers = [
         ("coarse.f32", &coarse),
         ("classes.u8", &classes),
         ("water.u8", &water),
-    ] {
+        ("snow-ice.u8", &cover.snow),
+        ("vegetation.u8", &cover.vegetation),
+        ("land-cover.u8", &cover.land_cover),
+    ];
+    for (name, bytes) in layers {
         write_new(&stage.path().join(name), bytes)?;
     }
+    let digests: serde_json::Map<String, serde_json::Value> = layers
+        .iter()
+        .map(|(name, bytes)| ((*name).to_owned(), json!(digest(bytes))))
+        .collect();
     let manifest = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "diffusion_world_input",
         "name": config.name,
         "size_blocks": [blocks, blocks],
@@ -177,8 +188,8 @@ pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<
         "config_sha256": digest(&text),
         "config_text": String::from_utf8_lossy(&text),
         "base": base,
-        "water": water_sources,
-        "layers": {"coarse.f32": digest(&coarse), "classes.u8": digest(&classes), "water.u8": digest(&water)},
+        "cover": cover.details,
+        "layers": digests,
     });
     write_new(
         &stage.path().join("world.json"),
