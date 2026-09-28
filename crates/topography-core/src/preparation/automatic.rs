@@ -1520,6 +1520,8 @@ pub fn upgrade(
     let temp = io_context("stage cover upgrade", tempfile::tempdir_in(root))?;
     let scratch = io_context("stage legacy masks", tempfile::tempdir())?;
     let mut values = BTreeMap::new();
+    // Only water from before game cover is kept whole; later game water is regenerated.
+    let keeps_water = legacy.is_some_and(|l| cover_policy(l).is_none());
     let (grid, fill, old_counts, basis) = if let Some(legacy) = legacy {
         let product: Value = read_json(legacy)?;
         let parents = product["parents"].as_array().map_or(&[][..], Vec::as_slice);
@@ -1545,7 +1547,7 @@ pub fn upgrade(
                 // A game cover product's water already holds earlier game water; carrying
                 // it forward would keep superseded WorldCover water forever. Only source
                 // water from before game cover joins the new game water.
-                mask = if cover_policy(legacy).is_none() {
+                mask = if keeps_water {
                     mask
                 } else {
                     source_water(runtime, &review_sha, width, height, scratch.path())?
@@ -1650,7 +1652,8 @@ pub fn upgrade(
     if let Some(old) = &old_counts {
         ensure(
             report["counts"]["repaired_cells"] == old["repaired_cells"]
-                && report["counts"]["water_cells"].as_u64() >= old["water_cells"].as_u64(),
+                && (!keeps_water
+                    || report["counts"]["water_cells"].as_u64() >= old["water_cells"].as_u64()),
             "legacy masks were not reproduced",
         )?;
     }
