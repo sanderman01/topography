@@ -171,6 +171,34 @@ drainage or ridge organisation between the coarse landforms. If it shows, add an
 intermediate level (e.g. 32 → 4 → 1 m) trained on the planned 4 m pyramid examples
 (master plan §5) instead of adding runs to this model.
 
+## Known issues after run 4 (2026-09-29)
+
+Run 4 passed the blind review (16/16 generated Yes) and halved the flat-terrain
+overshoot, but paired evaluation and a guidance test found the following. Work
+on them is paused while the pilot world is generated and exported.
+
+1. **Local shape is mostly ignored (the watch point above).** With one seed, four
+   different glacier windows produced outputs with 0.99 residual correlation;
+   guidance against a flattened coarse surface only lowered that to 0.86 at ×4.
+   Detail does not line up with slopes and landforms. Likely cause: the
+   coarse-relative channel is scaled by 256 m, so it varies only about ±0.1
+   inside a window, and there is no slope input. Proposed run 5: scale the
+   coarse input to unit range, add east/north slope channels, and drop
+   cover/coarse inputs occasionally in training. If that is not enough, add
+   the intermediate 4 m level above.
+2. **Glaciers too smooth.** Real glaciers here are crevasse fields (curvature std
+   0.65–1.57 m); run 4 gives 0.42. Guidance ×2 against an ice-absent condition
+   brings it into range (1.37) without retraining; ×4 overshoots. Used as a
+   stopgap for the pilot world. Cover dropout in run 5 would make this guidance
+   well-founded.
+3. **Flats still hummocky.** Canyonlands 2.1° real vs 7.5° (run 3: 14.3°).
+   Class guidance helps some flat windows and hurts others; expected to improve
+   with item 1.
+4. **Seams slightly worse than run 3** (join/overall slope 1.07 vs 1.02), no
+   visible joins. Recheck on the pilot world.
+5. **Twin review patches.** Fixed: the evaluator shows real and generated
+   patches from different windows.
+
 ## Open pilot choices
 
 - `s_r`, U-Net width, noise schedule and step counts are starting values to be
