@@ -75,6 +75,8 @@ struct FeatureConfig {
     kind: Kind,
     at: Option<[f32; 2]>,
     radii_m: Option<[f32; 2]>,
+    /// Clockwise turn of an area's radii on the map (north up).
+    rotation_deg: Option<f32>,
     path: Option<Vec<[f32; 2]>>,
     width_m: Option<f32>,
     height_m: Option<f32>,
@@ -199,6 +201,8 @@ enum Shape {
     Area {
         at: [f32; 2],
         radii: [f32; 2],
+        /// Cosine and sine of the clockwise rotation.
+        turn: (f32, f32),
     },
     Path {
         points: Vec<[f32; 2]>,
@@ -275,9 +279,10 @@ impl Feature {
         let (amp, wl) = self.meander();
         let (x, y) = warp(self.seed, x, y, amp, wl);
         match &self.shape {
-            Shape::Area { at, radii } => {
-                let q =
-                    (((x - at[0]) / radii[0]).powi(2) + ((y - at[1]) / radii[1]).powi(2)).sqrt();
+            Shape::Area { at, radii, turn } => {
+                let (dx, dy) = (x - at[0], y - at[1]);
+                let (u, v) = (dx * turn.0 + dy * turn.1, dy * turn.0 - dx * turn.1);
+                let q = ((u / radii[0]).powi(2) + (v / radii[1]).powi(2)).sqrt();
                 (q, 0.0, 0.0)
             }
             Shape::Path {
@@ -437,7 +442,7 @@ impl Feature {
     fn caldera(&self, s: &mut Sample, x: f32, y: f32) {
         let c = &self.config;
         let seed = self.seed;
-        let (Shape::Area { at, radii }, Some(crater)) = (&self.shape, c.crater_radius_m) else {
+        let (Shape::Area { at, radii, .. }, Some(crater)) = (&self.shape, c.crater_radius_m) else {
             return;
         };
         let (dx, dy) = (x - at[0], y - at[1]);
@@ -721,6 +726,10 @@ fn parse(text: &str) -> Result<Sketch> {
             (Some(at), Some(radii), None, None) if radii.iter().all(|r| *r > 0.0) => Shape::Area {
                 at: *at,
                 radii: *radii,
+                turn: {
+                    let r = config.rotation_deg.unwrap_or(0.0).to_radians();
+                    (r.cos(), r.sin())
+                },
             },
             (None, None, Some(points), Some(width)) if points.len() >= 2 && width > 0.0 => {
                 let mut cumulative = vec![0.0];
@@ -743,6 +752,10 @@ fn parse(text: &str) -> Result<Sketch> {
             }
         };
         let is_path = matches!(shape, Shape::Path { .. });
+        ensure(
+            !is_path || config.rotation_deg.is_none(),
+            context("rotation_deg applies to areas only"),
+        )?;
         let need = |ok: bool, what: &str| ensure(ok, context(what));
         match config.kind {
             Kind::Caldera => need(
