@@ -62,5 +62,18 @@ The input format is documented in `generate.py`: a 32 m coarse surface, a 32 m
 class map and 1 m water, snow/ice, vegetation and land-cover layers
 (`topography world input` writes them from WorldCover, GLIMS and OpenStreetMap).
 Runs from run 4 onward generate terrain for that cover; rebuild older world
-inputs that lack `snow-ice.u8`. The output is Float32 elevation plus masks. The
-16-bit export is a later step.
+inputs that lack `snow-ice.u8`. The output is Float32 elevation plus masks.
+`--guidance 2 --negative ice` sharpens glacier surfaces (see the diffusion plan's
+known issues).
+
+## 5. Export and viewing
+
+```sh
+topography export heightmap <world-output-dir> <new-export-dir> [256] [shared_edge]
+topography export view <export-dir> [port]
+```
+
+`export view` serves a loopback WebGL2 viewer (default port 8766) that reads only
+the exported tiles: an overview from the finest LOD level of at most 1,025
+samples per side, with double-click loading 1 or 2 km of level 0 around the
+picked point. Cover colours come from the land-cover, water and snow/ice masks.

@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>World viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #b8ccdc; font: 13px system-ui, sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #panel { position: absolute; top: 10px; left: 10px; width: 270px; padding: 10px 12px; background: rgba(20, 24, 28, .82); color: #e8ecef; border-radius: 6px; }
+  #panel h1 { font-size: 14px; margin: 0 0 6px; }
+  #panel label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 5px 0; }
+  #panel input[type=range] { width: 130px; }
+  #panel button, #panel select { font: inherit; }
+  .muted { color: #a9b3bb; font-size: 12px; line-height: 1.45; }
+  #status { margin-top: 6px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="panel">
+  <h1 id="title">World viewer</h1>
+  <label>Detail on double-click <select id="detail"><option value="1025">1 km at 1 m</option><option value="2049">2 km at 1 m</option></select></label>
+  <label><button id="overview">Overview only</button><span class="muted" id="mode"></span></label>
+  <label>Height exaggeration <input id="exag" type="range" min="1" max="3" step="0.1" value="1"></label>
+  <label>Sun azimuth <input id="az" type="range" min="0" max="360" step="5" value="315"></label>
+  <label>Sun elevation <input id="el" type="range" min="5" max="85" step="1" value="35"></label>
+  <label>Cover colours <input id="cover" type="checkbox" checked></label>
+  <div class="muted">Drag: orbit · right/shift-drag: pan · wheel: zoom · WASD: move · double-click: load 1 m detail there</div>
+  <div class="muted" id="status">Loading…</div>
+</div>
+<script>
+"use strict";
+const byId = id => document.getElementById(id);
+const canvas = byId("c");
+const gl = canvas.getContext("webgl2", { antialias: true });
+if (!gl) byId("status").textContent = "WebGL2 is not available in this browser.";
+
+const VS = `#version 300 es
+precision highp float; precision highp int;
+uniform highp sampler2D uH; uniform int uW; uniform vec2 uOrigin; uniform float uSpacing, uExag; uniform mat4 uMVP;
+out vec2 vUV; out vec3 vPos;
+void main() {
+  int ix = gl_VertexID % uW, iy = gl_VertexID / uW;
+  float h = texelFetch(uH, ivec2(ix, iy), 0).r;
+  vec3 p = vec3(uOrigin.x + float(ix) * uSpacing, h * uExag, uOrigin.y + float(iy) * uSpacing);
+  vUV = vec2(ix, iy); vPos = p;
+  gl_Position = uMVP * vec4(p, 1.0);
+}`;
+const FS = `#version 300 es
+precision highp float; precision highp int;
+uniform highp sampler2D uH; uniform highp sampler2D uM;
+uniform float uSpacing, uExag; uniform vec3 uSun, uEye; uniform vec4 uHole; uniform int uCover;
+in vec2 vUV; in vec3 vPos; out vec4 outColor;
+float h(ivec2 t) { ivec2 s = textureSize(uH, 0); return texelFetch(uH, clamp(t, ivec2(0), s - 1), 0).r; }
+vec3 normalAt(ivec2 t) {
+  float dx = (h(t + ivec2(1, 0)) - h(t - ivec2(1, 0))) * uExag / (2.0 * uSpacing);
+  float dz = (h(t + ivec2(0, 1)) - h(t - ivec2(0, 1))) * uExag / (2.0 * uSpacing);
+  return vec3(-dx, 1.0, -dz);
+}
+vec3 cover(float code, float veg) {
+  if (code == 10.0) return vec3(.23, .35, .19);
+  if (code == 20.0) return vec3(.44, .45, .27);
+  if (code == 30.0) return vec3(.50, .57, .32);
+  if (code == 40.0) return vec3(.62, .60, .36);
+  if (code == 50.0) return vec3(.55, .51, .50);
+  if (code == 60.0) return vec3(.62, .59, .54);
+  if (code == 90.0 || code == 95.0) return vec3(.33, .43, .33);
+  if (code == 100.0) return vec3(.55, .58, .45);
+  return veg > .5 ? vec3(.26, .37, .21) : vec3(.58, .56, .53);
+}
+void main() {
+  if (vPos.x > uHole.x && vPos.x < uHole.z && vPos.z > uHole.y && vPos.z < uHole.w) discard;
+  vec2 f = fract(vUV); ivec2 t = ivec2(floor(vUV));
+  vec3 n = normalize(mix(mix(normalAt(t), normalAt(t + ivec2(1, 0)), f.x),
+                         mix(normalAt(t + ivec2(0, 1)), normalAt(t + ivec2(1, 1)), f.x), f.y));
+  vec4 m = texelFetch(uM, ivec2(floor(vUV + .5)), 0);
+  vec3 base = vec3(.80);
+  if (uCover == 1) {
+    base = cover(floor(m.a * 255.0 + .5), m.b);
+    if (m.g > .5) base = vec3(.93, .95, .98);
+    if (m.r > .5) base = vec3(.16, .34, .50);
+  }
+  float diffuse = max(dot(n, uSun), 0.0);
+  vec3 color = base * (0.22 + 0.18 * n.y + 0.85 * diffuse);
+  float fog = 1.0 - exp(-length(vPos - uEye) / 18000.0);
+  outColor = vec4(mix(color, vec3(.72, .80, .86), fog), 1.0);
+}`;
+
+function shader(type, source) {
+  const s = gl.createShader(type); gl.shaderSource(s, source); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const program = gl.createProgram();
+gl.attachShader(program, shader(gl.VERTEX_SHADER, VS));
+gl.attachShader(program, shader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+const u = {};
+for (const name of ["uH", "uM", "uW", "uOrigin", "uSpacing", "uExag", "uMVP", "uSun", "uEye", "uHole", "uCover"])
+  u[name] = gl.getUniformLocation(program, name);
+const vao = gl.createVertexArray();
+
+// Minimal column-major 4×4 matrix helpers.
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+}
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const norm = a => { const l = Math.hypot(...a); return [a[0] / l, a[1] / l, a[2] / l]; };
+function lookAt(eye, target) {
+  const z = norm(sub(eye, target)), x = norm(cross([0, 1, 0], z)), y = cross(z, x);
+  return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x, eye), -dot(y, eye), -dot(z, eye), 1];
+}
+function multiply(a, b) {
+  const out = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) out[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+  return out;
+}
+
+const indexCache = new Map();
+function indices(w, h) {
+  const key = `${w}x${h}`;
+  if (!indexCache.has(key)) {
+    const data = new Uint32Array((w - 1) * (h - 1) * 6);
+    let i = 0;
+    for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) {
+      const a = y * w + x, b = a + 1, c = a + w, d = c + 1;
+      data.set([a, c, b, b, c, d], i); i += 6;
+    }
+    const buffer = gl.createBuffer();
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    indexCache.set(key, { buffer, count: data.length });
+  }
+  return indexCache.get(key);
+}
+
+let manifest, spacing0, maskIndex = {};
+let overview = null, detail = null;
+const camera = { target: [0, 0, 0], dist: 5000, yaw: 0.6, pitch: 0.55 };
+let dirty = true;
+
+function texture(internal, format, type, w, h, data) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, format, type, data);
+  for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST);
+  for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
+  return t;
+}
+async function loadRegion(level, x, y, side) {
+  const response = await fetch(`/region?level=${level}&x=${x}&y=${y}&side=${side}`);
+  if (!response.ok) throw new Error(await response.text());
+  const buffer = await response.arrayBuffer(), view = new DataView(buffer);
+  const w = view.getUint32(0, true), h = view.getUint32(4, true), n = w * h;
+  const heights = new Float32Array(buffer, 8, n);
+  const layer = name => maskIndex[name] === undefined ? null : new Uint8Array(buffer, 8 + 4 * n + maskIndex[name] * n, n);
+  const water = layer("water"), snow = layer("snow-ice"), veg = layer("vegetation"), cover = layer("land-cover");
+  const rgba = new Uint8Array(4 * n);
+  for (let i = 0; i < n; i++) {
+    rgba[4 * i] = water ? water[i] : 0; rgba[4 * i + 1] = snow ? snow[i] : 0;
+    rgba[4 * i + 2] = veg ? veg[i] : 0; rgba[4 * i + 3] = cover ? cover[i] : 0;
+  }
+  const s = spacing0 * 2 ** level;
+  return {
+    w, h, heights, spacing: s, x0: x * s, z0: y * s,
+    heightTex: texture(gl.R32F, gl.RED, gl.FLOAT, w, h, heights),
+    maskTex: texture(gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, w, h, rgba),
+  };
+}
+function release(t) { if (t) { gl.deleteTexture(t.heightTex); gl.deleteTexture(t.maskTex); } }
+
+// Bilinear ground height in metres at world position (x east, z south), or null outside.
+function groundAt(x, z) {
+  for (const t of [detail, overview]) {
+    if (!t) continue;
+    const fx = (x - t.x0) / t.spacing, fz = (z - t.z0) / t.spacing;
+    if (fx < 0 || fz < 0 || fx > t.w - 1 || fz > t.h - 1) continue;
+    const ix = Math.min(Math.floor(fx), t.w - 2), iz = Math.min(Math.floor(fz), t.h - 2), ax = fx - ix, az = fz - iz;
+    const H = (i, j) => t.heights[(iz + j) * t.w + ix + i];
+    return (H(0, 0) * (1 - ax) + H(1, 0) * ax) * (1 - az) + (H(0, 1) * (1 - ax) + H(1, 1) * ax) * az;
+  }
+  return null;
+}
+const exag = () => +byId("exag").value;
+function eye() {
+  const c = camera, cp = Math.cos(c.pitch);
+  return [c.target[0] + c.dist * cp * Math.sin(c.yaw), c.target[1] + c.dist * Math.sin(c.pitch), c.target[2] + c.dist * cp * Math.cos(c.yaw)];
+}
+function settleTarget() {
+  const g = groundAt(camera.target[0], camera.target[2]);
+  if (g !== null) camera.target[1] = g * exag();
+}
+
+function draw() {
+  dirty = false;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, w, h);
+  gl.clearColor(.72, .80, .86, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  if (!overview) return;
+  gl.enable(gl.DEPTH_TEST);
+  gl.useProgram(program);
+  gl.bindVertexArray(vao);
+  const e = eye(), near = Math.min(Math.max(camera.dist * 0.005, 0.2), 50);
+  const mvp = multiply(perspective(0.9, w / h, near, 60000), lookAt(e, camera.target));
+  const az = byId("az").value * Math.PI / 180, el = byId("el").value * Math.PI / 180;
+  gl.uniformMatrix4fv(u.uMVP, false, mvp);
+  gl.uniform3fv(u.uSun, [Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az)]);
+  gl.uniform3fv(u.uEye, e);
+  gl.uniform1f(u.uExag, exag());
+  gl.uniform1i(u.uCover, byId("cover").checked ? 1 : 0);
+  gl.uniform1i(u.uH, 0); gl.uniform1i(u.uM, 1);
+  for (const t of [detail, overview]) {
+    if (!t) continue;
+    // The overview leaves a hole where the detail region is drawn.
+    const hole = t === overview && detail
+      ? [detail.x0 + detail.spacing, detail.z0 + detail.spacing, detail.x0 + (detail.w - 2) * detail.spacing, detail.z0 + (detail.h - 2) * detail.spacing]
+      : [1, 1, 0, 0];
+    gl.uniform4fv(u.uHole, hole);
+    gl.uniform1i(u.uW, t.w);
+    gl.uniform2fv(u.uOrigin, [t.x0, t.z0]);
+    gl.uniform1f(u.uSpacing, t.spacing);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, t.heightTex);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, t.maskTex);
+    const idx = indices(t.w, t.h);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idx.buffer);
+    gl.drawElements(gl.TRIANGLES, idx.count, gl.UNSIGNED_INT, 0);
+  }
+  const [ox, oy] = manifest.origin_nw_corner, g = groundAt(camera.target[0], camera.target[2]);
+  byId("status").textContent = `Target E ${Math.round(ox + camera.target[0])} N ${Math.round(oy - camera.target[2])}`
+    + (g === null ? "" : ` · ${g.toFixed(1)} m`) + ` · distance ${Math.round(camera.dist)} m`;
+  byId("mode").textContent = detail ? `${Math.round((detail.w - 1) * detail.spacing)} m detail loaded` : "overview";
+}
+function frame() {
+  if (moveKeys()) dirty = true;
+  if (dirty) draw();
+  requestAnimationFrame(frame);
+}
+
+// Ray from the camera through a canvas pixel, marched to the ground.
+function pick(px, py) {
+  const e = eye(), f = norm(sub(camera.target, e)), r = norm(cross(f, [0, 1, 0])), up = cross(r, f);
+  const k = Math.tan(0.45), aspect = canvas.clientWidth / canvas.clientHeight;
+  const nx = (px / canvas.clientWidth) * 2 - 1, ny = 1 - (py / canvas.clientHeight) * 2;
+  const d = norm([0, 1, 2].map(i => f[i] + r[i] * nx * k * aspect + up[i] * ny * k));
+  let prev = 0;
+  for (let t = 1; t < 60000; t += Math.max(0.5, t * 0.002)) {
+    const p = [0, 1, 2].map(i => e[i] + d[i] * t), g = groundAt(p[0], p[2]);
+    if (g !== null && p[1] <= g * exag()) {
+      let lo = prev, hi = t;
+      for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2, q = [0, 1, 2].map(j => e[j] + d[j] * mid), gm = groundAt(q[0], q[2]);
+        if (gm !== null && q[1] <= gm * exag()) hi = mid; else lo = mid;
+      }
+      return [0, 1, 2].map(i => e[i] + d[i] * hi);
+    }
+    prev = t;
+  }
+  return null;
+}
+async function loadDetail(p) {
+  const side = +byId("detail").value, samples = manifest.levels[0].samples_per_side;
+  const clamp = v => Math.max(0, Math.min(samples - side, Math.round(v / spacing0 - (side - 1) / 2)));
+  byId("status").textContent = "Loading detail…";
+  const t = await loadRegion(0, clamp(p[0]), clamp(p[2]), side);
+  release(detail); detail = t;
+  camera.target = p.slice(); settleTarget();
+  camera.dist = Math.min(camera.dist, side * spacing0 * 0.6);
+  dirty = true;
+}
+
+// Input
+const keys = new Set();
+function moveKeys() {
+  let dx = 0, dz = 0;
+  if (keys.has("w") || keys.has("arrowup")) dz -= 1;
+  if (keys.has("s") || keys.has("arrowdown")) dz += 1;
+  if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
+  if (keys.has("d") || keys.has("arrowright")) dx += 1;
+  if (!dx && !dz) return false;
+  const speed = camera.dist * 0.012, s = Math.sin(camera.yaw), c = Math.cos(camera.yaw);
+  camera.target[0] += (dx * c + dz * s) * speed;
+  camera.target[2] += (-dx * s + dz * c) * speed;
+  settleTarget();
+  return true;
+}
+addEventListener("keydown", e => { if (e.target.tagName !== "SELECT") keys.add(e.key.toLowerCase()); });
+addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => keys.clear());
+let drag = null;
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+canvas.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener("pointerup", () => { drag = null; });
+canvas.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.pan) {
+    const k = camera.dist * 0.0015, s = Math.sin(camera.yaw), c = Math.cos(camera.yaw);
+    camera.target[0] -= (dx * c + dy * s) * k;
+    camera.target[2] -= (-dx * s + dy * c) * k;
+    settleTarget();
+  } else {
+    camera.yaw -= dx * 0.005;
+    camera.pitch = Math.min(1.55, Math.max(0.02, camera.pitch + dy * 0.005));
+  }
+  dirty = true;
+});
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  camera.dist = Math.min(40000, Math.max(3, camera.dist * Math.exp(e.deltaY * 0.001)));
+  dirty = true;
+}, { passive: false });
+canvas.addEventListener("dblclick", e => {
+  const p = pick(e.clientX, e.clientY);
+  if (p) loadDetail(p).catch(err => { byId("status").textContent = err.message; });
+});
+byId("overview").addEventListener("click", () => { release(detail); detail = null; dirty = true; });
+for (const id of ["az", "el", "cover"]) byId(id).addEventListener("input", () => { dirty = true; });
+byId("exag").addEventListener("input", () => { settleTarget(); dirty = true; });
+addEventListener("resize", () => { dirty = true; });
+
+(async () => {
+  manifest = await (await fetch("/manifest.json")).json();
+  spacing0 = manifest.spacing_m;
+  (manifest.masks?.layers ?? []).forEach((name, i) => { maskIndex[name] = i; });
+  byId("title").textContent = manifest.world_output.split("/").pop();
+  // Overview: the finest level that fits in one region.
+  const level = manifest.levels.findIndex(l => l.samples_per_side <= 1025);
+  overview = await loadRegion(level, 0, 0, manifest.levels[level].samples_per_side);
+  const size = manifest.size[0] * spacing0;
+  camera.target = [size / 2, 0, size / 2]; camera.dist = size * 1.1;
+  settleTarget();
+  dirty = true;
+  requestAnimationFrame(frame);
+})().catch(err => { byId("status").textContent = err.message; });
+</script>
+</body>
+</html>

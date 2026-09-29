@@ -16,13 +16,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Request {
-    method: String,
-    path: String,
+pub(crate) struct Request {
+    pub(crate) method: String,
+    pub(crate) path: String,
     headers: BTreeMap<String, String>,
     body: Vec<u8>,
 }
-fn request(stream: &mut TcpStream) -> Result<Request> {
+pub(crate) fn request(stream: &mut TcpStream) -> Result<Request> {
     io_context(
         "set read timeout",
         stream.set_read_timeout(Some(Duration::from_secs(2))),
@@ -101,7 +101,7 @@ fn request(stream: &mut TcpStream) -> Result<Request> {
         body: bytes[split..].to_vec(),
     })
 }
-fn respond(stream: &mut TcpStream, code: u16, kind: &str, bytes: &[u8]) -> Result<()> {
+pub(crate) fn respond(stream: &mut TcpStream, code: u16, kind: &str, bytes: &[u8]) -> Result<()> {
     let reason = match code {
         200 => "OK",
         400 => "Bad Request",

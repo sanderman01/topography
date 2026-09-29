@@ -38,6 +38,7 @@ Usage: topography [--help | --version]
        topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>
        topography world input <runtime.toml> <world.toml> <new-output-dir>
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
+       topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
 Options:
@@ -292,6 +293,21 @@ fn main() -> ExitCode {
                     layout,
                 )
                 .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, export, rest @ ..]
+            if command == "export" && action == "view" && rest.len() <= 1 =>
+        {
+            let port = match rest
+                .first()
+                .map(|v| v.to_str().and_then(|s| s.parse().ok()))
+            {
+                None => 8766,
+                Some(Some(p)) => p,
+                Some(None) => return usage_error(),
+            };
+            return workflow_result(
+                topography_core::export::view(Path::new(export), port).map(|()| String::new()),
             );
         }
         [command, action, runtime, config, output] if command == "world" && action == "input" => {
