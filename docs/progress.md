@@ -41,7 +41,9 @@ its scale.
 
 1. [World layout spec](plans/world-layout-spec-v1.md): brief, spec, fit check
    and reference sheet before any generation.
-2. GLO-30 context regions and the 128 m / 32 m models.
+2. GLO-30 context regions and the 128 m / 32 m models. 74 regions across all
+   twelve classes are built at 32 m (`context build`) and await the owner's
+   Yes/No in `context serve`; the models are next.
 3. Reduced 4 m lidar regions and the 4 m model.
 4. Run 5 of the 1 m model on the 4 m surface (fixes for local shape, glaciers
    and flats).
