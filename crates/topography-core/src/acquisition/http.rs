@@ -121,21 +121,40 @@ pub(super) fn query_large(url: &str, user_agent: &str, max_time_s: u64) -> Resul
 
 /// Final HTTPS URL after redirects, for example a dated file behind a "latest" link.
 pub(super) fn resolve(url: &str) -> Result<String> {
-    validate_url(url)?;
-    let out = run(curl().args([
-        "--head",
-        "--retry",
-        "3",
-        "--output",
-        "/dev/null",
-        "--write-out",
-        "%{url_effective}",
-        "--url",
-        url,
-    ]))?;
-    let resolved = String::from_utf8_lossy(&out).trim().to_owned();
-    validate_url(&resolved)?;
-    Ok(resolved)
+    let mut current = url.to_owned();
+    for _ in 0..4 {
+        validate_url(&current)?;
+        let out = run(curl().args([
+            "--no-location",
+            "--head",
+            "--retry",
+            "3",
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{redirect_url}",
+            "--url",
+            &current,
+        ]))?;
+        let next = String::from_utf8_lossy(&out).trim().to_owned();
+        if next.is_empty() {
+            return Ok(current);
+        }
+        // Some mirrors redirect to plain HTTP on their own host; stay on HTTPS.
+        let host = |u: &str| {
+            u.split("://")
+                .nth(1)
+                .and_then(|r| r.split('/').next())
+                .map(str::to_owned)
+        };
+        current = match next.strip_prefix("http://") {
+            Some(rest) if host(&next) == host(&current) => format!("https://{rest}"),
+            _ => next,
+        };
+    }
+    Err(AcquisitionError::Invalid(format!(
+        "too many redirects from {url}"
+    )))
 }
 
 /// HEAD an HTTPS object with retries: missing (403/404) is `false`, other failures are errors.
