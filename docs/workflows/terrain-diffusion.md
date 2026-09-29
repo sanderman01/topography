@@ -66,6 +66,26 @@ inputs that lack `snow-ice.u8`. The output is Float32 elevation plus masks.
 `--guidance 2 --negative ice` sharpens glacier surfaces (see the diffusion plan's
 known issues).
 
+### Invented worlds
+
+```sh
+topography world sketch configs/sketch/caldera-island.toml <new-world-input-dir>
+topography world preview <world-input-dir> <new-preview-dir> [8]
+```
+
+`world sketch` builds the same world input from a procedural recipe instead of a
+real place: an island outline plus ordered landform features (caldera, range,
+glacier, fjord, archipelago, cliffs, dunes, mesas, gorge, karst, braided river,
+cones), each painting its terrain class. Land takes the class of the nearest
+feature; carved paths, glaciers and the crater override. Snow/ice follows a
+windward and lee snowline, and land cover follows biome, elevation and wind-side
+moisture. It uses a local metric CRS and no source data. A 32 km sketch takes
+under a minute on CPU and writes about 4 GB, mostly 1 m masks.
+
+`world preview` interpolates any world input's 32 m surface to a few metres and
+samples its masks, so `export heightmap` and `export view` can show the layout
+before GPU generation.
+
 ## 5. Export and viewing
 
 ```sh

@@ -37,6 +37,8 @@ Usage: topography [--help | --version]
        topography dataset fit-verify <runtime.toml> <fitting-manifest.json>
        topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>
        topography world input <runtime.toml> <world.toml> <new-output-dir>
+       topography world sketch <sketch.toml> <new-output-dir>
+       topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
@@ -308,6 +310,28 @@ fn main() -> ExitCode {
             };
             return workflow_result(
                 topography_core::export::view(Path::new(export), port).map(|()| String::new()),
+            );
+        }
+        [command, action, config, output] if command == "world" && action == "sketch" => {
+            return workflow_result(
+                topography_core::world::build_sketch(Path::new(config), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
+        }
+        [command, action, input, output, rest @ ..]
+            if command == "world" && action == "preview" && rest.len() <= 1 =>
+        {
+            let spacing = match rest
+                .first()
+                .map(|v| v.to_str().and_then(|s| s.parse().ok()))
+            {
+                None => 8,
+                Some(Some(n)) => n,
+                Some(None) => return usage_error(),
+            };
+            return workflow_result(
+                topography_core::world::build_preview(Path::new(input), Path::new(output), spacing)
+                    .map(|p| p.display().to_string()),
             );
         }
         [command, action, runtime, config, output] if command == "world" && action == "input" => {

@@ -1,0 +1,162 @@
+# Procedural 32 km island around an ice-capped caldera; draft layout for review.
+# Positions are metres from the north-west corner: x east, y south. Features apply in
+# order; later ones override the class of earlier ones. Prevailing wind from the west:
+# fjords, forests and low snowline windward, dunes and badlands in the lee.
+schema_version = 1
+name = "caldera-island"
+seed = 20260929
+extent_m = 32768
+default_class = 0
+wind_from_deg = 270
+windward_snowline_m = 1500
+lee_snowline_m = 1900
+treeline_m = 900
+
+[island]
+center = [16384, 16384]
+radius_m = 13000
+coast_noise_m = 1800
+lowland_m = 40
+hills_m = 260
+shelf_m = -45
+
+# Ice cap over the caldera; the caldera after it keeps class 4 in the crater.
+[[features]]
+kind = "glacier"
+at = [16400, 15800]
+radii_m = [3700, 3700]
+
+# Central volcano: 2.5 km rim, 2.2 km crater filled with ice. Flanks are class 11.
+[[features]]
+kind = "caldera"
+at = [16400, 15800]
+radii_m = [7500, 7500]
+height_m = 2300
+crater_radius_m = 2200
+crater_floor_m = 1850
+
+# Windward alpine range along the west and a smaller northern spur.
+# Outlet glaciers descend from the ice cap to a fjord head and the outwash plain.
+[[features]]
+kind = "range"
+path = [[8200, 5000], [6600, 10500], [6900, 16500], [8400, 22000]]
+width_m = 7000
+height_m = 2300
+
+[[features]]
+kind = "range"
+path = [[10500, 6800], [12800, 4600], [15200, 3900]]
+width_m = 3200
+height_m = 1300
+
+[[features]]
+kind = "glacier"
+path = [[14200, 15500], [12200, 14700], [10300, 13800], [9200, 13300]]
+width_m = 1300
+floor_m = [1800, 120]
+
+[[features]]
+kind = "glacier"
+path = [[16400, 13600], [16700, 10800], [17300, 8400]]
+width_m = 1300
+floor_m = [1900, 300]
+
+# Lee side, south-east: badlands and mesas, with lava fields and cinder cones upslope.
+[[features]]
+kind = "mesas"
+at = [23600, 23600]
+radii_m = [4800, 3800]
+height_m = 420
+step_m = 70
+
+[[features]]
+kind = "cones"
+at = [19600, 22300]
+radii_m = [4600, 3400]
+height_m = 170
+spacing_m = 1100
+
+# Lee side, east: dune sea behind the massif.
+[[features]]
+kind = "dunes"
+at = [26200, 15300]
+radii_m = [4200, 5600]
+height_m = 45
+wavelength_m = 700
+
+# Humid south-west coast: karst towers rising from plain and sea.
+[[features]]
+kind = "karst"
+at = [8600, 25600]
+radii_m = [4800, 3600]
+height_m = 190
+spacing_m = 380
+
+# South coast and a north-east headland: cliffs with sea stacks.
+[[features]]
+kind = "cliffs"
+at = [16300, 29200]
+radii_m = [5600, 2300]
+height_m = 95
+spacing_m = 320
+
+[[features]]
+kind = "cliffs"
+at = [27200, 7600]
+radii_m = [3000, 2400]
+height_m = 70
+spacing_m = 300
+
+# Skerries and a dissected coast off the windward fjords.
+[[features]]
+kind = "archipelago"
+at = [2600, 12000]
+radii_m = [2800, 8500]
+height_m = 90
+
+[[features]]
+kind = "archipelago"
+at = [5200, 3200]
+radii_m = [3000, 2200]
+height_m = 70
+
+# Carved last so they cut through everything above. Fjord beds run head to mouth.
+[[features]]
+kind = "fjord"
+path = [[8600, 8600], [6000, 8000], [3600, 7300], [1200, 6800]]
+width_m = 800
+floor_m = [30, -120]
+
+[[features]]
+kind = "fjord"
+path = [[9200, 13300], [6400, 12700], [3600, 13100], [1000, 13300]]
+width_m = 1000
+floor_m = [20, -160]
+
+[[features]]
+kind = "fjord"
+path = [[8600, 18000], [6200, 18300], [3800, 17700], [1400, 18500]]
+width_m = 800
+floor_m = [30, -120]
+
+[[features]]
+kind = "fjord"
+path = [[10800, 4900], [9600, 3500], [8200, 1800]]
+width_m = 650
+floor_m = [40, -100]
+
+# Gorge through the mesa plateau to the south-east coast.
+[[features]]
+kind = "gorge"
+path = [[20400, 20300], [22400, 22700], [23800, 24100], [25500, 26600], [27200, 28700]]
+width_m = 240
+floor_m = [300, 1]
+river_m = 22
+
+# Glacial outwash plain from the northern outlet glacier to the north-east coast.
+[[features]]
+kind = "braided_river"
+path = [[17300, 8400], [18800, 6300], [21000, 4700], [23500, 3700], [25800, 2800]]
+width_m = 2600
+floor_m = [240, 1]
+river_m = 900

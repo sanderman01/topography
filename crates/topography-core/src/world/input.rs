@@ -80,16 +80,16 @@ pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<
         (-80.0..=84.0).contains(&config.center_lat) && (-180.0..180.0).contains(&config.center_lon),
         "center must lie inside UTM coverage",
     )?;
-    ensure(config.default_class <= 9, "default_class must be 0..=9")?;
+    ensure(config.default_class <= 12, "default_class must be 0..=12")?;
     for r in &config.regions {
         ensure(
-            r.class_id <= 9
+            r.class_id <= 12
                 && [r.x_m, r.y_m, r.width_m, r.height_m]
                     .iter()
                     .all(|v| v % BLOCK_M == 0)
                 && r.x_m + r.width_m <= config.extent_m
                 && r.y_m + r.height_m <= config.extent_m,
-            "regions need class 0..=9, 32 m aligned bounds inside the extent",
+            "regions need class 0..=12, 32 m aligned bounds inside the extent",
         )?;
     }
     let zone = ((config.center_lon + 180.0) / 6.0).floor() as u32 + 1;

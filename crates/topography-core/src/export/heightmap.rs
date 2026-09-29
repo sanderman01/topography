@@ -113,8 +113,11 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         "intervals must be a power of two from 16 to 4096",
     )?;
     let manifest: Value = serde_json::from_slice(&read_small(&world.join("manifest.json"))?)?;
+    // Generated worlds are 1 m; previews of world inputs are coarser.
+    let spacing = manifest["spacing_m"].as_f64().unwrap_or(0.0);
     ensure(
-        manifest["kind"] == "diffusion_world_output" && manifest["spacing_m"] == 1.0,
+        (manifest["kind"] == "diffusion_world_output" && spacing == 1.0)
+            || (manifest["kind"] == "world_preview" && spacing >= 1.0),
         "unsupported world output",
     )?;
     let input_dir = PathBuf::from(manifest["world_input"].as_str().unwrap_or_default());
@@ -250,7 +253,7 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
                 tiles.push(json!({"level": level, "x": tx, "y": ty, "width": tw, "height": th, "sha256": hashes}));
             }
         }
-        levels.push(json!({"level": level, "spacing_m": stride, "tiles_per_side": count, "samples_per_side": samples}));
+        levels.push(json!({"level": level, "spacing_m": stride as f64 * spacing, "tiles_per_side": count, "samples_per_side": samples}));
         if samples <= intervals {
             break;
         }
@@ -265,8 +268,8 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         "-a_ullr".into(),
         origin[0].to_string(),
         origin[1].to_string(),
-        (origin[0] + w as f64).to_string(),
-        (origin[1] - h as f64).to_string(),
+        (origin[0] + w as f64 * spacing).to_string(),
+        (origin[1] - h as f64 * spacing).to_string(),
     ];
     let bytes: Vec<u8> = elevation.iter().flat_map(|e| e.to_le_bytes()).collect();
     geotiff(stage.path(), "elevation", &bytes, w, true, &georef)?;
@@ -280,7 +283,7 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         "world_output_manifest_sha256": digest(&read_small(&world.join("manifest.json"))?),
         "crs": crs,
         "origin_nw_corner": origin,
-        "spacing_m": 1.0,
+        "spacing_m": spacing,
         "size": [w, h],
         "row_order": "north to south; texel (0,0) is the north-west cell centre",
         "layout": layout.name(),
