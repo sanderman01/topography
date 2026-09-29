@@ -10,8 +10,9 @@ World input directory (little-endian raw arrays, row-major, north-up):
   water.u8         optional 1 m water mask, 255 = water [rows*32, cols*32]
   snow-ice.u8, vegetation.u8
                    1 m cover, 2 present / 1 absent; required by conditioning layout 2
+  land-cover.u8    optional 1 m WorldCover classes, passed through unchanged
 Output: elevation.f32, snow-ice.u8 and vegetation.u8 (2 present / 1 absent),
-water.u8 and manifest.json. Water cells hold the coarse surface as fill. Layout 2
+water.u8, land-cover.u8 when given, and manifest.json. Water cells hold the coarse surface as fill. Layout 2
 generates terrain for the given cover and passes it through; layout 1 predicts cover.
 """
 
@@ -37,6 +38,8 @@ def main(argv=None) -> int:
     p.add_argument("--stride", type=int, default=128)
     p.add_argument("--batch", type=int, default=8)
     p.add_argument("--guidance", type=float, default=1.0)
+    p.add_argument("--negative", choices=["class", "ice"], default="class",
+                   help="guide away from the class-dropped condition or from the same cover without ice")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
 
@@ -85,10 +88,17 @@ def main(argv=None) -> int:
             return 2
         soft = config.get("cover_soft_m", data.COVER_SOFT_M)
         cond = data.condition(coarse, water, class_map, data.soft_cover(snow == 2, soft), data.soft_cover(veg == 2, soft))
+    negative = None
+    if args.negative == "ice":
+        if conditioning == 1:
+            print("error: ice guidance needs conditioning layout 2", file=sys.stderr)
+            return 2
+        negative = data.condition(coarse, water, class_map, np.zeros((h, w), np.uint8), data.soft_cover(veg == 2, soft))
+        negative = torch.from_numpy(negative)[None].to(device)
     cond = torch.from_numpy(cond)[None].to(device)
     start = time.time()
     out = sample_field(model, cond, steps=args.steps, window=config["crop"], stride=args.stride,
-                       batch=args.batch, seed=args.seed, guidance=args.guidance)[0].float().cpu().numpy()
+                       batch=args.batch, seed=args.seed, guidance=args.guidance, negative=negative)[0].float().cpu().numpy()
     elevation = np.where(water, coarse, coarse + out[0] * config["residual_scale_m"]).astype("<f4")
     layers = {
         "elevation.f32": elevation.tobytes(),
@@ -96,6 +106,8 @@ def main(argv=None) -> int:
         "vegetation.u8": (np.where(out[2] > 0, 2, 1).astype("u1") if conditioning == 1 else np.where(water, 1, veg).astype("u1")).tobytes(),
         "water.u8": np.where(water, 255, 0).astype("u1").tobytes(),
     }
+    if (args.world / "land-cover.u8").exists():
+        layers["land-cover.u8"] = (args.world / "land-cover.u8").read_bytes()
     args.out.mkdir(parents=True)
     for name, blob in layers.items():
         (args.out / name).write_bytes(blob)
@@ -108,7 +120,7 @@ def main(argv=None) -> int:
         "weights": str(weights),
         "weights_sha256": hashlib.sha256(Path(weights).read_bytes()).hexdigest(),
         "world_input": str(args.world.resolve()),
-        "steps": args.steps, "stride": args.stride, "guidance": args.guidance, "seed": args.seed,
+        "steps": args.steps, "stride": args.stride, "guidance": args.guidance, "negative": args.negative, "seed": args.seed,
         "seconds": round(time.time() - start, 1),
         "layers": {n: hashlib.sha256(b).hexdigest() for n, b in layers.items()},
     }

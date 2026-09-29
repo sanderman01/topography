@@ -131,7 +131,7 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
     let water = read_layer(world, "water.u8", layers, cells, 1)?;
-    let masks = [
+    let mut masks = vec![
         (
             "water",
             water
@@ -154,6 +154,14 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
                 .collect(),
         ),
     ];
+    // Categorical WorldCover classes, exported as-is for render materials.
+    let land_cover = layers.get("land-cover.u8").is_some();
+    if land_cover {
+        masks.push((
+            "land-cover",
+            read_layer(world, "land-cover.u8", layers, cells, 1)?,
+        ));
+    }
     // Range from land only; water fill is clamped and counted.
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for (e, wv) in elevation.iter().zip(&water) {
@@ -281,9 +289,10 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         "encoding": {"format": "PNG grayscale 16-bit", "h_min_m": h_min, "h_max_m": h_max, "step_m": step,
             "decode": "height_m = h_min_m + code * step_m", "range_from": "land cells (water fill excluded)",
             "clamped_cells": clamped, "max_land_quantization_error_m": max_error},
-        "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent", "layers": ["water", "snow-ice", "vegetation"]},
-        "masters": ["elevation.tif (Float32 m COG)", "water.tif", "snow-ice.tif", "vegetation.tif"],
-        "attribution": input["base"]["attribution"],
+        "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes",
+            "layers": masks.iter().map(|(name, _)| *name).collect::<Vec<_>>()},
+        "masters": ["elevation.tif (Float32 m COG)", "water.tif", "snow-ice.tif", "vegetation.tif", "land-cover.tif (when present)"],
+        "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
         "levels": levels,
         "tiles": tiles,
     });
