@@ -84,8 +84,11 @@ def _starts(length: int, window: int, stride: int) -> list[int]:
 
 
 @torch.no_grad()
-def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0):
-    """One MultiDiffusion evaluation: average window predictions over the field."""
+def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, negative=None):
+    """One MultiDiffusion evaluation: average window predictions over the field.
+
+    Guidance pushes away from `negative` (same shape as cond) or, without it, from
+    the class-dropped condition."""
     _, _, h, w = x.shape
     out = torch.zeros_like(x)
     total = torch.zeros((1, 1, h, w), device=x.device)
@@ -98,13 +101,19 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0):
         cs = torch.cat([cond[:, :, y : y + size, xx : xx + size] for y, xx in part])
         # Coarse-relative channel is re-centred per window, as in training.
         cs[:, 0] -= cs[:, 0].mean(dim=(1, 2), keepdim=True)
+        if negative is not None:
+            ns = torch.cat([negative[:, :, y : y + size, xx : xx + size] for y, xx in part])
+            ns[:, 0] -= ns[:, 0].mean(dim=(1, 2), keepdim=True)
         sig = torch.full((len(part),), sigma, device=x.device)
         with torch.autocast(x.device.type, dtype=torch.bfloat16, enabled=x.device.type == "cuda"):
             d = model(xs, sig, cs).float()
             if guidance != 1.0:
-                uncond, k = cs.clone(), class_start(cs)
-                uncond[:, k:] = 0
-                uncond[:, k] = 1
+                if negative is not None:
+                    uncond = ns
+                else:
+                    uncond, k = cs.clone(), class_start(cs)
+                    uncond[:, k:] = 0
+                    uncond[:, k] = 1
                 du = model(xs, sig, uncond).float()
                 d = du + guidance * (d - du)
         for j, (y, xx) in enumerate(part):
@@ -114,7 +123,7 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0):
 
 
 @torch.no_grad()
-def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0):
+def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None):
     """Heun EDM sampling over a field of any size. cond: [1, C, H, W] on device."""
     gen = torch.Generator(device="cpu").manual_seed(seed)
     _, _, h, w = cond.shape
@@ -122,10 +131,10 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     x = torch.randn((1, model.target_channels, h, w), generator=gen).to(cond.device) * sigmas[0]
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]
-        d = (x - denoise_field(model, x, s, cond, window, stride, batch, guidance)) / s
+        d = (x - denoise_field(model, x, s, cond, window, stride, batch, guidance, negative)) / s
         x_next = x + (s_next - s) * d
         if s_next > 0:
-            d2 = (x_next - denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance)) / s_next
+            d2 = (x_next - denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance, negative)) / s_next
             x_next = x + (s_next - s) * 0.5 * (d + d2)
         x = x_next
     return x
