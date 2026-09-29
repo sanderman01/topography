@@ -103,12 +103,19 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
     _, _, h, w = x.shape
     device = next(model.parameters()).device
     out = torch.zeros_like(x)
-    total = torch.zeros((1, 1, h, w), device=x.device)
-    wt = _weights(min(window, h, w), x.device)
-    boxes = [(y, xx) for y in _starts(h, window, stride) for xx in _starts(w, window, stride)]
+    size = min(window, h, w)
+    wt = _weights(size, x.device)
+    ys, xs_ = _starts(h, window, stride), _starts(w, window, stride)
+    # The window grid is regular and the weights separable, so their sum is an outer product.
+    ramp = wt[0, 0, :, 0] / wt[0, 0, :, 0].max()
+    rows, cols = torch.zeros(h, device=x.device), torch.zeros(w, device=x.device)
+    for y in ys:
+        rows[y : y + size] += ramp
+    for xx in xs_:
+        cols[xx : xx + size] += ramp
+    boxes = [(y, xx) for y in ys for xx in xs_]
     for i in range(0, len(boxes), batch):
         part = boxes[i : i + batch]
-        size = min(window, h, w)
         xs = torch.cat([x[:, :, y : y + size, xx : xx + size] for y, xx in part]).to(device)
         cs = cond.windows(part, size, device)
         # Coarse-relative channel is re-centred per window, as in training.
@@ -131,8 +138,9 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
         d = d.to(x.device)
         for j, (y, xx) in enumerate(part):
             out[:, :, y : y + size, xx : xx + size] += d[j : j + 1] * wt
-            total[:, :, y : y + size, xx : xx + size] += wt
-    return out / total
+    out /= rows[:, None]
+    out /= cols[None, :]
+    return out
 
 
 @torch.no_grad()
@@ -148,14 +156,22 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     h, w = cond.shape
     sigmas = sigma_schedule(steps)
     x = torch.randn((1, model.target_channels, h, w), generator=gen).to(cond.device) * sigmas[0]
+    # In-place updates keep at most four field-sized tensors alive.
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]
-        d = (x - denoise_field(model, x, s, cond, window, stride, batch, guidance, negative)) / s
-        x_next = x + (s_next - s) * d
+        d = denoise_field(model, x, s, cond, window, stride, batch, guidance, negative)
+        d.sub_(x).div_(-s)  # d = (x - D) / s
         if s_next > 0:
-            d2 = (x_next - denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance, negative)) / s_next
-            x_next = x + (s_next - s) * 0.5 * (d + d2)
-        x = x_next
+            x_next = x + (s_next - s) * d
+            d2 = denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance, negative)
+            d2.sub_(x_next).div_(-s_next)
+            del x_next
+            d.add_(d2)
+            del d2
+            x.add_(d, alpha=(s_next - s) * 0.5)
+        else:
+            x.add_(d, alpha=s_next - s)
+        del d
     return x
 
 
