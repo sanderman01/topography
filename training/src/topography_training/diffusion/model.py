@@ -83,13 +83,25 @@ def _starts(length: int, window: int, stride: int) -> list[int]:
     return s if s[-1] == length - window else s + [length - window]
 
 
+class TensorField:
+    """Conditioning held as one [1, C, H, W] tensor; the field lives on its device."""
+
+    def __init__(self, cond: torch.Tensor):
+        self.cond, self.shape, self.device = cond, tuple(cond.shape[-2:]), cond.device
+
+    def windows(self, boxes, size, device):
+        return torch.cat([self.cond[:, :, y : y + size, x : x + size] for y, x in boxes]).to(device)
+
+
 @torch.no_grad()
 def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, negative=None):
     """One MultiDiffusion evaluation: average window predictions over the field.
 
-    Guidance pushes away from `negative` (same shape as cond) or, without it, from
-    the class-dropped condition."""
+    `cond` and `negative` provide conditioning windows (see TensorField); only a batch of
+    windows is on the model's device at a time, so the field may stay in host memory.
+    Guidance pushes away from `negative` or, without it, from the class-dropped condition."""
     _, _, h, w = x.shape
+    device = next(model.parameters()).device
     out = torch.zeros_like(x)
     total = torch.zeros((1, 1, h, w), device=x.device)
     wt = _weights(min(window, h, w), x.device)
@@ -97,15 +109,15 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
     for i in range(0, len(boxes), batch):
         part = boxes[i : i + batch]
         size = min(window, h, w)
-        xs = torch.cat([x[:, :, y : y + size, xx : xx + size] for y, xx in part])
-        cs = torch.cat([cond[:, :, y : y + size, xx : xx + size] for y, xx in part])
+        xs = torch.cat([x[:, :, y : y + size, xx : xx + size] for y, xx in part]).to(device)
+        cs = cond.windows(part, size, device)
         # Coarse-relative channel is re-centred per window, as in training.
         cs[:, 0] -= cs[:, 0].mean(dim=(1, 2), keepdim=True)
         if negative is not None:
-            ns = torch.cat([negative[:, :, y : y + size, xx : xx + size] for y, xx in part])
+            ns = negative.windows(part, size, device)
             ns[:, 0] -= ns[:, 0].mean(dim=(1, 2), keepdim=True)
-        sig = torch.full((len(part),), sigma, device=x.device)
-        with torch.autocast(x.device.type, dtype=torch.bfloat16, enabled=x.device.type == "cuda"):
+        sig = torch.full((len(part),), sigma, device=device)
+        with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             d = model(xs, sig, cs).float()
             if guidance != 1.0:
                 if negative is not None:
@@ -116,6 +128,7 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
                     uncond[:, k] = 1
                 du = model(xs, sig, uncond).float()
                 d = du + guidance * (d - du)
+        d = d.to(x.device)
         for j, (y, xx) in enumerate(part):
             out[:, :, y : y + size, xx : xx + size] += d[j : j + 1] * wt
             total[:, :, y : y + size, xx : xx + size] += wt
@@ -124,9 +137,15 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
 
 @torch.no_grad()
 def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None):
-    """Heun EDM sampling over a field of any size. cond: [1, C, H, W] on device."""
+    """Heun EDM sampling over a field of any size.
+
+    cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`."""
+    if isinstance(cond, torch.Tensor):
+        cond = TensorField(cond)
+    if isinstance(negative, torch.Tensor):
+        negative = TensorField(negative)
     gen = torch.Generator(device="cpu").manual_seed(seed)
-    _, _, h, w = cond.shape
+    h, w = cond.shape
     sigmas = sigma_schedule(steps)
     x = torch.randn((1, model.target_channels, h, w), generator=gen).to(cond.device) * sigmas[0]
     for i in range(steps):

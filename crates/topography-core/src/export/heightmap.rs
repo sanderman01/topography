@@ -113,11 +113,11 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         "intervals must be a power of two from 16 to 4096",
     )?;
     let manifest: Value = serde_json::from_slice(&read_small(&world.join("manifest.json"))?)?;
-    // Generated worlds are 1 m; previews of world inputs are coarser.
+    // Full generation is 1 m; quick scaled runs and previews are coarser.
     let spacing = manifest["spacing_m"].as_f64().unwrap_or(0.0);
     ensure(
-        (manifest["kind"] == "diffusion_world_output" && spacing == 1.0)
-            || (manifest["kind"] == "world_preview" && spacing >= 1.0),
+        (manifest["kind"] == "diffusion_world_output" || manifest["kind"] == "world_preview")
+            && spacing >= 1.0,
         "unsupported world output",
     )?;
     let input_dir = PathBuf::from(manifest["world_input"].as_str().unwrap_or_default());
