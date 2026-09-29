@@ -37,6 +37,8 @@ Usage: topography [--help | --version]
        topography dataset fit-verify <runtime.toml> <fitting-manifest.json>
        topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>
        topography world input <runtime.toml> <world.toml> <new-output-dir>
+       topography context build <runtime.toml> <plan.toml> <regions-dir>
+       topography context serve <regions-dir> <port>
        topography world sketch <sketch.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
@@ -311,6 +313,22 @@ fn main() -> ExitCode {
             return workflow_result(
                 topography_core::export::view(Path::new(export), port).map(|()| String::new()),
             );
+        }
+        [command, action, runtime, plan, output] if command == "context" && action == "build" => {
+            return workflow_result(topography_core::context::build(
+                Path::new(runtime),
+                Path::new(plan),
+                Path::new(output),
+            ));
+        }
+        [command, action, root, port] if command == "context" && action == "serve" => {
+            let Some(port) = number::<u16>(port) else {
+                return usage_error();
+            };
+            return match topography_core::context::gallery::serve(Path::new(root), port) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => workflow_result(Err(error)),
+            };
         }
         [command, action, config, output] if command == "world" && action == "sketch" => {
             return workflow_result(

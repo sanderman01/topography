@@ -12,6 +12,7 @@ ignored by Git. Keep small reviewed inputs in `catalog/`, configuration in
 | `review/` | Hillshades, contours, oblique previews, metrics, and working annotations |
 | `datasets/` | Approved releases, paired tiles and controls, geographic splits, normalization, lineage |
 | `models/` | Run manifests, configurations, checkpoints, evaluations, and software versions |
+| `context/` | GLO-30 context regions at 32 m with cover, class labels and region votes |
 | `worlds/` | Revision manifests, base surfaces, placements, ownership, generated regions, edits, locks |
 | `exports/` | Height tiles, masks, encoding/coordinate metadata, attribution, and validation reports |
 | `cache/` | Rebuildable derived caches |

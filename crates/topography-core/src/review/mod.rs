@@ -83,7 +83,7 @@ pub(crate) fn band(
     Ok(bytes)
 }
 
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for group in bytes.chunks(3) {

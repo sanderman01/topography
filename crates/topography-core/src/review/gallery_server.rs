@@ -19,8 +19,8 @@ use std::{
 pub(crate) struct Request {
     pub(crate) method: String,
     pub(crate) path: String,
-    headers: BTreeMap<String, String>,
-    body: Vec<u8>,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) body: Vec<u8>,
 }
 pub(crate) fn request(stream: &mut TcpStream) -> Result<Request> {
     io_context(

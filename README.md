@@ -31,6 +31,9 @@ Preparing, Ready or Needs technical attention without asking for another vote.
 Version-2 preparation keeps snow/ice and available vegetation masks alongside
 ground and measured surface elevations. Legacy products show Surface assessment
 pending until backed by a new source assessment; their saved choices remain.
+[GLO-30 context regions](docs/workflows/context-regions.md) provide 32 m real
+terrain over tens of kilometres for the coarse cascade levels, with their own
+Yes/No review page.
 The [cover acquisition workflow](docs/workflows/cover-acquisition.md) drafts
 snow/ice and vegetation masks from public sources for one crop and merges them
 into a version-2 profile; it writes no catalog records or votes.

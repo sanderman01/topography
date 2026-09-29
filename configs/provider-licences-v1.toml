@@ -38,3 +38,14 @@ attribution = "Toitū Te Whenua Land Information New Zealand (LINZ) and the coll
 statement = "LINZ publishes these elevation collections under CC BY 4.0, which allows any use, including training, with attribution."
 edited_map_reuse = "Allowed under CC BY 4.0 with attribution and an indication that changes were made."
 redistribution = "Allowed under CC BY 4.0 with attribution and the licence link."
+
+[[providers]]
+id = "copernicus-glo30"
+url_prefixes = ["https://copernicus-dem-30m.s3.amazonaws.com/"]
+metadata_markers = []
+license_name = "Copernicus DEM GLO-30 Public licence (free worldwide licence)"
+license_url = "https://dataspace.copernicus.eu/sites/default/files/media/files/2025-06/copernicus_contributing_mission_data_access_v2_cop_dem_licenses.pdf"
+attribution = "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+statement = "GLO-30 Public is available worldwide under a free licence that allows any use, including commercial use, modification and derived products such as model training, with the attribution above."
+edited_map_reuse = "Allowed; modified products carry the 'produced using Copernicus WorldDEM-30' attribution."
+redistribution = "Allowed with the attribution."

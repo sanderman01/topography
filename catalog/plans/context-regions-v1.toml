@@ -1,0 +1,463 @@
+# GLO-30 context regions for the coarse cascade levels (L1 128 m, L2 32 m).
+# Each region is 49,152 m square at 32 m unless extent_m says otherwise, centred on
+# `center` = [lon, lat]. `class_id` labels the whole region (terrain-v2 legend);
+# optional [[regions.areas]] polygons override it. Build with `topography context build`,
+# vote with `topography context serve`. Changing an entry needs a new id.
+schema_version = 1
+name = "context-regions-v1"
+
+# 1 Karst towers, pinnacles and depressions
+[[regions]]
+id = "yangshuo"
+class_id = 1
+center = [110.47, 24.78]
+reference = "Yangshuo and the Li River, Guangxi"
+
+[[regions]]
+id = "wanfenglin"
+class_id = 1
+center = [104.95, 25.05]
+reference = "Wanfenglin tower karst, Xingyi, Guizhou"
+
+[[regions]]
+id = "dong-van"
+class_id = 1
+center = [105.35, 23.2]
+reference = "Dong Van karst plateau, Ha Giang"
+
+[[regions]]
+id = "tsingy-bemaraha"
+class_id = 1
+center = [44.8, -18.75]
+reference = "Tsingy de Bemaraha, Madagascar"
+
+[[regions]]
+id = "cockpit-country"
+class_id = 1
+center = [-77.6, 18.3]
+reference = "Cockpit Country, Jamaica"
+
+[[regions]]
+id = "gunung-mulu"
+class_id = 1
+center = [114.9, 4.1]
+reference = "Gunung Mulu and Gunung Api, Sarawak"
+
+# 2 Gorges and slot-like canyons
+[[regions]]
+id = "grand-canyon"
+class_id = 2
+center = [-112.1, 36.1]
+reference = "Grand Canyon, Arizona"
+
+[[regions]]
+id = "zion"
+class_id = 2
+center = [-113.0, 37.3]
+reference = "Zion Canyon and the Narrows, Utah"
+
+[[regions]]
+id = "verdon"
+class_id = 2
+center = [6.35, 43.77]
+reference = "Verdon Gorge, Provence"
+
+[[regions]]
+id = "fish-river-canyon"
+class_id = 2
+center = [17.6, -27.6]
+reference = "Fish River Canyon, Namibia"
+
+[[regions]]
+id = "copper-canyon"
+class_id = 2
+center = [-107.8, 27.5]
+reference = "Barrancas del Cobre, Chihuahua"
+
+[[regions]]
+id = "tara-canyon"
+class_id = 2
+center = [19.25, 43.2]
+reference = "Tara River Canyon, Montenegro"
+
+[[regions]]
+id = "black-canyon-gunnison"
+class_id = 2
+center = [-107.72, 38.57]
+reference = "Black Canyon of the Gunnison, Colorado"
+
+# 3 Fjords and glacial troughs
+[[regions]]
+id = "milford-sound"
+class_id = 3
+center = [167.9, -44.65]
+reference = "Milford Sound, Fiordland"
+
+[[regions]]
+id = "doubtful-sound"
+class_id = 3
+center = [167.1, -45.35]
+reference = "Doubtful Sound, Fiordland"
+
+[[regions]]
+id = "geirangerfjord"
+class_id = 3
+center = [7.1, 62.12]
+reference = "Geirangerfjord and Sunnylvsfjord, Norway"
+
+[[regions]]
+id = "aurlandsfjord"
+class_id = 3
+center = [7.1, 60.95]
+reference = "Aurlandsfjord and Naeroyfjord, Norway"
+
+[[regions]]
+id = "tracy-arm"
+class_id = 3
+center = [-133.4, 57.85]
+reference = "Tracy Arm and Endicott Arm, Alaska"
+
+[[regions]]
+id = "yosemite"
+class_id = 3
+center = [-119.6, 37.75]
+reference = "Yosemite Valley glacial trough, California"
+
+[[regions]]
+id = "lauterbrunnen"
+class_id = 3
+center = [7.9, 46.57]
+reference = "Lauterbrunnen trough valley, Bernese Oberland"
+
+[[regions]]
+id = "howe-sound"
+class_id = 3
+center = [-123.25, 49.55]
+reference = "Howe Sound, British Columbia"
+
+# 4 Volcanic calderas and craters
+[[regions]]
+id = "crater-lake"
+class_id = 4
+center = [-122.1, 42.94]
+reference = "Crater Lake caldera, Oregon"
+
+[[regions]]
+id = "aniakchak"
+class_id = 4
+center = [-158.15, 56.88]
+reference = "Aniakchak caldera, Alaska Peninsula"
+
+[[regions]]
+id = "ngorongoro"
+class_id = 4
+center = [35.55, -3.2]
+reference = "Ngorongoro Crater, Tanzania"
+
+[[regions]]
+id = "aso"
+class_id = 4
+center = [131.08, 32.9]
+reference = "Aso caldera, Kyushu"
+
+[[regions]]
+id = "valles-caldera"
+class_id = 4
+center = [-106.55, 35.88]
+reference = "Valles Caldera, New Mexico"
+
+[[regions]]
+id = "tambora"
+class_id = 4
+center = [118.0, -8.25]
+reference = "Mount Tambora caldera, Sumbawa"
+
+[[regions]]
+id = "newberry"
+class_id = 4
+center = [-121.25, 43.72]
+reference = "Newberry Volcano caldera, Oregon"
+
+# 5 Archipelagos and dissected coasts
+[[regions]]
+id = "lofoten"
+class_id = 5
+center = [13.1, 67.98]
+reference = "Reine and western Lofoten, Norway"
+
+[[regions]]
+id = "wayag"
+class_id = 5
+center = [130.05, -0.2]
+reference = "Wayag, Raja Ampat"
+
+[[regions]]
+id = "ha-long-bay"
+class_id = 5
+center = [107.1, 20.9]
+reference = "Ha Long Bay, Vietnam"
+
+[[regions]]
+id = "palau-rock-islands"
+class_id = 5
+center = [134.4, 7.25]
+reference = "Rock Islands, Palau"
+
+[[regions]]
+id = "broughton-archipelago"
+class_id = 5
+center = [-126.6, 50.75]
+reference = "Broughton Archipelago, British Columbia"
+
+[[regions]]
+id = "aysen-archipelago"
+class_id = 5
+center = [-73.8, -45.4]
+reference = "Chonos Archipelago and Aysen channels, Chile"
+
+# 6 Alpine ridges and cirques
+[[regions]]
+id = "zermatt"
+class_id = 6
+center = [7.72, 46.0]
+reference = "Matterhorn and the Zermatt peaks, Valais"
+
+[[regions]]
+id = "dolomites"
+class_id = 6
+center = [11.85, 46.5]
+reference = "Dolomites around Sella and Marmolada"
+
+[[regions]]
+id = "tetons"
+class_id = 6
+center = [-110.8, 43.75]
+reference = "Teton Range, Wyoming"
+
+[[regions]]
+id = "north-cascades"
+class_id = 6
+center = [-121.1, 48.6]
+reference = "North Cascades, Washington"
+
+[[regions]]
+id = "high-tatras"
+class_id = 6
+center = [20.1, 49.18]
+reference = "High Tatras, Slovakia and Poland"
+
+[[regions]]
+id = "sawtooth"
+class_id = 6
+center = [-115.0, 44.1]
+reference = "Sawtooth Range, Idaho"
+
+# 7 Badlands, mesas and eroded gullies
+[[regions]]
+id = "badlands-sd"
+class_id = 7
+center = [-102.2, 43.85]
+reference = "Badlands National Park, South Dakota"
+
+[[regions]]
+id = "monument-valley"
+class_id = 7
+center = [-110.1, 37.0]
+reference = "Monument Valley, Arizona and Utah"
+
+[[regions]]
+id = "canyonlands"
+class_id = 7
+center = [-109.9, 38.4]
+reference = "Canyonlands Island in the Sky and the Needles, Utah"
+
+[[regions]]
+id = "bardenas-reales"
+class_id = 7
+center = [-1.5, 42.2]
+reference = "Bardenas Reales, Navarre"
+
+[[regions]]
+id = "cappadocia"
+class_id = 7
+center = [34.85, 38.65]
+reference = "Cappadocia, Turkey"
+
+[[regions]]
+id = "san-rafael-swell"
+class_id = 7
+center = [-110.7, 38.85]
+reference = "San Rafael Swell, Utah"
+
+# 8 Dunes and sand ridges
+[[regions]]
+id = "sossusvlei"
+class_id = 8
+center = [15.3, -24.75]
+reference = "Sossusvlei, Namib Sand Sea"
+
+[[regions]]
+id = "badain-jaran"
+class_id = 8
+center = [102.4, 39.8]
+reference = "Badain Jaran megadunes, Inner Mongolia"
+
+[[regions]]
+id = "erg-chebbi"
+class_id = 8
+center = [-4.0, 31.15]
+reference = "Erg Chebbi, Morocco"
+
+[[regions]]
+id = "great-sand-dunes"
+class_id = 8
+center = [-105.55, 37.8]
+reference = "Great Sand Dunes and the Sangre de Cristo front, Colorado"
+
+[[regions]]
+id = "liwa"
+class_id = 8
+center = [53.8, 23.05]
+reference = "Liwa megadunes, Rub al Khali edge"
+
+[[regions]]
+id = "algodones"
+class_id = 8
+center = [-115.1, 32.95]
+reference = "Algodones Dunes, California"
+
+# 9 Braided river basins and floodplains (mountain valleys only)
+[[regions]]
+id = "rakaia-upper"
+class_id = 9
+center = [171.35, -43.35]
+reference = "Upper Rakaia valley and the Southern Alps, Canterbury"
+
+[[regions]]
+id = "waimakariri-upper"
+class_id = 9
+center = [171.65, -43.05]
+reference = "Upper Waimakariri and Arthur's Pass ranges, Canterbury"
+
+[[regions]]
+id = "tagliamento"
+class_id = 9
+center = [12.95, 46.3]
+reference = "Upper Tagliamento, Carnic Prealps"
+
+# 10 Glaciers and ice fields
+[[regions]]
+id = "aletsch"
+class_id = 10
+center = [8.05, 46.5]
+reference = "Aletsch Glacier, Bernese Alps"
+
+[[regions]]
+id = "aoraki-mount-cook"
+class_id = 10
+center = [170.2, -43.6]
+reference = "Aoraki/Mount Cook and the Tasman Glacier"
+
+[[regions]]
+id = "columbia-icefield"
+class_id = 10
+center = [-117.25, 52.17]
+reference = "Columbia Icefield, Canadian Rockies"
+
+[[regions]]
+id = "skaftafell"
+class_id = 10
+center = [-16.8, 64.1]
+reference = "Skaftafell and the southern Vatnajokull outlets, Iceland"
+
+[[regions]]
+id = "juneau-icefield"
+class_id = 10
+center = [-134.3, 58.6]
+reference = "Juneau Icefield, Alaska and British Columbia"
+
+[[regions]]
+id = "perito-moreno"
+class_id = 10
+center = [-73.2, -50.5]
+reference = "Perito Moreno and the Southern Patagonian Icefield edge"
+
+# 11 Volcanic cones and lava fields
+[[regions]]
+id = "fuji"
+class_id = 11
+center = [138.73, 35.36]
+reference = "Mount Fuji, Japan"
+
+[[regions]]
+id = "etna"
+class_id = 11
+center = [15.0, 37.75]
+reference = "Mount Etna, Sicily"
+
+[[regions]]
+id = "teide"
+class_id = 11
+center = [-16.64, 28.27]
+reference = "Teide and Las Canadas, Tenerife"
+
+[[regions]]
+id = "tongariro"
+class_id = 11
+center = [175.6, -39.2]
+reference = "Ruapehu, Ngauruhoe and Tongariro"
+
+[[regions]]
+id = "shasta"
+class_id = 11
+center = [-122.2, 41.4]
+reference = "Mount Shasta, California"
+
+[[regions]]
+id = "craters-of-the-moon"
+class_id = 11
+center = [-113.55, 43.4]
+reference = "Craters of the Moon lava field, Idaho"
+
+[[regions]]
+id = "timanfaya"
+class_id = 11
+center = [-13.75, 29.02]
+reference = "Timanfaya lava fields, Lanzarote"
+
+# 12 Coastal cliffs and sea stacks
+[[regions]]
+id = "na-pali"
+class_id = 12
+center = [-159.6, 22.12]
+reference = "Na Pali coast, Kauai"
+
+[[regions]]
+id = "big-sur"
+class_id = 12
+center = [-121.72, 36.2]
+reference = "Big Sur coast, California"
+
+[[regions]]
+id = "faroe-islands"
+class_id = 12
+center = [-7.0, 62.15]
+reference = "Streymoy and Vagar sea cliffs, Faroe Islands"
+
+[[regions]]
+id = "madeira"
+class_id = 12
+center = [-16.95, 32.75]
+reference = "Madeira north coast cliffs"
+
+[[regions]]
+id = "cliffs-of-moher"
+class_id = 12
+center = [-9.4, 52.97]
+reference = "Cliffs of Moher and the Burren coast, Clare"
+
+[[regions]]
+id = "twelve-apostles"
+class_id = 12
+center = [143.1, -38.66]
+reference = "Twelve Apostles and the Port Campbell coast, Victoria"
