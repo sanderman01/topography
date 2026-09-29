@@ -1,0 +1,20 @@
+crates/topography-core/src/acquisition/geofabrik.rs
+  s_8fb48d93e6f9bc::t_382f9b06b33507 158
+  s_8fb48d93e6f9bc::t_6a5159e4e37f23 159-164,167-168,269-300,302-311
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4b48ccd93cafa82239040d7fcee491ef0b51d83a",
+  "prompts": {},
+  "sessions": {
+    "s_8fb48d93e6f9bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "182fc722-24eb-420b-b649-94ee27bdc968",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
