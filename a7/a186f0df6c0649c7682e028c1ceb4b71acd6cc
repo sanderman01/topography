@@ -1,0 +1,19 @@
+crates/topography-core/src/export/view.html
+  s_2990aebbfb5b77::t_83b6f06b6f06ef 16-19,32,54-62,75,87-88,179,184-194,346,359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a7a186f0df6c0649c7682e028c1ceb4b71acd6cc",
+  "prompts": {},
+  "sessions": {
+    "s_2990aebbfb5b77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f7cfa0f-82d6-4b28-81d7-b2df0cae0a3c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
