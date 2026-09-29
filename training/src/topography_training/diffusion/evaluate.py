@@ -2,7 +2,9 @@
 
 python -m topography_training.diffusion.evaluate --run-dir <dir> --out <new-dir> [options]
 
-Writes metrics.json, review.html (blind, shuffled real/generated hillshades),
+Generates every picked window for the metrics; the review shows real patches from
+half of the windows and generated patches from the other half, so no two patches
+share a window. Writes metrics.json, review.html (blind, shuffled real/generated hillshades),
 key.json (which image is which; keep closed until votes are in), arrays.npz and
 seam.png (MultiDiffusion strip).
 """
@@ -58,7 +60,7 @@ def main(argv=None) -> int:
     p.add_argument("--run-dir", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--weights", type=Path)
-    p.add_argument("--count", type=int, default=16, help="generated patches (same number of real)")
+    p.add_argument("--count", type=int, default=16, help="review patches of each kind; 2x windows are generated")
     p.add_argument("--steps", type=int, default=32)
     p.add_argument("--guidance", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=0)
@@ -94,10 +96,10 @@ def main(argv=None) -> int:
     for idx, (ti, _, _) in enumerate(val.positions):
         by_tile.setdefault(ti, []).append(idx)
     picks, rnd = [], 0
-    while len(picks) < args.count and any(rnd < len(v) for v in by_tile.values()):
+    while len(picks) < 2 * args.count and any(rnd < len(v) for v in by_tile.values()):
         picks += [v[rnd] for v in by_tile.values() if rnd < len(v)]
         rnd += 1
-    picks = picks[: args.count]
+    picks = picks[: 2 * args.count]
 
     args.out.mkdir(parents=True)
     rng = np.random.default_rng(args.seed)
@@ -124,8 +126,8 @@ def main(argv=None) -> int:
         real_shown = np.where(water, np.nan, real)
         if (np.isnan(real_shown) & ~water).any():
             real_shown = np.where(water, np.nan, data.fill_nan(real_shown))
-        for kind, h in (("real", real_shown), ("generated", gen_h)):
-            items.append({"kind": kind, "tile": t.name, "class_id": t.class_id, "img": hillshade(h, water)})
+        kind, h = ("real", real_shown) if n % 2 == 0 else ("generated", gen_h)
+        items.append({"kind": kind, "tile": t.name, "class_id": t.class_id, "img": hillshade(h, water)})
         print(f"{n + 1}/{len(picks)} {t.name}", flush=True)
 
     # Memorization check: distance to the nearest training crop (4x downsampled residual).
