@@ -155,12 +155,17 @@ fn smallest(index: &Value, points: &[[f64; 2]]) -> Option<(f64, bool, String, St
 }
 
 /// The smallest Geofabrik region containing the whole bbox. When only a continent does
-/// (the bbox crosses a border), the smallest sub-regions covering an 8 × 8 grid of points.
-fn regions(index: &Value, [west, south, east, north]: [f64; 4]) -> Result<Vec<(String, String)>> {
+/// (the bbox crosses a border) or `whole_first` is false, the smallest sub-regions covering an
+/// 8 × 8 grid of points.
+fn regions(
+    index: &Value,
+    [west, south, east, north]: [f64; 4],
+    whole_first: bool,
+) -> Result<Vec<(String, String)>> {
     let corners = [[west, south], [west, north], [east, south], [east, north]];
     let whole = smallest(index, &corners);
-    if let Some((_, true, id, pbf)) = whole {
-        return Ok(vec![(id, pbf)]);
+    if let (true, Some((_, true, id, pbf))) = (whole_first, &whole) {
+        return Ok(vec![(id.clone(), pbf.clone())]);
     }
     let mut found: Vec<(String, String)> = Vec::new();
     for i in 0..8 {
@@ -261,36 +266,49 @@ pub(crate) fn water(
     }
     let index: Value =
         serde_json::from_slice(&io_context("read Geofabrik index", fs::read(&index_path))?)?;
-    let mut provenances = Vec::new();
-    let mut layers = [Vec::new(), Vec::new()];
-    for (id, pbf_url) in regions(&index, bbox)? {
-        let name = id.replace('/', "-");
-        let gpkg = dir.join(format!("{name}.water.gpkg"));
-        let meta = dir.join(format!("{name}.json"));
-        let provenance: Value = if gpkg.is_file() && meta.is_file() && fresh(&gpkg, EXTRACT_MAX_AGE)
-        {
-            serde_json::from_slice(&io_context("read extract provenance", fs::read(&meta))?)?
-        } else {
-            build(&dir, &id, &pbf_url, user_agent)?
-        };
-        provenances.push(provenance);
-        let [west, south, east, north] = bbox.map(|v| v.to_string());
-        for (k, layer) in ["multipolygons", "lines"].iter().enumerate() {
-            let out = scratch.join(format!("osm-{name}-{layer}.geojson"));
-            run(command("ogr2ogr")
-                .args(["-q", "-f", "GeoJSON", "-spat"])
-                .args([&west, &south, &east, &north])
-                .arg(&out)
-                .arg(&gpkg)
-                .arg(layer))?;
-            let collection: Value =
-                serde_json::from_slice(&io_context("read extract water", fs::read(&out))?)?;
-            let features = collection["features"].as_array().ok_or_else(|| {
-                AcquisitionError::Invalid("extract water is not a feature collection".into())
-            })?;
-            layers[k].extend(features.iter().cloned());
+    let collect = |list: Vec<(String, String)>| -> Result<(Vec<Value>, [Vec<Value>; 2])> {
+        let mut provenances = Vec::new();
+        let mut layers = [Vec::new(), Vec::new()];
+        for (id, pbf_url) in list {
+            let name = id.replace('/', "-");
+            let gpkg = dir.join(format!("{name}.water.gpkg"));
+            let meta = dir.join(format!("{name}.json"));
+            let provenance: Value = if gpkg.is_file()
+                && meta.is_file()
+                && fresh(&gpkg, EXTRACT_MAX_AGE)
+            {
+                serde_json::from_slice(&io_context("read extract provenance", fs::read(&meta))?)?
+            } else {
+                build(&dir, &id, &pbf_url, user_agent)?
+            };
+            provenances.push(provenance);
+            let [west, south, east, north] = bbox.map(|v| v.to_string());
+            for (k, layer) in ["multipolygons", "lines"].iter().enumerate() {
+                let out = scratch.join(format!("osm-{name}-{layer}.geojson"));
+                run(command("ogr2ogr")
+                    .args(["-q", "-f", "GeoJSON", "-spat"])
+                    .args([&west, &south, &east, &north])
+                    .arg(&out)
+                    .arg(&gpkg)
+                    .arg(layer))?;
+                let collection: Value =
+                    serde_json::from_slice(&io_context("read extract water", fs::read(&out))?)?;
+                let features = collection["features"].as_array().ok_or_else(|| {
+                    AcquisitionError::Invalid("extract water is not a feature collection".into())
+                })?;
+                layers[k].extend(features.iter().cloned());
+            }
         }
-    }
+        Ok((provenances, layers))
+    };
+    // A whole-bbox extract too large to download (a country across a province border)
+    // falls back to the smaller extracts under the bbox.
+    let (mut provenances, layers) = match collect(regions(&index, bbox, true)?) {
+        Err(e) if e.to_string().contains("exceeds limit") => {
+            collect(regions(&index, bbox, false)?)?
+        }
+        other => other?,
+    };
     let [areas, lines] = layers.map(|f| json!({"type": "FeatureCollection", "features": f}));
     // One extract keeps its provenance object; several are listed.
     let provenance = if provenances.len() == 1 {
