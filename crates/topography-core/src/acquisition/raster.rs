@@ -222,11 +222,19 @@ pub fn create_review(receipt_path: &Path, output: &Path, window: [u32; 4]) -> Re
 
 /// Project one lon/lat point into `srs` with gdaltransform.
 pub(crate) fn project(srs: &str, lon: f64, lat: f64) -> Result<(f64, f64)> {
+    transform("EPSG:4326", srs, lon, lat)
+}
+
+pub(crate) fn unproject(srs: &str, x: f64, y: f64) -> Result<(f64, f64)> {
+    transform(srs, "EPSG:4326", x, y)
+}
+
+fn transform(from: &str, to: &str, lon: f64, lat: f64) -> Result<(f64, f64)> {
     let out = run(command("gdaltransform").args([
         "-s_srs",
-        "EPSG:4326",
+        from,
         "-t_srs",
-        srs,
+        to,
         "-output_xy",
         "-coord",
         &lon.to_string(),

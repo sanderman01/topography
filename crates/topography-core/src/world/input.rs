@@ -37,29 +37,6 @@ struct WorldConfig {
     regions: Vec<Region>,
 }
 
-fn unproject(srs: &str, x: f64, y: f64) -> Result<(f64, f64)> {
-    let out = raster::run(raster::command("gdaltransform").args([
-        "-s_srs",
-        srs,
-        "-t_srs",
-        "EPSG:4326",
-        "-output_xy",
-        "-coord",
-        &x.to_string(),
-        &y.to_string(),
-    ]))?;
-    let text = String::from_utf8_lossy(&out);
-    let v: Vec<f64> = text
-        .split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    ensure(
-        v.len() >= 2,
-        format!("unexpected gdaltransform output: {text}"),
-    )?;
-    Ok((v[0], v[1]))
-}
-
 /// Build `world.json`, `coarse.f32`, `classes.u8` and the 1 m `water.u8`, `snow-ice.u8`,
 /// `vegetation.u8` and `land-cover.u8` in a new directory.
 pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<PathBuf> {
@@ -112,7 +89,7 @@ pub fn build_input(runtime: &Path, config_path: &Path, output: &Path) -> Result<
         (extent[2], extent[1]),
         (extent[2], extent[3]),
     ] {
-        let (lon, lat) = unproject(&srs, x, y)?;
+        let (lon, lat) = raster::unproject(&srs, x, y)?;
         bbox = [
             bbox[0].min(lon),
             bbox[1].min(lat),
