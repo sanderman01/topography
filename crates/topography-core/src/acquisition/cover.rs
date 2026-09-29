@@ -23,6 +23,7 @@ pub(crate) const POLICY: &str = "game_cover_v7";
 const DEFAULT_POLICY: &str = include_str!("../../../../configs/cover-game-v7.toml");
 /// ESA WorldCover v200 class codes; 0 marks cells outside WorldCover coverage.
 pub(crate) const LAND_COVER_CLASSES: [u8; 12] = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
+const GLIMS_USER_AGENT: &str = "topography-terrain-workshop/0.1 (game terrain glacier masks)";
 const ABSENT: u8 = 1;
 const PRESENT: u8 = 2;
 
@@ -295,8 +296,14 @@ fn worldcover(
         .arg(&vrt)
         .args(urls.iter().map(|u| format!("/vsicurl/{u}"))))?;
     let placed = scratch.join("worldcover.tif");
+    // Grids coarser than WorldCover's 10 m take the majority class, not one sample.
+    let resampling = if grid.transform[1].abs() > 10.0 {
+        "mode"
+    } else {
+        "near"
+    };
     run(gdal("gdalwarp")
-        .args(["-q", "-r", "near", "-et", "0", "-ot", "Byte"])
+        .args(["-q", "-r", resampling, "-et", "0", "-ot", "Byte"])
         .args([
             "-wo",
             "INIT_DEST=0",
@@ -329,7 +336,8 @@ fn glims(p: &Glims, bbox: [f64; 4], grid: &Grid, scratch: &Path) -> Result<(Vec<
         coord(north),
         coord(east)
     );
-    let body: Value = serde_json::from_slice(&http::query(&url)?)?;
+    // Large regions return several MiB of outlines.
+    let body: Value = serde_json::from_slice(&http::query_large(&url, GLIMS_USER_AGENT, 300)?)?;
     let features = body["features"]
         .as_array()
         .filter(|_| body["type"] == "FeatureCollection")
@@ -582,7 +590,9 @@ fn osm(
     let raster = scratch.join("osm.tif");
     blank(grid, &raster)?;
     burn(&areas, &scratch.join("osm-areas.geojson"), false, &raster)?;
-    burn(&lines, &scratch.join("osm-lines.geojson"), true, &raster)?;
+    // On coarse grids a narrow stream must not claim whole cells.
+    let touched = grid.transform[1].abs() <= 10.0;
+    burn(&lines, &scratch.join("osm-lines.geojson"), touched, &raster)?;
     let mut sources = sources;
     sources["default_widths_m"] =
         json!({"river":p.river_width_m,"canal":p.canal_width_m,"stream":p.stream_width_m});
