@@ -198,6 +198,19 @@ on them is paused while the pilot world is generated and exported.
    visible joins. Recheck on the pilot world.
 5. **Twin review patches.** Fixed: the evaluator shows real and generated
    patches from different windows.
+6. **Water pools on steep slopes** (found in the pilot world, 2026-09-29). Water
+   has to flow downhill: a slope can carry a stream, but never a pool. The
+   pools are probably WorldCover water false positives (dark terrain shadow on
+   steep faces is a known confusion), which neither the cover policy nor
+   generation checks against the terrain. Proposed fix, shared by training
+   releases and world inputs:
+   - **Cover policy:** drop standing-water patches (not OSM waterways) whose
+     ground-elevation range or mean slope exceeds a small limit, e.g. more than
+     a few metres of spread across the patch. Record the rule in the policy
+     version.
+   - **Generation:** give each remaining lake one flat surface level (its
+     lowest shore) and keep stream beds descending. Terrain around them is
+     generated to fit, instead of treating water as an unrelated mask.
 
 ## Open pilot choices
 
