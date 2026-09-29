@@ -3,7 +3,7 @@
 //! features; crops read their bounding box from that local file.
 
 use super::{
-    AcquisitionError, Result, ensure, hash_file, http, io_context,
+    AcquisitionError, Result, hash_file, http, io_context,
     raster::{command, run},
 };
 use serde_json::{Value, json};
@@ -134,9 +134,8 @@ fn area(polygon: &[Ring]) -> f64 {
     })
 }
 
-/// The smallest Geofabrik region whose outline contains the whole bbox.
-fn region(index: &Value, [west, south, east, north]: [f64; 4]) -> Result<(String, String)> {
-    let corners = [[west, south], [west, north], [east, south], [east, north]];
+/// Smallest region containing every point, with its area and whether it has a parent.
+fn smallest(index: &Value, points: &[[f64; 2]]) -> Option<(f64, bool, String, String)> {
     index["features"]
         .as_array()
         .into_iter()
@@ -144,16 +143,62 @@ fn region(index: &Value, [west, south, east, north]: [f64; 4]) -> Result<(String
         .filter_map(|f| {
             let pbf = f["properties"]["urls"]["pbf"].as_str()?;
             let id = f["properties"]["id"].as_str()?;
+            let child = f["properties"]["parent"].is_string();
             rings(&f["geometry"])
                 .iter()
-                .filter(|p| corners.iter().all(|c| inside(p, *c)))
+                .filter(|p| points.iter().all(|c| inside(p, *c)))
                 .map(|p| area(p))
                 .reduce(f64::min)
-                .map(|a| (a, id.to_owned(), pbf.to_owned()))
+                .map(|a| (a, child, id.to_owned(), pbf.to_owned()))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, id, pbf)| (id, pbf))
-        .ok_or_else(|| AcquisitionError::Invalid("no Geofabrik region contains this crop".into()))
+}
+
+/// The smallest Geofabrik region containing the whole bbox. When only a continent does
+/// (the bbox crosses a border), the smallest sub-regions covering an 8 × 8 grid of points.
+fn regions(index: &Value, [west, south, east, north]: [f64; 4]) -> Result<Vec<(String, String)>> {
+    let corners = [[west, south], [west, north], [east, south], [east, north]];
+    let whole = smallest(index, &corners);
+    if let Some((_, true, id, pbf)) = whole {
+        return Ok(vec![(id, pbf)]);
+    }
+    let mut found: Vec<(String, String)> = Vec::new();
+    for i in 0..8 {
+        for j in 0..8 {
+            let point = [
+                west + (east - west) * (f64::from(i) + 0.5) / 8.0,
+                south + (north - south) * (f64::from(j) + 0.5) / 8.0,
+            ];
+            // Continents are too large to download; open sea may lie in no sub-region.
+            let best = index["features"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|f| f["properties"]["parent"].is_string())
+                .filter_map(|f| {
+                    let pbf = f["properties"]["urls"]["pbf"].as_str()?;
+                    let id = f["properties"]["id"].as_str()?;
+                    rings(&f["geometry"])
+                        .iter()
+                        .filter(|p| inside(p, point))
+                        .map(|p| area(p))
+                        .reduce(f64::min)
+                        .map(|a| (a, id.to_owned(), pbf.to_owned()))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some((_, id, pbf)) = best {
+                if !found.iter().any(|(f, _)| *f == id) {
+                    found.push((id, pbf));
+                }
+            }
+        }
+    }
+    if found.is_empty() {
+        return whole.map(|(_, _, id, pbf)| vec![(id, pbf)]).ok_or_else(|| {
+            AcquisitionError::Invalid("no Geofabrik region contains this crop".into())
+        });
+    }
+    Ok(found)
 }
 
 /// Download the region's extract and keep its water features as a GeoPackage.
@@ -216,34 +261,42 @@ pub(crate) fn water(
     }
     let index: Value =
         serde_json::from_slice(&io_context("read Geofabrik index", fs::read(&index_path))?)?;
-    let (id, pbf_url) = region(&index, bbox)?;
-    let name = id.replace('/', "-");
-    let gpkg = dir.join(format!("{name}.water.gpkg"));
-    let meta = dir.join(format!("{name}.json"));
-    let provenance = if gpkg.is_file() && meta.is_file() && fresh(&gpkg, EXTRACT_MAX_AGE) {
-        serde_json::from_slice(&io_context("read extract provenance", fs::read(&meta))?)?
-    } else {
-        build(&dir, &id, &pbf_url, user_agent)?
-    };
-    let [west, south, east, north] = bbox.map(|v| v.to_string());
-    let mut layers = Vec::new();
-    for layer in ["multipolygons", "lines"] {
-        let out = scratch.join(format!("osm-{layer}.geojson"));
-        run(command("ogr2ogr")
-            .args(["-q", "-f", "GeoJSON", "-spat"])
-            .args([&west, &south, &east, &north])
-            .arg(&out)
-            .arg(&gpkg)
-            .arg(layer))?;
-        let collection: Value =
-            serde_json::from_slice(&io_context("read extract water", fs::read(&out))?)?;
-        ensure(
-            collection["features"].is_array(),
-            "extract water is not a feature collection",
-        )?;
-        layers.push(collection);
+    let mut provenances = Vec::new();
+    let mut layers = [Vec::new(), Vec::new()];
+    for (id, pbf_url) in regions(&index, bbox)? {
+        let name = id.replace('/', "-");
+        let gpkg = dir.join(format!("{name}.water.gpkg"));
+        let meta = dir.join(format!("{name}.json"));
+        let provenance: Value = if gpkg.is_file() && meta.is_file() && fresh(&gpkg, EXTRACT_MAX_AGE)
+        {
+            serde_json::from_slice(&io_context("read extract provenance", fs::read(&meta))?)?
+        } else {
+            build(&dir, &id, &pbf_url, user_agent)?
+        };
+        provenances.push(provenance);
+        let [west, south, east, north] = bbox.map(|v| v.to_string());
+        for (k, layer) in ["multipolygons", "lines"].iter().enumerate() {
+            let out = scratch.join(format!("osm-{name}-{layer}.geojson"));
+            run(command("ogr2ogr")
+                .args(["-q", "-f", "GeoJSON", "-spat"])
+                .args([&west, &south, &east, &north])
+                .arg(&out)
+                .arg(&gpkg)
+                .arg(layer))?;
+            let collection: Value =
+                serde_json::from_slice(&io_context("read extract water", fs::read(&out))?)?;
+            let features = collection["features"].as_array().ok_or_else(|| {
+                AcquisitionError::Invalid("extract water is not a feature collection".into())
+            })?;
+            layers[k].extend(features.iter().cloned());
+        }
     }
-    let lines = layers.pop().unwrap_or_default();
-    let areas = layers.pop().unwrap_or_default();
+    let [areas, lines] = layers.map(|f| json!({"type": "FeatureCollection", "features": f}));
+    // One extract keeps its provenance object; several are listed.
+    let provenance = if provenances.len() == 1 {
+        provenances.remove(0)
+    } else {
+        json!({"extracts": provenances})
+    };
     Ok((areas, lines, provenance))
 }
