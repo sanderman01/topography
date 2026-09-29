@@ -1,0 +1,32 @@
+crates/topography-core/src/review/gallery_server.rs
+  s_2990aebbfb5b77::t_0ef69ed6b0824a 19-21,25,104
+crates/topography-core/src/export/view.html
+  s_2990aebbfb5b77::t_61704f9a68433b 1-347
+crates/topography-core/src/export/mod.rs
+  s_2990aebbfb5b77::t_208c5ead3269ee 4,6
+crates/topography-cli/src/main.rs
+  s_2990aebbfb5b77::t_208c5ead3269ee 41,298-310
+  s_2990aebbfb5b77::t_1f45198c1daa44 311-312
+docs/workflows/terrain-diffusion.md
+  s_2990aebbfb5b77::t_1528df8fae63c5 65-79
+crates/topography-core/src/export/view.rs
+  s_2990aebbfb5b77::t_fa4503ee16bb82 1-47,53-85,94-109,112-123,127-168,173-197
+  s_2990aebbfb5b77::t_48f314b09fd5a8 169-172
+  s_2990aebbfb5b77::t_208c5ead3269ee 48-52,86-93,110-111,124-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "97afcde55e36f8d039463c0b1643cfdb594d809e",
+  "prompts": {},
+  "sessions": {
+    "s_2990aebbfb5b77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f7cfa0f-82d6-4b28-81d7-b2df0cae0a3c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
