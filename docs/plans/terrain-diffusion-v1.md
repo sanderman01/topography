@@ -1,8 +1,11 @@
 # Terrain diffusion pilot v1
 
-Status: planned 2026-09-25. Supersedes the "continue without a model" decision in
-the [scalar fitting report](../reports/scalar-codec-fit-v1.md) and
-[image-codec report](../reports/image-codec-pilot-v1.md). Curated patches and
+Status: planned 2026-09-25. Run 4 passed the human gate on 2026-09-29; the pilot
+world and export are done. On 2026-09-29 this model became the last level (L4) of
+the [terrain cascade](terrain-cascade-v1.md), which adds coarser models above it.
+Run 5 (known issues below) is cascade step 6. Supersedes the "continue without a
+model" decision in the [scalar fitting report](../reports/scalar-codec-fit-v1.md)
+and [image-codec report](../reports/image-codec-pilot-v1.md). Curated patches and
 blending stay the fallback (master plan §7).
 
 ## Why the earlier attempts do not settle the question
@@ -39,8 +42,9 @@ extra target channels, so they never knew where ice or forest was):
   - water mask (authored in worlds; water cells are not generated terrain);
   - snow/ice and vegetation coverage, blurred with a 6 m Gaussian and scaled to
     ±1, so the 10 m land-cover steps do not print as squares into the terrain;
-  - per-pixel terrain class as a one-hot map over the nine legend classes plus
-    "unknown". 10% class dropout during training enables classifier-free guidance.
+  - per-pixel terrain class as a one-hot map over the twelve legend v2 classes
+    plus "unknown". 10% class dropout during training enables classifier-free
+    guidance.
 - Loss: EDM denoising loss (Karras et al. 2022) over valid, non-water cells,
   including glacier surfaces.
 - Network: a U-Net (diffusers `UNet2DModel`) of about 50–100 M parameters, with
@@ -59,8 +63,8 @@ elevation gets the deterministic fill rule from the world contract.
 
 ## Data
 
-All accepted **Ready** gallery tiles (currently 33, about 82 km², seven classes:
-karst, gorges, fjords, volcanic, badlands, dunes and braided rivers). A Rust
+All accepted **Ready** gallery tiles. Release `diffusion-v8` (2026-09-29) has 132
+tiles after overlap pruning, 4.9 GB, all twelve classes (7–16 tiles each). A Rust
 command reads the gallery and snapshots each tile's current prepared product into
 a training release:
 
@@ -101,17 +105,17 @@ explicitly (below).
 
 ## Steps
 
-- [ ] **Environment:** ROCm PyTorch in `data/models/diffusion-env-v1/.venv`, plus
+- [x] **Environment:** ROCm PyTorch in `data/models/diffusion-env-v1/.venv`, plus
   the `diffusion` extra. A GPU matmul check confirms the RX 9060 XT (gfx1200) runs.
 - [x] **Release:** `topography dataset diffusion <runtime.toml> <gallery.json> <new-output-dir>`
   builds the training release from current Ready tiles.
-- [ ] **Training code:** data loading, split and crops, the model, EDM training with
+- [x] **Training code:** data loading, split and crops, the model, EDM training with
   checkpoints/resume, a VRAM and throughput log, and a sampler that supports
   MultiDiffusion.
-- [ ] **Smoke run** (minutes, needs readiness): fit a few hundred steps on a few
+- [x] **Smoke run** (minutes, needs readiness): fit a few hundred steps on a few
   crops. Loss falls, VRAM peak and steps/s are recorded, and the recorded speed sets
   the real run's time.
-- [ ] **Pilot training** (hours, needs readiness): at most three runs of about 8 h
+- [x] **Pilot training** (hours, needs readiness): at most three runs of about 8 h
   each, choosing between them on validation loss and samples. Run 1: 11/16
   generated patches got Yes, but grid artifacts (fixed coarse blocks), blocky water
   and learned source artifacts showed. Run 2 uses a smoothed coarse surface with a
@@ -123,26 +127,30 @@ explicitly (below).
   glaciers rocky (it was never told where ice is) and flats lumpy. Run 4 uses
   conditioning layout 2 on `game_cover_v7` products (10 m water smoothing that
   also removes small square WorldCover fragments). It is a fourth run beyond
-  the three planned, on the owner's direction (2026-09-28).
-- [ ] **Evaluation:**
+  the three planned, on the owner's direction (2026-09-28). Run 4: 8 h, 11,728
+  steps.
+- [x] **Evaluation:**
   - generate from the coarse surface, class and water of held-out validation
     windows;
   - report per-class slope and roughness distributions against real terrain,
     plus the nearest training-crop distance, to spot copying;
   - generate a 1 km MultiDiffusion strip and measure the height and slope steps
     across seams.
-- [ ] **Human gate:** a blind gallery batch of about 32 hillshaded 256 m patches,
+- [x] **Human gate:** a blind gallery batch of about 32 hillshaded 256 m patches,
   half real and half generated, in random order. The owner gives each patch a
   Yes/No. The gate passes when at least half the generated patches get Yes and the
   seam strip shows no visible joins. Otherwise try the next run, or fall back after
-  three.
+  three. Runs 2 and 4 passed (32/32 Yes each, 16/16 generated). Run 4's
+  review paired real and generated patches from the same windows; a re-review
+  with different windows (`diffusion-run-4/eval-2`) is still open.
 - [x] **Pilot world inputs:** `topography world input configs/runtime.example.toml configs/diffusion/pilot-1.toml <dir>`; a 4,096 m world config with a coarse base (a chosen
   GLO-30 region at 32 m or a sculpted surface), a coarse class map and authored
   water.
-- [ ] **Pilot world generation:** 1 m MultiDiffusion over 4,096² (about 1,000 windows
+- [x] **Pilot world generation:** 1 m MultiDiffusion over 4,096² (about 1,000 windows
   of 256² at stride 128), writing Float32 elevation and masks with provenance. Then
   a whole-world visual review. Check the mid scale specifically (see watch point
-  below); 256 m gate patches are too small to show it.
+  below); 256 m gate patches are too small to show it. Run 4 with ice guidance ×2
+  took 96 min over Milford Sound; the owner's review of the mid scale is still open.
 - [x] **16-bit export:** `topography export heightmap <world-output> <dir>`; 257² `shared_edge` tiles and quadtree LOD levels, per master
   plan §5 and §10.
 
@@ -155,13 +163,24 @@ explicitly (below).
 - Checkpoints: roughly 0.5–1 GB per run.
 - Generation time: estimated from smoke-run throughput, not assumed.
 
-## Follow-on: coarse structure model
+## Quick generation (added 2026-09-29)
 
-This pilot only adds 1 m detail to a given base. Original worlds need their
-large-scale structure generated too: a second model trained on global GLO-30 at
-about 32 m (master plan §8). It is planned after this pilot's gate.
+`generate --scale f` shrinks the world f times in all three axes, generates, and
+scales back, for f m output. Conditioning windows are built per batch from host
+memory, so worlds larger than VRAM work. On the Milford pilot, scale 2 with 12
+steps matched the 1 m run's land slope at 2 m sampling (40.1° vs 39.7°, mean
+height difference 3 m) at a tenth of the GPU time. The 32 km caldera island took
+44 min at 4 m and 2 h 40 min at 2 m (stride 192, window joins 0.97–1.00 of the
+average slope). These settings set the cascade's time estimates.
+
+## Coarse structure
+
+Moved to the [terrain cascade](terrain-cascade-v1.md) (levels L1–L3).
 
 ## Watch point: the 32× scale gap
+
+Confirmed by run 4 (issue 1) and the caldera-island world (issue 7). The cascade
+replaces the single 32× step with 4× steps.
 
 One step from 32 m to 1 m is aggressive; cascades usually step 4–8× per stage. The
 1 m model must invent features of roughly 60–300 m wavelength (gullies, spurs, small
@@ -212,6 +231,13 @@ on them is paused while the pilot world is generated and exported.
      lowest shore) and keep stream beds descending. Terrain around them is
      generated to fit, instead of treating water as an unrelated mask.
 
+7. **The base caps what the 1 m model can add** (caldera island, 2026-09-29).
+   The residual scale is 8 m, so generated detail stays within a few tens of
+   metres of the base. The island's karst towers and canyon walls were averaged
+   away or never present in its 32 m sketch base, and came out flat. Landforms
+   taller than about 30 m must be in the surface the 1 m model refines, which is
+   the job of cascade level L3.
+
 ## Open pilot choices
 
 - `s_r`, U-Net width, noise schedule and step counts are starting values to be
@@ -219,5 +245,4 @@ on them is paused while the pilot world is generated and exported.
 - The GLO-30 region for the pilot base is chosen at the pilot-world step.
   GLO-30 is a surface model (it includes canopy). At 32 m averaging this is
   tolerated for a pilot; sculpted bases avoid it entirely.
-- Classes without accepted tiles (archipelagos, alpine) have no training data.
-  Requesting them falls back to "unknown" until tiles are accepted.
+- All twelve classes now have accepted tiles (release v8).

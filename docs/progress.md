@@ -1,43 +1,54 @@
 # Progress
 
-Updated 2026-09-25. Follow the [master plan](plans/terrain-design-master-plan.md).
+Updated 2026-09-29. Follow the [master plan](plans/terrain-design-master-plan.md).
 
 ## Done
 
 - **Foundation:** Rust CLI validates presets, legend and source metadata;
   `scripts/check.sh` runs format, build, Clippy and CLI workflows.
-- **Acquisition:** USGS discovery, resumable HTTPS download and manual import of
-  raw Float32 GeoTIFFs with checksums; raw assets are immutable.
-- **Curation and review:** SQLite catalog, batch download queue and a persistent
+- **Acquisition:** USGS and LINZ discovery, batch planning, resumable HTTPS
+  download and manual import of raw Float32 GeoTIFFs with checksums.
+- **Curation and review:** SQLite catalog and a persistent
   [review gallery](workflows/batch-source-review.md) with whole-tile Yes/No
-  votes (33 Yes, 2 No).
-- **Preparation:** native same-survey preparation without resampling; 30
-  prepared regions across 11 areas and six families (Río Abajo karst, Banks
-  Peninsula, Grand Canyon, Zion, St. Helens, Milford Sound, Badlands and others).
-- **Automatic preparation:** a Yes queues technical checks and preparation in
-  the gallery worker; exceptions are reported without a repeat vote.
-- **Numeric work:** geographically split evaluation release and CPU numeric
-  check. Both CPU representation checks (image codec, scalar fit) failed, largely
-  from absolute-height scaling and a tiny budget. The
-  [terrain diffusion pilot](plans/terrain-diffusion-v1.md) trains a GPU residual
-  model instead; blending stays the fallback.
-- **World layout:** the first 16 m layout was rejected for repetition, visible
-  joins and dull geography. Expand the library before another world review.
-- **Snow/ice and vegetation masks (v2 contracts):** implemented and verified on
-  synthetic cases. Unknown snow/ice blocks qualification; vegetation is optional.
-  Legacy products show "Surface assessment pending".
-- **Game cover v2 (2026-09-25):** snow/ice, vegetation and water masks are built
-  automatically (WorldCover, GLIMS, OpenStreetMap water; water wins). The worker
-  upgrades every accepted tile and carries votes to identical metadata-successor
-  crops. Tile details show coordinates and a Google Earth link.
-  Gallery v15: **all 33 accepted tiles Ready**, 33 Yes / 2 No.
+  votes. Gallery v21: 205 tiles, 167 Yes, 29 No, all accepted tiles Ready.
+- **Preparation:** automatic after a Yes, through the gallery worker, including
+  technical checks, artifact checks (facets, stripes, seams) and game cover.
+- **Game cover v7:** snow/ice, vegetation, water and WorldCover land cover per
+  tile, from WorldCover, GLIMS and OpenStreetMap. Snow/ice is ground; water is
+  smoothed at 10 m.
+- **Terrain diffusion pilot:** release `diffusion-v8` (132 tiles, all twelve
+  classes), four 8 h GPU training runs. Run 4 conditions on snow/ice and
+  vegetation and passed the blind review (32/32 Yes). A 4 km Milford Sound pilot
+  world took 96 min of GPU time. See the [diffusion plan](plans/terrain-diffusion-v1.md).
+- **Export and viewing:** 16-bit heightmap tiles (257² `shared_edge`), quadtree
+  LOD levels, mask tiles, and a loopback 3D viewer.
+- **World sketch test (2026-09-29):** `world sketch` builds a world input from a
+  procedural recipe, `world preview` shows any world input before generation,
+  and `generate --scale` makes quick 4 m or 2 m versions. A 32 km caldera island
+  was generated at 4 m (44 min) and 2 m (2 h 40 min). The owner rejected it:
+  large landforms looked hand-drawn, and the canyon country and karst came out
+  flat. The 2 m export stays in `data/exports/caldera-island-2m` for comparison.
+- **Housekeeping (2026-09-29):** pruned superseded releases (v5–v7), weights of
+  runs 1–3 and the smoke run, run 4's intermediate snapshots, download chunks,
+  caches, unreferenced review output and the rejected sketch worlds. `data/`
+  went from 146 GB to 80 GB.
 
 ## Next
 
-1. [Terrain diffusion pilot](plans/terrain-diffusion-v1.md): training release,
-   GPU training, blind Yes/No gate, then a 4 km pilot world and 16-bit export.
-2. Broaden terrain families (seven of nine) with reusable source profiles.
-3. Later: label editing, cross-survey alignment, full extent, editing/rebuild.
+The [terrain cascade](plans/terrain-cascade-v1.md) replaces the single 32 m →
+1 m step with levels at 128 m, 32 m, 4 m and 1 m, each trained on real terrain at
+its scale.
+
+1. [World layout spec](plans/world-layout-spec-v1.md): brief, spec, fit check
+   and reference sheet before any generation.
+2. GLO-30 context regions and the 128 m / 32 m models.
+3. Reduced 4 m lidar regions and the 4 m model.
+4. Run 5 of the 1 m model on the 4 m surface (fixes for local shape, glaciers
+   and flats).
+5. Banded 1 m generation, then the first cascade world.
+
+Open reviews: the run 4 twin-free blind review (`data/models/diffusion-run-4/eval-2`)
+and the Milford pilot world's mid scale.
 
 Details: [source coverage](reports/pilot-source-coverage-v1.md),
 [automatic preparation](reports/automatic-preparation-rollout-v1.md),

@@ -82,6 +82,10 @@ windward and lee snowline, and land cover follows biome, elevation and wind-side
 moisture. It uses a local metric CRS and no source data. A 32 km sketch takes
 under a minute on CPU and writes about 4 GB, mostly 1 m masks.
 
+Use a sketch for layout experiments only. As a base surface its landforms read
+as brush strokes (rejected 2026-09-29); the [terrain cascade](../plans/terrain-cascade-v1.md)
+plans real-data levels above 1 m instead.
+
 `world preview` interpolates any world input's 32 m surface to a few metres and
 samples its masks, so `export heightmap` and `export view` can show the layout
 before GPU generation.
