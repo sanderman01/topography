@@ -1,0 +1,34 @@
+docs/plans/terrain-diffusion-v1.md
+  s_238ee41e21c230::t_c195ded42234cf 3-8,45-47,66-67,108,112,115,118,130-132,139,149,152-153,166,168-178,182-184,234-240,248
+  s_238ee41e21c230::t_be0f0df192293b 143-145
+docs/plans/terrain-cascade-v1.md
+  s_238ee41e21c230::t_466e746a498aa9 1-115,117-184
+  s_238ee41e21c230::t_1f5bd68c22c847 116
+docs/plans/terrain-design-master-plan.md
+  s_238ee41e21c230::t_bb44bb291b640e 369
+  s_238ee41e21c230::t_297f057409db55 235,241,306-307,312,314,487-489
+  s_238ee41e21c230::t_beba0d28982a4e 370
+docs/progress.md
+  s_238ee41e21c230::t_ec9240052773a4 3,9-11,13-34,38-51
+docs/workflows/terrain-diffusion.md
+  s_238ee41e21c230::t_8da7dc27ef8698 85-88
+docs/plans/world-layout-spec-v1.md
+  s_238ee41e21c230::t_96bb5ef6432e99 18,22
+  s_238ee41e21c230::t_5a28d48563e0da 1-17,19-21,23-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2c48aff3893f8cef2dcd67d9957e7dc5115d766c",
+  "prompts": {},
+  "sessions": {
+    "s_238ee41e21c230": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "931f383c-9644-4aff-9bd5-ab64b07b96b1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
