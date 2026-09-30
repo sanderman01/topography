@@ -22,6 +22,8 @@ REGION_M = 32
 ENVELOPE_M = 2048
 LAND_SMOOTH_M = 1024
 MIN_RANGE_M = 1.0  # unit-range shape channel floor for flat windows
+SEA_SMOOTH_CELLS = 2.0
+SEA_LEVEL_TOLERANCE_M = 8.0
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,40 @@ def l1_fields(r: Region) -> Fields:
     mid = (lo + hi) / 2
     extra = [((hi - lo) / 2048.0).astype(np.float32), soft(~water, LAND_SMOOTH_M / 128)]
     return Fields(h, mid.astype(np.float32), extra, r.class_id)
+
+
+def _grow(mask: np.ndarray) -> np.ndarray:
+    out = mask.copy()
+    out[1:] |= mask[:-1]
+    out[:-1] |= mask[1:]
+    out[:, 1:] |= mask[:, :-1]
+    out[:, :-1] |= mask[:, 1:]
+    return out
+
+
+def resolve_sea(h: np.ndarray, land: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Put generated sea at 0 m. `land` is the soft land/water condition (-1 water .. 1 land);
+    only water where the coarse surface is below 100 m counts as sea, not mountain lakes.
+
+    The model leaves the sea a few metres off zero, so the field is shifted by the median
+    height on the layout's sea side; sea is then the low ground connected to that side,
+    without single-cell specks, and is set to 0 m like GLO-30 sea."""
+    zone = (land < 0) & (coarse < 100.0)
+    if not zone.any():
+        return h, np.zeros(h.shape, bool)
+    h = h - float(np.median(h[zone]))
+    # The generated sea surface wanders by about +-10 m; decide on a smoothed surface.
+    low = smooth(h, SEA_SMOOTH_CELLS) <= SEA_LEVEL_TOLERANCE_M
+    sea = zone & low
+    while True:
+        grown = _grow(sea) & low
+        if (grown == sea).all():
+            break
+        sea = grown
+    for _ in range(3):  # cells with at most one neighbour of their kind are specks
+        land_n = sum(np.roll(~sea, s, a) for s in (1, -1) for a in (0, 1))
+        sea = (sea & (land_n < 4)) | (~sea & (land_n <= 1))
+    return np.where(sea, 0.0, h).astype(np.float32), sea
 
 
 def condition(level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes: np.ndarray) -> np.ndarray:
