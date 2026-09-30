@@ -97,25 +97,19 @@ pub(crate) fn reduce(
                 .collect()
         });
         for ((url, file), result) in chunk.iter().zip(&files).zip(fetched) {
-            let result = result.and_then(|()| {
+            let warp = |driver: &[&str]| {
                 run(super::cover::gdal("gdalwarp")
                     .env("GDAL_CACHEMAX", "512")
-                    // GDAL's own TIFF reader has the LERC codec LINZ uses; some system libtiff builds lack it.
-                    .args([
-                        "-q",
-                        "-if",
-                        "LIBERTIFF",
-                        "-ovr",
-                        "AUTO-1",
-                        "-r",
-                        "average",
-                        "-wm",
-                        "512",
-                    ])
+                    .arg("-q")
+                    .args(driver)
+                    .args(["-ovr", "AUTO-1", "-r", "average", "-wm", "512"])
                     .arg(file)
                     .arg(&placed))
                 .map(|_| ())
-            });
+            };
+            // GDAL's own TIFF reader has the LERC codec LINZ uses (some system libtiff builds
+            // lack it) but crashes on a few USGS tiles that the libtiff driver reads fine.
+            let result = result.and_then(|()| warp(&["-if", "LIBERTIFF"]).or_else(|_| warp(&[])));
             let _ = std::fs::remove_file(file);
             result.map_err(|e| AcquisitionError::Invalid(format!("{url}: {e}")))?;
         }

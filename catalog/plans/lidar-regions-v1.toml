@@ -1,7 +1,8 @@
 # Public 1 m lidar averaged to 4 m for the L3 cascade level. Each region is 16,384 m
 # square unless extent_m says otherwise, centred on `center` = [lon, lat]. Sources are
 # USGS 3DEP 1 m and LINZ 1 m DEMs read over HTTPS; only the 4 m result is kept.
-# Coverage is not guaranteed: region.json reports the surveyed share.
+# Coverage is not guaranteed: region.json reports the surveyed share. Wakatipu,
+# the San Juan Islands and Mount Rainier had no public 1 m DEM and were dropped.
 schema_version = 1
 name = "lidar-regions-v1"
 source = "lidar"
@@ -63,9 +64,6 @@ class_id = 3
 center = [-113.75, 48.7]
 reference = "Glacier National Park troughs, Montana"
 
-[[regions]]
-id = "wakatipu"
-class_id = 3
 center = [168.45, -45.0]
 reference = "Lake Wakatipu glacial trough, Otago"
 
@@ -95,9 +93,6 @@ center = [176.45, -38.12]
 reference = "Okataina caldera and Tarawera, Bay of Plenty"
 
 # 5 Archipelagos and dissected coasts
-[[regions]]
-id = "san-juan-islands"
-class_id = 5
 center = [-123.0, 48.58]
 reference = "San Juan Islands, Washington"
 
@@ -184,9 +179,6 @@ center = [171.4, -43.4]
 reference = "Upper Rakaia valley, Canterbury"
 
 # 10 Glaciers and ice fields
-[[regions]]
-id = "mount-rainier"
-class_id = 10
 center = [-121.76, 46.85]
 reference = "Mount Rainier glaciers, Washington"
 
