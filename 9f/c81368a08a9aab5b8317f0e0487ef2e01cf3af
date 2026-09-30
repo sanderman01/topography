@@ -1,0 +1,19 @@
+training/src/topography_training/diffusion/cascade_eval.py
+  s_8fb48d93e6f9bc::t_f61f4c1ade00d3 95-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9fc81368a08a9aab5b8317f0e0487ef2e01cf3af",
+  "prompts": {},
+  "sessions": {
+    "s_8fb48d93e6f9bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "182fc722-24eb-420b-b649-94ee27bdc968",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
