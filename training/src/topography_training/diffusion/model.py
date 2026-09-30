@@ -93,6 +93,20 @@ class TensorField:
         return torch.cat([self.cond[:, :, y : y + size, x : x + size] for y, x in boxes]).to(device)
 
 
+def _shape(cs: torch.Tensor, conditioning: int) -> torch.Tensor:
+    """Per-window channel 0, as in training: re-centred (1 m layouts) or unit range
+    from raw coarse metres (cascade layouts)."""
+    c = cs[:, 0]
+    if conditioning >= 3:
+        from .cascade import MIN_RANGE_M
+
+        lo, hi = c.amin(dim=(1, 2), keepdim=True), c.amax(dim=(1, 2), keepdim=True)
+        cs[:, 0] = (c - lo) / (hi - lo).clamp(min=MIN_RANGE_M) * 2 - 1
+    else:
+        cs[:, 0] = c - c.mean(dim=(1, 2), keepdim=True)
+    return cs
+
+
 @torch.no_grad()
 def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, negative=None):
     """One MultiDiffusion evaluation: average window predictions over the field.
@@ -117,12 +131,9 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
     for i in range(0, len(boxes), batch):
         part = boxes[i : i + batch]
         xs = torch.cat([x[:, :, y : y + size, xx : xx + size] for y, xx in part]).to(device)
-        cs = cond.windows(part, size, device)
-        # Coarse-relative channel is re-centred per window, as in training.
-        cs[:, 0] -= cs[:, 0].mean(dim=(1, 2), keepdim=True)
+        cs = _shape(cond.windows(part, size, device), model.conditioning)
         if negative is not None:
-            ns = negative.windows(part, size, device)
-            ns[:, 0] -= ns[:, 0].mean(dim=(1, 2), keepdim=True)
+            ns = _shape(negative.windows(part, size, device), model.conditioning)
         sig = torch.full((len(part),), sigma, device=device)
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             d = model(xs, sig, cs).float()

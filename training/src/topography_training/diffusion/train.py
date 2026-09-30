@@ -23,6 +23,7 @@ def _parse(argv):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--release", type=Path, required=True)
     p.add_argument("--run-dir", type=Path, required=True)
+    p.add_argument("--level", choices=["l1", "l2"], help="cascade level for a context release")
     p.add_argument("--steps", type=int, default=100_000)
     p.add_argument("--hours", type=float, default=8.0, help="wall-clock limit for this invocation")
     p.add_argument("--batch", type=int, default=12)
@@ -62,41 +63,66 @@ def main(argv=None) -> int:
     run.mkdir(parents=True, exist_ok=True)
     ckpt_path = run / "checkpoint.pt"
 
-    tiles = data.load_release(args.release)
     config_path = run / "config.json"
-    if config_path.exists():
-        config = json.loads(config_path.read_text())
+    saved = json.loads(config_path.read_text()) if config_path.exists() else None
+    release_kind = json.loads(args.release.read_text()).get("kind")
+    if release_kind == "context_training_release":
+        from . import cascade
+
+        name = saved["level"] if saved else args.level
+        if name is None:
+            print("error: a context release needs --level l1 or l2", file=sys.stderr)
+            return 2
+        level = cascade.LEVELS[name]
+        regions = cascade.load_release(args.release)
+        train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"])
+        val = cascade.Sampler(regions, "validation", level, train.size)
+        level_config = {"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
+                        "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
+                        "land_smooth_m": cascade.LAND_SMOOTH_M, "l2_smooth_cells": cascade.L2_SMOOTH_CELLS,
+                        "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
+    else:
+        tiles = data.load_release(args.release)
+        level_config = None
+    if saved:
+        config = saved
     else:
         config = {
             "schema_version": 1,
             "kind": "terrain_diffusion_run",
             "release": str(args.release.resolve()),
-            "residual_scale_m": data.residual_scale(tiles),
-            "coarse_m": data.COARSE_M,
-            "coarse_smooth_m": data.SMOOTH_M,
-            "coarse_offset": "random per crop",
-            "water_smooth_m": data.release_water_smooth_m(json.loads(args.release.read_text())),
             "crop": args.crop,
             "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")]},
             "conditioning": data.CONDITIONING,
-            "cover_soft_m": data.COVER_SOFT_M,
             "class_dropout": args.class_dropout,
             "seed": args.seed,
             "torch": torch.__version__,
             "hip": torch.version.hip,
             "device": torch.cuda.get_device_name(0),
         }
+        if level_config:
+            config |= level_config
+        else:
+            config |= {
+                "residual_scale_m": data.residual_scale(tiles),
+                "coarse_m": data.COARSE_M,
+                "coarse_smooth_m": data.SMOOTH_M,
+                "coarse_offset": "random per crop",
+                "water_smooth_m": data.release_water_smooth_m(json.loads(args.release.read_text())),
+                "cover_soft_m": data.COVER_SOFT_M,
+            }
         config_path.write_text(json.dumps(config, indent=2))
     scale = config["residual_scale_m"]
 
-    smooth_m = config.get("coarse_smooth_m", 0.0)
-    train = data.CropSampler(tiles, data.TRAIN, config["crop"], smooth_m=smooth_m)
-    val = data.CropSampler(tiles, data.VALIDATION, config["crop"], smooth_m=smooth_m)
-    print(f"tiles={len(tiles)} train_positions={len(train.positions)} val_positions={len(val.positions)} scale={scale} m", flush=True)
+    if level_config is None:
+        smooth_m = config.get("coarse_smooth_m", 0.0)
+        train = data.CropSampler(tiles, data.TRAIN, config["crop"], smooth_m=smooth_m)
+        val = data.CropSampler(tiles, data.VALIDATION, config["crop"], smooth_m=smooth_m)
+        if config.get("conditioning", 1) != data.CONDITIONING:
+            print("error: this run uses an older conditioning layout; start a new run", file=sys.stderr)
+            return 2
+    print(f"train_positions={len(train.positions)} val_positions={len(val.positions)} scale={scale} m", flush=True)
 
-    if config.get("conditioning", 1) != data.CONDITIONING:
-        print("error: this run uses an older conditioning layout; start a new run", file=sys.stderr)
-        return 2
     model = Denoiser(config["arch"], config["conditioning"]).to(device)
     if not args.no_checkpointing:
         model.unet.enable_gradient_checkpointing()

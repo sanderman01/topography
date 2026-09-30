@@ -39,6 +39,7 @@ Usage: topography [--help | --version]
        topography world input <runtime.toml> <world.toml> <new-output-dir>
        topography context build <runtime.toml> <plan.toml> <regions-dir>
        topography context serve <regions-dir> <port>
+       topography context release <regions-dir> <new-output-dir>
        topography world sketch <sketch.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
@@ -320,6 +321,12 @@ fn main() -> ExitCode {
                 Path::new(plan),
                 Path::new(output),
             ));
+        }
+        [command, action, root, output] if command == "context" && action == "release" => {
+            return workflow_result(
+                topography_core::context::build_release(Path::new(root), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
         }
         [command, action, root, port] if command == "context" && action == "serve" => {
             let Some(port) = number::<u16>(port) else {

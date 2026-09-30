@@ -65,3 +65,43 @@ a rebuilt region needs a new vote. Only Yes regions go into coarse-level release
   European Union and ESA; all rights reserved". Recorded in
   `configs/provider-licences-v1.toml`.
 - ESA WorldCover (CC BY 4.0), GLIMS and OpenStreetMap (ODbL), as for the game cover.
+
+## Training release
+
+```sh
+target/release/topography context release data/context/regions-v1 data/datasets/context-v1
+```
+
+The release hard-links the files of every region whose latest vote is Yes and pins
+their digests and the votes file. Whole regions are held out for validation: one per
+class with at least six accepted regions, picked by a stable hash of the id.
+
+## Cascade levels L1 and L2
+
+```sh
+P=data/models/diffusion-env-v1/.venv/bin/python
+$P -m topography_training.diffusion.train --release data/datasets/context-v1/release.json \
+    --run-dir data/models/cascade-l2-run-1 --level l2 --channels 64,96,128,192,256 --hours 3
+$P -m topography_training.diffusion.cascade_eval --run-dir data/models/cascade-l2-run-1 \
+    --out data/models/cascade-l2-run-1/eval-1
+```
+
+Both levels generate a residual over the level above, on 256² windows:
+
+- **L2 (32 m, 8 km windows)** refines the true surface block-averaged to 128 m on a
+  randomly shifted grid, upsampled and smoothed (sigma 2 cells).
+- **L1 (128 m, 32 km windows)** refines the mid-surface of an L0-like envelope: local
+  low and high over 2 km, smoothed at 2 km. Land/sea is given as coverage smoothed
+  at 1 km. Painted layouts give only this much, so the model has to invent ranges,
+  valleys and coastlines itself instead of tracing brush strokes.
+
+Conditioning (layouts 3 and 4): the coarse surface as a per-window unit-range shape
+channel, its east and north slopes, absolute height / 4,096 m, then for L2 water,
+snow/ice and vegetation, for L1 envelope relief and land/sea, then the class one-hot
+(dropped 10% of the time). Hero-feature lines are not implemented yet. The sea is
+part of the target (0 m), so coastlines come out where generated land rises above
+sea level.
+
+`cascade_eval` writes a blind review of held-out regions (`review.html`, with
+`key.json` and the side-by-side `compare.html` kept closed until the votes are in),
+terrain statistics and a nearest-training-window distance to detect memorization.

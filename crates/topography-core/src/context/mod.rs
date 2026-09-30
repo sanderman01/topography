@@ -2,6 +2,8 @@
 //! class labels, the training data for the coarse cascade levels (L1 128 m, L2 32 m).
 
 pub mod gallery;
+mod release;
+pub use release::build_release;
 
 use crate::acquisition::{
     AcquisitionError, Result, cover, digest, ensure, glo30, io_context, raster, read_small,

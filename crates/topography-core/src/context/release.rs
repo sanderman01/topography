@@ -1,0 +1,109 @@
+//! Training release of accepted context regions: hard links to the immutable region files
+//! plus a manifest pinning their digests, votes and the region-level geographic split.
+
+use super::{LAYERS, gallery::accepted};
+use crate::acquisition::{
+    AcquisitionError, Result, digest, ensure, io_context, read_small, write_new,
+};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
+
+/// Classes with at least this many accepted regions lend one to validation.
+const VALIDATION_MIN_REGIONS: usize = 6;
+
+fn link(from: &Path, to: &Path) -> Result<()> {
+    // Region files are never rewritten, so a hard link is a safe snapshot.
+    fs::hard_link(from, to)
+        .or_else(|_| fs::copy(from, to).map(|_| ()))
+        .map_err(|e| AcquisitionError::Invalid(format!("link {}: {e}", from.display())))
+}
+
+pub fn build_release(root: &Path, output: &Path) -> Result<PathBuf> {
+    ensure(!output.exists(), "release output already exists")?;
+    let dirs = accepted(root)?;
+    ensure(!dirs.is_empty(), "no accepted context regions")?;
+    let mut regions = Vec::new();
+    for dir in &dirs {
+        let bytes = read_small(&dir.join("region.json"))?;
+        let manifest: Value = serde_json::from_slice(&bytes)?;
+        regions.push((dir, digest(&bytes), manifest));
+    }
+    // One validation region per well-covered class, chosen by a stable hash of its id.
+    let mut by_class: BTreeMap<i64, Vec<&str>> = BTreeMap::new();
+    for (_, _, m) in &regions {
+        by_class
+            .entry(m["class_id"].as_i64().unwrap_or(0))
+            .or_default()
+            .push(m["id"].as_str().unwrap_or_default());
+    }
+    let validation: Vec<&str> = by_class
+        .values()
+        .filter(|ids| ids.len() >= VALIDATION_MIN_REGIONS)
+        .filter_map(|ids| ids.iter().min_by_key(|id| digest(id.as_bytes())).copied())
+        .collect();
+
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    io_context("create release parent", fs::create_dir_all(parent))?;
+    let stage = io_context("stage context release", tempfile::tempdir_in(parent))?;
+    let mut entries = Vec::new();
+    for (dir, sha256, m) in &regions {
+        let id = m["id"].as_str().unwrap_or_default();
+        let target = stage.path().join("regions").join(id);
+        io_context("create release region", fs::create_dir_all(&target))?;
+        let mut layers = serde_json::Map::new();
+        for name in LAYERS {
+            let expected = m["files"][name].as_str().unwrap_or_default();
+            let bytes = io_context(format!("read {name}"), fs::read(dir.join(name)))?;
+            ensure(
+                digest(&bytes) == expected,
+                format!("{id}/{name} does not match region.json"),
+            )?;
+            link(&dir.join(name), &target.join(name))?;
+            let dtype = if name.ends_with(".f32") {
+                "float32_le"
+            } else {
+                "uint8"
+            };
+            layers.insert(
+                name.trim_end_matches(".f32").trim_end_matches(".u8").into(),
+                json!({"path": format!("regions/{id}/{name}"), "sha256": expected, "dtype": dtype}),
+            );
+        }
+        link(&dir.join("region.json"), &target.join("region.json"))?;
+        let split = if validation.contains(&id) {
+            "validation"
+        } else {
+            "train"
+        };
+        entries.push(
+            json!({"id": id, "class_id": m["class_id"], "reference": m["reference"],
+            "split": split, "size": m["size"], "spacing_m": m["spacing_m"], "crs": m["crs"],
+            "origin": m["origin"], "region_json_sha256": sha256, "layers": layers}),
+        );
+    }
+    let decisions = read_small(&root.join("decisions.jsonl"))?;
+    let manifest = json!({
+        "schema_version": 1,
+        "kind": "context_training_release",
+        "regions_root": root.canonicalize().map(|p| p.display().to_string()).unwrap_or_default(),
+        "decisions_sha256": digest(&decisions),
+        "split": format!("whole regions; one validation region per class with {VALIDATION_MIN_REGIONS}+ accepted regions"),
+        "attribution": [
+            "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+            "ESA WorldCover 2021 (CC BY 4.0)", "GLIMS Glacier Database", "© OpenStreetMap contributors, ODbL"],
+        "regions": entries,
+    });
+    write_new(
+        &stage.path().join("release.json"),
+        &serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    io_context("publish context release", fs::rename(stage.path(), output))?;
+    Ok(output.join("release.json"))
+}
