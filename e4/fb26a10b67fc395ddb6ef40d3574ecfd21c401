@@ -1,0 +1,21 @@
+crates/topography-core/src/acquisition/http.rs
+  s_8fb48d93e6f9bc::t_50f28987134ce4 77-94
+crates/topography-core/src/acquisition/lidar.rs
+  s_8fb48d93e6f9bc::t_50f28987134ce4 68-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e4fb26a10b67fc395ddb6ef40d3574ecfd21c401",
+  "prompts": {},
+  "sessions": {
+    "s_8fb48d93e6f9bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "182fc722-24eb-420b-b649-94ee27bdc968",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
