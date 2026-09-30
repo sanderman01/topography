@@ -65,26 +65,33 @@ pub(crate) fn reduce(
         .args([extent[0], extent[3], extent[2], extent[1]].map(|v| v.to_string()))
         .args(["-outsize", &width.to_string(), &height.to_string()])
         .arg(&placed))?;
-    // One process per source, oldest first: a crash names its file, memory stays small, and
-    // newer surveys replace older cells where they have data.
-    for url in &urls {
-        run(super::cover::gdal("gdalwarp")
-            .env("GDAL_CACHEMAX", "512")
-            // GDAL's own TIFF reader has the LERC codec LINZ uses; some system libtiff builds lack it.
-            .args([
-                "-q",
-                "-if",
-                "LIBERTIFF",
-                "-ovr",
-                "AUTO-1",
-                "-r",
-                "average",
-                "-wm",
-                "512",
-            ])
-            .arg(format!("/vsicurl/{url}"))
-            .arg(&placed))
-        .map_err(|e| AcquisitionError::Invalid(format!("{url}: {e}")))?;
+    // One source at a time, oldest first: each tile is downloaded whole (COG block reads
+    // over HTTP are latency bound), averaged into the grid and deleted. Newer surveys
+    // replace older cells where they have data.
+    let local = scratch.join("source.tif");
+    for (i, url) in urls.iter().enumerate() {
+        eprintln!("  source {}/{}", i + 1, urls.len());
+        let result = http::fetch(url, &local).and_then(|()| {
+            run(super::cover::gdal("gdalwarp")
+                .env("GDAL_CACHEMAX", "512")
+                // GDAL's own TIFF reader has the LERC codec LINZ uses; some system libtiff builds lack it.
+                .args([
+                    "-q",
+                    "-if",
+                    "LIBERTIFF",
+                    "-ovr",
+                    "AUTO-1",
+                    "-r",
+                    "average",
+                    "-wm",
+                    "512",
+                ])
+                .arg(&local)
+                .arg(&placed))
+            .map(|_| ())
+        });
+        let _ = std::fs::remove_file(&local);
+        result.map_err(|e| AcquisitionError::Invalid(format!("{url}: {e}")))?;
     }
     let details = json!({"usgs_urls": usgs, "linz_urls": linz_urls, "linz_collections": linz_collections,
         "resampling": "average from the overview one level finer than the target (gdalwarp -ovr AUTO-1); newer surveys drawn over older",

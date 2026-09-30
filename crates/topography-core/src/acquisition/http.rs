@@ -74,6 +74,24 @@ pub(super) fn query(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Download a public HTTPS file to `path` in one request (scratch data, not a receipt).
+pub(super) fn fetch(url: &str, path: &Path) -> Result<()> {
+    validate_url(url)?;
+    run(curl()
+        .args([
+            "--max-filesize",
+            "4294967296",
+            "--retry",
+            "3",
+            "--max-time",
+            "1800",
+        ])
+        .arg("--output")
+        .arg(path)
+        .args(["--url", url]))?;
+    Ok(())
+}
+
 /// Like [`query`], but a missing object (HTTP 403/404) is `None`.
 pub(super) fn query_optional(url: &str) -> Result<Option<Vec<u8>>> {
     match query(url) {
