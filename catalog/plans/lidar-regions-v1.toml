@@ -64,9 +64,6 @@ class_id = 3
 center = [-113.75, 48.7]
 reference = "Glacier National Park troughs, Montana"
 
-center = [168.45, -45.0]
-reference = "Lake Wakatipu glacial trough, Otago"
-
 # 4 Calderas and craters
 [[regions]]
 id = "crater-lake"
@@ -93,9 +90,6 @@ center = [176.45, -38.12]
 reference = "Okataina caldera and Tarawera, Bay of Plenty"
 
 # 5 Archipelagos and dissected coasts
-center = [-123.0, 48.58]
-reference = "San Juan Islands, Washington"
-
 [[regions]]
 id = "marlborough-sounds"
 class_id = 5
@@ -179,9 +173,6 @@ center = [171.4, -43.4]
 reference = "Upper Rakaia valley, Canterbury"
 
 # 10 Glaciers and ice fields
-center = [-121.76, 46.85]
-reference = "Mount Rainier glaciers, Washington"
-
 [[regions]]
 id = "glacier-peak"
 class_id = 10
