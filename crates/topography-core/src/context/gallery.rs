@@ -1,7 +1,7 @@
 //! Loopback Yes/No review of context regions. Votes append to `decisions.jsonl` beside the
 //! regions, keyed by the region manifest digest, so a rebuilt region needs a new vote.
 
-use super::{LAYERS, SPACING_M, heights, hillshade, regions};
+use super::{DISPLAY_CELLS, LAYERS, display, heights, hillshade, regions};
 use crate::{
     acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small},
     review::{
@@ -115,35 +115,63 @@ impl Session {
                 json!({"index": index, "id": id, "region_sha256": e.sha256,
                     "class_id": m["class_id"],
                     "class": self.classes.get(&m["class_id"].as_i64().unwrap_or(0)),
-                    "reference": m["reference"], "size_km": m["size"][0].as_f64().unwrap_or(0.0) * f64::from(SPACING_M) / 1000.0,
+                    "reference": m["reference"], "size_km": m["size"][0].as_f64().unwrap_or(0.0) * spacing(m) / 1000.0,
                     "centre": centre, "stats": m["stats"], "decision": decision})
             })
             .collect();
         Ok(json!({"regions": regions}))
     }
 
-    /// The raw-crop inspector page for a region, built on request.
+    /// Validity per cell: the lidar validity layer, or all valid for GLO-30.
+    fn valid(&self, index: usize, cells: usize) -> Result<Vec<bool>> {
+        if self.entries[index].manifest["files"]["validity.u8"].is_string() {
+            Ok(self
+                .read(index, "validity.u8")?
+                .iter()
+                .map(|v| *v == 255)
+                .collect())
+        } else {
+            Ok(vec![true; cells])
+        }
+    }
+
+    /// The raw-crop inspector page for a region, reduced for display and built on request.
     fn preview(&self, index: usize) -> Result<Vec<u8>> {
         let m = &self.entries[index].manifest;
         let n = m["size"][0].as_u64().unwrap_or(0) as usize;
-        let bytes = self.read(index, LAYERS[0])?;
-        let h = heights(&bytes);
-        let (lo, hi) = h
+        let h = heights(&self.read(index, LAYERS[0])?);
+        let valid = self.valid(index, n * n)?;
+        let d = display(
+            &h,
+            &valid,
+            &self.read(index, "water.u8")?,
+            n,
+            spacing(m) as f32,
+        );
+        let (lo, hi) = d
+            .height
             .iter()
-            .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+            .zip(&d.valid)
+            .filter(|(_, ok)| **ok)
+            .fold((f32::MAX, f32::MIN), |(a, b), (v, _)| {
+                (a.min(*v), b.max(*v))
+            });
         let shades: Vec<String> = [315.0, 45.0, 225.0]
             .iter()
-            .map(|az| base64(&hillshade(&h, n, n, SPACING_M as f32, *az)))
+            .map(|az| base64(&hillshade(&d.height, d.n, d.n, d.spacing, *az)))
             .collect();
-        let s = f64::from(SPACING_M);
-        let payload = json!({"width": n, "height": n,
+        let s = f64::from(d.spacing);
+        let good = d.valid.iter().filter(|v| **v).count();
+        let mask: Vec<u8> = d.valid.iter().map(|v| if *v { 255 } else { 0 }).collect();
+        let bytes: Vec<u8> = d.height.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let payload = json!({"width": d.n, "height": d.n,
             "transform": [m["origin"][0], s, 0.0, m["origin"][1], 0.0, -s],
             "record_id": m["id"],
-            "metrics": {"cells": n * n, "finite_valid_cells": n * n, "provider_invalid_cells": 0,
+            "metrics": {"cells": d.n * d.n, "finite_valid_cells": good, "provider_invalid_cells": d.n * d.n - good,
                 "nonfinite_valid_cells": 0, "minimum_native": lo, "maximum_native": hi,
-                "vertical_units_declared": "metre", "vertical_datum_declared": "EGM2008 (GLO-30)",
+                "vertical_units_declared": "metre", "vertical_datum_declared": "as published",
                 "metric_north_up_preview": true},
-            "elevation_le_f32": base64(&bytes), "mask": base64(&vec![255u8; n * n]), "shades": shades});
+            "elevation_le_f32": base64(&bytes), "mask": base64(&mask), "shades": shades});
         let encoded = serde_json::to_string(&payload)?.replace('<', "\\u003c");
         let identity = json!({"index": index, "review": self.entries[index].sha256});
         let mut html = include_str!("../review/preview.html").replace("__TERRAIN_DATA__", &encoded);
@@ -154,21 +182,25 @@ impl Session {
         Ok(html.into_bytes())
     }
 
-    /// Cover overlay in the bridge's packing: 2 bits each for water, snow/ice, vegetation.
+    /// Cover overlay in the bridge's packing (2 bits each for water, snow/ice, vegetation),
+    /// sampled at the preview's resolution.
     fn overlay(&self, index: usize) -> Result<Value> {
         let n = self.entries[index].manifest["size"][0]
             .as_u64()
             .unwrap_or(0) as usize;
+        let f = n.div_ceil(DISPLAY_CELLS);
+        let m = n / f;
         let water = self.read(index, "water.u8")?;
         let snow = self.read(index, "snow-ice.u8")?;
         let vegetation = self.read(index, "vegetation.u8")?;
-        let cells: Vec<u8> = (0..n * n)
-            .map(|i| {
+        let cells: Vec<u8> = (0..m * m)
+            .map(|j| {
+                let i = (j / m * f + f / 2) * n + j % m * f + f / 2;
                 let w = if water[i] == 255 { 2 } else { 1 };
                 w | (snow[i] & 3) << 2 | (vegetation[i] & 3) << 4
             })
             .collect();
-        Ok(json!({"width": n, "height": n, "cells": base64(&cells)}))
+        Ok(json!({"width": m, "height": m, "cells": base64(&cells)}))
     }
 
     fn vote(&self, vote: Vote) -> Result<Value> {
@@ -265,6 +297,10 @@ impl Session {
         }
         respond(stream, 404, "text/plain", b"Not found")
     }
+}
+
+fn spacing(manifest: &Value) -> f64 {
+    manifest["spacing_m"].as_f64().unwrap_or(32.0)
 }
 
 fn poisoned() -> AcquisitionError {

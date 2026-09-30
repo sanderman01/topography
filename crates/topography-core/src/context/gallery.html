@@ -33,7 +33,7 @@ function list(){const shown=visible(),box=byId('list');box.replaceChildren(...sh
 function select(index){active=index;ready=false;overlay=null;const r=regions[index];if(!r)return;const s=r.stats||{};
  byId('name').textContent=`${r.id} — ${r.reference}`;
  const f=v=>v===undefined?'?':Math.round(v);const [lon,lat]=r.centre;
- byId('facts').innerHTML='';byId('facts').append(`Class ${r.class_id}: ${r.class||'?'} · ${r.size_km} km · land ${Math.round((s.land_share||0)*100)}% · ${f(s.min_m)}–${f(s.max_m)} m (p5–p95 ${f(s.p5_m)}–${f(s.p95_m)}) · flat ${Math.round((s.flat_share||0)*100)}% · ${label(r.decision)} · `);
+ byId('facts').innerHTML='';byId('facts').append(`Class ${r.class_id}: ${r.class||'?'} · ${r.size_km} km · land ${Math.round((s.land_share||0)*100)}% · ${f(s.min_m)}–${f(s.max_m)} m (p5–p95 ${f(s.p5_m)}–${f(s.p95_m)}) · flat ${Math.round((s.flat_share||0)*100)}%${s.valid_share!==undefined&&s.valid_share<1?` · surveyed ${Math.round(s.valid_share*100)}%`:''} · ${label(r.decision)} · `);
  const a=document.createElement('a');a.href=`https://earth.google.com/web/@${lat.toFixed(5)},${lon.toFixed(5)},0a,${Math.round(r.size_km*2500)}d,35y,0h,0t,0r`;a.target='_blank';a.rel='noopener';a.textContent='Google Earth';byId('facts').append(a);
  frame.src=`/preview/${index}`;list();}
 async function syncOverlay(){const r=regions[active];if(!r||!ready)return;for(const b of document.querySelectorAll('.overlays button'))b.setAttribute('aria-pressed',String(layers[b.dataset.layer]));

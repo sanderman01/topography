@@ -436,6 +436,16 @@ pub(super) fn download(identity: &Identity, staging: &Path, destination: &Path) 
 }
 
 pub(super) fn discover(bounds: [f64; 4], limit: u32, output: &Path) -> Result<()> {
+    discover_page(bounds, limit, 0, output)
+}
+
+/// One page of the TNM 1 m DEM product search.
+pub(super) fn discover_page(
+    bounds: [f64; 4],
+    limit: u32,
+    offset: u32,
+    output: &Path,
+) -> Result<()> {
     let bbox = bounds.map(|v| v.to_string()).join(",");
     run(curl()
         .args([
@@ -458,6 +468,8 @@ pub(super) fn discover(bounds: [f64; 4], limit: u32, output: &Path) -> Result<()
             &format!("bbox={bbox}"),
             "--data-urlencode",
             &format!("max={limit}"),
+            "--data-urlencode",
+            &format!("offset={offset}"),
         ])
         .arg("--output")
         .arg(output))?;

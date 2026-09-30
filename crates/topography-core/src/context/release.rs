@@ -1,7 +1,7 @@
 //! Training release of accepted context regions: hard links to the immutable region files
 //! plus a manifest pinning their digests, votes and the region-level geographic split.
 
-use super::{LAYERS, gallery::accepted};
+use super::gallery::accepted;
 use crate::acquisition::{
     AcquisitionError, Result, digest, ensure, io_context, read_small, write_new,
 };
@@ -58,8 +58,10 @@ pub fn build_release(root: &Path, output: &Path) -> Result<PathBuf> {
         let target = stage.path().join("regions").join(id);
         io_context("create release region", fs::create_dir_all(&target))?;
         let mut layers = serde_json::Map::new();
-        for name in LAYERS {
-            let expected = m["files"][name].as_str().unwrap_or_default();
+        let files = m["files"].as_object().cloned().unwrap_or_default();
+        for (name, expected) in files.iter().filter(|(k, _)| *k != "overview.png") {
+            let name = name.as_str();
+            let expected = expected.as_str().unwrap_or_default();
             let bytes = io_context(format!("read {name}"), fs::read(dir.join(name)))?;
             ensure(
                 digest(&bytes) == expected,

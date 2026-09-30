@@ -82,26 +82,9 @@ pub struct LinzDiscovery {
     pub source_files: Vec<PathBuf>,
 }
 
-/// Write one source declaration per LINZ 1 m DEM tile intersecting `bounds`
-/// (lon/lat), at most `limit`. `cache` keeps STAC catalogue responses.
-pub fn discover_linz(
-    bounds: [f64; 4],
-    limit: u32,
-    output: &Path,
-    cache: &Path,
-) -> Result<LinzDiscovery> {
-    ensure(
-        (1..=100).contains(&limit),
-        "discovery max-items must be in 1..=100",
-    )?;
-    ensure(
-        bounds[0] < bounds[2] && bounds[1] < bounds[3] && bounds.iter().all(|v| v.is_finite()),
-        "bbox must be ordered west,south,east,north degrees",
-    )?;
-    ensure(
-        !output.exists(),
-        "discovery output already exists; choose a new directory",
-    )?;
+/// CC BY 4.0 1 m DEM collections overlapping `bounds`, newest capture first, as
+/// (end date, collection URL, collection).
+fn collections(bounds: [f64; 4], cache: &Path) -> Result<Vec<(String, String, Value)>> {
     let catalog: Value = serde_json::from_slice(&cached(
         cache,
         &format!("{BASE}/catalog.json"),
@@ -129,6 +112,11 @@ pub fn discover_linz(
     }
     // Newest capture first.
     collections.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(collections)
+}
+
+/// Tile codes (with their NZTM origins) intersecting `bounds`.
+fn codes(bounds: [f64; 4]) -> Result<Vec<(String, [f64; 2])>> {
     let corners = [
         raster::project("EPSG:2193", bounds[0], bounds[1])?,
         raster::project("EPSG:2193", bounds[0], bounds[3])?,
@@ -155,6 +143,58 @@ pub fn discover_linz(
         }
         n -= TILE_H;
     }
+    Ok(codes)
+}
+
+/// Every published 1 m DEM tile URL intersecting `bounds`, oldest capture first so later
+/// ones win where they have data. Also returns the collection slugs used.
+pub(crate) fn dem_urls(bounds: [f64; 4], cache: &Path) -> Result<(Vec<String>, Vec<String>)> {
+    let collections = collections(bounds, cache)?;
+    let codes = codes(bounds)?;
+    let (mut urls, mut slugs) = (Vec::new(), Vec::new());
+    for (_, url, collection) in collections.iter().rev() {
+        let base = url.trim_end_matches("collection.json");
+        let mut used = false;
+        for (code, _) in &codes {
+            if http::query_optional(&format!("{base}{code}.json"))?.is_some() {
+                urls.push(format!("{base}{code}.tiff"));
+                used = true;
+            }
+        }
+        if used {
+            slugs.push(
+                collection["linz:slug"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_owned(),
+            );
+        }
+    }
+    Ok((urls, slugs))
+}
+
+/// Write one source declaration per LINZ 1 m DEM tile intersecting `bounds`
+/// (lon/lat), at most `limit`. `cache` keeps STAC catalogue responses.
+pub fn discover_linz(
+    bounds: [f64; 4],
+    limit: u32,
+    output: &Path,
+    cache: &Path,
+) -> Result<LinzDiscovery> {
+    ensure(
+        (1..=100).contains(&limit),
+        "discovery max-items must be in 1..=100",
+    )?;
+    ensure(
+        bounds[0] < bounds[2] && bounds[1] < bounds[3] && bounds.iter().all(|v| v.is_finite()),
+        "bbox must be ordered west,south,east,north degrees",
+    )?;
+    ensure(
+        !output.exists(),
+        "discovery output already exists; choose a new directory",
+    )?;
+    let collections = collections(bounds, cache)?;
+    let codes = codes(bounds)?;
     let parent = output
         .parent()
         .filter(|p| !p.as_os_str().is_empty())

@@ -6,6 +6,7 @@ pub mod geofabrik;
 pub(crate) mod glo30;
 pub mod hash_memo;
 mod http;
+pub(crate) mod lidar;
 mod linz;
 mod plan;
 pub(crate) mod raster;
