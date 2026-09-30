@@ -92,7 +92,10 @@ def main(argv=None) -> int:
             print(f"{n + 1}/{len(val.regions)} {r.name}", flush=True)
     else:
         by_region: dict[int, list[int]] = {}
-        for idx, (ri, _, _) in enumerate(val.positions):
+        for idx, (ri, y, x) in enumerate(val.positions):
+            # Mostly-water windows show nothing but sea-surface noise; water is masked in worlds.
+            if (val.fields[ri].extra[0][y : y + size, x : x + size] > 0).mean() > 0.5:
+                continue
             by_region.setdefault(ri, []).append(idx)
         picks, rnd = [], 0
         while len(picks) < 2 * args.count and any(rnd < len(v) for v in by_region.values()):
