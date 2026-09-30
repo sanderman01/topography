@@ -6,6 +6,8 @@ use crate::review;
 use serde_json::{Value, json};
 use std::path::Path;
 
+const PARALLEL_DOWNLOADS: usize = 4;
+
 /// TNM 1 m DEM tile URLs in `bbox`, oldest publication first so newer surveys win.
 fn usgs_urls(bbox: [f64; 4], scratch: &Path) -> Result<Vec<String>> {
     let mut items: Vec<(String, String)> = Vec::new();
@@ -38,7 +40,7 @@ fn usgs_urls(bbox: [f64; 4], scratch: &Path) -> Result<Vec<String>> {
 
 /// Average every public 1 m DEM under `bbox` onto the grid `extent` (in `srs`) at
 /// `spacing_m`, reading the overview one level finer than the target. Returns Float32 LE
-/// heights with NaN where no survey has data.
+/// heights with NaN where no survey has data. Source tiles are staged under `cache`.
 pub(crate) fn reduce(
     srs: &str,
     extent: [f64; 4],
@@ -65,33 +67,58 @@ pub(crate) fn reduce(
         .args([extent[0], extent[3], extent[2], extent[1]].map(|v| v.to_string()))
         .args(["-outsize", &width.to_string(), &height.to_string()])
         .arg(&placed))?;
-    // One source at a time, oldest first: each tile is downloaded whole (COG block reads
-    // over HTTP are latency bound), averaged into the grid and deleted. Newer surveys
-    // replace older cells where they have data.
-    let local = scratch.join("source.tif");
-    for (i, url) in urls.iter().enumerate() {
-        eprintln!("  source {}/{}", i + 1, urls.len());
-        let result = http::fetch(url, &local).and_then(|()| {
-            run(super::cover::gdal("gdalwarp")
-                .env("GDAL_CACHEMAX", "512")
-                // GDAL's own TIFF reader has the LERC codec LINZ uses; some system libtiff builds lack it.
-                .args([
-                    "-q",
-                    "-if",
-                    "LIBERTIFF",
-                    "-ovr",
-                    "AUTO-1",
-                    "-r",
-                    "average",
-                    "-wm",
-                    "512",
-                ])
-                .arg(&local)
-                .arg(&placed))
-            .map(|_| ())
+    // Tiles are downloaded whole (COG block reads over HTTP are latency bound), a few at
+    // a time since each connection is slow, then averaged into the grid oldest first so
+    // newer surveys replace older cells where they have data.
+    let staging = io_context("create lidar staging", tempfile::tempdir_in(cache))?;
+    for (n, chunk) in urls.chunks(PARALLEL_DOWNLOADS).enumerate() {
+        eprintln!(
+            "  sources {}-{} of {}",
+            n * PARALLEL_DOWNLOADS + 1,
+            n * PARALLEL_DOWNLOADS + chunk.len(),
+            urls.len()
+        );
+        let files: Vec<_> = (0..chunk.len())
+            .map(|i| staging.path().join(format!("source-{i}.tif")))
+            .collect();
+        let fetched: Vec<Result<()>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .zip(&files)
+                .map(|(url, file)| scope.spawn(move || http::fetch(url, file)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join().unwrap_or_else(|_| {
+                        Err(AcquisitionError::Invalid("download thread panicked".into()))
+                    })
+                })
+                .collect()
         });
-        let _ = std::fs::remove_file(&local);
-        result.map_err(|e| AcquisitionError::Invalid(format!("{url}: {e}")))?;
+        for ((url, file), result) in chunk.iter().zip(&files).zip(fetched) {
+            let result = result.and_then(|()| {
+                run(super::cover::gdal("gdalwarp")
+                    .env("GDAL_CACHEMAX", "512")
+                    // GDAL's own TIFF reader has the LERC codec LINZ uses; some system libtiff builds lack it.
+                    .args([
+                        "-q",
+                        "-if",
+                        "LIBERTIFF",
+                        "-ovr",
+                        "AUTO-1",
+                        "-r",
+                        "average",
+                        "-wm",
+                        "512",
+                    ])
+                    .arg(file)
+                    .arg(&placed))
+                .map(|_| ())
+            });
+            let _ = std::fs::remove_file(file);
+            result.map_err(|e| AcquisitionError::Invalid(format!("{url}: {e}")))?;
+        }
     }
     let details = json!({"usgs_urls": usgs, "linz_urls": linz_urls, "linz_collections": linz_collections,
         "resampling": "average from the overview one level finer than the target (gdalwarp -ovr AUTO-1); newer surveys drawn over older",
