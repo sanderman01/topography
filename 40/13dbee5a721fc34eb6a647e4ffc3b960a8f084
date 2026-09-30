@@ -1,0 +1,38 @@
+training/src/topography_training/diffusion/cascade_eval.py
+  s_8fb48d93e6f9bc::t_9fde164a9a668d 1-168
+crates/topography-core/src/context/release.rs
+  s_8fb48d93e6f9bc::t_2122b295d6c83c 1-4,8-68,74-79,87,90-109
+  s_8fb48d93e6f9bc::t_1e9cdd1ebc1909 5-7,69-73,80-86,88-89
+crates/topography-cli/src/main.rs
+  s_8fb48d93e6f9bc::t_1e9cdd1ebc1909 42,325-329
+  s_8fb48d93e6f9bc::t_c04088b0f27d3b 330
+crates/topography-core/src/context/mod.rs
+  s_8fb48d93e6f9bc::t_1e9cdd1ebc1909 5-6
+training/src/topography_training/diffusion/cascade.py
+  s_8fb48d93e6f9bc::t_65ad0332dea18e 1-124,126-129,148,150-183,185,188-193,196,198,204,206-241,243,247-248
+  s_8fb48d93e6f9bc::t_66194dc5f77268 125,130-147,149,184,186-187,194-195,197,199-203,205,242,244-246
+training/src/topography_training/diffusion/train.py
+  s_8fb48d93e6f9bc::t_2bd36d5a078912 26,67-88,103-113,117-124
+training/src/topography_training/diffusion/model.py
+  s_8fb48d93e6f9bc::t_d5b7ca8e51ba7f 96-109,134,136
+training/src/topography_training/diffusion/data.py
+  s_8fb48d93e6f9bc::t_d5b7ca8e51ba7f 227-230
+docs/workflows/context-regions.md
+  s_8fb48d93e6f9bc::t_f08c12c361b532 68-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4013dbee5a721fc34eb6a647e4ffc3b960a8f084",
+  "prompts": {},
+  "sessions": {
+    "s_8fb48d93e6f9bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "182fc722-24eb-420b-b649-94ee27bdc968",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
