@@ -3,7 +3,7 @@
 python -m topography_training.diffusion.cascade_eval --run-dir <dir> --out <new-dir> [options]
 
 L1 generates each validation region whole (48 km at 128 m) from its derived layout; L2
-generates 8 km windows at 32 m from the true 128 m surface. The review shows real terrain
+and L3 generate windows (8 km at 32 m, 1 km at 4 m) from the true surface of the level above. The review shows real terrain
 for half of the items and generated terrain for the other half, never the same place
 twice. Writes review.html, key.json (keep closed until votes are in), compare.html
 (side by side, also closed), metrics.json and arrays.npz.
@@ -97,6 +97,9 @@ def main(argv=None) -> int:
             # Mostly-water windows show nothing but sea-surface noise; water is masked in worlds.
             if (val.fields[ri].extra[0][y : y + size, x : x + size] > 0).mean() > 0.5:
                 continue
+            # Survey gaps would give real windows away.
+            if np.isnan(val.fields[ri].target[y : y + size, x : x + size]).mean() > 0.005:
+                continue
             by_region.setdefault(ri, []).append(idx)
         picks, rnd = [], 0
         while len(picks) < 2 * args.count and any(rnd < len(v) for v in by_region.values()):
@@ -104,6 +107,7 @@ def main(argv=None) -> int:
             rnd += 1
         for n, idx in enumerate(picks[: 2 * args.count]):
             real, coarse, cond = val.window(idx)
+            real = np.where(np.isnan(real), coarse, real)
             r = val.regions[val.positions[idx][0]]
             items.append((r.name, r.class_id, real, coarse, generate(coarse, cond, args.seed + n)))
             print(f"{n + 1}/{2 * args.count} {r.name}", flush=True)
@@ -118,7 +122,7 @@ def main(argv=None) -> int:
     bank = []
     for i in rng.choice(len(train.positions), size=min(3000, len(train.positions)), replace=False):
         real, coarse, _ = train.window(int(i))
-        bank.append(small(real - coarse).ravel())
+        bank.append(small(np.where(np.isnan(real), coarse, real) - coarse).ravel())
     bank = np.stack(bank)
 
     def nearest(h, coarse):

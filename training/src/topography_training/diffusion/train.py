@@ -23,7 +23,7 @@ def _parse(argv):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--release", type=Path, required=True)
     p.add_argument("--run-dir", type=Path, required=True)
-    p.add_argument("--level", choices=["l1", "l2"], help="cascade level for a context release")
+    p.add_argument("--level", choices=["l1", "l2", "l3"], help="cascade level for a context release")
     p.add_argument("--steps", type=int, default=100_000)
     p.add_argument("--hours", type=float, default=8.0, help="wall-clock limit for this invocation")
     p.add_argument("--batch", type=int, default=12)
@@ -71,7 +71,7 @@ def main(argv=None) -> int:
 
         name = saved["level"] if saved else args.level
         if name is None:
-            print("error: a context release needs --level l1 or l2", file=sys.stderr)
+            print("error: a context release needs --level l1, l2 or l3", file=sys.stderr)
             return 2
         level = cascade.LEVELS[name]
         regions = cascade.load_release(args.release)
@@ -79,7 +79,8 @@ def main(argv=None) -> int:
         val = cascade.Sampler(regions, "validation", level, train.size)
         level_config = {"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
                         "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
-                        "land_smooth_m": cascade.LAND_SMOOTH_M, "l2_smooth_cells": cascade.L2_SMOOTH_CELLS,
+                        "land_smooth_m": cascade.LAND_SMOOTH_M, "block": level.block,
+                        "smooth_cells": level.smooth_cells,
                         "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
     else:
         tiles = data.load_release(args.release)

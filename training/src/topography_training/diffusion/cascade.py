@@ -1,8 +1,9 @@
-"""Coarse cascade levels trained on GLO-30 context regions (see terrain-cascade-v1.md).
+"""Cascade levels trained on context regions (see terrain-cascade-v1.md).
 
-L2 (32 m) refines the 128 m surface; L1 (128 m) refines the smooth mid-surface of an
-L0-like layout envelope. Both generate a residual over the level above. Regions are
-row-major, north-up, 32 m cells; the split is by whole region (set in the release).
+L1 (128 m) refines the smooth mid-surface of an L0-like layout envelope; L2 (32 m)
+refines the 128 m surface, both from GLO-30 regions at 32 m. L3 (4 m) refines the 32 m
+surface from lidar regions at 4 m. Each generates a residual over the level above.
+Regions are row-major and north-up; the split is by whole region (set in the release).
 """
 
 from __future__ import annotations
@@ -14,9 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .data import NUM_CLASSES, smooth
+from .data import NUM_CLASSES, _window_sum, smooth
 
-REGION_M = 32
 # L0 layout scales: the envelope and land/sea are soft so the model, not the painter,
 # draws ranges, valleys and coastlines.
 ENVELOPE_M = 2048
@@ -31,10 +31,19 @@ class Level:
     name: str
     cell_m: int
     conditioning: int  # layout id stored in run configs
+    region_m: int  # cell size of the regions it trains on
+    block: int = 0  # refining levels: coarse block size in cells
+    smooth_cells: float = 0.0  # refining levels: smoothing after upsampling
+    margin: int = 16  # refining levels: context cells around a window
 
 
-LEVELS = {"l1": Level("l1", 128, 4), "l2": Level("l2", 32, 3)}
-L2_SMOOTH_CELLS = 2.0  # half a 128 m block, like the 1 m model's 16 m on 32 m blocks
+# Smoothing is half a block, like the 1 m model's 16 m on 32 m blocks.
+LEVELS = {
+    "l1": Level("l1", 128, 4, 32),
+    "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
+    "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32),
+}
+MIN_VALID = 0.9  # share of surveyed cells a training window needs
 
 
 @dataclass
@@ -42,7 +51,8 @@ class Region:
     name: str
     class_id: int
     split: str
-    height: np.ndarray  # float32 metres, 32 m
+    spacing_m: int
+    height: np.ndarray  # float32 metres, NaN where not surveyed
     water: np.ndarray  # bool
     snow: np.ndarray  # bool
     vegetation: np.ndarray  # bool
@@ -62,11 +72,12 @@ def load_release(manifest_path: Path) -> list[Region]:
         raise ValueError("unsupported context release")
     out = []
     for r in manifest["regions"]:
-        if r["spacing_m"] != REGION_M:
-            raise ValueError(f"{r['id']}: spacing must be {REGION_M} m")
         shape = (r["size"][1], r["size"][0])
         layers = {k: _read(manifest_path.parent, v, shape) for k, v in r["layers"].items()}
-        out.append(Region(r["id"], int(r["class_id"]), r["split"], layers["height"].astype(np.float32),
+        height = layers["height"].astype(np.float32)
+        if "validity" in layers:
+            height = np.where(layers["validity"] == 255, height, np.nan).astype(np.float32)
+        out.append(Region(r["id"], int(r["class_id"]), r["split"], int(r["spacing_m"]), height,
                           layers["water"] == 255, layers["snow-ice"] == 2, layers["vegetation"] == 2))
     return out
 
@@ -129,24 +140,39 @@ class Fields:
     class_id: int
 
 
-def l2_coarse(h: np.ndarray, y: int, x: int, size: int, oy: int = 0, ox: int = 0) -> np.ndarray:
-    """Coarse surface of one window: 128 m block means on a grid shifted by (oy, ox)
-    cells, upsampled and smoothed to 32 m. Cells beyond the region repeat its edge."""
-    m = 16  # covers the bicubic support and 3 sigma of smoothing
-    n = -(-(size + 2 * m + 4) // 4) * 4
+def _nan_blocks(a: np.ndarray, k: int) -> np.ndarray:
+    """Block means over surveyed cells; blocks under a quarter surveyed are filled."""
+    from .data import fill_nan
+
+    h, w = a.shape[0] // k * k, a.shape[1] // k * k
+    b = a[:h, :w].reshape(h // k, k, w // k, k)
+    count = (~np.isnan(b)).sum(axis=(1, 3))
+    if count.min() == k * k:
+        return b.mean(axis=(1, 3), dtype=np.float64).astype(np.float32)
+    with np.errstate(invalid="ignore"):
+        mean = (np.nansum(b, axis=(1, 3), dtype=np.float64) / count).astype(np.float32)
+    mean[count < k * k // 4] = np.nan
+    return fill_nan(mean)
+
+
+def refine_coarse(level: Level, h: np.ndarray, y: int, x: int, size: int, oy: int = 0, ox: int = 0) -> np.ndarray:
+    """Coarse surface of one window: block means on a grid shifted by (oy, ox) cells,
+    upsampled and smoothed. Cells beyond the region repeat its edge."""
+    k, m = level.block, level.margin
+    n = -(-(size + 2 * m + k) // k) * k
     rows = np.clip(np.arange(y - m - oy, y - m - oy + n), 0, h.shape[0] - 1)
     cols = np.clip(np.arange(x - m - ox, x - m - ox + n), 0, h.shape[1] - 1)
-    c = smooth(upsample(block_mean(h[np.ix_(rows, cols)], 4), 4), L2_SMOOTH_CELLS)
+    c = smooth(upsample(_nan_blocks(h[np.ix_(rows, cols)], k), k), level.smooth_cells)
     return c[m + oy : m + oy + size, m + ox : m + ox + size]
 
 
-def l2_surface(h128: np.ndarray) -> np.ndarray:
-    """32 m coarse surface of a whole 128 m field (generation from an L1 result)."""
-    return smooth(upsample(h128, 4), L2_SMOOTH_CELLS)
+def refine_surface(level: Level, coarse: np.ndarray) -> np.ndarray:
+    """Coarse surface of a whole field from the level above (generation)."""
+    return smooth(upsample(coarse, level.block), level.smooth_cells)
 
 
-def l2_fields(r: Region) -> Fields:
-    """Per-cell inputs; the coarse surface is computed per window (see l2_coarse)."""
+def refine_fields(r: Region) -> Fields:
+    """Per-cell inputs; the coarse surface is computed per window (see refine_coarse)."""
     extra = [np.where(r.water, 1.0, -1.0).astype(np.float32), soft(r.snow, 1.0), soft(r.vegetation, 1.0)]
     return Fields(r.height, None, extra, r.class_id)
 
@@ -217,24 +243,28 @@ class Sampler:
         self.regions = [r for r in regions if r.split == split]
         if not self.regions:
             raise ValueError(f"no {split} regions")
-        self.fields = [l1_fields(r) if level.name == "l1" else l2_fields(r) for r in self.regions]
+        if any(r.spacing_m != level.region_m for r in self.regions):
+            raise ValueError(f"{level.name} trains on {level.region_m} m regions")
+        self.fields = [l1_fields(r) if level.name == "l1" else refine_fields(r) for r in self.regions]
         self.positions = []
         for i, f in enumerate(self.fields):
             rows, cols = f.target.shape
+            valid = _window_sum(~np.isnan(f.target), size) >= MIN_VALID * size * size
             ys, xs = range(0, rows - size + 1, stride), range(0, cols - size + 1, stride)
-            self.positions += [(i, y, x) for y in ys for x in xs]
+            self.positions += [(i, y, x) for y in ys for x in xs if valid[y, x]]
         if not self.positions:
-            raise ValueError("regions are smaller than the window")
+            raise ValueError("no window of this size has enough surveyed ground")
 
     def window(self, index: int, rng: np.random.Generator | None = None):
-        """(true surface, coarse, cond with raw channel 0) of one window. L2 draws a
-        random 128 m block offset so the model cannot learn a fixed alignment."""
+        """(true surface, coarse, cond with raw channel 0) of one window. Refining levels
+        draw a random block offset so the model cannot learn a fixed alignment."""
         i, y, x = self.positions[index]
         f, s = self.fields[i], self.size
         sl = np.s_[y : y + s, x : x + s]
         if f.coarse is None:
-            oy, ox = (int(v) for v in rng.integers(4, size=2)) if rng is not None else (0, 0)
-            c = l2_coarse(f.target, y, x, s, oy, ox)
+            k = self.level.block
+            oy, ox = (int(v) for v in rng.integers(k, size=2)) if rng is not None else (0, 0)
+            c = refine_coarse(self.level, f.target, y, x, s, oy, ox)
         else:
             c = f.coarse[sl]
         classes = np.full((s, s), f.class_id, np.int64)
@@ -242,9 +272,10 @@ class Sampler:
 
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
         h, c, cond = self.window(index, rng)
-        target = ((h - c) / scale)[None].astype(np.float32)
+        valid = ~np.isnan(h)
+        target = np.where(valid, (h - c) / scale, 0.0)[None].astype(np.float32)
         cond = normalise(cond)
-        mask = np.ones_like(target)
+        mask = valid[None].astype(np.float32)
         if augment:
             k, flip = rng.integers(4), rng.integers(2)
             target, cond, mask = (_dihedral(a, k, flip) for a in (target, cond, mask))
@@ -274,11 +305,12 @@ def _rotate_slopes(cond: np.ndarray, k: int, flip: int) -> np.ndarray:
     return cond
 
 
-def residual_scale(sampler: Sampler) -> float:
-    """Fixed metre scale: twice the residual std over the training regions, to 0.5 m."""
+def residual_scale(sampler: Sampler, windows: int = 400) -> float:
+    """Fixed metre scale: twice the residual std over training windows, to 0.5 m."""
+    rng = np.random.default_rng(0)
     parts = []
-    for f in sampler.fields:
-        c = f.coarse if f.coarse is not None else l2_surface(block_mean(f.target, 4))
-        parts.append((f.target - c).ravel())
+    for p in rng.choice(len(sampler.positions), size=min(windows, len(sampler.positions)), replace=False):
+        h, c, _ = sampler.window(int(p))
+        parts.append((h - c)[~np.isnan(h)])
     std = float(np.concatenate(parts).std())
     return max(0.5, round(2 * std * 2) / 2)
