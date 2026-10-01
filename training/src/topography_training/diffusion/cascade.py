@@ -44,6 +44,8 @@ class Level:
 # Smoothing is half a block, like the 1 m model's 16 m on 32 m blocks.
 LEVELS = {
     "l1": Level("l1", 128, 4, 32),
+    # L1b: land/sea given as the layout's 256 m mask; the sea is left out of the loss.
+    "l1b": Level("l1b", 128, 4, 32),
     "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
     "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32, stride=32),
 }
@@ -152,6 +154,7 @@ class Fields:
     coarse: np.ndarray | None  # None: computed per window
     extra: list[np.ndarray]  # conditioning channels after shape, slopes and absolute height
     class_id: int
+    ignore: np.ndarray | None = None  # cells left out of the loss (L1b: the sea)
 
 
 def _nan_blocks(a: np.ndarray, k: int) -> np.ndarray:
@@ -199,6 +202,42 @@ def l1_fields(r: Region) -> Fields:
     mid = (lo + hi) / 2
     extra = [((hi - lo) / 2048.0).astype(np.float32), soft(~water, LAND_SMOOTH_M / 128)]
     return Fields(h, mid.astype(np.float32), extra, r.class_id)
+
+
+def layout_sea(sea128: np.ndarray) -> np.ndarray:
+    """The sea as a layout gives it: majority per 256 m cell, back on the 128 m grid."""
+    h, w = sea128.shape[0] // 2 * 2, sea128.shape[1] // 2 * 2
+    coarse = sea128[:h, :w].reshape(h // 2, 2, w // 2, 2).mean(axis=(1, 3)) >= 0.5
+    out = np.zeros(sea128.shape, bool)
+    out[:h, :w] = np.repeat(np.repeat(coarse, 2, axis=0), 2, axis=1)
+    return out
+
+
+def l1b_fields(r: Region) -> Fields:
+    """L1 with a sharp layout coast: land/sea from the 256 m sea mask (lightly rounded),
+    and the true sea left out of the loss so the model learns land down to the water."""
+    h = block_mean(r.height, 4)
+    sea = block_mean((r.water & (np.nan_to_num(r.height) <= 1.0)).astype(np.float32), 4) > 0.5
+    lo, hi = envelope(np.where(sea, 0.0, h).astype(np.float32))
+    mid = (lo + hi) / 2
+    extra = [((hi - lo) / 2048.0).astype(np.float32), soft(~layout_sea(sea), 1.0)]
+    return Fields(h, mid.astype(np.float32), extra, r.class_id, ignore=sea)
+
+
+def erode(mask: np.ndarray, cells: int) -> np.ndarray:
+    for _ in range(cells):
+        mask = ~_grow(~mask)
+    return mask
+
+
+def connected(seed: np.ndarray, allowed: np.ndarray) -> np.ndarray:
+    """Cells of `allowed` 4-connected to `seed`."""
+    region = seed & allowed
+    while True:
+        grown = _grow(region) & allowed
+        if (grown == region).all():
+            return region
+        region = grown
 
 
 def refine_mask(mask: np.ndarray, k: int, sigma_cells: float) -> np.ndarray:
@@ -271,7 +310,8 @@ class Sampler:
             raise ValueError(f"no {split} regions")
         if any(r.spacing_m != level.region_m for r in self.regions):
             raise ValueError(f"{level.name} trains on {level.region_m} m regions")
-        self.fields = [l1_fields(r) if level.name == "l1" else refine_fields(r) for r in self.regions]
+        make = {"l1": l1_fields, "l1b": l1b_fields}.get(level.name, refine_fields)
+        self.fields = [make(r) for r in self.regions]
         for r in self.regions:  # the fields hold everything the windows need
             r.water = r.snow = r.vegetation = None
         self.positions = []
@@ -301,6 +341,9 @@ class Sampler:
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
         h, c, cond = self.window(index, rng)
         valid = ~np.isnan(h)
+        i, y, x = self.positions[index]
+        if self.fields[i].ignore is not None:
+            valid &= ~self.fields[i].ignore[y : y + self.size, x : x + self.size]
         target = np.where(valid, (h - c) / scale, 0.0)[None].astype(np.float32)
         cond = normalise(cond)
         mask = valid[None].astype(np.float32)

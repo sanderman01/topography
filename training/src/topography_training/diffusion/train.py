@@ -23,7 +23,7 @@ def _parse(argv):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--release", type=Path, required=True)
     p.add_argument("--run-dir", type=Path, required=True)
-    p.add_argument("--level", choices=["l1", "l2", "l3"], help="cascade level for a context release")
+    p.add_argument("--level", choices=["l1", "l1b", "l2", "l3"], help="cascade level for a context release")
     p.add_argument("--steps", type=int, default=100_000)
     p.add_argument("--hours", type=float, default=8.0, help="wall-clock limit for this invocation")
     p.add_argument("--batch", type=int, default=12)
