@@ -1,0 +1,19 @@
+docs/progress.md
+  s_3dd607e0c79402::t_adbb939fa3d011 47-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "601d62ccdde2934b27264f6d59b4739dadd7e5dd",
+  "prompts": {},
+  "sessions": {
+    "s_3dd607e0c79402": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6da004f-a834-4e63-8a15-4960f8fdbc5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
