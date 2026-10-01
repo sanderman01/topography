@@ -24,6 +24,9 @@ LAND_SMOOTH_M = 1024
 MIN_RANGE_M = 1.0  # unit-range shape channel floor for flat windows
 SEA_SMOOTH_CELLS = 2.0
 SEA_LEVEL_TOLERANCE_M = 8.0
+# Flat ground this low on the layout's sea side is the model's uneven sea surface.
+SHELF_MAX_M = 30.0
+SHELF_MAX_SLOPE_DEG = 3.0
 
 
 @dataclass(frozen=True)
@@ -198,6 +201,12 @@ def l1_fields(r: Region) -> Fields:
     return Fields(h, mid.astype(np.float32), extra, r.class_id)
 
 
+def refine_mask(mask: np.ndarray, k: int, sigma_cells: float) -> np.ndarray:
+    """A coarse mask enlarged k times with its block corners rounded."""
+    big = np.repeat(np.repeat(mask, k, axis=0), k, axis=1)
+    return smooth(big.astype(np.float32), sigma_cells) > 0.5
+
+
 def _grow(mask: np.ndarray) -> np.ndarray:
     out = mask.copy()
     out[1:] |= mask[:-1]
@@ -212,14 +221,18 @@ def resolve_sea(h: np.ndarray, land: np.ndarray, coarse: np.ndarray) -> tuple[np
     only water where the coarse surface is below 100 m counts as sea, not mountain lakes.
 
     The model leaves the sea a few metres off zero, so the field is shifted by the median
-    height on the layout's sea side; sea is then the low ground connected to that side,
-    without single-cell specks, and is set to 0 m like GLO-30 sea."""
+    height on the layout's sea side; sea is then the low ground connected to that side
+    (including flat shelves up to 30 m near the layout's coast), without single-cell
+    specks, and is set to 0 m like GLO-30 sea. Cells are 128 m (L1 output)."""
     zone = (land < 0) & (coarse < 100.0)
     if not zone.any():
         return h, np.zeros(h.shape, bool)
     h = h - float(np.median(h[zone]))
     # The generated sea surface wanders by about +-10 m; decide on a smoothed surface.
-    low = smooth(h, SEA_SMOOTH_CELLS) <= SEA_LEVEL_TOLERANCE_M
+    hs = smooth(h, SEA_SMOOTH_CELLS)
+    gy, gx = np.gradient(hs, 128.0)
+    flat = np.degrees(np.arctan(np.hypot(gx, gy))) < SHELF_MAX_SLOPE_DEG
+    low = (hs <= SEA_LEVEL_TOLERANCE_M) | ((hs <= SHELF_MAX_M) & flat & (land < 0.5))
     sea = zone & low
     while True:
         grown = _grow(sea) & low
