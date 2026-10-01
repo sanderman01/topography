@@ -12,8 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Classes with at least this many accepted regions lend one to validation.
-const VALIDATION_MIN_REGIONS: usize = 6;
+/// By default, classes with at least this many accepted regions lend one to validation.
+pub const VALIDATION_MIN_REGIONS: usize = 6;
 
 fn link(from: &Path, to: &Path) -> Result<()> {
     // Region files are never rewritten, so a hard link is a safe snapshot.
@@ -22,7 +22,8 @@ fn link(from: &Path, to: &Path) -> Result<()> {
         .map_err(|e| AcquisitionError::Invalid(format!("link {}: {e}", from.display())))
 }
 
-pub fn build_release(root: &Path, output: &Path) -> Result<PathBuf> {
+/// `min_per_class`: classes with at least this many accepted regions lend one to validation.
+pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result<PathBuf> {
     ensure(!output.exists(), "release output already exists")?;
     let dirs = accepted(root)?;
     ensure(!dirs.is_empty(), "no accepted context regions")?;
@@ -40,9 +41,10 @@ pub fn build_release(root: &Path, output: &Path) -> Result<PathBuf> {
             .or_default()
             .push(m["id"].as_str().unwrap_or_default());
     }
+    ensure(min_per_class >= 2, "min-per-class must be at least 2")?;
     let validation: Vec<&str> = by_class
         .values()
-        .filter(|ids| ids.len() >= VALIDATION_MIN_REGIONS)
+        .filter(|ids| ids.len() >= min_per_class)
         .filter_map(|ids| ids.iter().min_by_key(|id| digest(id.as_bytes())).copied())
         .collect();
 
@@ -96,7 +98,7 @@ pub fn build_release(root: &Path, output: &Path) -> Result<PathBuf> {
         "kind": "context_training_release",
         "regions_root": root.canonicalize().map(|p| p.display().to_string()).unwrap_or_default(),
         "decisions_sha256": digest(&decisions),
-        "split": format!("whole regions; one validation region per class with {VALIDATION_MIN_REGIONS}+ accepted regions"),
+        "split": format!("whole regions; one validation region per class with {min_per_class}+ accepted regions"),
         "attribution": [
             "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
             "ESA WorldCover 2021 (CC BY 4.0)", "GLIMS Glacier Database", "© OpenStreetMap contributors, ODbL"],

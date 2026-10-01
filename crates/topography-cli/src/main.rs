@@ -39,7 +39,7 @@ Usage: topography [--help | --version]
        topography world input <runtime.toml> <world.toml> <new-output-dir>
        topography context build <runtime.toml> <plan.toml> <regions-dir>
        topography context serve <regions-dir> <port>
-       topography context release <regions-dir> <new-output-dir>
+       topography context release <regions-dir> <new-output-dir> [min-per-class]
        topography world sketch <sketch.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
@@ -322,9 +322,16 @@ fn main() -> ExitCode {
                 Path::new(output),
             ));
         }
-        [command, action, root, output] if command == "context" && action == "release" => {
+        [command, action, root, output, rest @ ..]
+            if command == "context" && action == "release" && rest.len() <= 1 =>
+        {
+            let min = match rest.first().map(|v| number::<usize>(v)) {
+                None => topography_core::context::VALIDATION_MIN_REGIONS,
+                Some(Some(n)) => n,
+                Some(None) => return usage_error(),
+            };
             return workflow_result(
-                topography_core::context::build_release(Path::new(root), Path::new(output))
+                topography_core::context::build_release(Path::new(root), Path::new(output), min)
                     .map(|p| p.display().to_string()),
             );
         }

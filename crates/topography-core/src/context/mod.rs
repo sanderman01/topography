@@ -4,7 +4,7 @@
 
 pub mod gallery;
 mod release;
-pub use release::build_release;
+pub use release::{VALIDATION_MIN_REGIONS, build_release};
 
 use crate::acquisition::{
     AcquisitionError, Result, cover, digest, ensure, glo30, io_context, lidar, raster, read_small,

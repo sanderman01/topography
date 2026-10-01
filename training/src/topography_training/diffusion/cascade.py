@@ -35,13 +35,14 @@ class Level:
     block: int = 0  # refining levels: coarse block size in cells
     smooth_cells: float = 0.0  # refining levels: smoothing after upsampling
     margin: int = 16  # refining levels: context cells around a window
+    stride: int = 8  # spacing of candidate training windows, in cells
 
 
 # Smoothing is half a block, like the 1 m model's 16 m on 32 m blocks.
 LEVELS = {
     "l1": Level("l1", 128, 4, 32),
     "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
-    "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32),
+    "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32, stride=32),
 }
 MIN_VALID = 0.9  # share of surveyed cells a training window needs
 
@@ -238,8 +239,9 @@ def normalise(cond: np.ndarray) -> np.ndarray:
 class Sampler:
     """Random windows of one split with the CropSampler interface of the 1 m model."""
 
-    def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int = 8):
+    def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None):
         self.level, self.size = level, size
+        stride = stride or level.stride
         self.regions = [r for r in regions if r.split == split]
         if not self.regions:
             raise ValueError(f"no {split} regions")
