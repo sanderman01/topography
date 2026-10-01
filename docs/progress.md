@@ -44,7 +44,9 @@ its scale.
 2. GLO-30 context regions and the 128 m / 32 m models: done as pilots. 64 of 74
    regions accepted; L2 run 1 (3 h) passed the blind review 30/32 (both No were
    open-sea windows), L1 run 1 (2 h) 7/7. L1 output gets its sea resolved to 0 m.
-3. Reduced 4 m lidar regions and the 4 m model.
+3. Reduced 4 m lidar regions and the 4 m model: done as a pilot. 36 lidar regions
+   (USGS 3DEP and LINZ averaged to 4 m) accepted; L3 run 1 (3 h) passed the blind
+   review 32/32.
 4. Run 5 of the 1 m model on the 4 m surface (fixes for local shape, glaciers
    and flats).
 5. Banded 1 m generation, then the first cascade world.
