@@ -1,0 +1,25 @@
+training/src/topography_training/diffusion/cascade.py
+  s_8fb48d93e6f9bc::t_731bb9634d2a53 38,45,242,244
+crates/topography-core/src/context/release.rs
+  s_8fb48d93e6f9bc::t_7c10a0a6bb486f 15-16,25-26,44,47,101
+crates/topography-core/src/context/mod.rs
+  s_8fb48d93e6f9bc::t_7c10a0a6bb486f 7
+crates/topography-cli/src/main.rs
+  s_8fb48d93e6f9bc::t_7c10a0a6bb486f 42,325-332,334
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "68d446a61378860ab46991917b3f4f9d590d3f80",
+  "prompts": {},
+  "sessions": {
+    "s_8fb48d93e6f9bc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "182fc722-24eb-420b-b649-94ee27bdc968",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
