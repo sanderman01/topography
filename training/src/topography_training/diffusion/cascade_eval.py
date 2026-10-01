@@ -87,15 +87,15 @@ def main(argv=None) -> int:
     if level.name == "l1":
         for n, (r, f) in enumerate(zip(val.regions, val.fields)):
             classes = np.full(f.coarse.shape, f.class_id, np.int64)
-            cond = cascade.condition(level, f.coarse, f.extra, classes)
-            gen, _ = cascade.resolve_sea(generate(f.coarse, cond, args.seed + n), f.extra[1], f.coarse)
+            cond = cascade.condition(level, f.coarse, [cascade.decode(e) for e in f.extra], classes)
+            gen, _ = cascade.resolve_sea(generate(f.coarse, cond, args.seed + n), cascade.decode(f.extra[1]), f.coarse)
             items.append((r.name, r.class_id, f.target, f.coarse, gen))
             print(f"{n + 1}/{len(val.regions)} {r.name}", flush=True)
     else:
         by_region: dict[int, list[int]] = {}
         for idx, (ri, y, x) in enumerate(val.positions):
             # Mostly-water windows show nothing but sea-surface noise; water is masked in worlds.
-            if (val.fields[ri].extra[0][y : y + size, x : x + size] > 0).mean() > 0.5:
+            if (cascade.decode(val.fields[ri].extra[0][y : y + size, x : x + size]) > 0).mean() > 0.5:
                 continue
             # Survey gaps would give real windows away.
             if np.isnan(val.fields[ri].target[y : y + size, x : x + size]).mean() > 0.005:

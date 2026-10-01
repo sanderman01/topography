@@ -131,6 +131,16 @@ def soft(mask: np.ndarray, sigma_cells: float) -> np.ndarray:
     return (np.clip(smooth(mask.astype(np.float32), sigma_cells), 0, 1) * 2 - 1).astype(np.float32)
 
 
+def soft_u8(mask: np.ndarray, sigma_cells: float) -> np.ndarray:
+    """Soft coverage stored as uint8 (0 absent .. 255 present); see `decode`."""
+    return np.rint(np.clip(smooth(mask.astype(np.float32), sigma_cells), 0, 1) * 255).astype(np.uint8)
+
+
+def decode(e: np.ndarray) -> np.ndarray:
+    """A conditioning channel as float32; uint8 coverage maps to -1 .. 1."""
+    return e.astype(np.float32) / 127.5 - 1 if e.dtype == np.uint8 else e
+
+
 @dataclass
 class Fields:
     """Full-region inputs of one level; channel 0 holds raw coarse metres."""
@@ -174,7 +184,8 @@ def refine_surface(level: Level, coarse: np.ndarray) -> np.ndarray:
 
 def refine_fields(r: Region) -> Fields:
     """Per-cell inputs; the coarse surface is computed per window (see refine_coarse)."""
-    extra = [np.where(r.water, 1.0, -1.0).astype(np.float32), soft(r.snow, 1.0), soft(r.vegetation, 1.0)]
+    # Stored as uint8 per region; full-size float32 copies would not fit in memory at 4 m.
+    extra = [np.where(r.water, 255, 0).astype(np.uint8), soft_u8(r.snow, 1.0), soft_u8(r.vegetation, 1.0)]
     return Fields(r.height, None, extra, r.class_id)
 
 
@@ -248,6 +259,8 @@ class Sampler:
         if any(r.spacing_m != level.region_m for r in self.regions):
             raise ValueError(f"{level.name} trains on {level.region_m} m regions")
         self.fields = [l1_fields(r) if level.name == "l1" else refine_fields(r) for r in self.regions]
+        for r in self.regions:  # the fields hold everything the windows need
+            r.water = r.snow = r.vegetation = None
         self.positions = []
         for i, f in enumerate(self.fields):
             rows, cols = f.target.shape
@@ -270,7 +283,7 @@ class Sampler:
         else:
             c = f.coarse[sl]
         classes = np.full((s, s), f.class_id, np.int64)
-        return f.target[sl], c, condition(self.level, c, [e[sl] for e in f.extra], classes)
+        return f.target[sl], c, condition(self.level, c, [decode(e[sl]) for e in f.extra], classes)
 
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
         h, c, cond = self.window(index, rng)
