@@ -212,8 +212,11 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   the chain.
 - GEBCO seabed layer built (release `context-v2`, 64 GLO-30 regions, same split);
   L1 layout 5 drops the land/sea channel; the chain takes the sea as ground below
-  0 m connected to the field edge, and heightmap export encodes the seabed. L1/L2
-  retraining pending.
+  0 m connected to the field edge, and heightmap export encodes the seabed.
+- L2 run 2 (32/32 Yes in blind review) and L1 run 2 (7/7 Yes) trained on continuous
+  terrain. Chain 7 (Howe Sound): slopes run straight into the sea with no flat
+  ring, islands and drowned valleys come from the terrain. Remaining gap: real
+  terrain has many small tarns, the chain keeps only the largest depressions.
 
 ## Gates and fallbacks
 
