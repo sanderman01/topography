@@ -106,10 +106,12 @@ attribution.
 ### GEBCO bathymetry (L1, L2 below sea level)
 
 The GEBCO global grid (15 arc-second, public, free use with attribution) supplies the
-seabed under each GLO-30 region's sea. It is added as a layer of the context
-regions and joined to GLO-30 where GLO-30 shows sea (0 m with WorldCover water),
-with a short blend at the coast so the join does not create a step. Lakes are not
-filled from GEBCO.
+seabed under each GLO-30 region's sea. The training release reads it over HTTPS
+(public CEDA GeoTIFF tiles, no bulk download) as a `seabed` layer per region, so
+accepted regions and their votes stay unchanged. Training joins it where GLO-30
+shows sea (0 m ground reaching GEBCO depths): the land slope continues down from the
+coast to the deepest GEBCO within 1 km, and GEBCO takes over 1–3 km out, so the join
+has no step or flat ring. Lakes are not filled from GEBCO.
 
 ### Reduced lidar regions (L3)
 
@@ -208,6 +210,10 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   sea-level clean-up steps that went with them are superseded by the water approach
   above. Next: GEBCO layer, retrain L1 and L2 with continuous terrain, then rerun
   the chain.
+- GEBCO seabed layer built (release `context-v2`, 64 GLO-30 regions, same split);
+  L1 layout 5 drops the land/sea channel; the chain takes the sea as ground below
+  0 m connected to the field edge, and heightmap export encodes the seabed. L1/L2
+  retraining pending.
 
 ## Gates and fallbacks
 

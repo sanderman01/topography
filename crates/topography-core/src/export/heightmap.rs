@@ -165,35 +165,25 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
             read_layer(world, "land-cover.u8", layers, cells, 1)?,
         ));
     }
-    // Range from land only; water fill is clamped and counted.
+    // Range from all ground: terrain continues under water, so the seabed is encoded too.
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-    for (e, wv) in elevation.iter().zip(&water) {
+    for e in &elevation {
         ensure(e.is_finite(), "non-finite elevation")?;
-        if *wv != 255 {
-            lo = lo.min(*e);
-            hi = hi.max(*e);
-        }
+        lo = lo.min(*e);
+        hi = hi.max(*e);
     }
-    ensure(hi > lo, "world needs land with a positive height range")?;
+    ensure(hi > lo, "world needs a positive height range")?;
     let (h_min, h_max) = (f64::from(lo), f64::from(hi));
     let step = (h_max - h_min) / 65535.0;
-    let mut clamped = 0usize;
     let codes: Vec<u16> = elevation
         .iter()
-        .map(|&e| {
-            let c = ((f64::from(e) - h_min) / step).round();
-            if !(0.0..=65535.0).contains(&c) {
-                clamped += 1;
-            }
-            c.clamp(0.0, 65535.0) as u16
-        })
+        .map(|&e| (((f64::from(e) - h_min) / step).round()).clamp(0.0, 65535.0) as u16)
         .collect();
-    let mut max_error = 0f64;
-    for ((e, c), wv) in elevation.iter().zip(&codes).zip(&water) {
-        if *wv != 255 {
-            max_error = max_error.max((h_min + f64::from(*c) * step - f64::from(*e)).abs());
-        }
-    }
+    let max_error = elevation
+        .iter()
+        .zip(&codes)
+        .map(|(e, c)| (h_min + f64::from(*c) * step - f64::from(*e)).abs())
+        .fold(0f64, f64::max);
 
     let parent = output
         .parent()
@@ -290,8 +280,8 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         "intervals": intervals,
         "lod": "nested decimation: level k texel = level-0 sample at index * 2^k",
         "encoding": {"format": "PNG grayscale 16-bit", "h_min_m": h_min, "h_max_m": h_max, "step_m": step,
-            "decode": "height_m = h_min_m + code * step_m", "range_from": "land cells (water fill excluded)",
-            "clamped_cells": clamped, "max_land_quantization_error_m": max_error},
+            "decode": "height_m = h_min_m + code * step_m", "range_from": "all cells (ground continues under water)",
+            "max_quantization_error_m": max_error},
         "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes",
             "layers": masks.iter().map(|(name, _)| *name).collect::<Vec<_>>()},
         "masters": ["elevation.tif (Float32 m COG)", "water.tif", "snow-ice.tif", "vegetation.tif", "land-cover.tif (when present)"],

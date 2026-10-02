@@ -40,7 +40,7 @@ def stats(h: np.ndarray, cell_m: float) -> dict:
     lap = (np.roll(h, 1, 0) + np.roll(h, -1, 0) + np.roll(h, 1, 1) + np.roll(h, -1, 1) - 4 * h)[1:-1, 1:-1]
     return {"slope_mean_deg": float(slope.mean()), "slope_p90_deg": float(np.percentile(slope, 90)),
             "curvature_std_m": float(lap.std()), "relief_m": float(h.max() - h.min()),
-            "land_share": float((h > 0.5).mean())}
+            "land_share": float((h >= 0).mean())}
 
 
 def main(argv=None) -> int:
@@ -84,22 +84,18 @@ def main(argv=None) -> int:
 
     # Items: (name, class, real surface, coarse, generated surface).
     items = []
-    if level.name in ("l1", "l1b", "l1c"):
+    if level.name == "l1":
         for n, (r, f) in enumerate(zip(val.regions, val.fields)):
             classes = np.full(f.coarse.shape, f.class_id, np.int64)
             cond = cascade.condition(level, f.coarse, [cascade.decode(e) for e in f.extra], classes)
             gen = generate(f.coarse, cond, args.seed + n)
-            if level.name in ("l1b", "l1c"):
-                gen = np.where(cascade.decode(f.extra[1]) < 0, 0.0, np.maximum(gen, 1.0)).astype(np.float32)
-            else:
-                gen, _ = cascade.resolve_sea(gen, cascade.decode(f.extra[1]), f.coarse)
             items.append((r.name, r.class_id, f.target, f.coarse, gen))
             print(f"{n + 1}/{len(val.regions)} {r.name}", flush=True)
     else:
         by_region: dict[int, list[int]] = {}
         for idx, (ri, y, x) in enumerate(val.positions):
-            # Mostly-water windows show nothing but sea-surface noise; water is masked in worlds.
-            if (cascade.decode(val.fields[ri].extra[0][y : y + size, x : x + size]) > 0).mean() > 0.5:
+            # Mostly-sea windows show little but a smooth seabed.
+            if (val.fields[ri].target[y : y + size, x : x + size] < 0).mean() > 0.5:
                 continue
             # Survey gaps would give real windows away.
             if np.isnan(val.fields[ri].target[y : y + size, x : x + size]).mean() > 0.005:
@@ -141,7 +137,7 @@ def main(argv=None) -> int:
         metrics.append({"region": name, "class_id": class_id, "real": stats(real, level.cell_m),
                         "generated": stats(gen, level.cell_m),
                         "nearest_train_rms_m": {"real": nearest(real, coarse), "generated": nearest(gen, coarse)}})
-        imgs = {k: Image.fromarray(shade(h, level.cell_m, h <= 0.5)).resize(
+        imgs = {k: Image.fromarray(shade(h, level.cell_m, cascade.open_sea(h))).resize(
             (h.shape[1] * zoom, h.shape[0] * zoom), Image.NEAREST) for k, h in (("real", real), ("generated", gen))}
         for k, img in imgs.items():
             img.save(args.out / f"{k}-{n:03d}.png")

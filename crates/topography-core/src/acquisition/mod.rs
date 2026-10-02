@@ -2,6 +2,7 @@
 
 pub mod batch;
 pub mod cover;
+pub(crate) mod gebco;
 pub mod geofabrik;
 pub(crate) mod glo30;
 pub mod hash_memo;

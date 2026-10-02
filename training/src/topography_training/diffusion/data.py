@@ -224,9 +224,9 @@ CONDITIONING = 2
 
 
 def channels(conditioning: int) -> tuple[int, int]:
-    """(conditioning, target) channel counts of a layout; 3 and 4 are the cascade
-    levels L2 and L1 (see cascade.py)."""
-    extra = {1: 3, 2: 5, 3: 7, 4: 6}[conditioning]
+    """(conditioning, target) channel counts of a layout; 3 is the cascade L2/L3 layout,
+    5 the L1 layout and 4 the retired L1 layout with a land/sea channel (see cascade.py)."""
+    extra = {1: 3, 2: 5, 3: 7, 4: 6, 5: 5}[conditioning]
     return (extra + NUM_CLASSES, 3 if conditioning == 1 else 1)
 
 

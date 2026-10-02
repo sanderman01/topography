@@ -1,9 +1,10 @@
 //! Training release of accepted context regions: hard links to the immutable region files
 //! plus a manifest pinning their digests, votes and the region-level geographic split.
+//! GLO-30 regions also get a GEBCO seabed layer, read at release time.
 
 use super::gallery::accepted;
 use crate::acquisition::{
-    AcquisitionError, Result, digest, ensure, io_context, read_small, write_new,
+    AcquisitionError, Result, digest, ensure, gebco, io_context, read_small, write_new,
 };
 use serde_json::{Value, json};
 use std::{
@@ -20,6 +21,30 @@ fn link(from: &Path, to: &Path) -> Result<()> {
     fs::hard_link(from, to)
         .or_else(|_| fs::copy(from, to).map(|_| ()))
         .map_err(|e| AcquisitionError::Invalid(format!("link {}: {e}", from.display())))
+}
+
+/// GEBCO on the region's grid; the release joins nothing, training does (see cascade.py).
+fn seabed(m: &Value) -> Result<(Vec<u8>, Value)> {
+    let num = |v: &Value| {
+        v.as_f64()
+            .ok_or_else(|| AcquisitionError::Invalid("region.json grid".into()))
+    };
+    let (x0, top, s) = (
+        num(&m["origin"][0])?,
+        num(&m["origin"][1])?,
+        num(&m["spacing_m"])?,
+    );
+    let (w, h) = (num(&m["size"][0])?, num(&m["size"][1])?);
+    let bbox = [0, 1, 2, 3].map(|i| m["wgs84_bbox"][i].as_f64().unwrap_or(0.0));
+    let srs = m["crs"].as_str().unwrap_or_default();
+    let scratch = io_context("seabed scratch", tempfile::tempdir())?;
+    gebco::seabed(
+        srs,
+        [x0, top - h * s, x0 + w * s, top],
+        s,
+        bbox,
+        scratch.path(),
+    )
 }
 
 /// `min_per_class`: classes with at least this many accepted regions lend one to validation.
@@ -81,6 +106,17 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
             );
         }
         link(&dir.join("region.json"), &target.join("region.json"))?;
+        let mut seabed_source = Value::Null;
+        // Early GLO-30 regions predate the "source" field.
+        if m["source"] != "lidar_1m_average" {
+            let (bytes, details) = seabed(m)?;
+            write_new(&target.join("seabed.f32"), &bytes)?;
+            layers.insert(
+                "seabed".into(),
+                json!({"path": format!("regions/{id}/seabed.f32"), "sha256": digest(&bytes), "dtype": "float32_le"}),
+            );
+            seabed_source = details;
+        }
         let split = if validation.contains(&id) {
             "validation"
         } else {
@@ -89,7 +125,8 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
         entries.push(
             json!({"id": id, "class_id": m["class_id"], "reference": m["reference"],
             "split": split, "size": m["size"], "spacing_m": m["spacing_m"], "crs": m["crs"],
-            "origin": m["origin"], "region_json_sha256": sha256, "layers": layers}),
+            "origin": m["origin"], "region_json_sha256": sha256, "layers": layers,
+            "seabed_source": seabed_source}),
         );
     }
     let decisions = read_small(&root.join("decisions.jsonl"))?;
@@ -101,7 +138,7 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
         "split": format!("whole regions; one validation region per class with {min_per_class}+ accepted regions"),
         "attribution": [
             "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
-            "ESA WorldCover 2021 (CC BY 4.0)", "GLIMS Glacier Database", "© OpenStreetMap contributors, ODbL"],
+            gebco::ATTRIBUTION, "ESA WorldCover 2021 (CC BY 4.0)", "GLIMS Glacier Database", "© OpenStreetMap contributors, ODbL"],
         "regions": entries,
     });
     write_new(

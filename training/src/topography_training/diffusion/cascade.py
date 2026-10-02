@@ -4,6 +4,10 @@ L1 (128 m) refines the smooth mid-surface of an L0-like layout envelope; L2 (32 
 refines the 128 m surface, both from GLO-30 regions at 32 m. L3 (4 m) refines the 32 m
 surface from lidar regions at 4 m. Each generates a residual over the level above.
 Regions are row-major and north-up; the split is by whole region (set in the release).
+
+Terrain continues under water: GLO-30 sea (0 m) is replaced by a seabed joined to the
+coast (see `join_seabed`), so sea is simply ground below 0 m. Water layers keep only
+water above sea level.
 """
 
 from __future__ import annotations
@@ -17,16 +21,16 @@ import numpy as np
 
 from .data import NUM_CLASSES, _window_sum, smooth
 
-# L0 layout scales: the envelope and land/sea are soft so the model, not the painter,
-# draws ranges, valleys and coastlines.
+# L0 layout scale: the envelope is soft so the model, not the painter, draws ranges,
+# valleys and coastlines.
 ENVELOPE_M = 2048
-LAND_SMOOTH_M = 1024
 MIN_RANGE_M = 1.0  # unit-range shape channel floor for flat windows
-SEA_SMOOTH_CELLS = 2.0
-SEA_LEVEL_TOLERANCE_M = 8.0
-# Flat ground this low on the layout's sea side is the model's uneven sea surface.
-SHELF_MAX_M = 30.0
-SHELF_MAX_SLOPE_DEG = 3.0
+# Seabed join: GEBCO (~450 m) is not trusted this near the coast; there the land slope
+# continues down until it meets the deepest GEBCO nearby, then GEBCO takes over.
+NEARSHORE_M = 1000.0
+COAST_BAND_M = 300.0  # land whose slope continues under water
+SEA_SLOPE_DEG = (1.0, 35.0)
+SEA_MIN_DEPTH_M = 10.0  # GLO-30 ground at 0 m is sea only where GEBCO reaches this depth
 
 
 @dataclass(frozen=True)
@@ -42,13 +46,9 @@ class Level:
 
 
 # Smoothing is half a block, like the 1 m model's 16 m on 32 m blocks.
+# Layout 4 (land/sea channel, flat sea) is retired; L1 runs before 2026-10-02 used it.
 LEVELS = {
-    "l1": Level("l1", 128, 4, 32),
-    # L1b: land/sea given as a sharp 128 m coast; the sea is left out of the loss.
-    "l1b": Level("l1b", 128, 4, 32),
-    # L1c: the same sharp coast with the sea (0 m) in the loss, so the model learns the
-    # step from sea to land; L1b left the first land cells at sea level.
-    "l1c": Level("l1c", 128, 4, 32),
+    "l1": Level("l1", 128, 5, 32),
     "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
     "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32, stride=32),
 }
@@ -61,8 +61,8 @@ class Region:
     class_id: int
     split: str
     spacing_m: int
-    height: np.ndarray  # float32 metres, NaN where not surveyed
-    water: np.ndarray  # bool
+    height: np.ndarray  # float32 metres, NaN where not surveyed; seabed under the sea
+    water: np.ndarray  # bool; water above sea level where a seabed is joined
     snow: np.ndarray  # bool
     vegetation: np.ndarray  # bool
 
@@ -86,9 +86,52 @@ def load_release(manifest_path: Path) -> list[Region]:
         height = layers["height"].astype(np.float32)
         if "validity" in layers:
             height = np.where(layers["validity"] == 255, height, np.nan).astype(np.float32)
+        water = layers["water"] == 255
+        if "seabed" in layers:
+            height, sea = join_seabed(height, water, layers["seabed"], float(r["spacing_m"]))
+            water &= ~sea
         out.append(Region(r["id"], int(r["class_id"]), r["split"], int(r["spacing_m"]), height,
-                          layers["water"] == 255, layers["snow-ice"] == 2, layers["vegetation"] == 2))
+                          water, layers["snow-ice"] == 2, layers["vegetation"] == 2))
     return out
+
+
+def join_seabed(height: np.ndarray, water: np.ndarray, seabed: np.ndarray, cell_m: float):
+    """GLO-30 with its sea (0 m) replaced by ground continuing under water.
+
+    Near the coast the local land slope carries on down to the deepest GEBCO depth within
+    NEARSHORE_M; GEBCO itself takes over from 1 to 3 km out. Returns (surface, sea)."""
+    from scipy import ndimage
+
+    # GLO-30 sea is 0 m; the water layer misses marinas and booms drawn as land.
+    candidate = np.abs(np.nan_to_num(height, nan=1.0)) <= 0.5
+    labels, _ = ndimage.label(candidate)
+    deep = np.unique(labels[candidate & (seabed < -SEA_MIN_DEPTH_M)])
+    sea = np.isin(labels, deep[deep > 0])
+    if not sea.any():
+        return height, sea
+    dist, (iy, ix) = ndimage.distance_transform_edt(sea, return_indices=True)
+    dist_m = dist * cell_m
+    # Land slope next to the coast, averaged along it, read at each sea cell's nearest shore.
+    gy, gx = np.gradient(np.nan_to_num(height), cell_m)
+    band = (~sea & (ndimage.distance_transform_edt(~sea) * cell_m <= COAST_BAND_M)).astype(np.float32)
+    sigma = COAST_BAND_M / cell_m
+    num, den = smooth(np.hypot(gx, gy).astype(np.float32) * band, sigma), smooth(band, sigma)
+    slope = np.where(den > 1e-3, num / np.maximum(den, 1e-3), 0.0)[iy, ix]
+    lo, hi = np.tan(np.radians(SEA_SLOPE_DEG))
+    extrap = -dist_m * np.clip(slope, lo, hi)
+    near = 2 * int(NEARSHORE_M / cell_m) + 1
+    deepest = ndimage.minimum_filter(seabed, size=near, mode="nearest")
+    t = np.clip((dist_m - NEARSHORE_M) / (2 * NEARSHORE_M), 0, 1)
+    t = t * t * (3 - 2 * t)
+    floor = (1 - t) * deepest + t * seabed
+    # Always a little below sea level and still deepening away from the coast.
+    ceiling = -np.minimum(0.5 + 0.01 * dist_m, 20.0)
+    bed = np.minimum(np.maximum(extrap, floor), ceiling).astype(np.float32)
+    # Soften the kink where the slope meets the GEBCO floor, within the sea only.
+    w = sea.astype(np.float32)
+    bed = smooth(bed * w, 2.0) / np.maximum(smooth(w, 2.0), 1e-3)
+    bed = np.minimum(bed, ceiling)
+    return np.where(sea, bed, height).astype(np.float32), sea
 
 
 def block_mean(a: np.ndarray, k: int) -> np.ndarray:
@@ -157,7 +200,6 @@ class Fields:
     coarse: np.ndarray | None  # None: computed per window
     extra: list[np.ndarray]  # conditioning channels after shape, slopes and absolute height
     class_id: int
-    ignore: np.ndarray | None = None  # cells left out of the loss (L1b: the sea)
 
 
 def _nan_blocks(a: np.ndarray, k: int) -> np.ndarray:
@@ -199,50 +241,11 @@ def refine_fields(r: Region) -> Fields:
 
 
 def l1_fields(r: Region) -> Fields:
+    """The layout: envelope mid-surface and relief. Sea is wherever it lies below 0 m."""
     h = block_mean(r.height, 4)
-    water = block_mean(r.water.astype(np.float32), 4) > 0.5
     lo, hi = envelope(h)
     mid = (lo + hi) / 2
-    extra = [((hi - lo) / 2048.0).astype(np.float32), soft(~water, LAND_SMOOTH_M / 128)]
-    return Fields(h, mid.astype(np.float32), extra, r.class_id)
-
-
-def layout_sea(sea128: np.ndarray) -> np.ndarray:
-    """The sea as a layout gives it: majority per 256 m cell, back on the 128 m grid."""
-    h, w = sea128.shape[0] // 2 * 2, sea128.shape[1] // 2 * 2
-    coarse = sea128[:h, :w].reshape(h // 2, 2, w // 2, 2).mean(axis=(1, 3)) >= 0.5
-    out = np.zeros(sea128.shape, bool)
-    out[:h, :w] = np.repeat(np.repeat(coarse, 2, axis=0), 2, axis=1)
-    return out
-
-
-def l1b_fields(r: Region) -> Fields:
-    """L1 with a sharp coast: land/sea from the 128 m sea mask (lightly rounded), and the
-    sea left out of the loss so the model learns land down to the water."""
-    h = block_mean(r.height, 4)
-    sea = block_mean((r.water & (np.nan_to_num(r.height) <= 1.0)).astype(np.float32), 4) > 0.5
-    lo, hi = envelope(np.where(sea, 0.0, h).astype(np.float32))
-    mid = (lo + hi) / 2
-    # The coast at 128 m: a coarser layout coast disagrees with the land the model learns
-    # and leaves cliffs and flats where the two differ (L1b run 1).
-    extra = [((hi - lo) / 2048.0).astype(np.float32), soft(~sea, 0.5)]
-    return Fields(h, mid.astype(np.float32), extra, r.class_id, ignore=sea)
-
-
-def erode(mask: np.ndarray, cells: int) -> np.ndarray:
-    for _ in range(cells):
-        mask = ~_grow(~mask)
-    return mask
-
-
-def connected(seed: np.ndarray, allowed: np.ndarray) -> np.ndarray:
-    """Cells of `allowed` 4-connected to `seed`."""
-    region = seed & allowed
-    while True:
-        grown = _grow(region) & allowed
-        if (grown == region).all():
-            return region
-        region = grown
+    return Fields(h, mid.astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)], r.class_id)
 
 
 def refine_mask(mask: np.ndarray, k: int, sigma_cells: float) -> np.ndarray:
@@ -251,48 +254,14 @@ def refine_mask(mask: np.ndarray, k: int, sigma_cells: float) -> np.ndarray:
     return smooth(big.astype(np.float32), sigma_cells) > 0.5
 
 
-def l1c_fields(r: Region) -> Fields:
-    f = l1b_fields(r)
-    f.ignore = None
-    return f
+def open_sea(h: np.ndarray) -> np.ndarray:
+    """Ground below sea level connected to the field edge: the sea of a generated surface.
+    Closed basins below 0 m stay land (filled as lakes by drainage)."""
+    from scipy import ndimage
 
-
-def _grow(mask: np.ndarray) -> np.ndarray:
-    out = mask.copy()
-    out[1:] |= mask[:-1]
-    out[:-1] |= mask[1:]
-    out[:, 1:] |= mask[:, :-1]
-    out[:, :-1] |= mask[:, 1:]
-    return out
-
-
-def resolve_sea(h: np.ndarray, land: np.ndarray, coarse: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Put generated sea at 0 m. `land` is the soft land/water condition (-1 water .. 1 land);
-    only water where the coarse surface is below 100 m counts as sea, not mountain lakes.
-
-    The model leaves the sea a few metres off zero, so the field is shifted by the median
-    height on the layout's sea side; sea is then the low ground connected to that side
-    (including flat shelves up to 30 m near the layout's coast), without single-cell
-    specks, and is set to 0 m like GLO-30 sea. Cells are 128 m (L1 output)."""
-    zone = (land < 0) & (coarse < 100.0)
-    if not zone.any():
-        return h, np.zeros(h.shape, bool)
-    h = h - float(np.median(h[zone]))
-    # The generated sea surface wanders by about +-10 m; decide on a smoothed surface.
-    hs = smooth(h, SEA_SMOOTH_CELLS)
-    gy, gx = np.gradient(hs, 128.0)
-    flat = np.degrees(np.arctan(np.hypot(gx, gy))) < SHELF_MAX_SLOPE_DEG
-    low = (hs <= SEA_LEVEL_TOLERANCE_M) | ((hs <= SHELF_MAX_M) & flat & (land < 0.5))
-    sea = zone & low
-    while True:
-        grown = _grow(sea) & low
-        if (grown == sea).all():
-            break
-        sea = grown
-    for _ in range(3):  # cells with at most one neighbour of their kind are specks
-        land_n = sum(np.roll(~sea, s, a) for s in (1, -1) for a in (0, 1))
-        sea = (sea & (land_n < 4)) | (~sea & (land_n <= 1))
-    return np.where(sea, 0.0, h).astype(np.float32), sea
+    labels, _ = ndimage.label(h < 0)
+    edge = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
+    return np.isin(labels, edge[edge > 0])
 
 
 def condition(level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes: np.ndarray) -> np.ndarray:
@@ -321,7 +290,7 @@ class Sampler:
             raise ValueError(f"no {split} regions")
         if any(r.spacing_m != level.region_m for r in self.regions):
             raise ValueError(f"{level.name} trains on {level.region_m} m regions")
-        make = {"l1": l1_fields, "l1b": l1b_fields, "l1c": l1c_fields}.get(level.name, refine_fields)
+        make = l1_fields if level.name == "l1" else refine_fields
         self.fields = [make(r) for r in self.regions]
         for r in self.regions:  # the fields hold everything the windows need
             r.water = r.snow = r.vegetation = None
@@ -352,9 +321,6 @@ class Sampler:
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
         h, c, cond = self.window(index, rng)
         valid = ~np.isnan(h)
-        i, y, x = self.positions[index]
-        if self.fields[i].ignore is not None:
-            valid &= ~self.fields[i].ignore[y : y + self.size, x : x + self.size]
         target = np.where(valid, (h - c) / scale, 0.0)[None].astype(np.float32)
         cond = normalise(cond)
         mask = valid[None].astype(np.float32)

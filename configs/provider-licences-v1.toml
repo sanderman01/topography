@@ -49,3 +49,14 @@ attribution = "produced using Copernicus WorldDEM-30 Â© DLR e.V. 2010-2014 and Â
 statement = "GLO-30 Public is available worldwide under a free licence that allows any use, including commercial use, modification and derived products such as model training, with the attribution above."
 edited_map_reuse = "Allowed; modified products carry the 'produced using Copernicus WorldDEM-30' attribution."
 redistribution = "Allowed with the attribution."
+
+[[providers]]
+id = "gebco"
+url_prefixes = ["https://dap.ceda.ac.uk/bodc/gebco/"]
+metadata_markers = []
+license_name = "GEBCO Grid terms of use (public domain)"
+license_url = "https://www.gebco.net/data-products/gridded-bathymetry-data"
+attribution = "GEBCO Compilation Group (2025) GEBCO 2025 Grid"
+statement = "The GEBCO Grid is placed in the public domain and may be used free of charge, including commercially, with the source acknowledged."
+edited_map_reuse = "Allowed with the acknowledgement."
+redistribution = "Allowed with the acknowledgement; do not suggest GEBCO endorsement."

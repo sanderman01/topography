@@ -3,11 +3,12 @@
 python -m topography_training.diffusion.cascade_chain --l1-run <dir> --l2-run <dir> --l3-run <dir>
     --release <context release.json> --region <id> --out <new-dir> [options]
 
-The layout (envelope, land/sea, class) is derived from a real GLO-30 region, as an
+The layout (envelope, relief, class) is derived from a real GLO-30 region, as an
 author's L0 would give it; snow/ice and vegetation come from the same region. L1 and L2
-cover the whole region, L3 a square in its middle. After L1 the surface is made to drain
-(lakes kept, other depressions carved); L2 and L3 shape the coastline in a strip along it,
-and streams traced on the L2 surface are water for L3.
+cover the whole region, L3 a square in its middle. Terrain continues under water: after
+each level the sea is the ground below 0 m connected to the field edge. After L1 the
+land is made to drain (lakes kept, other depressions carved), and streams traced on the
+L2 surface are water for L3.
 Writes l1/l2/l3 hillshades, the real region for comparison, arrays.npz and a 4 m world
 output (manifest.json + layers) for `topography export heightmap`.
 """
@@ -28,7 +29,8 @@ from .cascade_eval import shade
 from .data import NUM_CLASSES
 from .evaluate import _latest
 
-COAST_BAND_CELLS = 3  # coast strip (in cells of the finer level) where the terrain sets the coastline
+# L3 learned land only (lidar stops at the shore); deeper than this its seabed is the L2 surface.
+L3_SEABED_M = 5.0
 
 
 def _load(run: Path, device):
@@ -72,16 +74,6 @@ def _spread(level: np.ndarray, mask: np.ndarray, cells: int) -> np.ndarray:
     for _ in range(cells):
         out = np.maximum(out, hydrology._maxpool3(out))
     return out
-
-
-def _coast(h: np.ndarray, core: np.ndarray, sigma: float, solid_cells: int):
-    """Sea after a level: ground at sea level connected to the sea core (drowned valleys
-    included), plus thin land that never widens to `solid_cells` (offshore slivers).
-    Remaining land is kept at least 1 m above the sea."""
-    sea = cascade.connected(core, (cascade.smooth(h, sigma) <= 0.5) | core)
-    land = ~sea
-    sea |= ~cascade.connected(cascade.erode(land, solid_cells), land)
-    return np.where(sea, 0.0, np.maximum(h, 1.0)).astype(np.float32), sea
 
 
 def _nearest(a: np.ndarray, k: int) -> np.ndarray:
@@ -129,48 +121,43 @@ def main(argv=None) -> int:
     # depressions become lakes, the rest are carved through like real valleys.
     t = time.time()
     model, config = _load(args.l1_run, device)
-    sharp = config["level"] in ("l1b", "l1c")
-    f1 = cascade.l1b_fields(r) if sharp else cascade.l1_fields(r)
-    land = cascade.decode(f1.extra[1])
-    cond = _condition(cascade.LEVELS[config["level"]], f1.coarse, f1.extra, r.class_id)
+    level = cascade.LEVELS["l1"]
+    if config["conditioning"] != level.conditioning:
+        print("error: the L1 run uses a retired layout", file=sys.stderr)
+        return 2
+    f1 = cascade.l1_fields(r)
+    cond = _condition(level, f1.coarse, f1.extra, r.class_id)
     h128 = _sample(model, config, f1.coarse, cond, args.steps, args.seed, args.batch)
-    if sharp:  # the layout's coast; land never dips below sea level next to it
-        sea128 = land < 0
-        h128 = np.where(sea128, 0.0, np.maximum(h128, 1.0)).astype(np.float32)
-    else:
-        h128, sea128 = cascade.resolve_sea(h128, land, f1.coarse)
-    h128 = np.where(sea128, 0.0, np.maximum(h128, 1.0)).astype(np.float32)
-    h128, lake128, level128 = hydrology.drain(h128, sea128, args.lake_share, 1.0)
-    h128 = np.where(sea128, 0.0, np.where(lake128, h128, np.maximum(h128, 1.0))).astype(np.float32)
+    h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128), args.lake_share, 1.0)
+    sea128 = cascade.open_sea(h128)
+    lake128 &= ~sea128
     times["l1_s"] = time.time() - t
-    print(f"L1 {h128.shape} in {times['l1_s']:.0f} s; lakes {lake128.mean():.1%}", flush=True)
+    print(f"L1 {h128.shape} in {times['l1_s']:.0f} s; sea {sea128.mean():.1%}, lakes {lake128.mean():.1%}", flush=True)
 
-    # L2: the whole region. Along the coast L2 is not told about the sea, so the coastline
-    # becomes the sea-level contour of its own terrain (drowned valleys, headlands).
+    # L2: the whole region, seabed included; lakes are the only water it is told about.
     t = time.time()
     level = cascade.LEVELS["l2"]
     model, config = _load(args.l2_run, device)
     coarse = cascade.refine_surface(level, h128)
-    sea32 = cascade.refine_mask(sea128, 4, 2.0)
-    core32 = cascade.erode(sea32, COAST_BAND_CELLS)
-    lake32 = cascade.refine_mask(lake128, 4, 2.0) & ~sea32
+    lake32 = cascade.refine_mask(lake128, 4, 2.0)
     lake_level32 = _spread(_nearest(np.nan_to_num(level128), 4), _nearest(lake128, 4), 4)
-    snow32, veg32 = r.snow & ~sea32, r.vegetation & ~sea32
-    extra = [np.where(core32 | lake32, 255, 0).astype(np.uint8), cascade.soft_u8(snow32, 1.0),
-             cascade.soft_u8(veg32, 1.0)]
+    extra = [np.where(lake32, 255, 0).astype(np.uint8), cascade.soft_u8(r.snow, 1.0),
+             cascade.soft_u8(r.vegetation, 1.0)]
     h32 = _sample(model, config, coarse, _condition(level, coarse, extra, r.class_id), args.steps,
                   args.seed + 1, args.batch)
-    h32, sea32 = _coast(h32, core32, 1.0, 2)
+    sea32 = cascade.open_sea(h32)
     lake32 &= ~sea32
     h32[lake32] = lake_level32[lake32]
     h32, _, _ = hydrology.drain(h32, sea32 | lake32, 0.0, 1.0)
-    h32 = np.where(sea32, 0.0, np.where(lake32, h32, np.maximum(h32, 1.0))).astype(np.float32)
+    sea32 = cascade.open_sea(h32)
+    lake32 &= ~sea32
+    snow32, veg32 = r.snow & ~sea32, r.vegetation & ~sea32
     stream32, parent32, width32 = hydrology.streams(h32, sea32 | lake32, 32.0)
     times["l2_s"] = time.time() - t
     print(f"L2 {h32.shape} in {times['l2_s']:.0f} s; streams {stream32.sum()} cells", flush=True)
 
     # L3: a central square from the L2 surface (with a margin for the smoothing). Sea,
-    # lakes and streams are water; the coast again follows L3's own terrain.
+    # lakes and streams are water, as in its lidar training data.
     t = time.time()
     level = cascade.LEVELS["l3"]
     model, config = _load(args.l3_run, device)
@@ -181,18 +168,19 @@ def main(argv=None) -> int:
     coarse = cascade.refine_surface(level, patch)[m * 8 : -m * 8, m * 8 : -m * 8]
     sl = np.s_[y0 : y0 + n32, x0 : x0 + n32]
     sea4 = cascade.refine_mask(sea32[sl], 8, 6.0)
-    core4 = cascade.erode(sea4, COAST_BAND_CELLS * 2)
     lake4 = cascade.refine_mask(lake32[sl], 8, 6.0) & ~sea4
     level4 = _spread(_nearest(h32[sl], 8), _nearest(lake32[sl], 8), 12)
     stream4 = hydrology.draw_streams(stream32, parent32, width32, 8, 32.0, y0, x0, n32) & ~sea4 & ~lake4
     snow4, veg4 = _nearest(snow32[sl], 8), _nearest(veg32[sl], 8)
-    extra = [np.where(core4 | lake4 | stream4, 255, 0).astype(np.uint8), cascade.soft_u8(snow4, 1.0),
+    extra = [np.where(sea4 | lake4 | stream4, 255, 0).astype(np.uint8), cascade.soft_u8(snow4, 1.0),
              cascade.soft_u8(veg4, 1.0)]
     cond = _condition(level, coarse, extra, r.class_id)
     del extra
     h4 = _sample(model, config, coarse, cond, args.steps, args.seed + 2, args.batch).astype(np.float32)
     del cond
-    h4, sea4 = _coast(h4, core4, 2.0, 6)
+    w = np.clip(-coarse / L3_SEABED_M, 0, 1)
+    h4 = ((1 - w) * h4 + w * coarse).astype(np.float32)
+    sea4 = cascade.open_sea(h4)
     lake4 &= ~sea4
     stream4 &= ~sea4
     h4[lake4] = level4[lake4]
@@ -203,7 +191,7 @@ def main(argv=None) -> int:
     # Pictures: generated levels and the real region at the same framing.
     _png(args.out / "l1.png", h128, 128, sea128 | lake128)
     _png(args.out / "l2.png", h32, 32, sea32 | lake32 | stream32)
-    _png(args.out / "real.png", np.nan_to_num(r.height), 32, r.water)
+    _png(args.out / "real.png", np.nan_to_num(r.height), 32, r.water | cascade.open_sea(np.nan_to_num(r.height)))
     _png(args.out / "l2-l3-area.png", h32[sl], 32, (sea32 | lake32 | stream32)[sl], 1024)
     _png(args.out / "l3.png", h4, 4, water4, 2048)
     c = h4.shape[0] // 2
@@ -230,7 +218,7 @@ def main(argv=None) -> int:
     (args.out / "manifest.json").write_text(json.dumps({
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 4.0, "size": [h4.shape[1], h4.shape[0]],
-        "method": "cascade chain L1 -> L2 -> L3 from a derived layout", "water_fill": "0 m sea; lakes flat at their spill level",
+        "method": "cascade chain L1 -> L2 -> L3 from a derived layout", "water_fill": "ground continues under the sea; lakes flat at their spill level",
         "region": args.region, "steps": args.steps, "times": times,
         "runs": {k: str(getattr(args, f"{k}_run").resolve()) for k in ("l1", "l2", "l3")},
         "layers": digests}, indent=1))
