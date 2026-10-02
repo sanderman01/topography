@@ -102,6 +102,34 @@ raster jobs, builds, benchmarks, and any other resource-heavy work.
 
 (Rust builds and file downloads are fine. Do not pause for these)
 
+## Long-running jobs
+
+Monitors are for watching, never for running jobs. If a Monitor expires, it kills
+its command.
+
+- **Launch:** run the job as a background Bash command, with its output going
+  to a log under the run directory. Record its PID and write its exit code to a
+  file (`...; echo $? > exit_code`). Background Bash has no timeout and sends a
+  notification when it exits.
+- **Detect the end with more than one signal:** the background-job exit
+  notification, a watcher such as `tail --pid=$PID -f /dev/null` or an
+  `until [ -e exit_code ]` loop, and the job's own done/failed log lines. Treat
+  a missing PID with no `exit_code` file as a crash.
+- **Monitor filters:** use `grep -E --line-buffered`, with no `head`, and match
+  failures as well as success: `Traceback|Error|OOM|Killed|nan|FAILED`, plus a
+  done marker. Emit only progress lines, such as one per epoch or checkpoint,
+  never raw logs.
+- **Timeouts:** with a duration estimate, set the watch timeout to about 1.5×
+  the estimate. Monitor `timeout_ms` is capped at 30 minutes, so re-arm a
+  Monitor on each expiry. For anything longer, use a background Bash wait
+  instead (`timeout <s> tail --pid=$PID -f /dev/null`). An unexplained
+  expiry or silence means checking the PID and log, not assuming success.
+- **Hourly progress on very long jobs:** keep a background Bash heartbeat that
+  exits after an hour or when the job ends
+  (`timeout 3600 tail --pid=$PID -f /dev/null`). When it fires, report the
+  progress, the rate and the estimated time remaining from the log, then
+  re-arm it. Do not report monitor expiries to the user as news.
+
 ## Development and verification
 
 Use Rust 1.85 or newer (edition 2024), Cargo, rustfmt, and Clippy. Python work
