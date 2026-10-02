@@ -44,7 +44,7 @@ class Level:
 # Smoothing is half a block, like the 1 m model's 16 m on 32 m blocks.
 LEVELS = {
     "l1": Level("l1", 128, 4, 32),
-    # L1b: land/sea given as the layout's 256 m mask; the sea is left out of the loss.
+    # L1b: land/sea given as a sharp 128 m coast; the sea is left out of the loss.
     "l1b": Level("l1b", 128, 4, 32),
     "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
     "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32, stride=32),
@@ -214,13 +214,15 @@ def layout_sea(sea128: np.ndarray) -> np.ndarray:
 
 
 def l1b_fields(r: Region) -> Fields:
-    """L1 with a sharp layout coast: land/sea from the 256 m sea mask (lightly rounded),
-    and the true sea left out of the loss so the model learns land down to the water."""
+    """L1 with a sharp coast: land/sea from the 128 m sea mask (lightly rounded), and the
+    sea left out of the loss so the model learns land down to the water."""
     h = block_mean(r.height, 4)
     sea = block_mean((r.water & (np.nan_to_num(r.height) <= 1.0)).astype(np.float32), 4) > 0.5
     lo, hi = envelope(np.where(sea, 0.0, h).astype(np.float32))
     mid = (lo + hi) / 2
-    extra = [((hi - lo) / 2048.0).astype(np.float32), soft(~layout_sea(sea), 1.0)]
+    # The coast at 128 m: a coarser layout coast disagrees with the land the model learns
+    # and leaves cliffs and flats where the two differ (L1b run 1).
+    extra = [((hi - lo) / 2048.0).astype(np.float32), soft(~sea, 0.5)]
     return Fields(h, mid.astype(np.float32), extra, r.class_id, ignore=sea)
 
 
