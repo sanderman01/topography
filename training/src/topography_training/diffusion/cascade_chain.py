@@ -129,7 +129,7 @@ def main(argv=None) -> int:
     # depressions become lakes, the rest are carved through like real valleys.
     t = time.time()
     model, config = _load(args.l1_run, device)
-    sharp = config["level"] == "l1b"
+    sharp = config["level"] in ("l1b", "l1c")
     f1 = cascade.l1b_fields(r) if sharp else cascade.l1_fields(r)
     land = cascade.decode(f1.extra[1])
     cond = _condition(cascade.LEVELS[config["level"]], f1.coarse, f1.extra, r.class_id)

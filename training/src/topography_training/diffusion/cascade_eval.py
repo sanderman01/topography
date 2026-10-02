@@ -84,12 +84,12 @@ def main(argv=None) -> int:
 
     # Items: (name, class, real surface, coarse, generated surface).
     items = []
-    if level.name in ("l1", "l1b"):
+    if level.name in ("l1", "l1b", "l1c"):
         for n, (r, f) in enumerate(zip(val.regions, val.fields)):
             classes = np.full(f.coarse.shape, f.class_id, np.int64)
             cond = cascade.condition(level, f.coarse, [cascade.decode(e) for e in f.extra], classes)
             gen = generate(f.coarse, cond, args.seed + n)
-            if level.name == "l1b":
+            if level.name in ("l1b", "l1c"):
                 gen = np.where(cascade.decode(f.extra[1]) < 0, 0.0, np.maximum(gen, 1.0)).astype(np.float32)
             else:
                 gen, _ = cascade.resolve_sea(gen, cascade.decode(f.extra[1]), f.coarse)

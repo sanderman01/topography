@@ -46,6 +46,9 @@ LEVELS = {
     "l1": Level("l1", 128, 4, 32),
     # L1b: land/sea given as a sharp 128 m coast; the sea is left out of the loss.
     "l1b": Level("l1b", 128, 4, 32),
+    # L1c: the same sharp coast with the sea (0 m) in the loss, so the model learns the
+    # step from sea to land; L1b left the first land cells at sea level.
+    "l1c": Level("l1c", 128, 4, 32),
     "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
     "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32, stride=32),
 }
@@ -248,6 +251,12 @@ def refine_mask(mask: np.ndarray, k: int, sigma_cells: float) -> np.ndarray:
     return smooth(big.astype(np.float32), sigma_cells) > 0.5
 
 
+def l1c_fields(r: Region) -> Fields:
+    f = l1b_fields(r)
+    f.ignore = None
+    return f
+
+
 def _grow(mask: np.ndarray) -> np.ndarray:
     out = mask.copy()
     out[1:] |= mask[:-1]
@@ -312,7 +321,7 @@ class Sampler:
             raise ValueError(f"no {split} regions")
         if any(r.spacing_m != level.region_m for r in self.regions):
             raise ValueError(f"{level.name} trains on {level.region_m} m regions")
-        make = {"l1": l1_fields, "l1b": l1b_fields}.get(level.name, refine_fields)
+        make = {"l1": l1_fields, "l1b": l1b_fields, "l1c": l1c_fields}.get(level.name, refine_fields)
         self.fields = [make(r) for r in self.regions]
         for r in self.regions:  # the fields hold everything the windows need
             r.water = r.snow = r.vegetation = None
