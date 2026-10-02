@@ -1,6 +1,7 @@
 # Terrain cascade v1
 
-Status: planned 2026-09-29, not implemented. It extends the
+Status: planned 2026-09-29; L1, L2 and L3 pilots trained and chained 2026-10-01/02
+(see [Progress](#progress-2026-10-02)). It extends the
 [terrain diffusion pilot](terrain-diffusion-v1.md) into a coarse-to-fine
 generator and replaces its "follow-on coarse structure model" section. The
 [master plan](terrain-design-master-plan.md) §§5, 8 and 11 point here. Curated
@@ -29,7 +30,7 @@ adds detail at its own scale and leaves the larger shapes alone.
 
 | Level | Cell | 32 km grid | Adds | Trained on |
 | --- | --- | --- | --- | --- |
-| L0 layout | 256 m | 128² | Land and sea, biome regions, height envelope, hero-feature lines | Nothing. Authored from the [layout spec](world-layout-spec-v1.md) |
+| L0 layout | 256 m | 128² | Biome regions, height envelope (below 0 m where sea is wanted), hero-feature lines | Nothing. Authored from the [layout spec](world-layout-spec-v1.md) |
 | L1 world | 128 m | 256² | Island shape, ranges, main valleys, drainage divides, caldera | GLO-30 averaged to 128 m |
 | L2 regional | 32 m | 1,024² | Valley systems, fjords, canyon networks, mesas, cones | GLO-30 |
 | L3 local | 4 m | 8,192² | Spurs, gullies, karst towers, cliff bands, crevasse fields | 1 m lidar averaged to 4 m |
@@ -52,7 +53,9 @@ Each level gets:
 - the level above, upsampled and smoothed, as a unit-range local shape channel
   plus east and north slope channels (the fix proposed for run 5, issue 1);
 - absolute height / 4,096 m;
-- land/sea and the water network;
+- lakes and rivers (from L2 down). There is no sea input: the sea is ground below
+  0 m connected to open water, so coastlines come from the terrain (see
+  [Water](#water));
 - the biome class map (one-hot, dropped 10% of the time for guidance);
 - snow/ice and vegetation coverage (from L2 down);
 - at L1 only, the L0 height envelope (low and high bound per 256 m cell) and
@@ -60,8 +63,23 @@ Each level gets:
 
 Training derives every condition from the real data itself, so the model learns
 how real terrain relates to a layout. For example the envelope comes from the
-local minimum and maximum of the true surface at 256 m, and land/sea from GLO-30
-zero heights and WorldCover water. At generation time the author paints them.
+local minimum and maximum of the true surface at 256 m, including the seabed. At
+generation time the author paints them.
+
+### Water
+
+Terrain continues under water (master plan §8, 2026-10-02). DEMs record water
+surfaces, so training targets join GLO-30 land to GEBCO bathymetry below sea level:
+L1 learns the seabed as it is (GEBCO at about 450 m against L1's 128 m), and L2 and
+L3 learn a smooth seabed, the GEBCO surface upsampled and blended into the coast,
+so that only the coastline position and near-shore slopes matter. Generated sea is
+then the ground below 0 m connected to the field edge or a layout ocean.
+
+Lakes and rivers come from the generated land: a drainage pass after L1 keeps the
+largest closed depressions as lakes (a land share set by the layout, 2% by default)
+and carves the rest into draining valleys; streams are traced on the L2 surface by
+drainage area and passed to L3 as water. Generated L1 had about ten times the closed
+depressions of real terrain, so this pass is required, not cosmetic.
 
 ## Data
 
@@ -84,6 +102,14 @@ this is tolerable, and it never supervises L3 or L4 (master plan §2).
 Before training, record the GLO-30 licence in
 `configs/provider-licences-v1.toml` and confirm it allows training use with
 attribution.
+
+### GEBCO bathymetry (L1, L2 below sea level)
+
+The GEBCO global grid (15 arc-second, public, free use with attribution) supplies the
+seabed under each GLO-30 region's sea. It is added as a layer of the context
+regions and joined to GLO-30 where GLO-30 shows sea (0 m with WorldCover water),
+with a short blend at the coast so the join does not create a step. Lakes are not
+filled from GEBCO.
 
 ### Reduced lidar regions (L3)
 
@@ -164,6 +190,24 @@ Each step ends with a check and, where terrain is involved, an owner review.
    then run L4 overnight and export.
 
 Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going.
+
+## Progress (2026-10-02)
+
+- 74 GLO-30 context regions built, 64 accepted (`context build`, `context serve`).
+  36 lidar regions at 4 m built and accepted (USGS 3DEP, LINZ; 3 dropped for no
+  public coverage).
+- L1 run 1 (128 m, 2 h): blind review 7/7. L2 run 1 (32 m, 3 h): 30/32, both No were
+  open-sea windows. L3 run 1 (4 m, 3 h): 32/32.
+- `cascade_chain` turns a layout derived from a held-out region (Howe Sound) into a
+  48 km world at 32 m and a 16 km area at 4 m in about 20 minutes of GPU time, with
+  drainage, lakes and streams.
+- Owner review of the chain: clear progress, but still less real than the source;
+  coasts showed a gentle strip between mountains and water. The strip came from
+  treating the sea as a mask over a flat 0 m surface. Variants with a blurred
+  coast (L1), a sharp coast without the sea in the loss (L1b runs 1 and 2) and the
+  sea-level clean-up steps that went with them are superseded by the water approach
+  above. Next: GEBCO layer, retrain L1 and L2 with continuous terrain, then rerun
+  the chain.
 
 ## Gates and fallbacks
 

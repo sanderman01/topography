@@ -71,8 +71,11 @@ exists. Consult upstream documentation for the versions actually selected.
   numeric accuracy or measured feature resolution.
 - Keep raw assets immutable, derived artifacts traceable, and human acceptance
   separate from successful processing. Preserve accepted outputs and edits.
-- Keep water masks and authored surface levels separate from ground elevation.
-  Underwater cells use deterministic masked fill; bathymetry is outside scope.
+- Terrain continues under water. Sea is ground below sea level connected to open
+  water; it is not a mask that sets elevation. Coarse public bathymetry (GEBCO) is
+  used only so the seabed keeps sloping down past the coast; underwater detail and
+  accuracy are not goals. Water masks track lakes, rivers and other water above sea
+  level, with their surface levels kept separate from ground elevation.
 - Snow/ice, vegetation and water masks are game layers from coarse public land
   cover (about 10 m is enough). Mark snow/ice where the area commonly has it;
   ignore seasonality and survey dates. Missing or ambiguous cover is resolved by
@@ -88,7 +91,8 @@ exists. Consult upstream documentation for the versions actually selected.
   256 intervals, `shared_edge` layout, 257² texels at 16 bits (`power_of_two`
   gives 256²), plus coarser quadtree LOD levels.
 - Leave Bevy integration, QuadTrees, vegetation rendering/placement/growth,
-  weather, a full flight model, and underwater terrain outside the current plan.
+  weather, a full flight model, and detailed underwater terrain outside the current
+  plan.
 
 ## Before heavy workloads
 

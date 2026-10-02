@@ -43,13 +43,18 @@ its scale.
    and reference sheet before any generation.
 2. GLO-30 context regions and the 128 m / 32 m models: done as pilots. 64 of 74
    regions accepted; L2 run 1 (3 h) passed the blind review 30/32 (both No were
-   open-sea windows), L1 run 1 (2 h) 7/7. L1 output gets its sea resolved to 0 m.
+   open-sea windows), L1 run 1 (2 h) 7/7.
 3. Reduced 4 m lidar regions and the 4 m model: done as a pilot. 36 lidar regions
    (USGS 3DEP and LINZ averaged to 4 m) accepted; L3 run 1 (3 h) passed the blind
    review 32/32.
-4. Run 5 of the 1 m model on the 4 m surface (fixes for local shape, glaciers
+4. Chain test (`cascade_chain`, Howe Sound layout): L1 → L2 → L3 with drainage,
+   lakes and streams works; coasts still read wrong. **Direction change
+   (2026-10-02): terrain continues under water** ([master plan §8](plans/terrain-design-master-plan.md),
+   [cascade plan, Water](plans/terrain-cascade-v1.md#water)). Next: GEBCO layer for
+   the context regions, retrain L1 and L2 on continuous terrain, rerun the chain.
+5. Run 5 of the 1 m model on the 4 m surface (fixes for local shape, glaciers
    and flats).
-5. Banded 1 m generation, then the first cascade world.
+6. Banded 1 m generation, then the first cascade world.
 
 Open reviews: the run 4 twin-free blind review (`data/models/diffusion-run-4/eval-2`)
 and the Milford pilot world's mid scale.

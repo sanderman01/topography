@@ -14,7 +14,7 @@ The central design decision is to separate the world's large-scale structure fro
 
 Keep an authoritative elevation surface in floating-point metres throughout processing. Produce 16-bit heightmap textures as controlled exports and optional training intermediates. A grayscale image is a storage representation of elevation, not the definition of the terrain.
 
-This plan covers acquisition, cleaning, labeling, training experiments, generation, editing, validation, and export, including snow/ice classification and vegetation masks where available. Bevy integration, QuadTree subdivision, vegetation placement/rendering/growth, weather simulation, a complete flight model, and underwater bathymetry remain outside its scope. This is a solo project; every human checkpoint below is performed by the same person, so checkpoints are a workflow discipline, not a multi-role handoff.
+This plan covers acquisition, cleaning, labeling, training experiments, generation, editing, validation, and export, including snow/ice classification and vegetation masks where available. Bevy integration, QuadTree subdivision, vegetation placement/rendering/growth, weather simulation, a complete flight model, and detailed underwater terrain remain outside its scope; coarse public bathymetry is used only so terrain continues below sea level (§8). This is a solo project; every human checkpoint below is performed by the same person, so checkpoints are a workflow discipline, not a multi-role handoff.
 
 Being solo also caps the scope of everything above: the plan's many provider adapters, quality gates, and a possible custom autoencoder are a menu to draw from as needed, not a checklist to fully complete before the pilot means anything. Keep the real-patch-and-blending baseline (§7) a genuine fallback, not just a comparison point — if diffusion training does not clear its feasibility gate within a reasonable number of attempts, ship the world using curated real terrain and blending instead of treating diffusion as mandatory. Prefer adding a small number of high-value agency adapters over integrating every table row in §2, and prefer a narrow first source region per biome over broad simultaneous coverage.
 
@@ -68,7 +68,7 @@ project's acquisition scope. If a needed asset has no public download, use
 adequate existing public evidence, select another public source, or record the
 limitation without making correspondence a dependency.
 
-Search national mapping agencies first for numeric bare-earth DEMs, often called DTM, MNT, or MDT. Use classified LiDAR point clouds when delivered DEMs are missing or inadequately processed. Keep DSMs, rendered hillshades, imagery, and bathymetry distinct from ground elevation.
+Search national mapping agencies first for numeric bare-earth DEMs, often called DTM, MNT, or MDT. Use classified LiDAR point clouds when delivered DEMs are missing or inadequately processed. Keep DSMs, rendered hillshades and imagery distinct from ground elevation; coarse bathymetry joins it only below sea level (§8).
 
 | Agency / source | Confirmed product or access route | Proposed role and remaining checks |
 | --- | --- | --- |
@@ -317,9 +317,9 @@ Use MultiDiffusion-style inference to coordinate overlapping windows during deno
 
 At each level, use spatially consistent initial noise, shared world-coordinate controls, normalized overlap weights, and stable processing rules. Include context outside final crop boundaries and handle outer edges and four-window corners explicitly. If using a latent model, also validate tiled decoding seams. Store height and slope differences across joins; inspect feature continuity through the whole overlap.
 
-Prevent broad elevation drift through the coarse surface and height anchors. Keep river elevations consistent downstream except where a designed waterfall applies; keep lake surfaces level. Ocean, lake, and river surfaces are separate from ground elevation. Ordinary terrestrial LiDAR does not supply underwater topography.
+Prevent broad elevation drift through the coarse surface and height anchors. Keep river elevations consistent downstream except where a designed waterfall applies; keep lake surfaces level. Lake and river surfaces are separate from ground elevation. Ordinary terrestrial LiDAR does not supply underwater topography.
 
-**Water is out of scope as bathymetry.** Since flight happens above the surface, bed elevation is not a gameplay requirement here; do not source, author, or infer any underwater surface. Represent each water body as a mask plus an authored water-surface function (a flat elevation for lakes/ocean, a monotonic downstream profile for rivers, with explicit drops where a waterfall is designed). Cells under the water mask carry a fixed deterministic fill value in the elevation raster, not a sloped or shaped bed; that fill value is excluded from training loss, structural controls, seam/continuity checks, and export validation alike, exactly like other masked-invalid cells. If a future need for underwater flight or diving arises, that is a separate follow-on effort with its own data sourcing and its own bed representation, not an extension of this plan.
+**Terrain continues under water** (direction change 2026-10-02, replacing "water is out of scope as bathymetry"). Ground elevation is one continuous surface above and below sea level. The sea is not a mask that sets elevation: it is the ground below 0 m connected to open water, so coastlines, coves, drowned valleys and islands follow from the terrain. DEMs record water surfaces (GLO-30 sea is a flat 0 m, lakes are flat sheets), so the coarse cascade levels train on GLO-30 land joined to GEBCO bathymetry (public, about 450 m) below sea level; finer levels learn only a smooth seabed. Underwater detail and accuracy are not goals: the seabed only has to keep sloping down past the coast so that coast profiles are learned from real data. Lakes and rivers keep a mask plus a water-surface function (a flat level for lakes, a monotonic downstream profile for rivers, with explicit drops where a waterfall is designed); ground under lakes is filled deterministically, as before, and excluded from training loss, seam checks and export validation. Underwater flight or diving would still be a separate effort.
 
 Carry snow/ice and available vegetation layers through source placement, joins
 and local edits using categorical rules and the same spatial transforms as the
@@ -415,7 +415,7 @@ composes eligible adjacent reviews from the same survey without resampling,
 preserves valid Float32 values and distinct masks, and registers immutable outputs.
 This path is verified with synthetic fixtures and twenty-eight real prepared regions
 whose valid ground samples remain bit-identical to accepted native terrain;
-water uses deterministic masked fill. The owner selected
+water used deterministic masked fill (lakes still do; the sea now follows the terrain, see §8). The owner selected
 five of six tiles in [batch 2](../reports/pilot-tile-batch-2.md); rejection preserves
 the sixth tile's data. All four tiles in [batch 3](../reports/pilot-tile-batch-3.md) from two further
 areas are now selected and prepared. A [numeric pilot proposal](../reports/numeric-pilot-proposal-v1.md)
