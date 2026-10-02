@@ -1,0 +1,26 @@
+AGENTS.md
+  s_3dd607e0c79402::t_4bf4ae9eb38993 74-78,94-95
+docs/plans/terrain-design-master-plan.md
+  s_3dd607e0c79402::t_dc6ab93546d054 17,71,320,322,418
+docs/plans/terrain-cascade-v1.md
+  s_3dd607e0c79402::t_4595fcd9a977fc 3-4,33,56-58,66-82,106-113,194-210
+  s_3dd607e0c79402::t_8f7847e9a1f1bd 211
+docs/progress.md
+  s_3dd607e0c79402::t_8f25ec1f043122 46,50-55,57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0f124802a28add766ca6c87ff3c298a7d50bdb26",
+  "prompts": {},
+  "sessions": {
+    "s_3dd607e0c79402": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6da004f-a834-4e63-8a15-4960f8fdbc5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
