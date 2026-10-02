@@ -1,0 +1,19 @@
+docs/plans/terrain-cascade-v1.md
+  s_3dd607e0c79402::t_91cd2e233c9940 215-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9c15a277e8c6b902895b310cd1ed7cbeb6da960b",
+  "prompts": {},
+  "sessions": {
+    "s_3dd607e0c79402": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6da004f-a834-4e63-8a15-4960f8fdbc5c",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
