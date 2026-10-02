@@ -3,7 +3,7 @@
 python -m topography_training.diffusion.cascade_eval --run-dir <dir> --out <new-dir> [options]
 
 L1 generates each validation region whole (48 km at 128 m) from its derived layout; L2
-and L3 generate windows (8 km at 32 m, 1 km at 4 m) from the true surface of the level above. The review shows real terrain
+L3 and L4 generate windows (8 km at 32 m, 1 km at 4 m, 256 m at 1 m) from the true surface of the level above. The review shows real terrain
 for half of the items and generated terrain for the other half, never the same place
 twice. Writes review.html, key.json (keep closed until votes are in), compare.html
 (side by side, also closed), metrics.json and arrays.npz.
@@ -73,7 +73,7 @@ def main(argv=None) -> int:
     model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
     model.load_state_dict(load_file(str(weights), device=str(device)))
     scale, size = config["residual_scale_m"], config["crop"]
-    regions = cascade.load_release(Path(config["release"]))
+    regions = cascade.load_regions(Path(config["release"]))
     val = cascade.Sampler(regions, "validation", level, size, stride=size)
     train = cascade.Sampler(regions, "train", level, size, stride=size // 4)
 
@@ -154,9 +154,10 @@ def main(argv=None) -> int:
                      f'<label><input type="radio" name="p{pos}" value="yes">Yes</label> '
                      f'<label><input type="radio" name="p{pos}" value="no">No</label></figcaption></figure>')
     (args.out / "key.json").write_text(json.dumps(key, indent=1))
-    km = items[0][2].shape[0] * level.cell_m / 1000
+    span = items[0][2].shape[0] * level.cell_m
+    span = f"{span / 1000:.0f} km" if span >= 1000 else f"{span} m"
     page = _page(cards).replace("<h1>Does this look like good game terrain?</h1>",
-                                f"<h1>Does this look like real terrain? ({km:.0f} km, {level.cell_m} m cells)</h1>")
+                                f"<h1>Does this look like real terrain? ({span}, {level.cell_m} m cells)</h1>")
     (args.out / "review.html").write_text(page.replace("width:384px", "width:560px"))
     rows = "".join(f'<h3>{name}</h3><div class="pair"><img src="real-{n:03d}.png"><img src="generated-{n:03d}.png"></div>'
                    for name, n in pairs)

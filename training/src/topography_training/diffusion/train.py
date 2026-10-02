@@ -23,7 +23,8 @@ def _parse(argv):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--release", type=Path, required=True)
     p.add_argument("--run-dir", type=Path, required=True)
-    p.add_argument("--level", choices=["l1", "l2", "l3"], help="cascade level for a context release")
+    p.add_argument("--level", choices=["l1", "l2", "l3", "l4"],
+                   help="cascade level; l4 trains on a 1 m library release")
     p.add_argument("--steps", type=int, default=100_000)
     p.add_argument("--hours", type=float, default=8.0, help="wall-clock limit for this invocation")
     p.add_argument("--batch", type=int, default=12)
@@ -32,6 +33,8 @@ def _parse(argv):
     p.add_argument("--warmup", type=int, default=1000)
     p.add_argument("--ema", type=float, default=0.999)
     p.add_argument("--class-dropout", type=float, default=0.1)
+    p.add_argument("--coarse-dropout", type=float, default=0.1, help="cascade layout 3: zero shape and slopes")
+    p.add_argument("--cover-dropout", type=float, default=0.1, help="cascade layout 3: zero snow/ice and vegetation")
     p.add_argument("--channels", type=str, default="64,128,256,384,512")
     p.add_argument("--val-every", type=int, default=1000)
     p.add_argument("--save-every", type=int, default=2000)
@@ -66,24 +69,26 @@ def main(argv=None) -> int:
     config_path = run / "config.json"
     saved = json.loads(config_path.read_text()) if config_path.exists() else None
     release_kind = json.loads(args.release.read_text()).get("kind")
-    if release_kind == "context_training_release":
+    name = saved.get("level") if saved else args.level
+    if release_kind == "context_training_release" and name is None:
+        print("error: a context release needs --level l1, l2 or l3", file=sys.stderr)
+        return 2
+    if name is not None:
         from . import cascade
 
-        name = saved["level"] if saved else args.level
-        if name is None:
-            print("error: a context release needs --level l1, l2 or l3", file=sys.stderr)
-            return 2
         level = cascade.LEVELS[name]
         if saved and saved["conditioning"] != level.conditioning:
             print("error: the run uses a retired layout; start a new run", file=sys.stderr)
             return 2
-        regions = cascade.load_release(args.release)
+        regions = cascade.load_regions(args.release)
         train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"])
         val = cascade.Sampler(regions, "validation", level, train.size)
         level_config = {"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
                         "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
                         "block": level.block,
                         "smooth_cells": level.smooth_cells,
+                        "coarse_dropout": args.coarse_dropout if level.conditioning == 3 else 0.0,
+                        "cover_dropout": args.cover_dropout if level.conditioning == 3 else 0.0,
                         "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
     else:
         tiles = data.load_release(args.release)
@@ -176,6 +181,8 @@ def main(argv=None) -> int:
         k = data.class_start(cond)
         cond[drop, k:] = 0
         cond[drop, k] = 1
+        if config.get("coarse_dropout") or config.get("cover_dropout"):
+            cascade.drop(cond, rng, config["coarse_dropout"], config["cover_dropout"])
         target, cond, mask = (torch.from_numpy(a).to(device, non_blocking=True) for a in (target, cond, mask))
         for g in opt.param_groups:
             g["lr"] = args.lr * min(1.0, (step + 1) / args.warmup)

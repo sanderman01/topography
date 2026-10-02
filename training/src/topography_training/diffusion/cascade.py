@@ -2,8 +2,10 @@
 
 L1 (128 m) refines the smooth mid-surface of an L0-like layout envelope; L2 (32 m)
 refines the 128 m surface, both from GLO-30 regions at 32 m. L3 (4 m) refines the 32 m
-surface from lidar regions at 4 m. Each generates a residual over the level above.
-Regions are row-major and north-up; the split is by whole region (set in the release).
+surface from lidar regions at 4 m. L4 (1 m) refines the 4 m surface of the 1 m library
+tiles (diffusion training releases). Each generates a residual over the level above.
+Regions are row-major and north-up; context regions are split whole (set in the
+release), library tiles by geographic bands inside each tile.
 
 Terrain continues under water: GLO-30 sea (0 m) is replaced by a seabed joined to the
 coast (see `join_seabed`), so sea is simply ground below 0 m. Water layers keep only
@@ -43,6 +45,7 @@ class Level:
     smooth_cells: float = 0.0  # refining levels: smoothing after upsampling
     margin: int = 16  # refining levels: context cells around a window
     stride: int = 8  # spacing of candidate training windows, in cells
+    water_in_loss: bool = True  # False where water cells hold a surveyed surface, not ground
 
 
 # Smoothing is half a block, like the 1 m model's 16 m on 32 m blocks.
@@ -51,7 +54,10 @@ LEVELS = {
     "l1": Level("l1", 128, 5, 32),
     "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
     "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32, stride=32),
+    "l4": Level("l4", 1, 3, 1, block=4, smooth_cells=2.0, margin=16, stride=16, water_in_loss=False),
 }
+# Layout 3 channels set to 0 when dropped in training, for guidance at generation.
+SHAPE_CHANNELS, COVER_CHANNELS = (0, 1, 2), (5, 6)
 MIN_VALID = 0.9  # share of surveyed cells a training window needs
 
 
@@ -63,8 +69,10 @@ class Region:
     spacing_m: int
     height: np.ndarray  # float32 metres, NaN where not surveyed; seabed under the sea
     water: np.ndarray  # bool; water above sea level where a seabed is joined
-    snow: np.ndarray  # bool
-    vegetation: np.ndarray  # bool
+    snow: np.ndarray  # bool, or uint8 soft coverage for library tiles
+    vegetation: np.ndarray  # bool, or uint8 soft coverage for library tiles
+    cells: np.ndarray | None = None  # per-cell split of library tiles (data.TRAIN, data.VALIDATION)
+    fields: Fields | None = None  # built once, shared by the train and validation samplers
 
 
 def _read(release: Path, layer: dict, shape) -> np.ndarray:
@@ -73,6 +81,16 @@ def _read(release: Path, layer: dict, shape) -> np.ndarray:
         raise ValueError(f"release layer hash mismatch: {layer['path']}")
     dtype = {"float32_le": "<f4", "uint8": "u1"}[layer["dtype"]]
     return np.frombuffer(data, dtype=dtype).reshape(shape)
+
+
+def load_regions(manifest_path: Path) -> list[Region]:
+    """Regions of a context release, or the tiles of a 1 m library release (L4)."""
+    if json.loads(manifest_path.read_text()).get("kind") != "diffusion_training_release":
+        return load_release(manifest_path)
+    from .data import load_release as load_tiles
+
+    return [Region(t.name, t.class_id, "tile", 1, t.height, t.water, t.snow, t.vegetation, t.split)
+            for t in load_tiles(manifest_path)]
 
 
 def load_release(manifest_path: Path) -> list[Region]:
@@ -236,7 +254,10 @@ def refine_surface(level: Level, coarse: np.ndarray) -> np.ndarray:
 def refine_fields(r: Region) -> Fields:
     """Per-cell inputs; the coarse surface is computed per window (see refine_coarse)."""
     # Stored as uint8 per region; full-size float32 copies would not fit in memory at 4 m.
-    extra = [np.where(r.water, 255, 0).astype(np.uint8), soft_u8(r.snow, 1.0), soft_u8(r.vegetation, 1.0)]
+    def cover(m):  # library tiles arrive with soft coverage already
+        return m if m.dtype == np.uint8 else soft_u8(m, 1.0)
+
+    extra = [np.where(r.water, 255, 0).astype(np.uint8), cover(r.snow), cover(r.vegetation)]
     return Fields(r.height, None, extra, r.class_id)
 
 
@@ -273,6 +294,16 @@ def condition(level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes
     return np.concatenate(parts).astype(np.float32)
 
 
+def drop(cond: np.ndarray, rng: np.random.Generator, coarse: float, cover: float) -> np.ndarray:
+    """Zero the shape or cover channels of some layout 3 windows, in place."""
+    n = len(cond)
+    for rate, chans in ((coarse, SHAPE_CHANNELS), (cover, COVER_CHANNELS)):
+        hit = rng.random(n) < rate
+        for c in chans:
+            cond[hit, c] = 0
+    return cond
+
+
 def normalise(cond: np.ndarray) -> np.ndarray:
     cond = cond.copy()
     cond[0] = unit_range(cond[0])
@@ -285,21 +316,26 @@ class Sampler:
     def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None):
         self.level, self.size = level, size
         stride = stride or level.stride
-        self.regions = [r for r in regions if r.split == split]
+        role = {"train": 1, "validation": 2}[split]  # data.TRAIN, data.VALIDATION
+        self.regions = [r for r in regions if r.split == split or (r.cells is not None and (r.cells == role).any())]
         if not self.regions:
             raise ValueError(f"no {split} regions")
         if any(r.spacing_m != level.region_m for r in self.regions):
             raise ValueError(f"{level.name} trains on {level.region_m} m regions")
         make = l1_fields if level.name == "l1" else refine_fields
-        self.fields = [make(r) for r in self.regions]
         for r in self.regions:  # the fields hold everything the windows need
-            r.water = r.snow = r.vegetation = None
+            if r.fields is None:
+                r.fields = make(r)
+                r.water = r.snow = r.vegetation = None
+        self.fields = [r.fields for r in self.regions]
         self.positions = []
-        for i, f in enumerate(self.fields):
+        for i, (r, f) in enumerate(zip(self.regions, self.fields)):
             rows, cols = f.target.shape
-            valid = _window_sum(~np.isnan(f.target), size) >= MIN_VALID * size * size
-            ys, xs = range(0, rows - size + 1, stride), range(0, cols - size + 1, stride)
-            self.positions += [(i, y, x) for y in ys for x in xs if valid[y, x]]
+            ok = _window_sum(~np.isnan(f.target), size) >= MIN_VALID * size * size
+            if r.cells is not None:
+                ok &= _window_sum(r.cells == role, size) == size * size
+            ys, xs = np.nonzero(ok[: rows - size + 1 : stride, : cols - size + 1 : stride])
+            self.positions += [(i, int(y) * stride, int(x) * stride) for y, x in zip(ys, xs)]
         if not self.positions:
             raise ValueError("no window of this size has enough surveyed ground")
 
@@ -321,6 +357,8 @@ class Sampler:
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
         h, c, cond = self.window(index, rng)
         valid = ~np.isnan(h)
+        if not self.level.water_in_loss:
+            valid &= cond[4] < 0  # water channel: 1 water, -1 dry
         target = np.where(valid, (h - c) / scale, 0.0)[None].astype(np.float32)
         cond = normalise(cond)
         mask = valid[None].astype(np.float32)
