@@ -1,0 +1,19 @@
+AGENTS.md
+  s_3644d53fd471f9::t_e5402ddabc1a1d 105-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "f4f9f98376106bd29e713c3355696d481df76e93",
+  "prompts": {},
+  "sessions": {
+    "s_3644d53fd471f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4439e6df-5a0d-4dfb-92e0-c63d6b6c30f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
