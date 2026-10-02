@@ -1,0 +1,25 @@
+training/src/topography_training/diffusion/cascade.py
+  s_3dd607e0c79402::t_eeac81fff7cf5f 49-51,254-259,324
+training/src/topography_training/diffusion/cascade_chain.py
+  s_3dd607e0c79402::t_c1c263907dcc90 132
+training/src/topography_training/diffusion/cascade_eval.py
+  s_3dd607e0c79402::t_9ecac7d7b6c941 87,92
+training/src/topography_training/diffusion/train.py
+  s_3dd607e0c79402::t_258322818d1d15 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "14dcc7dc39dd79792eed81a25056e1086870fcfb",
+  "prompts": {},
+  "sessions": {
+    "s_3dd607e0c79402": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6da004f-a834-4e63-8a15-4960f8fdbc5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
