@@ -1,0 +1,48 @@
+training/src/topography_training/diffusion/cascade_chain.py
+  s_3dd607e0c79402::t_8e98f2079e775a 6,8-11,32-33,124-129,131-133,135,137,142,144-145,148,152-154,160,175,181-183,194,221
+crates/topography-core/src/acquisition/mod.rs
+  s_3dd607e0c79402::t_b944e129deb7ef 5
+crates/topography-core/src/context/release.rs
+  s_3dd607e0c79402::t_20407ad9a26807 3,7,26-27,37-40,48-49,109,112-119,128-129,141
+  s_3dd607e0c79402::t_1221a7aa7b981f 110-111
+  s_3dd607e0c79402::t_483f9bdeed5307 28-36,41-47
+crates/topography-core/src/export/heightmap.rs
+  s_3dd607e0c79402::t_e50a44dbbba45f 168,170,172-173,175,180,182-186,283-284
+docs/workflows/context-regions.md
+  s_3dd607e0c79402::t_9c90a38e9eb7e1 67-68,74,81-88,93-96,104-115
+training/pyproject.toml
+  s_3dd607e0c79402::t_8220cb299c3f8c 16
+crates/topography-core/src/acquisition/gebco.rs
+  s_3dd607e0c79402::t_483f9bdeed5307 8-9
+  s_3dd607e0c79402::t_b944e129deb7ef 1-7,10-68
+configs/provider-licences-v1.toml
+  s_3dd607e0c79402::t_d2c7ad68182358 52-62
+training/src/topography_training/diffusion/cascade.py
+  s_3dd607e0c79402::t_c324b63fbe5730 7-10,24-25,28-32,49,51,64-65,89-92,94,98,100-104,107-136,244,248,257-260,262-264,293
+  s_3dd607e0c79402::t_671a7d153f6209 33,99,105-106
+training/src/topography_training/diffusion/data.py
+  s_3dd607e0c79402::t_dc73ba6cf5fb69 229
+  s_3dd607e0c79402::t_c96fa1ed122b52 227-228
+training/src/topography_training/diffusion/cascade_eval.py
+  s_3dd607e0c79402::t_e21358cabe2a6d 43,87,97-98,140
+docs/plans/terrain-cascade-v1.md
+  s_3dd607e0c79402::t_4609cef8a9960e 109-114,213-216
+training/src/topography_training/diffusion/train.py
+  s_3dd607e0c79402::t_4df0d552367c16 26,77-79,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b4a5e90fe91b8a013d14b19d441a11157fe78a2e",
+  "prompts": {},
+  "sessions": {
+    "s_3dd607e0c79402": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6da004f-a834-4e63-8a15-4960f8fdbc5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
