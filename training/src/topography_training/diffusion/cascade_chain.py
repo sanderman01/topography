@@ -16,6 +16,7 @@ output (manifest.json + layers) for `topography export heightmap`.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import sys
@@ -98,7 +99,10 @@ def main(argv=None) -> int:
     p.add_argument("--steps", type=int, default=12)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--lake-share", type=float, default=0.02, help="share of land kept as lakes after L1")
+    # Water amounts default to the region class's profile (hydrology.WATER).
+    p.add_argument("--lake-share", type=float, help="share of land kept as lakes after L1")
+    p.add_argument("--tarn-share", type=float, help="share of land kept as small lakes after L2")
+    p.add_argument("--stream-km2", type=float, help="drainage area where streams begin")
     args = p.parse_args(argv)
 
     import torch
@@ -114,6 +118,9 @@ def main(argv=None) -> int:
     r = regions[0]
     manifest = json.loads(args.release.read_text())
     meta = next(m for m in manifest["regions"] if m["id"] == args.region)
+    profile = hydrology.WATER.get(r.class_id, hydrology.WATER[0])
+    overrides = {"lake_share": args.lake_share, "tarn_share": args.tarn_share, "stream_km2": args.stream_km2}
+    water = dataclasses.replace(profile, **{k: v for k, v in overrides.items() if v is not None})
     args.out.mkdir(parents=True)
     times = {}
 
@@ -128,7 +135,7 @@ def main(argv=None) -> int:
     f1 = cascade.l1_fields(r)
     cond = _condition(level, f1.coarse, f1.extra, r.class_id)
     h128 = _sample(model, config, f1.coarse, cond, args.steps, args.seed, args.batch)
-    h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128), args.lake_share, 1.0)
+    h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0)
     sea128 = cascade.open_sea(h128)
     lake128 &= ~sea128
     times["l1_s"] = time.time() - t
@@ -148,13 +155,15 @@ def main(argv=None) -> int:
     sea32 = cascade.open_sea(h32)
     lake32 &= ~sea32
     h32[lake32] = lake_level32[lake32]
-    h32, _, _ = hydrology.drain(h32, sea32 | lake32, 0.0, 1.0)
+    raw32 = h32.copy()
+    # Small lakes (tarns, kettles) from L2's own hollows; the rest are carved through.
+    h32, tarn32, _ = hydrology.drain(h32, sea32 | lake32, water.tarn_share, 1.0, tarns=True)
     sea32 = cascade.open_sea(h32)
-    lake32 &= ~sea32
+    lake32 = (lake32 | tarn32) & ~sea32
     snow32, veg32 = r.snow & ~sea32, r.vegetation & ~sea32
-    stream32, parent32, width32 = hydrology.streams(h32, sea32 | lake32, 32.0)
+    stream32, parent32, width32 = hydrology.streams(h32, sea32 | lake32, 32.0, water.stream_km2, water.stream_width)
     times["l2_s"] = time.time() - t
-    print(f"L2 {h32.shape} in {times['l2_s']:.0f} s; streams {stream32.sum()} cells", flush=True)
+    print(f"L2 {h32.shape} in {times['l2_s']:.0f} s; tarns {tarn32.mean():.2%}, streams {stream32.sum()} cells", flush=True)
 
     # L3: a central square from the L2 surface (with a margin for the smoothing). Sea,
     # lakes and streams are water, as in its lidar training data.
@@ -196,7 +205,7 @@ def main(argv=None) -> int:
     _png(args.out / "l3.png", h4, 4, water4, 2048)
     c = h4.shape[0] // 2
     _png(args.out / "l3-detail.png", h4[c - 512 : c + 512, c - 512 : c + 512], 4, water4[c - 512 : c + 512, c - 512 : c + 512], 1024)
-    np.savez_compressed(args.out / "arrays.npz", l1=h128, l2=h32, l3=h4)
+    np.savez_compressed(args.out / "arrays.npz", l1=h128, l2=h32, l2_raw=raw32, l3=h4)
 
     # A 4 m world output for `topography export heightmap` and `export view`.
     s = 32.0
@@ -219,7 +228,7 @@ def main(argv=None) -> int:
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 4.0, "size": [h4.shape[1], h4.shape[0]],
         "method": "cascade chain L1 -> L2 -> L3 from a derived layout", "water_fill": "ground continues under the sea; lakes flat at their spill level",
-        "region": args.region, "steps": args.steps, "times": times,
+        "region": args.region, "steps": args.steps, "water": vars(water), "times": times,
         "runs": {k: str(getattr(args, f"{k}_run").resolve()) for k in ("l1", "l2", "l3")},
         "layers": digests}, indent=1))
     print(f"wrote {args.out}", flush=True)

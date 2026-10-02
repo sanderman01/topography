@@ -8,6 +8,7 @@ streams follow drainage areas above a threshold with a width growing with that a
 from __future__ import annotations
 
 import heapq
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -16,6 +17,44 @@ STREAM_MIN_AREA_KM2 = 4.0
 # Width (m) = STREAM_WIDTH_M * sqrt(drainage area / km2), capped.
 STREAM_WIDTH_M = 2.5
 STREAM_MAX_WIDTH_M = 60.0
+
+
+@dataclass(frozen=True)
+class Water:
+    """How much water a terrain class gets: lakes kept after L1 and small lakes after L2
+    (shares of the land), the drainage area where streams begin and their width (m per
+    sqrt(km2) of drainage area; dry washes are narrow). Judgment values
+    from the inland water share of the real context regions (2026-10-03): about 0.5% in
+    dunes, canyons and badlands, 3-5% in fjords, archipelagos and glacier country."""
+
+    lake_share: float
+    tarn_share: float
+    stream_km2: float
+    stream_width: float = 2.5
+
+
+# By class id (0: unlabelled). Dry classes keep valley floors as dry washes.
+WATER = {
+    0: Water(0.010, 0.002, 8.0),
+    1: Water(0.003, 0.000, 20.0, 1.5),  # karst: streams sink
+    2: Water(0.002, 0.000, 50.0, 1.0),  # gorges and canyons
+    3: Water(0.020, 0.005, 4.0),  # fjords and glacial troughs
+    4: Water(0.010, 0.002, 10.0),  # calderas and craters
+    5: Water(0.020, 0.003, 4.0),  # archipelagos
+    6: Water(0.006, 0.005, 4.0),  # alpine ridges and cirques
+    7: Water(0.002, 0.000, 50.0, 1.0),  # badlands and mesas
+    8: Water(0.001, 0.000, 200.0, 0.5),  # dunes
+    9: Water(0.010, 0.001, 4.0),  # braided rivers
+    10: Water(0.015, 0.005, 4.0),  # glaciers and ice fields
+    11: Water(0.005, 0.002, 10.0),  # volcanic cones and lava fields
+    12: Water(0.008, 0.001, 4.0),  # coastal cliffs
+}
+
+# Tarns, in cells of the surface drained (32 m at L2: about 0.4 to 26 ha), at least 2 m
+# deep and compact (bounding-box side squared over area).
+TARN_CELLS = (4, 256)
+TARN_MIN_DEPTH_M = 2.0
+TARN_MAX_ELONGATION = 4.0
 
 
 def flood(h: np.ndarray, outlet: np.ndarray):
@@ -64,31 +103,13 @@ def accumulate(parent: np.ndarray, order: np.ndarray) -> np.ndarray:
     return acc
 
 
-def _components(mask: np.ndarray) -> tuple[np.ndarray, int]:
-    """4-connected labels (0 = background) by iterative minimum propagation."""
-    labels = np.where(mask, np.arange(1, mask.size + 1).reshape(mask.shape), 0)
-    big = mask.size + 1
-    while True:
-        work = np.where(mask, labels, big)
-        best = work.copy()
-        best[1:] = np.minimum(best[1:], work[:-1])
-        best[:-1] = np.minimum(best[:-1], work[1:])
-        best[:, 1:] = np.minimum(best[:, 1:], work[:, :-1])
-        best[:, :-1] = np.minimum(best[:, :-1], work[:, 1:])
-        best = np.where(mask, best, 0)
-        if (best == labels).all():
-            break
-        labels = best
-    ids, labels = np.unique(labels, return_inverse=True)
-    return labels.reshape(mask.shape), len(ids) - 1
-
-
-def streams(h: np.ndarray, water: np.ndarray, cell_m: float):
+def streams(h: np.ndarray, water: np.ndarray, cell_m: float, min_km2: float = STREAM_MIN_AREA_KM2,
+            width_m: float = STREAM_WIDTH_M):
     """Stream cells, downstream neighbour (flat index) and width (m) on a draining surface."""
     _, parent, order = flood(h, water)
     area_km2 = accumulate(parent, order).reshape(h.shape) * cell_m * cell_m / 1e6
-    stream = (area_km2 >= STREAM_MIN_AREA_KM2) & ~water
-    width = np.clip(STREAM_WIDTH_M * np.sqrt(area_km2), 0, STREAM_MAX_WIDTH_M).astype(np.float32)
+    stream = (area_km2 >= min_km2) & ~water
+    width = np.clip(width_m * np.sqrt(area_km2), 0, STREAM_MAX_WIDTH_M).astype(np.float32)
     return stream, parent.reshape(h.shape), width
 
 
@@ -156,30 +177,52 @@ def carve(h: np.ndarray, outlet: np.ndarray) -> np.ndarray:
     return hc.reshape(h.shape)
 
 
-def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float):
-    """Make a generated surface drain like real terrain.
-
-    The largest depressions by volume are kept as lakes (flat at their spill level) until
-    they cover `lake_share` of the land; every other depression is carved through and the
-    cut is widened into a valley floor. Returns (surface, lake mask, lake level)."""
-    from .data import smooth
+def _hollows(h: np.ndarray, sea: np.ndarray):
+    """Filled surface, depth and labelled closed depressions (scipy labels) of a surface."""
+    from scipy import ndimage
 
     filled, _, _ = flood(h, sea)
     depth = filled - h
-    labels, count = _components((depth > 0.05) & ~sea)
-    keep = np.zeros(h.shape, bool)
-    if count:
-        flat = labels.ravel()
-        area = np.bincount(flat, minlength=count + 1)[1:]
-        volume = np.bincount(flat, weights=depth.ravel(), minlength=count + 1)[1:]
-        budget = lake_share * (~sea).sum()
-        chosen, total = [], 0
-        for k in np.argsort(-volume):
-            if total + area[k] > budget:
-                continue
+    labels, count = ndimage.label((depth > 0.05) & ~sea)
+    return filled, depth, labels, count
+
+
+def _pick(order, area, budget) -> list[int]:
+    chosen, total = [], 0
+    for k in order:
+        if total + area[k] <= budget:
             chosen.append(k + 1)
             total += area[k]
-        keep = np.isin(labels, chosen)
+    return chosen
+
+
+def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float, tarns: bool = False):
+    """Make a generated surface drain like real terrain.
+
+    Depressions are kept as lakes (flat at their spill level) until they cover
+    `lake_share` of the land: the largest by volume, or with `tarns` the deepest compact
+    small ones (cirque tarns and kettles rather than valley-floor flats). Every other
+    depression is carved through and the cut is widened into a valley floor.
+    Returns (surface, lake mask, lake level)."""
+    from scipy import ndimage
+
+    from .data import smooth
+
+    filled, depth, labels, count = _hollows(h, sea)
+    keep = np.zeros(h.shape, bool)
+    if count:
+        idx = np.arange(1, count + 1)
+        area = ndimage.sum(np.ones(h.shape), labels, idx)
+        budget = lake_share * (~sea).sum()
+        if tarns:
+            deepest = ndimage.maximum(depth, labels, idx)
+            span = np.array([max(s[0].stop - s[0].start, s[1].stop - s[1].start) for s in ndimage.find_objects(labels)])
+            ok = (area >= TARN_CELLS[0]) & (area <= TARN_CELLS[1]) & (deepest >= TARN_MIN_DEPTH_M)
+            ok &= span**2 / area <= TARN_MAX_ELONGATION
+            order = [k for k in np.argsort(-deepest) if ok[k]]
+        else:
+            order = np.argsort(-ndimage.sum(depth, labels, idx))
+        keep = np.isin(labels, _pick(order, area, budget))
     work = np.where(keep, filled, h)
     cut = work - carve(work, sea | keep)
     widened = np.maximum(cut, smooth(_maxpool3(cut).astype(np.float32), widen_sigma))

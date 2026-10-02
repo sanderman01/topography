@@ -215,8 +215,14 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   0 m connected to the field edge, and heightmap export encodes the seabed.
 - L2 run 2 (32/32 Yes in blind review) and L1 run 2 (7/7 Yes) trained on continuous
   terrain. Chain 7 (Howe Sound): slopes run straight into the sea with no flat
-  ring, islands and drowned valleys come from the terrain. Remaining gap: real
-  terrain has many small tarns, the chain keeps only the largest depressions.
+  ring, islands and drowned valleys come from the terrain.
+- Water by terrain class (`hydrology.WATER`, judgment values from the regions' inland
+  water share): lakes after L1, compact deep hollows kept as small lakes after L2
+  (tarns; chain 9 has about 230 on Howe Sound), stream start area and width. Dry
+  classes keep few lakes and narrow, rare streams (Canyonlands 0.5% water, Erg Chebbi
+  about 1% before streams were narrowed). Open: rivers entering from outside the
+  world (Green and Colorado in Canyonlands) need a layout input; generated mesas and
+  dunes are softer than real.
 
 ## Gates and fallbacks
 
