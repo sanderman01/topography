@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from .data import channels, class_start
 
@@ -156,11 +157,15 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
 
 @torch.no_grad()
 def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None,
-                 noise=None):
+                 noise=None, hold=None):
     """Heun EDM sampling over a field of any size.
 
     cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`.
-    noise: optional unit starting noise [1, T, H, W]; otherwise drawn from `seed`."""
+    noise: optional unit starting noise [1, T, H, W]; otherwise drawn from `seed`.
+    hold: optional (known [1, T, H, W], weight [1, 1, H, W] in 0-1, sigma_cells): low-frequency
+    guidance (ILVR, Choi et al. 2021). After every step the Gaussian low-pass of the sample
+    is moved toward that of the known target, noised to the step's level, by the weight;
+    detail finer than sigma_cells stays the model's own."""
     if isinstance(cond, torch.Tensor):
         cond = TensorField(cond)
     if isinstance(negative, torch.Tensor):
@@ -171,6 +176,10 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
         gen = torch.Generator(device="cpu").manual_seed(seed)
         noise = torch.randn((1, model.target_channels, h, w), generator=gen)
     x = noise.to(cond.device) * sigmas[0]
+    if hold is not None:
+        known, weight, hold_sigma = hold
+        known, weight = known.to(cond.device), weight.to(cond.device)
+        hold_gen = torch.Generator(device="cpu").manual_seed(seed + 7919)
     # In-place updates keep at most four field-sized tensors alive.
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]
@@ -187,7 +196,19 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
         else:
             x.add_(d, alpha=s_next - s)
         del d
+        if hold is not None:
+            eps = torch.randn(x.shape, generator=hold_gen).to(x.device)
+            x.add_(weight * (_low_pass(known + s_next * eps, hold_sigma) - _low_pass(x, hold_sigma)))
     return x
+
+
+def _low_pass(x: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Separable Gaussian blur of [N, C, H, W] with reflected edges."""
+    r = max(1, int(3 * sigma))
+    k = torch.exp(-torch.arange(-r, r + 1, dtype=x.dtype, device=x.device) ** 2 / (2 * sigma * sigma))
+    k = (k / k.sum()).view(1, 1, 1, -1).repeat(x.shape[1], 1, 1, 1)
+    y = F.conv2d(F.pad(x, (r, r, 0, 0), mode="reflect"), k, groups=x.shape[1])
+    return F.conv2d(F.pad(y, (0, 0, r, r), mode="reflect"), k.transpose(2, 3), groups=x.shape[1])
 
 
 def parameter_count(model: nn.Module) -> int:

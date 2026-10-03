@@ -34,7 +34,8 @@ NAMES = {
 }
 TIERS = ("starter", "mid", "specialist")
 TIER_RGB = {0: (120, 200, 110), 1: (240, 190, 60), 2: (220, 70, 60)}
-SITE_RADIUS_M = 250.0  # a site counts as reached if any cell this close is
+SITE_RADIUS_M = 250.0
+RIVER_WIDTH_M = 48.0  # authored rivers as water at L2: a channel one or two 32 m cells wide  # a site counts as reached if any cell this close is
 
 
 @dataclass
@@ -49,6 +50,7 @@ class L0:
     lake_level: np.ndarray
     snowline: np.ndarray
     forest: np.ndarray
+    hold: np.ndarray  # 0-1 weight with which L1 sampling holds `mid`
 
 
 def load(d: Path) -> L0:
@@ -61,21 +63,38 @@ def load(d: Path) -> L0:
          if not name.endswith(".txt")}
     return L0(tomllib.loads(m["config_text"]), float(m["cell_m"]), a["mid.f32"], a["relief.f32"],
               a["coast.f32"], a["class.u8"], a["lake.u8"] == 255, a["lake-level.f32"],
-              a["snowline.f32"], a["forest.u8"])
+              a["snowline.f32"], a["forest.u8"],
+              a["hold.u8"].astype(np.float32) / 255 if "hold.u8" in a else np.zeros((h, w), np.float32))
+
+
+def line_cells(path, width_m: float, cell_m: float, n: int) -> np.ndarray:
+    """Cells of an n x n grid within width_m / 2 of a polyline (at least the cells it crosses)."""
+    c = (np.arange(n) + 0.5) * cell_m
+    x, y = np.meshgrid(c, c)
+    d = np.full(x.shape, np.inf)
+    for (ax, ay), (bx, by) in zip(path, path[1:]):
+        dx, dy = bx - ax, by - ay
+        t = np.clip(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy), 0, 1)
+        d = np.minimum(d, np.hypot(x - ax - t * dx, y - ay - t * dy))
+    return d < max(width_m, cell_m) / 2
 
 
 def lake_cells(lk: dict, cell_m: float, n: int) -> np.ndarray:
     """Cells of an authored lake on an n x n grid (round or along a valley path)."""
-    c = (np.arange(n) + 0.5) * cell_m
-    x, y = np.meshgrid(c, c)
     if "at" in lk:
+        c = (np.arange(n) + 0.5) * cell_m
+        x, y = np.meshgrid(c, c)
         return np.hypot(x - lk["at"][0], y - lk["at"][1]) < lk["radius_m"]
-    d = np.full(x.shape, np.inf)
-    for (ax, ay), (bx, by) in zip(lk["path"], lk["path"][1:]):
-        dx, dy = bx - ax, by - ay
-        t = np.clip(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy), 0, 1)
-        d = np.minimum(d, np.hypot(x - ax - t * dx, y - ay - t * dy))
-    return d < lk["width_m"] / 2
+    return line_cells(lk["path"], lk["width_m"], cell_m, n)
+
+
+def rivers(spec: dict, cell_m: float, n: int) -> np.ndarray:
+    """Authored rivers (gorges with `river = true`) as water cells on an n x n grid."""
+    out = np.zeros((n, n), bool)
+    for f in spec.get("features", []):
+        if f["kind"] == "gorge" and f.get("river"):
+            out |= line_cells(f["path"], RIVER_WIDTH_M, cell_m, n)
+    return out
 
 
 def _font(size: int):

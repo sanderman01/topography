@@ -36,6 +36,8 @@ from .evaluate import _latest
 LAYOUT_CRS = ('ENGCRS["Topography sketch plane",EDATUM["Topography sketch"],CS[Cartesian,2],'
               'AXIS["easting (X)",east,ORDER[1],LENGTHUNIT["metre",1]],'
               'AXIS["northing (Y)",north,ORDER[2],LENGTHUNIT["metre",1]]]')
+# Landmarks are held above this scale (cells of the level held: 3 x 128 m at L1).
+HOLD_SIGMA_CELLS = 3.0
 # L3 learned land only (lidar stops at the shore); deeper than this its seabed is the L2 surface.
 L3_SEABED_M = 5.0
 
@@ -65,7 +67,9 @@ def _condition(level, coarse, extra, classes) -> np.ndarray:
     return cond
 
 
-def _sample(model, config, coarse, cond, steps, seed, batch):
+def _sample(model, config, coarse, cond, steps, seed, batch, hold=None):
+    """Sample a level; `hold` = (target surface, weight 0-1) guides the large-scale shape of
+    held cells toward the target (see model.sample_field)."""
     import torch
 
     from .model import sample_field
@@ -73,8 +77,13 @@ def _sample(model, config, coarse, cond, steps, seed, batch):
     size = config["crop"]
     if isinstance(cond, np.ndarray):
         cond = torch.from_numpy(cond)[None]
+    if hold is not None:
+        target, weight = hold
+        known = ((target - coarse) / config["residual_scale_m"]).astype(np.float32)
+        hold = (torch.from_numpy(known)[None, None], torch.from_numpy(weight.astype(np.float32))[None, None],
+                HOLD_SIGMA_CELLS)
     out = sample_field(model, cond, steps=steps, window=size, stride=size // 2,
-                       batch=batch, seed=seed)
+                       batch=batch, seed=seed, hold=hold)
     return coarse + out[0, 0].numpy() * config["residual_scale_m"]
 
 
@@ -244,7 +253,8 @@ def main(argv=None) -> int:
         print("error: the L1 run uses a retired layout", file=sys.stderr)
         return 2
     cond = _condition(level, src.coarse, src.extra, src.classes)
-    h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch)
+    hold = (src.l0.mid, src.l0.hold) if src.l0 is not None and src.l0.hold.any() else None
+    h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch, hold)
     authored = src.l0.lake if src.l0 else None
     h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0, keep_at=authored)
     sea128 = cascade.open_sea(h128)
@@ -262,7 +272,9 @@ def main(argv=None) -> int:
     lake32 = cascade.refine_mask(lake128, 4, 2.0)
     lake_level32 = _spread(_nearest(np.nan_to_num(level128), 4), _nearest(lake128, 4), 4)
     snow_in, veg_in = src.cover(coarse, 4)
-    extra = [np.where(lake32, 255, 0).astype(np.uint8), cascade.soft_u8(snow_in, 1.0),
+    # Authored rivers are water for L2, which learned valley floors around rivers.
+    river32 = layout.rivers(src.l0.spec, 32.0, coarse.shape[0]) & (coarse >= 0) if src.l0 else lake32 & False
+    extra = [np.where(lake32 | river32, 255, 0).astype(np.uint8), cascade.soft_u8(snow_in, 1.0),
              cascade.soft_u8(veg_in, 1.0)]
     h32 = _sample(model, config, coarse, _condition(level, coarse, extra, src.classes_at(4)), args.steps,
                   args.seed + 1, args.batch)

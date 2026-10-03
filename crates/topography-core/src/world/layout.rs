@@ -31,6 +31,8 @@ const PASS_INNER_M: f32 = 200.0;
 const PASS_OUTER_M: f32 = 1500.0;
 const BASIN_RIM_M: f32 = 1000.0;
 const LAKE_DEPTH_M: f32 = 30.0;
+/// Relief fades out over this distance offshore (except in archipelagos).
+const SEA_RELIEF_M: f32 = 1500.0;
 
 type Point = [f32; 2];
 
@@ -511,6 +513,52 @@ struct Rendered {
     lake_level: Vec<f32>,
     snowline: Vec<f32>,
     forest: Vec<u8>,
+    /// How strongly the cascade holds `mid` while sampling (0-1): the landmarks.
+    hold: Vec<f32>,
+}
+
+/// Hold weights: high where a landmark's authored shape must survive L1 sampling, fading
+/// out so the model joins it to the generated terrain around it.
+fn hold_weights(layout: &Layout, n: usize) -> Vec<f32> {
+    let centre = |i: usize| (i as f32 + 0.5) * CELL_M;
+    let fade = |w: f32, inner: f32, outer: f32, d: f32| w * (1.0 - smoothstep(inner, outer, d));
+    (0..n * n)
+        .map(|k| {
+            let (x, y) = (centre(k % n), centre(k / n));
+            let mut w: f32 = 0.0;
+            for f in &layout.features {
+                w = w.max(match f {
+                    Feature::Volcano(v) => {
+                        fade(0.85, 0.3 * v.radius_m, v.radius_m, dist(v.at, x, y))
+                    }
+                    Feature::Cone(c) | Feature::Peak(c) => {
+                        fade(0.75, 0.3 * c.radius_m, c.radius_m, dist(c.at, x, y))
+                    }
+                    Feature::Basin(b) => {
+                        let rim = b.radius_m + BASIN_RIM_M;
+                        fade(0.85, b.radius_m, rim, dist(b.at, x, y))
+                    }
+                    Feature::Gorge(c) | Feature::Fjord(c) | Feature::BraidedRiver(c) => {
+                        let strength = match f {
+                            Feature::Gorge(_) if c.river => 0.9,
+                            Feature::Gorge(_) => 0.6,
+                            _ => 0.5,
+                        };
+                        let rw = (c.rim_width_m / 2.0).max(CELL_M);
+                        fade(strength, rw, rw + 2.0 * CELL_M, along(&c.path, x, y).0)
+                    }
+                    _ => 0.0,
+                });
+            }
+            for l in &layout.lakes {
+                w = w.max(fade(1.0, 0.0, 400.0, l.edge(x, y)));
+            }
+            for p in &layout.passes {
+                w = w.max(fade(0.7, 400.0, PASS_OUTER_M, dist(p.at, x, y)));
+            }
+            w
+        })
+        .collect()
 }
 
 fn render(layout: &Layout) -> Rendered {
@@ -762,6 +810,13 @@ fn render(layout: &Layout) -> Rendered {
         }
     }
 
+    // Open sea keeps little relief, or the models raise islands; archipelagos keep theirs.
+    for k in 0..n * n {
+        if coast[k] < 0.0 && class[k] != 5 {
+            relief[k] *= smoothstep(-SEA_RELIEF_M, 0.0, coast[k]);
+        }
+    }
+
     // Snowline from wind exposure across the island: windward low, lee high.
     let bearing = layout.wind_from_deg.to_radians();
     let (tx, ty) = (-bearing.sin(), bearing.cos()); // direction the wind blows toward (y south)
@@ -796,6 +851,7 @@ fn render(layout: &Layout) -> Rendered {
         lake_level,
         snowline,
         forest,
+        hold: hold_weights(layout, n),
     }
 }
 
@@ -1089,6 +1145,12 @@ pub fn build_layout(config_path: &Path, output: &Path) -> Result<PathBuf> {
     publish("lake-level.f32", &f32s(&r.lake_level))?;
     publish("snowline.f32", &f32s(&r.snowline))?;
     publish("forest.u8", &r.forest)?;
+    let hold: Vec<u8> = r
+        .hold
+        .iter()
+        .map(|w| (w.clamp(0.0, 1.0) * 255.0).round() as u8)
+        .collect();
+    publish("hold.u8", &hold)?;
     publish("fit-check.txt", report.as_bytes())?;
     let manifest = json!({
         "schema_version": 1,
@@ -1113,6 +1175,7 @@ pub fn build_layout(config_path: &Path, output: &Path) -> Result<PathBuf> {
             "lake-level.f32": "lake surface (m), NaN elsewhere",
             "snowline.f32": "snowline (m) from wind exposure",
             "forest.u8": "forest share 0-255 below the treeline",
+            "hold.u8": "weight 0-255 with which L1 sampling holds mid: the landmarks",
         },
     });
     write_new(
