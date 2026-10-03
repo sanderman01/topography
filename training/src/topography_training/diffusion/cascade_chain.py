@@ -324,7 +324,8 @@ def main(argv=None) -> int:
     n32 = args.l3_km * 1024 // 32  # 16 -> 512 cells of 32 m, 4,096 of 4 m
     m = 16
     y0 = x0 = (h32.shape[0] - n32) // 2
-    patch = h32[y0 - m : y0 + n32 + m, x0 - m : x0 + n32 + m]
+    # The smoothing margin repeats the edge where the square reaches the field's edge.
+    patch = np.pad(h32, m, mode="edge")[y0 : y0 + n32 + 2 * m, x0 : x0 + n32 + 2 * m]
     coarse = cascade.refine_surface(level, patch)[m * 8 : -m * 8, m * 8 : -m * 8]
     sl = np.s_[y0 : y0 + n32, x0 : x0 + n32]
     sea4 = cascade.refine_mask(sea32[sl], 8, 6.0)
