@@ -167,6 +167,14 @@ fn regions(
     if let (true, Some((_, true, id, pbf))) = (whole_first, &whole) {
         return Ok(vec![(id.clone(), pbf.clone())]);
     }
+    // Regions with sub-regions are skipped: one too large to download is why we are here,
+    // and points only they contain are open sea, which needs no inland water.
+    let parents: Vec<&str> = index["features"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f["properties"]["parent"].as_str())
+        .collect();
     let mut found: Vec<(String, String)> = Vec::new();
     for i in 0..8 {
         for j in 0..8 {
@@ -183,6 +191,9 @@ fn regions(
                 .filter_map(|f| {
                     let pbf = f["properties"]["urls"]["pbf"].as_str()?;
                     let id = f["properties"]["id"].as_str()?;
+                    if parents.contains(&id) {
+                        return None;
+                    }
                     rings(&f["geometry"])
                         .iter()
                         .filter(|p| inside(p, point))
