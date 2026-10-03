@@ -1,13 +1,13 @@
-# Fujion: draft layout spec (world-layout-spec-v1, format not yet validated by tools).
+# Fujion: layout spec v1, rendered to L0 by `topography world layout`.
 # See brief.md for intent and layout.md for a readable summary.
 # Positions are metres from the north-west corner: x east, y south.
-# Regions apply in order; later regions override the class of earlier ones.
-# `refs` name GLO-30 context regions (catalog/plans/context-regions-v1.toml).
-# Heights: floor and summit of the envelope, relief = typical local relief.
+# Regions set classes in order (later override earlier) and a ground surface that runs
+# from `ground_m[0]` at the coast to `ground_m[1]` at `ramp_m` inland; neighbours blend.
+# Ridges and features then raise or carve that surface. `relief_m` is local relief at
+# the 2 km envelope scale on top of it. `refs` name GLO-30 context regions.
 schema_version = 1
 name = "fujion"
 extent_m = 32768
-sea_level_m = 0
 wind_from_deg = 225
 windward_snowline_m = 1600
 lee_snowline_m = 2100
@@ -17,13 +17,12 @@ height_budget_m = [-200, 3776]
 default_class = 11
 
 [sea]
-# Short shelf, then down to the map edge; coarse only (GEBCO-like).
+# Short shelf, then down toward the map edge; coarse only.
 shelf_m = -40
 edge_m = -200
 
 [island]
 target_km2 = 670
-# Clockwise from the Na Pali arm; about 670 km².
 coast = [
   [3300, 5500], [5700, 3700], [9100, 3200], [13300, 2600], [17900, 2500],
   [21600, 2200], [23900, 2000], [27100, 2700], [29800, 3600], [30600, 5900],
@@ -35,9 +34,15 @@ coast = [
   [2400, 7300],
 ]
 
+[tiers]
+starter_ceiling_m = 1500
+mid_ceiling_m = 3000
+clearance_m = 100
+
 # ---------------------------------------------------------------- regions
 
-# First, so neighbouring regions take its outer flanks.
+# First, so neighbouring regions take its outer flanks. No ground of its own: the
+# cone stands on its neighbours' ground.
 [[regions]]
 id = "volcano"
 name = "Fujion"
@@ -46,11 +51,9 @@ refs = ["fuji", "teide"]
 center = [14900, 17400]
 radius_m = 8000
 target_km2 = 200
-floor_m = 200
-summit_m = 3776
-relief_m = 3500
-cover = "forest on the lower flanks, bare scoria, ice above about 2,600 m windward and 2,900 m lee"
-
+relief_m = 300
+forest = 0.6
+cover = "forest on the lower flanks, bare scoria, ice on the upper cone"
 
 [[regions]]
 id = "fjords"
@@ -59,13 +62,12 @@ class_id = 3
 refs = ["milford-sound", "doubtful-sound"]
 outline = [[1000, 11500], [4100, 12000], [8000, 13200], [9000, 15000], [9200, 19000],
            [8600, 20800], [7200, 23000], [4800, 23900], [1000, 23500]]
-target_km2 = 90  # includes the bay; overrides the cone's outer west flank
-floor_m = -150
-summit_m = 1600
+target_km2 = 55
+ground_m = [300, 1300]
+ramp_m = 3000
 relief_m = 1000
+forest = 0.9
 coast = "fjord mouths with skerries"
-cover = "dense forest below the treeline, bare rock and snow above"
-transitions = { volcano = "gradual, 2 km", alpine = "sharp, arm crest", napali = "gradual, 1 km" }
 
 [[regions]]
 id = "napali"
@@ -75,12 +77,11 @@ refs = ["na-pali", "madeira"]
 outline = [[1800, 5000], [5600, 2600], [8800, 3000], [11200, 9000], [10600, 12600],
            [8000, 13200], [4200, 12700], [2000, 9500]]
 target_km2 = 70
-floor_m = 0
-summit_m = 1200
+ground_m = [600, 900]
+ramp_m = 1500
 relief_m = 800
+forest = 0.8
 coast = "sheer cliffs 500-1,000 m, sea stacks, small beaches at valley mouths"
-cover = "dense forest and scrub on ridges, bare cliff faces"
-transitions = { plateau = "gradual, 2 km; wet to dry", fjords = "gradual, 1 km" }
 
 [[regions]]
 id = "plateau"
@@ -91,12 +92,11 @@ outline = [[8800, 3000], [13300, 2400], [17900, 2300], [22800, 1900], [23100, 43
            [21800, 7000], [23800, 8600], [21500, 10500], [18500, 9800], [16000, 9800],
            [12500, 10200], [11200, 9000]]
 target_km2 = 90
-floor_m = 0
-summit_m = 1100  # rim falls from 1,100 m at the volcano's foot to 700 m at the coast
-relief_m = 600
+ground_m = [700, 1100]
+ramp_m = 7000
+relief_m = 400
+forest = 0.1
 coast = "plateau bluffs 300-600 m, the delta at the canyon mouth"
-cover = "sparse scrub, bare rock"
-transitions = { volcano = "gradual, lava apron 2 km", dunes = "gradual, 1 km", napali = "gradual, 2 km" }
 
 [[regions]]
 id = "badlands"
@@ -105,43 +105,40 @@ class_id = 7
 refs = ["badlands-sd", "bardenas-reales", "monument-valley"]
 outline = [[23200, 11500], [26500, 9800], [30000, 10500], [29400, 16000], [29500, 19500],
            [28800, 22300], [24500, 22600], [22300, 21000], [22700, 16000]]
-target_km2 = 60
-floor_m = 0
-summit_m = 900
+target_km2 = 70
+ground_m = [150, 750]
+ramp_m = 5000
 relief_m = 300
+forest = 0.1
 coast = "eroded bluffs 100-300 m"
-cover = "bare ground, sparse scrub in washes"
-transitions = { volcano = "gradual, 2 km", rift = "lava flows over the badlands", karst = "sharp, SE arm crest" }
 
 [[regions]]
 id = "karst"
-name = "Drowned karst bay"
+name = "Drowned karst bay and the SE arm"
 class_id = 1
 refs = ["ha-long-bay", "yangshuo"]
 outline = [[11800, 28200], [14200, 25600], [17500, 25000], [20800, 24600], [24500, 22600],
            [28800, 22300], [29200, 26000], [29000, 31500], [12000, 31500]]
-target_km2 = 90  # includes the bay and the SE arm (limestone massif)
-floor_m = -40
-summit_m = 600
-relief_m = 300  # towers 100-400 m, one landmark tower 550 m
+target_km2 = 55
+ground_m = [50, 300]
+ramp_m = 3000
+relief_m = 300
+forest = 0.9
 coast = "towers on the shore and standing in the sea"
-cover = "dense forest on tower tops and slopes, bare cliffs"
-transitions = { volcano = "sharp, lava front on limestone", alpine = "gradual, 1 km", badlands = "sharp, SE arm crest" }
 
 [[regions]]
 id = "alpine"
 name = "South-west alpine arm"
 class_id = 6
 refs = ["zermatt", "aoraki-mount-cook"]
-outline = [[9600, 20800], [11500, 22500], [13000, 24800], [13500, 26800], [12400, 28500], [9100, 29800],
-           [4500, 29700], [2800, 28000], [4100, 25700], [5900, 23900], [7200, 23000]]
-target_km2 = 45
-floor_m = 0
-summit_m = 2600
-relief_m = 1500
+outline = [[9600, 20800], [11500, 22500], [13000, 24800], [13500, 26800], [12400, 28500],
+           [9100, 29800], [4500, 29700], [2800, 28000], [4100, 25700], [5900, 23900], [7200, 23000]]
+target_km2 = 55
+ground_m = [300, 900]
+ramp_m = 2500
+relief_m = 1200
+forest = 0.7
 coast = "cliffed headland at the arm tip"
-cover = "forest low, bare rock, glaciers and snow above 1,600 m"
-transitions = { volcano = "sharp, high saddle", fjords = "sharp, arm crest", karst = "gradual, 1 km" }
 
 [[regions]]
 id = "rift"
@@ -150,11 +147,11 @@ class_id = 11
 refs = ["timanfaya", "craters-of-the-moon"]
 path = [[19800, 12000], [22500, 10000], [25500, 8300], [28000, 7200], [28800, 5800], [29000, 4600]]
 width_m = 1500
-target_km2 = 20
-floor_m = 400
-summit_m = 1300
+target_km2 = 10
+ground_m = [600, 1000]
+ramp_m = 6000
 relief_m = 250
-cover = "bare lava and cinders"
+forest = 0.0
 
 # After the rift, so sand banks around the cones.
 [[regions]]
@@ -164,42 +161,68 @@ class_id = 8
 refs = ["great-sand-dunes", "sossusvlei"]
 outline = [[23700, 2300], [26800, 2800], [29600, 3800], [30200, 6000], [29900, 8600],
            [28000, 9400], [25500, 9600], [23800, 8600], [21800, 7000], [22000, 4800]]
-target_km2 = 55
-floor_m = 0
-summit_m = 450  # star dunes up to 250 m on a base near 200 m
-relief_m = 200
+target_km2 = 50
+ground_m = [20, 250]
+ramp_m = 4000
+relief_m = 150
+forest = 0.0
 coast = "beaches and the canyon delta"
-cover = "bare sand"
-transitions = { plateau = "gradual, 1 km", rift = "dunes banked against the end cones" }
+
+# The bay water between the towers: Ha Long's drowned-karst archipelago.
+[[regions]]
+id = "karst-bay"
+name = "Tower bay"
+class_id = 5
+refs = ["ha-long-bay", "palau-rock-islands"]
+outline = [[12400, 28500], [14700, 26900], [17000, 25700], [19700, 26000], [22500, 27100],
+           [24800, 28700], [26200, 29800], [27500, 31500], [12000, 31500]]
+target_km2 = 0
+relief_m = 300
+forest = 0.9
+coast = "towers and islets standing in shallow water"
+
+# ---------------------------------------------------------------- ridges (the X)
+
+# Crest heights run from the first point to the last; the cross-section is a rounded
+# ridge `width_m` wide that only raises the ground.
+[[ridges]]
+id = "nw-arm"
+path = [[11500, 12500], [8500, 9800], [5500, 7200], [3300, 5500]]
+crest_m = [1200, 700]
+width_m = 3500
+
+[[ridges]]
+id = "sw-arm"
+path = [[10800, 21700], [8300, 24400], [6000, 26800], [3600, 28600]]
+crest_m = [2400, 1500]
+width_m = 4500
+
+[[ridges]]
+id = "se-arm"
+path = [[20000, 22800], [23500, 25000], [26500, 27200], [28000, 29000]]
+crest_m = [1800, 800]
+width_m = 4000
+note = "limestone massif; sharp border between the badlands and the karst"
+
+[[ridges]]
+id = "ne-rift"
+path = [[19800, 12000], [22500, 10000], [25500, 8300], [28000, 7200]]
+crest_m = [1300, 700]
+width_m = 3000
 
 # ---------------------------------------------------------------- hero features
 
 [[features]]
-id = "summit"
-kind = "crater"
+id = "fujion"
+kind = "volcano"
 class_id = 4
 at = [14900, 17400]
-diameter_m = 800
-rim_m = 3776
-floor_m = 3550
-fill = "ice and snow"
-profile = "concave like Mayon: gentle below 1,500 m, over 35 degrees near the top"
-
-[[features]]
-id = "flank-cone"
-kind = "cone"
-class_id = 4
-at = [19300, 13200]
-summit_m = 1600
-crater_diameter_m = 900
-note = "open-sided crater facing north-east, downslope (like Hoei on Fuji)"
-
-[[features]]
-id = "rift-cones"
-kind = "cones"
-points = [[21500, 10900], [23300, 9500], [25000, 8600], [26700, 7700], [28400, 6400], [28800, 4900]]
-height_above_ground_m = [100, 300]
-note = "lava flows from the cones spread south-east over the badlands"
+radius_m = 8000
+summit_m = 3776
+concavity = 1.8  # profile exponent: over 35 degrees near the top, gentle below 1,500 m
+crater_diameter_m = 800
+crater_floor_m = 3550
+note = "crater filled with ice and snow"
 
 [[features]]
 id = "ice-cap"
@@ -207,7 +230,6 @@ kind = "glacier"
 class_id = 10
 at = [14900, 17400]
 radius_m = 2500
-floor_m = 2600
 
 [[features]]
 id = "west-outlet"
@@ -215,48 +237,51 @@ kind = "glacier"
 class_id = 10
 path = [[12400, 16800], [10200, 16000], [8700, 15600]]
 width_m = 900
-floor_m = [2700, 400]
 
 [[features]]
-id = "outwash-fan"
-kind = "braided_river"
-class_id = 9
-path = [[8700, 15600], [6300, 15800]]
-width_m = 1200
-floor_m = [300, 2]
-note = "small fan at the head of the middle fjord; refs rakaia-upper"
+id = "flank-cone"
+kind = "cone"
+class_id = 4
+at = [19300, 13200]
+radius_m = 1500
+summit_m = 1600
+note = "open-sided crater 900 m across facing north-east, like Hoei on Fuji"
 
 [[features]]
-id = "fjord-south"
-kind = "fjord"
-path = [[2000, 21400], [5000, 21000], [7600, 21700], [9200, 21600]]
-width_m = 900
-floor_m = [-150, 10]
-wall_m = 1500
+id = "rift-cones"
+kind = "cones"
+class_id = 11
+points = [[21500, 10900], [23300, 9500], [25000, 8600], [26700, 7700], [28400, 6400], [28800, 4900]]
+radius_m = 600
+height_m = 200
+note = "100-300 m above the ground; lava flows spread south-east over the badlands"
 
 [[features]]
-id = "fjord-middle"
-kind = "fjord"
-path = [[1200, 16500], [5000, 16100], [6300, 15800]]
-width_m = 800
-floor_m = [-120, 2]
-wall_m = 900
-
-[[features]]
-id = "fjord-north"
-kind = "fjord"
-path = [[1500, 12000], [5800, 12100]]
-width_m = 600
-floor_m = [-80, 5]
-wall_m = 800
+id = "islet"
+kind = "cone"
+class_id = 11
+at = [1300, 2800]
+radius_m = 800
+summit_m = 400
+note = "volcanic islet off the Na Pali coast, like Stromboli"
 
 [[features]]
 id = "horn"
 kind = "peak"
 class_id = 6
 at = [8300, 24400]
+radius_m = 1500
 summit_m = 2600
-note = "pyramid horn, smaller Matterhorn (refs zermatt)"
+note = "pyramid horn, a smaller Matterhorn"
+
+[[features]]
+id = "great-tower"
+kind = "peak"
+class_id = 1
+at = [20600, 27400]
+radius_m = 400
+summit_m = 550
+note = "karst tower standing in shallow water"
 
 [[features]]
 id = "cirque-basin"
@@ -268,43 +293,7 @@ floor_m = 1800
 rim_m = 2300
 lip_m = 1750
 lip_at = [8200, 27600]
-note = "hanging basin, mid tier only; outlet falls to the south coast"
-
-[[features]]
-id = "canyon"
-kind = "gorge"
-class_id = 2
-path = [[16600, 9000], [17800, 7700], [17300, 6100], [18700, 5000], [20300, 5500],
-        [21100, 4100], [21000, 2900], [22600, 2400], [23200, 1700]]
-floor_width_m = [150, 400]
-rim_width_m = [600, 1500]
-floor_m = [740, 0]
-depth_m = [400, 700]
-river = "snowmelt from head-lake"
-
-[[features]]
-id = "canyon-box"
-kind = "gorge"
-class_id = 2
-path = [[17800, 7700], [19500, 8000], [21000, 7400], [22200, 7700]]
-floor_width_m = [80, 150]
-note = "dead end in a box canyon"
-
-[[features]]
-id = "canyon-slot"
-kind = "gorge"
-class_id = 2
-path = [[17300, 6100], [15700, 5600], [14200, 5800], [12800, 5200]]
-floor_width_m = [25, 50]
-note = "risky slot shortcut; climbs out west onto the plateau; held from L3 down"
-
-[[features]]
-id = "canyon-dunes"
-kind = "gorge"
-class_id = 2
-path = [[21100, 4100], [22600, 4500], [24000, 5200]]
-floor_width_m = [80, 150]
-note = "climbs out at the dune edge"
+note = "hanging basin, mid tier only; its outlet falls to the south coast"
 
 [[features]]
 id = "star-dunes"
@@ -312,25 +301,87 @@ kind = "dunes"
 class_id = 8
 at = [27300, 5600]
 radii_m = [1800, 1500]
-height_above_ground_m = [150, 250]
-note = "banked against the end cones; low crescent and ridge dunes 10-40 m elsewhere"
+height_m = 100
+relief_m = 250
+note = "star dunes 150-250 m banked against the end cones; 10-40 m dunes elsewhere"
+
+# Carved features: a trough `width_m` wide at the bed, walls out to `rim_width_m`.
+# Beds run from the first point to the last.
+[[features]]
+id = "fjord-south"
+kind = "fjord"
+path = [[2000, 21400], [5000, 21000], [7600, 21700], [9200, 21600]]
+width_m = 900
+rim_width_m = 2400
+bed_m = [-150, 10]
 
 [[features]]
-id = "great-tower"
-kind = "tower"
-class_id = 1
-at = [20600, 27400]
-summit_m = 550
-note = "stands in shallow water off the shore"
+id = "fjord-middle"
+kind = "fjord"
+path = [[1200, 16500], [5000, 16100], [6300, 15800]]
+width_m = 800
+rim_width_m = 2000
+bed_m = [-120, 2]
 
 [[features]]
-id = "islet"
-kind = "cone"
-class_id = 11
-at = [1300, 2800]
-summit_m = 400
-radius_m = 700
-note = "volcanic islet off the Na Pali coast, like Stromboli"
+id = "fjord-north"
+kind = "fjord"
+path = [[1500, 12000], [5800, 12100]]
+width_m = 600
+rim_width_m = 1600
+bed_m = [-80, 5]
+
+[[features]]
+id = "outwash-fan"
+kind = "braided_river"
+class_id = 9
+path = [[8700, 15600], [6300, 15800]]
+width_m = 1200
+rim_width_m = 1800
+bed_m = [300, 2]
+note = "small fan at the head of the middle fjord (like the upper Rakaia)"
+
+[[features]]
+id = "canyon"
+kind = "gorge"
+class_id = 2
+path = [[16600, 9000], [17800, 7700], [17300, 6100], [18700, 5000], [20300, 5500],
+        [21100, 4100], [21000, 2900], [22600, 2400], [23200, 1700]]
+width_m = 300
+rim_width_m = 1200
+bed_m = [770, 0]
+river = true
+note = "floor 150-400 m wide, 400-700 m deep; the outlet of head-lake"
+
+[[features]]
+id = "canyon-box"
+kind = "gorge"
+class_id = 2
+path = [[17800, 7700], [19500, 8000], [21000, 7400], [22200, 7700]]
+width_m = 120
+rim_width_m = 500
+bed_m = [640, 820]
+note = "dead end in a box canyon"
+
+[[features]]
+id = "canyon-slot"
+kind = "gorge"
+class_id = 2
+path = [[17300, 6100], [15700, 5600], [14200, 5800], [12800, 5200]]
+width_m = 40
+rim_width_m = 300
+bed_m = [530, 950]
+note = "risky slot shortcut, 25-50 m wide; climbs out west onto the plateau; held from L3 down"
+
+[[features]]
+id = "canyon-dunes"
+kind = "gorge"
+class_id = 2
+path = [[21100, 4100], [22600, 4500], [24000, 5200]]
+width_m = 120
+rim_width_m = 500
+bed_m = [170, 300]
+note = "climbs out at the dune edge"
 
 # ---------------------------------------------------------------- water
 
@@ -362,14 +413,9 @@ radius_m = 400
 surface_m = 1820
 note = "meltwater tarn in the cirque basin"
 
-# Rivers other than the canyon come from the drainage pass, scaled by class water rules.
+# ---------------------------------------------------------------- routes
 
-# ---------------------------------------------------------------- routes and tiers
-
-[tiers]
-starter_ceiling_m = 1500
-mid_ceiling_m = 3000
-
+# Passes are carved as saddles no higher than `height_m`.
 [[passes]]
 id = "napali-gap"
 tier = "starter"
@@ -405,9 +451,9 @@ note = "between the horn and the volcano"
 [[passes]]
 id = "volcano-shoulder"
 tier = "mid"
-at = [13600, 15700]
+at = [13900, 16300]
 height_m = 2700
-note = "shortcut over the NW shoulder between the fjords and the plateau"
+note = "over the NW shoulder, between the fjords and the plateau"
 
 [[destinations]]
 id = "cirque"
@@ -419,7 +465,8 @@ id = "summit"
 tier = "specialist"
 at = [14900, 17400]
 
-# Flat patches (0.5-1 km² under 5 degrees) reserved for future settlements.
+# Flat patches (0.5-1 km² under 5 degrees) reserved for future settlements; all starter
+# tier unless a destination above says otherwise.
 [[sites]]
 region = "fjords"
 at = [7400, 15700]
@@ -435,22 +482,23 @@ note = "wide canyon floor bend"
 
 [[sites]]
 region = "volcano"
-at = [16800, 11400]
-note = "head-lake south shore"
+at = [15300, 10700]
+note = "head-lake west shore"
 
 [[sites]]
 region = "badlands"
-at = [26500, 14500]
+at = [25000, 13200]
 note = "mesa top"
 
 [[sites]]
 region = "dunes"
-at = [23400, 2400]
-note = "canyon delta"
+at = [24900, 2600]
+note = "beach east of the canyon delta"
 
 [[sites]]
 region = "karst"
-at = [22500, 26300]
+at = [20900, 26200]
+note = "bay shore"
 
 [[sites]]
 region = "alpine"

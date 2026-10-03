@@ -41,6 +41,7 @@ Usage: topography [--help | --version]
        topography context serve <regions-dir> <port>
        topography context release <regions-dir> <new-output-dir> [min-per-class]
        topography world sketch <sketch.toml> <new-output-dir>
+       topography world layout <layout.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
        topography export view <export-dir> [port]
@@ -343,6 +344,12 @@ fn main() -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => workflow_result(Err(error)),
             };
+        }
+        [command, action, config, output] if command == "world" && action == "layout" => {
+            return workflow_result(
+                topography_core::world::build_layout(Path::new(config), Path::new(output))
+                    .map(|p| p.display().to_string()),
+            );
         }
         [command, action, config, output] if command == "world" && action == "sketch" => {
             return workflow_result(
