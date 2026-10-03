@@ -82,6 +82,11 @@ exists. Consult upstream documentation for the versions actually selected.
   a recorded judgment call, never left as a blocker.
 - Split training data geographically before overlapping crops. Admit source data
   only under the master plan's quality and documented training-permission gates.
+- Terrain models must use their conditioning. Coarse elevation and terrain class
+  are the most important inputs at every level; prove each input changes the output
+  with a swap test at every checkpoint, and review on invented and painted inputs,
+  not only real held-out ones. A good loss or blind review does not show this. See
+  [class conditioning](docs/plans/class-conditioning-v1.md).
 - Keep the 16 GB VRAM ceiling. Establish real-terrain and numeric-precision
   baselines before expensive model work; curated patches and blending remain a
   supported fallback if diffusion fails its feasibility gate.

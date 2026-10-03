@@ -76,6 +76,12 @@ every proposed gate as an implemented or permanently fixed rule.
   routes. Optional camera-height controls are viewing aids. The owner decides
   whole-tile suitability with a yes/no judgment; these views do not define
   acceptance thresholds.
+- Blind reviews of generated terrain must include generations from invented or
+  painted inputs and a class grid (one input rendered in several classes), not only
+  real held-out inputs. A real coarse surface carries its region's character, so a
+  model that ignores its conditioning can still pass (all cascade levels did on
+  2026-10-03). Automatic input swap tests run before the owner review; see
+  [machine learning](machine-learning.md).
 - Record representation limits during review. A heightfield cannot represent
   caves, arches, or overhangs; flag features the chosen representation or survey
   cannot support.

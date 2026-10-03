@@ -243,7 +243,17 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   `data/worlds/cascade-world-1-howe-sound`, 4 m export for review. Awaiting the
   owner's look before L4.
 
+- **Class ignored (2026-10-03).** A class-swap test on the painted Fujion world showed
+  that L1, L2, L3 and L4 all ignore the terrain class (correlation between classes
+  0.99–1.00, against 0.33–0.67 for a seed change), so every biome got the same
+  texture. The blind reviews could not catch it because they generated from real
+  coarse inputs. Retraining with a class signal the models cannot ignore, new gates
+  and more data per class: [class conditioning](class-conditioning-v1.md).
+
 ## Gates and fallbacks
+
+- Every level must pass the class-swap and class-recognition gates of the
+  [class conditioning plan](class-conditioning-v1.md) before its blind review.
 
 - If L1/L2 cannot reproduce recognizable large landforms after two runs, compose
   L2 from real GLO-30 patches placed per the layout and blended (master plan §8)

@@ -26,6 +26,32 @@ feasibility before committing to a diffusion architecture or a large training ru
   they may supervise only the 4 m and 16 m levels; upsampling is not fine-detail
   ground truth. See [geospatial processing](geospatial.md).
 
+## Prove that every conditioning input is used
+
+A conditioning input the model can ignore will be ignored when another input already
+predicts the target. On 2026-10-03 all four cascade levels were found to ignore the
+terrain class entirely, after passing every blind review; see
+[class conditioning](../plans/class-conditioning-v1.md).
+
+- Coarse elevation and terrain class are the two most important inputs at every
+  level. A terrain model must behave differently per class: class-typical forms
+  (dune ridges, mesa steps, karst towers, gullies, crater rims) at its scale.
+- Test each input with a swap test: same window, same seed, change only that input.
+  The change must move the output more than changing the seed, and in that input's
+  direction. Run it at each validation checkpoint, not only after training. An
+  untested input counts as ignored.
+- Check that generated terrain is recognised as its requested class by a simple
+  classifier trained on real held-out terrain of that level.
+- Design training so the input is necessary: drop the competing inputs (coarse
+  surface, envelope) for a share of windows, balance classes by independent region,
+  and include windows that mix classes along a border. With one class per region the
+  class is only a region label the coarse surface already implies.
+- Evaluate on the inputs the model will meet in use (painted and invented layouts,
+  mixed classes), not only on real held-out coarse surfaces, which carry the answer.
+- Before a long run, get enough independent regions per class (see the targets in
+  the class conditioning plan); acquire more public data rather than training a class
+  on one or two regions.
+
 ## Measure numeric fidelity first
 
 - Load DEMs as scalar physical values. Use fixed normalization per model level,
