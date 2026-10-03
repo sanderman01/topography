@@ -196,13 +196,15 @@ def _pick(order, area, budget) -> list[int]:
     return chosen
 
 
-def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float, tarns: bool = False):
+def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float, tarns: bool = False,
+          keep_at: np.ndarray | None = None):
     """Make a generated surface drain like real terrain.
 
     Depressions are kept as lakes (flat at their spill level) until they cover
     `lake_share` of the land: the largest by volume, or with `tarns` the deepest compact
     small ones (cirque tarns and kettles rather than valley-floor flats). Every other
-    depression is carved through and the cut is widened into a valley floor.
+    depression is carved through and the cut is widened into a valley floor. Depressions
+    touching `keep_at` (authored lakes) are always kept and count toward the share.
     Returns (surface, lake mask, lake level)."""
     from scipy import ndimage
 
@@ -214,6 +216,8 @@ def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float,
         idx = np.arange(1, count + 1)
         area = ndimage.sum(np.ones(h.shape), labels, idx)
         budget = lake_share * (~sea).sum()
+        forced = [] if keep_at is None else [int(k) for k in np.unique(labels[keep_at & (labels > 0)])]
+        budget -= sum(area[k - 1] for k in forced)
         if tarns:
             deepest = ndimage.maximum(depth, labels, idx)
             span = np.array([max(s[0].stop - s[0].start, s[1].stop - s[1].start) for s in ndimage.find_objects(labels)])
@@ -222,7 +226,7 @@ def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float,
             order = [k for k in np.argsort(-deepest) if ok[k]]
         else:
             order = np.argsort(-ndimage.sum(depth, labels, idx))
-        keep = np.isin(labels, _pick(order, area, budget))
+        keep = np.isin(labels, _pick([k for k in order if k + 1 not in forced], area, budget) + forced)
     work = np.where(keep, filled, h)
     cut = work - carve(work, sea | keep)
     widened = np.maximum(cut, smooth(_maxpool3(cut).astype(np.float32), widen_sigma))

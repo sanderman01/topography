@@ -174,6 +174,30 @@ def _reach(src: Source, h: np.ndarray, cell_m: float, out: Path, name: str):
     print(f"{name} reachability: {warnings} warning(s), see reach-{name}.txt", flush=True)
 
 
+def _lakes(src: Source, lake: np.ndarray, level: np.ndarray, out: Path):
+    """Where each authored lake ended up after L1: its kept hollow's area and level."""
+    if src.l0 is None:
+        return
+    from scipy import ndimage
+
+    labels, _ = ndimage.label(lake)
+    lines = []
+    for lk in src.l0.spec.get("lakes", []):
+        cells = layout.lake_cells(lk, src.l0.cell_m, lake.shape[0])
+        ids = np.unique(labels[cells & (labels > 0)])
+        if not len(ids):
+            lines.append(f"  WARN {lk['id']:<13} missing: the generated surface has no hollow there")
+            continue
+        got = np.isin(labels, ids)
+        km2, surface = got.sum() * src.l0.cell_m**2 / 1e6, float(np.nanmean(level[got]))
+        ok = surface <= lk["surface_m"] + 50
+        lines.append(f"  {'ok  ' if ok else 'WARN'} {lk['id']:<13} {km2:5.2f} km² at {surface:.0f} m "
+                     f"(spec {cells.sum() * src.l0.cell_m**2 / 1e6:.2f} km² at {lk['surface_m']:.0f} m)")
+    text = "Authored lakes after L1\n" + "\n".join(lines) + "\n"
+    (out / "lakes-l1.txt").write_text(text)
+    print(text, end="", flush=True)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     for level in ("l1", "l2", "l3"):
@@ -221,16 +245,14 @@ def main(argv=None) -> int:
         return 2
     cond = _condition(level, src.coarse, src.extra, src.classes)
     h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch)
-    fixed = src.l0.lake & (h128 >= 0) if src.l0 else np.zeros(h128.shape, bool)
-    h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128) | fixed, water.lake_share, 1.0)
-    if fixed.any():
-        h128[fixed] = level128[fixed] = src.l0.lake_level[fixed]
-        lake128 |= fixed
+    authored = src.l0.lake if src.l0 else None
+    h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0, keep_at=authored)
     sea128 = cascade.open_sea(h128)
     lake128 &= ~sea128
     times["l1_s"] = time.time() - t
     print(f"L1 {h128.shape} in {times['l1_s']:.0f} s; sea {sea128.mean():.1%}, lakes {lake128.mean():.1%}", flush=True)
     _reach(src, h128, 128.0, args.out, "l1")
+    _lakes(src, lake128, level128, args.out)
 
     # L2: the whole region, seabed included; lakes are the only water it is told about.
     t = time.time()

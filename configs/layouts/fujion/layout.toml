@@ -235,7 +235,7 @@ radius_m = 2500
 id = "west-outlet"
 kind = "glacier"
 class_id = 10
-path = [[12400, 16800], [10200, 16000], [8700, 15600]]
+path = [[12400, 16800], [11000, 16300], [10000, 16000]]
 width_m = 900
 
 [[features]]
@@ -310,9 +310,9 @@ note = "star dunes 150-250 m banked against the end cones; 10-40 m dunes elsewhe
 [[features]]
 id = "fjord-south"
 kind = "fjord"
-path = [[2000, 21400], [5000, 21000], [7600, 21700], [9200, 21600]]
+path = [[2000, 21400], [5000, 21000], [7600, 21700]]
 width_m = 900
-rim_width_m = 2400
+rim_width_m = 1800
 bed_m = [-150, 10]
 
 [[features]]
@@ -335,11 +335,11 @@ bed_m = [-80, 5]
 id = "outwash-fan"
 kind = "braided_river"
 class_id = 9
-path = [[8700, 15600], [6300, 15800]]
+path = [[7700, 15700], [6300, 15800]]
 width_m = 1200
 rim_width_m = 1800
-bed_m = [300, 2]
-note = "small fan at the head of the middle fjord (like the upper Rakaia)"
+bed_m = [360, 2]
+note = "small fan from the glacier lake to the head of the middle fjord (like the upper Rakaia)"
 
 [[features]]
 id = "canyon"
@@ -383,28 +383,46 @@ rim_width_m = 500
 bed_m = [170, 300]
 note = "climbs out at the dune edge"
 
+# Lake outlets: small valleys that set each lake's spill level.
+[[features]]
+id = "valley-outlet"
+kind = "gorge"
+class_id = 3
+path = [[8650, 21450], [8200, 21600], [7600, 21700]]
+width_m = 150
+rim_width_m = 700
+bed_m = [198, 10]
+note = "the moraine dam's notch down to the south fjord head"
+
+[[features]]
+id = "east-outlet"
+kind = "gorge"
+class_id = 7
+path = [[22800, 16600], [24200, 17100], [25600, 17600]]
+width_m = 100
+rim_width_m = 600
+bed_m = [635, 450]
+note = "dry wash through the badlands"
+
 # ---------------------------------------------------------------- water
 
-[[lakes]]
-id = "head-lake"
-at = [16800, 10200]
-radius_m = 1200
-surface_m = 780
-note = "lava-dammed; outflow feeds the canyon"
+# Lakes are dammed hollows at `surface_m`; the cascade keeps the generated hollow as a lake
+# and its shoreline follows the terrain. Most lakes come from the drainage pass by class
+# (fjords, glaciers and alpine get more); these are the landmarks. The wet SW holds most.
 
 [[lakes]]
-id = "rift-lake"
-at = [18900, 10700]
-radius_m = 800
-surface_m = 820
-note = "lava-dammed; drains to head-lake"
+id = "glacier-lake"
+at = [9000, 15700]
+radius_m = 1000
+surface_m = 380
+note = "proglacial lake at the west outlet's snout, like Tasman Lake; drains over the fan"
 
 [[lakes]]
-id = "east-lake"
-at = [22300, 16600]
-radius_m = 1300
-surface_m = 640
-note = "lava-dammed; drains east through the badlands"
+id = "valley-lake"
+path = [[9000, 21400], [10000, 20900], [11000, 20500]]
+width_m = 700
+surface_m = 200
+note = "moraine-dammed valley lake behind the south fjord, like Manapouri; drains to its head"
 
 [[lakes]]
 id = "tarn"
@@ -412,6 +430,20 @@ at = [7800, 26500]
 radius_m = 400
 surface_m = 1820
 note = "meltwater tarn in the cirque basin"
+
+[[lakes]]
+id = "head-lake"
+at = [16800, 10200]
+radius_m = 1200
+surface_m = 780
+note = "lava-dammed snowmelt lake on the lee foot; its outflow cuts the canyon"
+
+[[lakes]]
+id = "east-lake"
+at = [22300, 16600]
+radius_m = 500
+surface_m = 640
+note = "small lava-dammed lake; drains east through the badlands"
 
 # ---------------------------------------------------------------- routes
 

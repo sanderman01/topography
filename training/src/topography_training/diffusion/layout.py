@@ -64,6 +64,20 @@ def load(d: Path) -> L0:
               a["snowline.f32"], a["forest.u8"])
 
 
+def lake_cells(lk: dict, cell_m: float, n: int) -> np.ndarray:
+    """Cells of an authored lake on an n x n grid (round or along a valley path)."""
+    c = (np.arange(n) + 0.5) * cell_m
+    x, y = np.meshgrid(c, c)
+    if "at" in lk:
+        return np.hypot(x - lk["at"][0], y - lk["at"][1]) < lk["radius_m"]
+    d = np.full(x.shape, np.inf)
+    for (ax, ay), (bx, by) in zip(lk["path"], lk["path"][1:]):
+        dx, dy = bx - ax, by - ay
+        t = np.clip(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy), 0, 1)
+        d = np.minimum(d, np.hypot(x - ax - t * dx, y - ay - t * dy))
+    return d < lk["width_m"] / 2
+
+
 def _font(size: int):
     from PIL import ImageFont
 
@@ -163,8 +177,8 @@ def overview(l0: L0, out: Path, px: int = 2048) -> Path:
             d.ellipse([x - rr, y - rr, x + rr, y + rr], outline=(0, 0, 0), width=2)
             _label(d, (x + rr, y - rr), f"{f['id']} floor {f['floor_m']:.0f} m", small)
     for lk in spec.get("lakes", []):
-        x, y = P(lk["at"])
-        _label(d, (x - 20, y - 8), f"{lk['surface_m']:.0f}", small, (190, 225, 255))
+        x, y = P(lk["at"] if "at" in lk else lk["path"][len(lk["path"]) // 2])
+        _label(d, (x - 40, y - 8), f"{lk['id']} {lk['surface_m']:.0f} m", small, (190, 225, 255))
     for p in spec.get("passes", []):
         x, y = P(p["at"])
         c = TIER_RGB[TIERS.index(p["tier"])]

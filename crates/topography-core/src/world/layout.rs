@@ -30,6 +30,7 @@ const PASS_GRADE: f32 = 0.15;
 const PASS_INNER_M: f32 = 200.0;
 const PASS_OUTER_M: f32 = 1500.0;
 const BASIN_RIM_M: f32 = 1000.0;
+const LAKE_DEPTH_M: f32 = 30.0;
 
 type Point = [f32; 2];
 
@@ -207,10 +208,14 @@ enum Feature {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+/// A dammed hollow, round (`at` + `radius_m`) or along a valley (`path` + `width_m`). The
+/// cascade keeps the generated hollow there as a lake; its shoreline comes from the terrain.
 struct Lake {
     id: String,
-    at: Point,
-    radius_m: f32,
+    at: Option<Point>,
+    radius_m: Option<f32>,
+    path: Option<Vec<Point>>,
+    width_m: Option<f32>,
     surface_m: f32,
     #[allow(dead_code)]
     note: Option<String>,
@@ -283,6 +288,17 @@ struct Layout {
     destinations: Vec<Destination>,
     #[serde(default)]
     sites: Vec<Site>,
+}
+
+impl Lake {
+    /// Distance outside the lake's edge (negative inside).
+    fn edge(&self, x: f32, y: f32) -> f32 {
+        match (self.at, self.radius_m, &self.path, self.width_m) {
+            (Some(at), Some(r), _, _) => dist(at, x, y) - r,
+            (_, _, Some(p), Some(w)) => along(p, x, y).0 - w / 2.0,
+            _ => f32::MAX,
+        }
+    }
 }
 
 impl Feature {
@@ -465,6 +481,12 @@ fn validate(layout: &Layout) -> Result<()> {
             .all(within),
         "passes and destinations must lie inside the extent",
     )?;
+    for l in &layout.lakes {
+        ensure(
+            (l.at.is_some() && l.radius_m.is_some()) != (l.path.is_some() && l.width_m.is_some()),
+            format!("lake {} needs at + radius_m or path + width_m", l.id),
+        )?;
+    }
     for s in &layout.sites {
         ensure(
             layout.regions.iter().any(|r| r.id == s.region),
@@ -719,8 +741,10 @@ fn render(layout: &Layout) -> Rendered {
     }
     for l in &layout.lakes {
         for (k, x, y) in cells() {
-            if dist(l.at, x, y) < l.radius_m {
-                mid[k] = l.surface_m;
+            let e = l.edge(x, y);
+            if e < 0.0 {
+                // A shallow bowl below the surface, so the models see a basin to keep.
+                mid[k] = l.surface_m - LAKE_DEPTH_M * smoothstep(0.0, 300.0, -e);
                 lake[k] = 255;
                 lake_level[k] = l.surface_m;
             }
@@ -965,12 +989,11 @@ fn fit_check(layout: &Layout, r: &Rendered) -> (String, usize) {
         // Lowest ground on a ring just outside the lake: the spill point.
         let rim = (0..r.n * r.n)
             .filter(|&k| {
-                let d = dist(
-                    l.at,
+                let d = l.edge(
                     (k % r.n) as f32 * CELL_M + 64.0,
                     (k / r.n) as f32 * CELL_M + 64.0,
                 );
-                d > l.radius_m + 64.0 && d < l.radius_m + 400.0
+                d > 64.0 && d < 192.0
             })
             .map(|k| r.mid[k])
             .fold(f32::MAX, f32::min);
