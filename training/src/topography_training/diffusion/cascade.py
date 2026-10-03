@@ -58,7 +58,9 @@ LEVELS = {
     "l4": Level("l4", 1, 3, 1, block=4, smooth_cells=2.0, margin=16, stride=16, water_in_loss=False),
 }
 # Layout 3 channels set to 0 when dropped in training, for guidance at generation.
-SHAPE_CHANNELS, COVER_CHANNELS = (0, 1, 2), (5, 6)
+# Coarse dropout hides shape, slopes and absolute height: absolute height alone carries
+# the whole coarse surface (L2 pilot of 2026-10-04 learned no class with it left in).
+SHAPE_CHANNELS, COVER_CHANNELS = (0, 1, 2, 3), (5, 6)
 MIN_VALID = 0.9  # share of surveyed cells a training window needs
 
 
