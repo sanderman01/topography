@@ -85,6 +85,20 @@ level; it is not overridden by a good blind review.
 4. **The other inputs.** The swap test is repeated for water, snow/ice, vegetation
    and landmark channels where the level has them.
 
+Baseline of the current runs (`class_gates`, 2026-10-03; recognition is the share of
+generated windows recognised as their requested class, against the classifier's
+leave-one-region-out accuracy on real windows):
+
+| Level | Between classes | Other seed | Real | Swapped | Own | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| L1 run 3 | 0.99 | 0.43 | 0.42 | 0.19 | 0.42 | fail |
+| L2 run 2 | 1.00 | 0.69 | 0.24 | 0.00 | 0.42 | fail |
+| L3 run 1 | 1.00 | 0.71 | 0.17 | 0.08 | 0.35 | fail |
+| L4 run 5 | 1.00 | 0.71 | 0.32 | 0.12 | 0.38 | fail |
+
+The classifier's real accuracy (chance is 0.08) is low with 3–7 regions per class; it
+must rise with the new data before the recognition gate means much.
+
 Checkpoints are tested during training (at each validation step), so a run that is
 not learning the class is stopped early instead of finishing its full budget.
 
