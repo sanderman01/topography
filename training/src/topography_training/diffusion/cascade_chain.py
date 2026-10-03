@@ -228,7 +228,7 @@ def main(argv=None) -> int:
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 4.0, "size": [h4.shape[1], h4.shape[0]],
         "method": "cascade chain L1 -> L2 -> L3 from a derived layout", "water_fill": "ground continues under the sea; lakes flat at their spill level",
-        "region": args.region, "steps": args.steps, "water": vars(water), "times": times,
+        "region": args.region, "class_id": r.class_id, "steps": args.steps, "water": vars(water), "times": times,
         "runs": {k: str(getattr(args, f"{k}_run").resolve()) for k in ("l1", "l2", "l3")},
         "layers": digests}, indent=1))
     print(f"wrote {args.out}", flush=True)

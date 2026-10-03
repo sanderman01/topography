@@ -155,18 +155,22 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
 
 
 @torch.no_grad()
-def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None):
+def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None,
+                 noise=None):
     """Heun EDM sampling over a field of any size.
 
-    cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`."""
+    cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`.
+    noise: optional unit starting noise [1, T, H, W]; otherwise drawn from `seed`."""
     if isinstance(cond, torch.Tensor):
         cond = TensorField(cond)
     if isinstance(negative, torch.Tensor):
         negative = TensorField(negative)
-    gen = torch.Generator(device="cpu").manual_seed(seed)
     h, w = cond.shape
     sigmas = sigma_schedule(steps)
-    x = torch.randn((1, model.target_channels, h, w), generator=gen).to(cond.device) * sigmas[0]
+    if noise is None:
+        gen = torch.Generator(device="cpu").manual_seed(seed)
+        noise = torch.randn((1, model.target_channels, h, w), generator=gen)
+    x = noise.to(cond.device) * sigmas[0]
     # In-place updates keep at most four field-sized tensors alive.
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]

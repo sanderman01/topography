@@ -227,7 +227,14 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   8 h, 12,484 steps): unit-range shape and slope inputs, 10% coarse and cover
   dropout, water out of the loss. Same-seed residual correlation across 8 windows
   0.29 (run 4: 0.99); mean slope 19.6° as real, curvature std 0.28 vs 0.35 m.
-  Blind review 32/32 Yes (2026-10-03). Next: banded L4 generation.
+  Blind review 32/32 Yes (2026-10-03).
+- Banded L4 (`cascade_l4`): refines a `cascade_chain` 4 m world to 1 m in row bands
+  (default 2,048 m with a 256 m halo), with starting noise shared where bands overlap
+  and a cross-fade over the halo. Output layers are memory-mapped and resumable per
+  band; water keeps the smooth 4 m surface. A 2 km Canyonlands test shows no visible
+  band joins (fade rows about 12% smoother) and exports through `export heightmap`.
+  Speed about 30,000 cells/s (12 steps, stride 192): roughly 3 h for 16 km, 12 h for
+  32 km. Export still holds the whole world in memory (about 13 GB at 32 km).
 
 ## Gates and fallbacks
 
