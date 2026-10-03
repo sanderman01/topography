@@ -81,7 +81,7 @@ def border_hold(mid: np.ndarray, cell_m: float) -> tuple[np.ndarray, np.ndarray]
     return np.minimum(mid, border_limit(n, cell_m)).astype(np.float32), weight.astype(np.float32)
 
 
-LAYERS = ("classes", "roughness", "height")  # top to bottom in layout.xcf
+LAYERS = ("classes", "roughness", "hold", "height")  # top to bottom in layout.xcf
 
 
 def _gimp(script: str):
@@ -101,7 +101,7 @@ def _to_xcf(pngs: Path, xcf: Path):
 img = Gimp.file_load(NI, F({str(pngs / 'height.png')!r}))
 img.convert_rgb()
 img.get_layers()[0].set_name('height')
-for name in ('roughness', 'classes'):
+for name in ('hold', 'roughness', 'classes'):
     layer = Gimp.file_load_layer(NI, img, F({str(pngs)!r} + '/' + name + '.png'))
     layer.set_name(name)
     img.insert_layer(layer, None, 0)
@@ -139,6 +139,30 @@ for layer in img.get_layers():
         raise ValueError(f"layout.xcf has no layer named {', '.join(missing)}")
 
 
+def replace_layers(xcf: Path, pngs: dict[str, Path]):
+    """Replace the pixels of named layers in layout.xcf from PNGs, keeping every other
+    layer and the layer order; a missing layer is added hidden above `height`."""
+    _gimp(f"""
+img = Gimp.file_load(NI, F({str(xcf)!r}))
+for name, png in {({k: str(v) for k, v in pngs.items()})!r}.items():
+    old = [l for l in img.get_layers() if l.get_name() == name]
+    new = Gimp.file_load_layer(NI, img, F(png))
+    new.set_name(name)
+    if old:
+        pos = img.get_item_position(old[0])
+        visible, opacity = old[0].get_visible(), old[0].get_opacity()
+        img.remove_layer(old[0])
+    else:
+        height = [l for l in img.get_layers() if l.get_name() == 'height']
+        pos = img.get_item_position(height[0]) if height else 0
+        visible, opacity = False, 100.0
+    img.insert_layer(new, None, pos)
+    new.set_visible(visible)
+    new.set_opacity(opacity)
+Gimp.file_save(NI, img, F({str(xcf)!r}), None)
+""")
+
+
 def export(l0_dir: Path, out: Path) -> Path:
     from PIL import Image
 
@@ -155,6 +179,8 @@ def export(l0_dir: Path, out: Path) -> Path:
     Image.fromarray(np.array([COLORS[i] for i in range(13)], np.uint8)[cls]).save(pngs / "classes.png")
     rough = np.clip(_resize(l0.relief, PX) / RELIEF_MAX_M * 255, 0, 255)
     Image.fromarray(np.rint(rough).astype(np.uint8)).save(pngs / "roughness.png")
+    held = np.clip(_resize(l0.hold, PX) * 255, 0, 255)
+    Image.fromarray(np.rint(held).astype(np.uint8)).save(pngs / "hold.png")
     _to_xcf(pngs, out / "layout.xcf")
     shutil.rmtree(pngs)
     (out / "terrain-v2.gpl").write_text(
@@ -187,6 +213,9 @@ classes     terrain class per pixel in the colours of terrain-v2.gpl, shown at 6
             antialiasing; mixed colours snap to the nearest class.
 roughness   hidden; local relief, white = {RELIEF_MAX_M:.0f} m. Delete the layer to use each
             class's default.
+hold        hidden; white holds the height layer's large-scale shape (above about 400 m)
+            while L1 samples, black leaves the model free. Use it sparingly, for landmarks
+            the model would otherwise flatten (the volcano). Optional.
 
 Palette: Windows > Dockable Dialogs > Palettes > Import Palette > terrain-v2.gpl.
 Save with File > Save (layout.xcf); no export needed.
@@ -260,6 +289,11 @@ def _import_pngs(paint: Path, meta: dict, out: Path) -> Path:
     fade = np.clip(1 + coast / SEA_RELIEF_M, 0, 1)
     relief = np.where((coast < 0) & (cls != 5), relief * fade * fade * (3 - 2 * fade), relief).astype(np.float32)
     forest = np.rint(np.array([FOREST[i] for i in range(13)])[cls] * 255).astype(np.uint8)
+    hold_path = paint / "hold.png"
+    hold = np.zeros((n, n), np.uint8)
+    if hold_path.exists():
+        w = np.asarray(Image.open(hold_path).convert("L")).astype(np.float32)
+        hold = np.rint(_blocks(w, w.shape[0] // n)).astype(np.uint8)
     # Snowline from wind exposure across the land: windward low, lee high.
     ys, xs = np.nonzero(land)
     cy, cx = ((ys.mean(), xs.mean()) if len(ys) else (n / 2, n / 2))
@@ -272,7 +306,7 @@ def _import_pngs(paint: Path, meta: dict, out: Path) -> Path:
     layers = {
         "mid.f32": mid, "relief.f32": relief, "coast.f32": coast.astype(np.float32), "class.u8": cls,
         "lake.u8": np.zeros((n, n), np.uint8), "lake-level.f32": np.full((n, n), np.nan, np.float32),
-        "snowline.f32": snowline, "forest.u8": forest, "hold.u8": np.zeros((n, n), np.uint8),
+        "snowline.f32": snowline, "forest.u8": forest, "hold.u8": hold,
     }
     out.mkdir(parents=True)
     digests = {}
