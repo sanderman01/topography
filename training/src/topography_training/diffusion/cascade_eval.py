@@ -51,6 +51,8 @@ def main(argv=None) -> int:
     p.add_argument("--count", type=int, default=16, help="L2 review items of each kind")
     p.add_argument("--steps", type=int, default=32)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed-check", type=int, default=8,
+                   help="windows generated with one seed; their residual correlation shows whether the level above steers the output")
     args = p.parse_args(argv)
 
     import torch
@@ -112,6 +114,18 @@ def main(argv=None) -> int:
             items.append((r.name, r.class_id, real, coarse, generate(coarse, cond, args.seed + n)))
             print(f"{n + 1}/{2 * args.count} {r.name}", flush=True)
 
+    # Same-seed check: residuals that correlate across different windows ignore their input.
+    seed_check = None
+    if level.name != "l1" and args.seed_check > 1:
+        res = []
+        for idx in picks[: args.seed_check]:
+            _, coarse, cond = val.window(idx)
+            res.append((generate(coarse, cond, args.seed) - coarse).ravel())
+        corr = np.corrcoef(np.stack(res))
+        seed_check = {"windows": len(res), "seed": args.seed,
+                      "mean_residual_correlation": float(corr[np.triu_indices(len(res), 1)].mean())}
+        print(f"same-seed residual correlation {seed_check['mean_residual_correlation']:.3f}", flush=True)
+
     # Memorization check: distance to the nearest training residual (4x downsampled).
     def small(r):
         r = r - r.mean()
@@ -167,7 +181,8 @@ def main(argv=None) -> int:
         f"<h1>Left real, right generated</h1>{rows}")
     np.savez_compressed(args.out / "arrays.npz", **arrays)
     (args.out / "metrics.json").write_text(json.dumps(
-        {"schema_version": 1, "level": level.name, "weights": str(weights), "steps": args.steps, "items": metrics},
+        {"schema_version": 1, "level": level.name, "weights": str(weights), "steps": args.steps,
+         "same_seed": seed_check, "items": metrics},
         indent=1))
     print(f"wrote {args.out}", flush=True)
     return 0
