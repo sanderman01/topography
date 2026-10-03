@@ -223,6 +223,11 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   about 1% before streams were narrowed). Open: rivers entering from outside the
   world (Green and Colorado in Canyonlands) need a layout input; generated mesas and
   dunes are softer than real.
+- L4 run 5 (1 m on the 4 m surface of the `diffusion-v8` tiles, `train --level l4`;
+  8 h, 12,484 steps): unit-range shape and slope inputs, 10% coarse and cover
+  dropout, water out of the loss. Same-seed residual correlation across 8 windows
+  0.29 (run 4: 0.99); mean slope 19.6° as real, curvature std 0.28 vs 0.35 m.
+  Blind review 32/32 Yes (2026-10-03). Next: banded L4 generation.
 
 ## Gates and fallbacks
 
