@@ -73,7 +73,7 @@ coast = "fjord mouths with skerries"
 id = "napali"
 name = "Na Pali arm"
 class_id = 12
-refs = ["na-pali", "madeira"]
+refs = ["na-pali", "faroe-islands"]
 outline = [[1800, 5000], [5600, 2600], [8800, 3000], [11200, 9000], [10600, 12600],
            [8000, 13200], [4200, 12700], [2000, 9500]]
 target_km2 = 70
@@ -102,7 +102,7 @@ coast = "plateau bluffs 300-600 m, the delta at the canyon mouth"
 id = "badlands"
 name = "Eastern badlands and mesas"
 class_id = 7
-refs = ["badlands-sd", "bardenas-reales", "monument-valley"]
+refs = ["bardenas-reales", "monument-valley", "san-rafael-swell"]
 outline = [[23200, 11500], [26500, 9800], [30000, 10500], [29400, 16000], [29500, 19500],
            [28800, 22300], [24500, 22600], [22300, 21000], [22700, 16000]]
 target_km2 = 70
@@ -144,7 +144,7 @@ coast = "cliffed headland at the arm tip"
 id = "rift"
 name = "North-east rift cones"
 class_id = 11
-refs = ["timanfaya", "craters-of-the-moon"]
+refs = ["craters-of-the-moon", "etna"]
 path = [[19800, 12000], [22500, 10000], [25500, 8300], [28000, 7200], [28800, 5800], [29000, 4600]]
 width_m = 1500
 target_km2 = 10
@@ -173,7 +173,7 @@ coast = "beaches and the canyon delta"
 id = "karst-bay"
 name = "Tower bay"
 class_id = 5
-refs = ["ha-long-bay", "palau-rock-islands"]
+refs = ["ha-long-bay"]
 outline = [[12400, 28500], [14700, 26900], [17000, 25700], [19700, 26000], [22500, 27100],
            [24800, 28700], [26200, 29800], [27500, 31500], [12000, 31500]]
 target_km2 = 0
@@ -451,7 +451,7 @@ note = "between the horn and the volcano"
 [[passes]]
 id = "volcano-shoulder"
 tier = "mid"
-at = [13900, 16300]
+at = [13700, 16000]
 height_m = 2700
 note = "over the NW shoulder, between the fjords and the plateau"
 

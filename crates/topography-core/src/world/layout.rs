@@ -24,8 +24,11 @@ const FAR_BLEND_M: f32 = 4000.0;
 const SEA_FALL_M: f32 = 2000.0;
 /// Ridges fade in over this distance inland so arm tips end in cliffs, not sea mounts.
 const RIDGE_COAST_M: f32 = 300.0;
+/// Passes are saddles: ground rises from the pass height at no more than this grade, out to
+/// PASS_OUTER_M, so the gap is a corridor through the ridge rather than a dimple in it.
+const PASS_GRADE: f32 = 0.15;
 const PASS_INNER_M: f32 = 200.0;
-const PASS_OUTER_M: f32 = 900.0;
+const PASS_OUTER_M: f32 = 1500.0;
 const BASIN_RIM_M: f32 = 1000.0;
 
 type Point = [f32; 2];
@@ -585,9 +588,19 @@ fn render(layout: &Layout) -> Rendered {
         }
     }
 
+    // Passes cut the ridges before peaks and cones rise, so a nearby peak keeps its height.
+    for p in &layout.passes {
+        for (k, x, y) in cells() {
+            let d = dist(p.at, x, y);
+            if d < PASS_OUTER_M {
+                mid[k] = mid[k].min(p.height_m + PASS_GRADE * (d - PASS_INNER_M).max(0.0));
+            }
+        }
+    }
+
     let mut lake = vec![0u8; n * n];
     let mut lake_level = vec![f32::NAN; n * n];
-    // Raised features first, then carving, then lakes and passes.
+    // Raised features first, then carving, then lakes.
     let order = |f: &Feature| match f {
         Feature::Fjord(_) | Feature::Gorge(_) | Feature::BraidedRiver(_) => 1,
         _ => 0,
@@ -713,16 +726,6 @@ fn render(layout: &Layout) -> Rendered {
             }
         }
     }
-    for p in &layout.passes {
-        for (k, x, y) in cells() {
-            let d = dist(p.at, x, y);
-            if d < PASS_OUTER_M && mid[k] > p.height_m {
-                mid[k] =
-                    p.height_m + (mid[k] - p.height_m) * smoothstep(PASS_INNER_M, PASS_OUTER_M, d);
-            }
-        }
-    }
-
     // Open sea no region claims takes the class of the nearest region (by wide blend).
     for k in 0..n * n {
         if class[k] == 0 && mid[k] < 0.0 {
@@ -1027,7 +1030,7 @@ fn fit_check(layout: &Layout, r: &Rendered) -> (String, usize) {
     }
     let _ = writeln!(
         out,
-        "\n{warnings} warning(s). Tier reachability: python -m topography_training.layout reach"
+        "\n{warnings} warning(s). Tier reachability: python -m topography_training.diffusion.layout reach"
     );
     (out, warnings)
 }

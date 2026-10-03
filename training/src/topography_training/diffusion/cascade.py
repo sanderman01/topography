@@ -93,12 +93,15 @@ def load_regions(manifest_path: Path) -> list[Region]:
             for t in load_tiles(manifest_path)]
 
 
-def load_release(manifest_path: Path) -> list[Region]:
+def load_release(manifest_path: Path, ids: set[str] | None = None) -> list[Region]:
+    """Regions of a context release; `ids` reads only those."""
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("kind") != "context_training_release" or manifest.get("schema_version") != 1:
         raise ValueError("unsupported context release")
     out = []
     for r in manifest["regions"]:
+        if ids is not None and r["id"] not in ids:
+            continue
         shape = (r["size"][1], r["size"][0])
         layers = {k: _read(manifest_path.parent, v, shape) for k, v in r["layers"].items()}
         height = layers["height"].astype(np.float32)
