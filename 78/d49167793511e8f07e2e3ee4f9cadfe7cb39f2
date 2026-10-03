@@ -1,0 +1,29 @@
+training/src/topography_training/diffusion/layout.py
+  s_822b2940d42397::t_0ba0413a1dbb4f 1-101,119-136,138-196,198-395
+  s_822b2940d42397::t_4c75822c01d5cf 102-118,137,197
+crates/topography-core/src/world/layout.rs
+  s_822b2940d42397::t_8f43056e6da70a 1033
+  s_822b2940d42397::t_e416b15114af77 27-29,31,591-600,603
+training/src/topography_training/diffusion/cascade.py
+  s_822b2940d42397::t_8f43056e6da70a 96-97,103-104
+configs/layouts/fujion/layout.toml
+  s_822b2940d42397::t_7b98f5b8bba0b9 454
+  s_822b2940d42397::t_8f43056e6da70a 105,147,176
+  s_822b2940d42397::t_a4417a4166e8ae 76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "78d49167793511e8f07e2e3ee4f9cadfe7cb39f2",
+  "prompts": {},
+  "sessions": {
+    "s_822b2940d42397": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffc5a568-d430-445e-acf0-937d21ff16ca",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
