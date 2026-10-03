@@ -1,7 +1,7 @@
 //! 16-bit heightmap texture tiles with quadtree LOD levels (master plan §5, §10).
 
 use crate::acquisition::{
-    AcquisitionError, Result, digest, ensure, io_context, raster, read_small, write_new,
+    AcquisitionError, Result, digest, ensure, hash_file, io_context, raster, read_small, write_new,
 };
 use serde_json::{Value, json};
 use std::{
@@ -31,20 +31,65 @@ impl Layout {
     }
 }
 
-fn read_layer(
-    dir: &Path,
-    name: &str,
-    expected: &Value,
-    cells: usize,
-    size: usize,
-) -> Result<Vec<u8>> {
-    let bytes = io_context(format!("read {name}"), fs::read(dir.join(name)))?;
-    ensure(
-        bytes.len() == cells * size && expected[name].as_str() == Some(digest(&bytes).as_str()),
-        format!("{name} does not match the world manifest"),
-    )?;
-    Ok(bytes)
+/// One raw world layer, verified against the manifest and read a few rows at a time.
+struct Layer {
+    name: &'static str,
+    file: fs::File,
+    cell: usize,
+    width: usize,
+    map: fn(u8) -> u8,
 }
+
+impl Layer {
+    fn open(
+        dir: &Path,
+        name: &'static str,
+        expected: &Value,
+        (width, height): (usize, usize),
+        cell: usize,
+        map: fn(u8) -> u8,
+    ) -> Result<Self> {
+        let path = dir.join(name);
+        let (sha, len) = hash_file(&path)?;
+        ensure(
+            len == (width * height * cell) as u64 && expected[name].as_str() == Some(sha.as_str()),
+            format!("{name} does not match the world manifest"),
+        )?;
+        let file = io_context(format!("open {name}"), fs::File::open(&path))?;
+        Ok(Self {
+            name,
+            file,
+            cell,
+            width,
+            map,
+        })
+    }
+
+    /// Raw bytes of `count` rows starting at row `y`.
+    fn rows(&mut self, y: usize, count: usize, buf: &mut Vec<u8>) -> Result<()> {
+        use std::io::{Read, Seek, SeekFrom};
+        buf.resize(count * self.width * self.cell, 0);
+        let offset = (y * self.width * self.cell) as u64;
+        io_context(
+            format!("read {}", self.name),
+            self.file
+                .seek(SeekFrom::Start(offset))
+                .and_then(|_| self.file.read_exact(buf)),
+        )
+    }
+}
+
+fn f32_at(bytes: &[u8], i: usize) -> f32 {
+    f32::from_le_bytes([
+        bytes[4 * i],
+        bytes[4 * i + 1],
+        bytes[4 * i + 2],
+        bytes[4 * i + 3],
+    ])
+}
+
+/// Rows per read when streaming whole layers.
+const CHUNK_ROWS: usize = 256;
 
 fn png(
     path: &Path,
@@ -72,15 +117,27 @@ fn png(
 
 fn geotiff(
     stage: &Path,
-    name: &str,
-    data: &[u8],
-    width: usize,
-    float: bool,
+    layer: &mut Layer,
+    out_name: &str,
+    height: usize,
     georef: &[String],
 ) -> Result<()> {
-    let height = data.len() / width / if float { 4 } else { 1 };
-    let raw = stage.join(format!(".{name}.raw"));
-    fs::write(&raw, data).map_err(|e| AcquisitionError::Invalid(format!("write raw: {e}")))?;
+    use std::io::Write;
+    let float = layer.cell == 4;
+    let width = layer.width;
+    let raw = stage.join(format!(".{out_name}.raw"));
+    let mut writer = std::io::BufWriter::new(io_context("create raw", fs::File::create(&raw))?);
+    let mut buf = Vec::new();
+    for y in (0..height).step_by(CHUNK_ROWS) {
+        let count = CHUNK_ROWS.min(height - y);
+        layer.rows(y, count, &mut buf)?;
+        if !float {
+            buf.iter_mut().for_each(|v| *v = (layer.map)(*v));
+        }
+        io_context("write raw", writer.write_all(&buf))?;
+    }
+    io_context("flush raw", writer.flush())?;
+    drop(writer);
     let header = format!(
         "ENVI\nsamples = {width}\nlines = {height}\nbands = 1\nheader offset = 0\ndata type = {}\ninterleave = bsq\nbyte order = 0\n",
         if float { 4 } else { 1 }
@@ -90,7 +147,15 @@ fn geotiff(
     let result = raster::run(
         raster::command("gdal_translate")
             .env("GDAL_DISABLE_READDIR_ON_OPEN", "FALSE")
-            .args(["-q", "-of", "COG", "-co", "COMPRESS=DEFLATE"])
+            .args([
+                "-q",
+                "-of",
+                "COG",
+                "-co",
+                "COMPRESS=DEFLATE",
+                "-co",
+                "BIGTIFF=IF_SAFER",
+            ])
             .args(if float {
                 ["-co", "PREDICTOR=YES"]
             } else {
@@ -98,7 +163,7 @@ fn geotiff(
             })
             .args(georef)
             .arg(&raw)
-            .arg(stage.join(format!("{name}.tif"))),
+            .arg(stage.join(format!("{out_name}.tif"))),
     );
     let _ = fs::remove_file(&raw);
     let _ = fs::remove_file(raw.with_extension("hdr"));
@@ -127,63 +192,48 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         w == h && w.is_power_of_two() && w >= intervals,
         "world must be a power-of-two square of at least one tile",
     )?;
-    let cells = w * h;
     let layers = &manifest["layers"];
-    let elevation: Vec<f32> = read_layer(world, "elevation.f32", layers, cells, 4)?
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect();
-    let water = read_layer(world, "water.u8", layers, cells, 1)?;
+    let mut elevation = Layer::open(world, "elevation.f32", layers, (w, h), 4, |v| v)?;
     let mut masks = vec![
-        (
-            "water",
-            water
-                .iter()
-                .map(|&v| if v == 255 { 255 } else { 0 })
-                .collect::<Vec<u8>>(),
-        ),
-        (
-            "snow-ice",
-            read_layer(world, "snow-ice.u8", layers, cells, 1)?
-                .iter()
-                .map(|&v| if v == 2 { 255 } else { 0 })
-                .collect(),
-        ),
-        (
-            "vegetation",
-            read_layer(world, "vegetation.u8", layers, cells, 1)?
-                .iter()
-                .map(|&v| if v == 2 { 255 } else { 0 })
-                .collect(),
-        ),
+        Layer::open(world, "water.u8", layers, (w, h), 1, |v| {
+            if v == 255 { 255 } else { 0 }
+        })?,
+        Layer::open(world, "snow-ice.u8", layers, (w, h), 1, |v| {
+            if v == 2 { 255 } else { 0 }
+        })?,
+        Layer::open(world, "vegetation.u8", layers, (w, h), 1, |v| {
+            if v == 2 { 255 } else { 0 }
+        })?,
     ];
     // Categorical WorldCover classes, exported as-is for render materials.
-    let land_cover = layers.get("land-cover.u8").is_some();
-    if land_cover {
-        masks.push((
-            "land-cover",
-            read_layer(world, "land-cover.u8", layers, cells, 1)?,
-        ));
+    if layers.get("land-cover.u8").is_some() {
+        masks.push(Layer::open(
+            world,
+            "land-cover.u8",
+            layers,
+            (w, h),
+            1,
+            |v| v,
+        )?);
     }
+    let mask_name = |layer: &Layer| layer.name.trim_end_matches(".u8");
     // Range from all ground: terrain continues under water, so the seabed is encoded too.
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-    for e in &elevation {
-        ensure(e.is_finite(), "non-finite elevation")?;
-        lo = lo.min(*e);
-        hi = hi.max(*e);
+    let mut buf = Vec::new();
+    for y in (0..h).step_by(CHUNK_ROWS) {
+        elevation.rows(y, CHUNK_ROWS.min(h - y), &mut buf)?;
+        for i in 0..buf.len() / 4 {
+            let e = f32_at(&buf, i);
+            ensure(e.is_finite(), "non-finite elevation")?;
+            lo = lo.min(e);
+            hi = hi.max(e);
+        }
     }
     ensure(hi > lo, "world needs a positive height range")?;
     let (h_min, h_max) = (f64::from(lo), f64::from(hi));
     let step = (h_max - h_min) / 65535.0;
-    let codes: Vec<u16> = elevation
-        .iter()
-        .map(|&e| (((f64::from(e) - h_min) / step).round()).clamp(0.0, 65535.0) as u16)
-        .collect();
-    let max_error = elevation
-        .iter()
-        .zip(&codes)
-        .map(|(e, c)| (h_min + f64::from(*c) * step - f64::from(*e)).abs())
-        .fold(0f64, f64::max);
+    let code = |e: f32| (((f64::from(e) - h_min) / step).round()).clamp(0.0, 65535.0) as u16;
+    let mut max_error = 0f64;
 
     let parent = output
         .parent()
@@ -200,20 +250,41 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         let per_tile = intervals + usize::from(layout == Layout::SharedEdge);
         let count = samples.div_ceil(intervals);
         for ty in 0..count {
+            // One row of tiles: its lattice rows, decimated to this level, read from disk.
+            let y0 = ty * intervals;
+            let th = per_tile.min(samples - y0);
+            let mut codes = Vec::with_capacity(th * samples);
+            let mut mask_rows = vec![Vec::with_capacity(th * samples); masks.len()];
+            for r in 0..th {
+                let y = (y0 + r) * stride;
+                elevation.rows(y, 1, &mut buf)?;
+                for x in 0..samples {
+                    let e = f32_at(&buf, x * stride);
+                    let c = code(e);
+                    if level == 0 {
+                        max_error =
+                            max_error.max((h_min + f64::from(c) * step - f64::from(e)).abs());
+                    }
+                    codes.push(c);
+                }
+                for (layer, out) in masks.iter_mut().zip(&mut mask_rows) {
+                    layer.rows(y, 1, &mut buf)?;
+                    out.extend((0..samples).map(|x| (layer.map)(buf[x * stride])));
+                }
+            }
             for tx in 0..count {
                 // Tiles stop at the world edge; the last shared-edge tile has no closing sample.
-                let (x0, y0) = (tx * intervals, ty * intervals);
+                let x0 = tx * intervals;
                 let tw = per_tile.min(samples - x0);
-                let th = per_tile.min(samples - y0);
                 let mut height_px = Vec::with_capacity(tw * th * 2);
                 let mut mask_px = vec![Vec::with_capacity(tw * th); masks.len()];
                 for r in 0..th {
-                    for c in 0..tw {
-                        let i = (y0 + r) * stride * w + (x0 + c) * stride;
-                        height_px.extend_from_slice(&codes[i].to_be_bytes());
-                        for (m, (_, values)) in mask_px.iter_mut().zip(&masks) {
-                            m.push(values[i]);
-                        }
+                    let row = r * samples + x0;
+                    for c in &codes[row..row + tw] {
+                        height_px.extend_from_slice(&c.to_be_bytes());
+                    }
+                    for (m, values) in mask_px.iter_mut().zip(&mask_rows) {
+                        m.extend_from_slice(&values[row..row + tw]);
                     }
                 }
                 let name = format!("L{level}/{tx}_{ty}.png");
@@ -228,9 +299,10 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
                         &height_px
                     )?),
                 );
-                for (m, (layer, _)) in mask_px.iter().zip(&masks) {
+                for (m, layer) in mask_px.iter().zip(&masks) {
+                    let layer = mask_name(layer);
                     hashes.insert(
-                        (*layer).into(),
+                        layer.into(),
                         json!(png(
                             &stage.path().join(layer).join(&name),
                             tw,
@@ -261,10 +333,10 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         (origin[0] + w as f64 * spacing).to_string(),
         (origin[1] - h as f64 * spacing).to_string(),
     ];
-    let bytes: Vec<u8> = elevation.iter().flat_map(|e| e.to_le_bytes()).collect();
-    geotiff(stage.path(), "elevation", &bytes, w, true, &georef)?;
-    for (layer, values) in &masks {
-        geotiff(stage.path(), layer, values, w, false, &georef)?;
+    geotiff(stage.path(), &mut elevation, "elevation", h, &georef)?;
+    for layer in &mut masks {
+        let name = mask_name(layer);
+        geotiff(stage.path(), layer, name, h, &georef)?;
     }
     let result = json!({
         "schema_version": 1,
@@ -283,7 +355,7 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
             "decode": "height_m = h_min_m + code * step_m", "range_from": "all cells (ground continues under water)",
             "max_quantization_error_m": max_error},
         "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes",
-            "layers": masks.iter().map(|(name, _)| *name).collect::<Vec<_>>()},
+            "layers": masks.iter().map(mask_name).collect::<Vec<_>>()},
         "masters": ["elevation.tif (Float32 m COG)", "water.tif", "snow-ice.tif", "vegetation.tif", "land-cover.tif (when present)"],
         "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
         "levels": levels,

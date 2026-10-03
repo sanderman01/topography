@@ -234,7 +234,8 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   band; water keeps the smooth 4 m surface. A 2 km Canyonlands test shows no visible
   band joins (fade rows about 12% smoother) and exports through `export heightmap`.
   Speed about 30,000 cells/s (12 steps, stride 192): roughly 3 h for 16 km, 12 h for
-  32 km. Export still holds the whole world in memory (about 13 GB at 32 km).
+  32 km. `export heightmap` streams layers row by row: a synthetic 32 km 1 m world
+  exported in 13 minutes with a 164 MB peak (21,845 tiles, 8 LOD levels).
 
 ## Gates and fallbacks
 
