@@ -1,0 +1,28 @@
+crates/topography-core/src/context/release.rs
+  s_822b2940d42397::t_7ba412292bc938 50-51,63-65,77-79,85-86,151
+  s_822b2940d42397::t_2d22adf64552c3 80-84
+catalog/plans/lidar-regions-v2.toml
+  s_822b2940d42397::t_64a87f6e3e380a 1-128,130-318
+  s_822b2940d42397::t_396af998eac914 129
+catalog/plans/context-regions-v2.toml
+  s_822b2940d42397::t_396af998eac914 296,298-299,302,304-305
+  s_822b2940d42397::t_64a87f6e3e380a 1-295,297,300-301,303,306-413
+docs/workflows/context-regions.md
+  s_822b2940d42397::t_26faa32a67c2c5 79-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6175a9c764b5cce2f7a3d26ba3d92d5be2f84ba5",
+  "prompts": {},
+  "sessions": {
+    "s_822b2940d42397": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffc5a568-d430-445e-acf0-937d21ff16ca",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
