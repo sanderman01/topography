@@ -39,7 +39,7 @@ Usage: topography [--help | --version]
        topography world input <runtime.toml> <world.toml> <new-output-dir>
        topography context build <runtime.toml> <plan.toml> <regions-dir>
        topography context serve <regions-dir> <port>
-       topography context release <regions-dir> <new-output-dir> [min-per-class]
+       topography context release <regions-dir> <new-output-dir> [min-per-class] [--include-unreviewed]
        topography world sketch <sketch.toml> <new-output-dir>
        topography world layout <layout.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
@@ -324,16 +324,31 @@ fn main() -> ExitCode {
             ));
         }
         [command, action, root, output, rest @ ..]
-            if command == "context" && action == "release" && rest.len() <= 1 =>
+            if command == "context" && action == "release" && rest.len() <= 2 =>
         {
+            let unreviewed = rest
+                .iter()
+                .any(|v| v.to_str() == Some("--include-unreviewed"));
+            let rest: Vec<_> = rest
+                .iter()
+                .filter(|v| v.to_str() != Some("--include-unreviewed"))
+                .collect();
+            if rest.len() > 1 {
+                return usage_error();
+            }
             let min = match rest.first().map(|v| number::<usize>(v)) {
                 None => topography_core::context::VALIDATION_MIN_REGIONS,
                 Some(Some(n)) => n,
                 Some(None) => return usage_error(),
             };
             return workflow_result(
-                topography_core::context::build_release(Path::new(root), Path::new(output), min)
-                    .map(|p| p.display().to_string()),
+                topography_core::context::build_release(
+                    Path::new(root),
+                    Path::new(output),
+                    min,
+                    unreviewed,
+                )
+                .map(|p| p.display().to_string()),
             );
         }
         [command, action, root, port] if command == "context" && action == "serve" => {

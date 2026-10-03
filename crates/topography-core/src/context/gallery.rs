@@ -71,13 +71,29 @@ fn load_decisions(path: &Path) -> Result<BTreeMap<String, (String, String)>> {
 
 /// Accepted region directories under `root`: the latest vote is Yes for the current manifest.
 pub fn accepted(root: &Path) -> Result<Vec<PathBuf>> {
+    Ok(release_candidates(root, false)?
+        .into_iter()
+        .map(|(dir, _)| dir)
+        .collect())
+}
+
+/// Regions for a training release with their review status: "yes", and with
+/// `include_unreviewed` also "unreviewed" (no vote for the current region.json).
+/// Rejected regions are never included; inclusion does not record acceptance.
+pub fn release_candidates(
+    root: &Path,
+    include_unreviewed: bool,
+) -> Result<Vec<(PathBuf, &'static str)>> {
     let decisions = load_decisions(&root.join("decisions.jsonl"))?;
     let mut out = Vec::new();
     for dir in regions(root)? {
         let sha = digest(&read_small(&dir.join("region.json"))?);
         let id = dir.file_name().unwrap_or_default().to_string_lossy();
-        if decisions.get(id.as_ref()) == Some(&(sha, "yes".into())) {
-            out.push(dir);
+        match decisions.get(id.as_ref()) {
+            Some((s, d)) if *s == sha && d == "yes" => out.push((dir, "yes")),
+            Some((s, _)) if *s == sha => {}
+            _ if include_unreviewed => out.push((dir, "unreviewed")),
+            _ => {}
         }
     }
     Ok(out)

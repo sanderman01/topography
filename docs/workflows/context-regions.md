@@ -80,7 +80,9 @@ class with at least six accepted regions and two per class with eight or more, p
 by a stable hash of the id. `context-regions-v2.toml` and `lidar-regions-v2.toml` add
 regions toward the per-class targets of the
 [class conditioning plan](../plans/class-conditioning-v1.md); build them into the
-same regions directories.
+same regions directories. `--include-unreviewed` also releases regions without a vote
+(rejected ones never), marking each region's `review` as `yes` or `unreviewed`; it
+records no acceptance.
 
 GLO-30 regions also get `seabed.f32`: the GEBCO 2025 grid (15 arc-second) read over
 HTTPS from the public CEDA tiles and resampled to the region grid (cubic spline). The

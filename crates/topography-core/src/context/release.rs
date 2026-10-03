@@ -2,7 +2,7 @@
 //! plus a manifest pinning their digests, votes and the region-level geographic split.
 //! GLO-30 regions also get a GEBCO seabed layer, read at release time.
 
-use super::gallery::accepted;
+use super::gallery::release_candidates;
 use crate::acquisition::{
     AcquisitionError, Result, digest, ensure, gebco, io_context, read_small, write_new,
 };
@@ -50,10 +50,29 @@ fn seabed(m: &Value) -> Result<(Vec<u8>, Value)> {
 const VALIDATION_TWO_FROM: usize = 8;
 
 /// `min_per_class`: classes with at least this many accepted regions lend one to validation.
-pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result<PathBuf> {
+/// `include_unreviewed` also releases regions without a vote, marked as unreviewed.
+pub fn build_release(
+    root: &Path,
+    output: &Path,
+    min_per_class: usize,
+    include_unreviewed: bool,
+) -> Result<PathBuf> {
     ensure(!output.exists(), "release output already exists")?;
-    let dirs = accepted(root)?;
-    ensure(!dirs.is_empty(), "no accepted context regions")?;
+    let candidates = release_candidates(root, include_unreviewed)?;
+    ensure(!candidates.is_empty(), "no accepted context regions")?;
+    let review: BTreeMap<String, &str> = candidates
+        .iter()
+        .map(|(d, s)| {
+            (
+                d.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                *s,
+            )
+        })
+        .collect();
+    let dirs: Vec<PathBuf> = candidates.into_iter().map(|(d, _)| d).collect();
     let mut regions = Vec::new();
     for dir in &dirs {
         let bytes = read_small(&dir.join("region.json"))?;
@@ -137,7 +156,7 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
         };
         entries.push(
             json!({"id": id, "class_id": m["class_id"], "reference": m["reference"],
-            "split": split, "size": m["size"], "spacing_m": m["spacing_m"], "crs": m["crs"],
+            "split": split, "review": review.get(id).copied().unwrap_or("yes"), "size": m["size"], "spacing_m": m["spacing_m"], "crs": m["crs"],
             "origin": m["origin"], "region_json_sha256": sha256, "layers": layers,
             "seabed_source": seabed_source}),
         );
@@ -148,6 +167,7 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
         "kind": "context_training_release",
         "regions_root": root.canonicalize().map(|p| p.display().to_string()).unwrap_or_default(),
         "decisions_sha256": digest(&decisions),
+        "unreviewed_included": include_unreviewed,
         "split": format!("whole regions; one validation region per class with {min_per_class}+ accepted regions, two with {VALIDATION_TWO_FROM}+"),
         "attribution": [
             "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
