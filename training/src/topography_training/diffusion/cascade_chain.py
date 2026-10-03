@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import cascade, hydrology, layout
+from . import cascade, hydrology, layout, paint
 from .cascade_eval import shade
 from .data import NUM_CLASSES
 from .evaluate import _latest
@@ -259,6 +259,8 @@ def main(argv=None) -> int:
     cond = _condition(level, src.coarse, extra, src.classes)
     hold = (src.l0.mid, src.l0.hold) if src.l0 is not None and src.l0.hold.any() else None
     h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch, hold)
+    if src.l0 is not None:  # the map border stays sea
+        h128 = np.minimum(h128, paint.border_limit(h128.shape[0], 128.0)).astype(np.float32)
     authored = src.l0.lake if src.l0 else None
     h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0, keep_at=authored)
     sea128 = cascade.open_sea(h128)
@@ -282,6 +284,8 @@ def main(argv=None) -> int:
              cascade.soft_u8(veg_in, 1.0)]
     h32 = _sample(model, config, coarse, _condition(level, coarse, extra, src.classes_at(4)), args.steps,
                   args.seed + 1, args.batch)
+    if src.l0 is not None:
+        h32 = np.minimum(h32, paint.border_limit(h32.shape[0], 32.0)).astype(np.float32)
     sea32 = cascade.open_sea(h32)
     lake32 &= ~sea32
     h32[lake32] = lake_level32[lake32]

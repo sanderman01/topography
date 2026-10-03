@@ -172,8 +172,9 @@ def overview(l0: L0, out: Path, px: int = 2048) -> Path:
     big, small = _font(26), _font(17)
     P = lambda p: (p[0] * k, p[1] * k)  # noqa: E731
 
-    coast = spec["island"]["coast"]
-    d.line([P(p) for p in coast + coast[:1]], fill=(20, 20, 20), width=2)
+    coast = spec.get("island", {}).get("coast")
+    if coast:
+        d.line([P(p) for p in coast + coast[:1]], fill=(20, 20, 20), width=2)
     for r in spec.get("ridges", []):
         d.line([P(p) for p in r["path"]], fill=(255, 255, 255), width=1)
     for f in spec.get("features", []):
@@ -206,7 +207,7 @@ def overview(l0: L0, out: Path, px: int = 2048) -> Path:
     for s in spec.get("sites", []):
         x, y = P(s["at"])
         d.rectangle([x - 5, y - 5, x + 5, y + 5], fill=(255, 255, 255), outline=(0, 0, 0))
-    for r in spec["regions"]:
+    for r in spec.get("regions", []):
         x, y = P(_region_anchor(r))
         _label(d, (x - 60, y - 14), r["name"], big)
 
