@@ -144,8 +144,9 @@ explicitly (below).
   Yes/No. The gate passes when at least half the generated patches get Yes and the
   seam strip shows no visible joins. Otherwise try the next run, or fall back after
   three. Runs 2 and 4 passed (32/32 Yes each, 16/16 generated). Run 4's
-  review paired real and generated patches from the same windows; a re-review
-  with different windows (`diffusion-run-4/eval-2`) is still open.
+  review paired real and generated patches from the same windows; the re-review
+  with different windows was closed unreviewed when run 5 (L4) replaced run 4.
+  Runs 1–4 were deleted on 2026-10-03; their reviews are recorded here.
 - [x] **Pilot world inputs:** `topography world input configs/runtime.example.toml configs/diffusion/pilot-1.toml <dir>`; a 4,096 m world config with a coarse base (a chosen
   GLO-30 region at 32 m or a sculpted surface), a coarse class map and authored
   water.
