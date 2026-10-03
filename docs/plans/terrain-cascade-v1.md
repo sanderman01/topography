@@ -1,7 +1,9 @@
 # Terrain cascade v1
 
-Status: planned 2026-09-29; L1, L2 and L3 pilots trained and chained 2026-10-01/02
-(see [Progress](#progress-2026-10-02)). It extends the
+Status: planned 2026-09-29. Steps 2–7 done by 2026-10-03: L1–L4 pass blind
+review, the chain and banded 1 m generation work, and export streams. Step 8, the
+first cascade world, is in progress; step 1 (authored layouts) is open (see
+[Progress](#progress-2026-10-03) and the [workflow](../workflows/terrain-cascade.md)). It extends the
 [terrain diffusion pilot](terrain-diffusion-v1.md) into a coarse-to-fine
 generator and replaces its "follow-on coarse structure model" section. The
 [master plan](terrain-design-master-plan.md) §§5, 8 and 11 point here. Curated
@@ -193,7 +195,7 @@ Each step ends with a check and, where terrain is involved, an owner review.
 
 Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going.
 
-## Progress (2026-10-02)
+## Progress (2026-10-03)
 
 - 74 GLO-30 context regions built, 64 accepted (`context build`, `context serve`).
   36 lidar regions at 4 m built and accepted (USGS 3DEP, LINZ; 3 dropped for no
@@ -236,6 +238,10 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   Speed about 30,000 cells/s (12 steps, stride 192): roughly 3 h for 16 km, 12 h for
   32 km. `export heightmap` streams layers row by row: a synthetic 32 km 1 m world
   exported in 13 minutes with a 164 MB peak (21,845 tiles, 8 LOD levels).
+- First cascade world: Howe Sound derived layout, 32 km. L1 10 s, L2 2.5 min, L3
+  (8,192² at 4 m, per-window conditioning) 59 min →
+  `data/worlds/cascade-world-1-howe-sound`, 4 m export for review. Awaiting the
+  owner's look before L4.
 
 ## Gates and fallbacks
 

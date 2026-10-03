@@ -4,6 +4,10 @@ Implements the [terrain diffusion pilot](../plans/terrain-diffusion-v1.md). Set 
 the GPU environment as described in [training/README.md](../../training/README.md#terrain-diffusion).
 `PY` below is `data/models/diffusion-env-v1/.venv/bin/python`.
 
+The training release (step 1) is current: it trains cascade level L4. Steps 2 onward
+describe the original 1 m pilot on a 32 m coarse surface, superseded by the
+[terrain cascade workflow](terrain-cascade.md) (L4 run 5, banded generation).
+
 ## 1. Training release
 
 ```sh

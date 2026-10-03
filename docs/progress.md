@@ -1,6 +1,6 @@
 # Progress
 
-Updated 2026-09-29. Follow the [master plan](plans/terrain-design-master-plan.md).
+Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md).
 
 ## Done
 
@@ -16,48 +16,40 @@ Updated 2026-09-29. Follow the [master plan](plans/terrain-design-master-plan.md
 - **Game cover v7:** snow/ice, vegetation, water and WorldCover land cover per
   tile, from WorldCover, GLIMS and OpenStreetMap. Snow/ice is ground; water is
   smoothed at 10 m.
-- **Terrain diffusion pilot:** release `diffusion-v8` (132 tiles, all twelve
-  classes), four 8 h GPU training runs. Run 4 conditions on snow/ice and
-  vegetation and passed the blind review (32/32 Yes). A 4 km Milford Sound pilot
-  world took 96 min of GPU time. See the [diffusion plan](plans/terrain-diffusion-v1.md).
+- **1 m diffusion pilot:** release `diffusion-v8` (132 tiles, all twelve
+  classes); runs 1–4 on a 32 m coarse surface, run 4 passed the blind review.
+  It ignored the local shape (same-seed outputs of different windows correlated
+  0.99) and became cascade level L4. See the [diffusion plan](plans/terrain-diffusion-v1.md).
+- **Caldera island sketch (2026-09-29):** a 32 km world on a procedural 32 m
+  base was rejected: large landforms looked hand-drawn. This led to the cascade.
+- **[Terrain cascade](plans/terrain-cascade-v1.md)** ([workflow](workflows/terrain-cascade.md)):
+  - Context regions: 64 of 74 GLO-30 regions accepted, with a GEBCO seabed
+    (release `context-v2`); 36 lidar regions averaged to 4 m accepted (`lidar-v1`).
+  - Models, all passing blind review: L1 128 m (run 2, 7/7), L2 32 m (run 2,
+    32/32), L3 4 m (run 1, 32/32), L4 1 m (run 5, 32/32; same-seed correlation
+    0.29).
+  - Terrain continues under water (direction change 2026-10-02): sea is ground
+    below 0 m connected to open water.
+  - `cascade_chain`: L1 → L2 → L3 from a layout derived from a real region, with
+    drainage, lakes, tarns and streams by terrain class.
+  - `cascade_l4`: banded, resumable 1 m generation with memory-mapped output.
 - **Export and viewing:** 16-bit heightmap tiles (257² `shared_edge`), quadtree
-  LOD levels, mask tiles, and a loopback 3D viewer.
-- **World sketch test (2026-09-29):** `world sketch` builds a world input from a
-  procedural recipe, `world preview` shows any world input before generation,
-  and `generate --scale` makes quick 4 m or 2 m versions. A 32 km caldera island
-  was generated at 4 m (44 min) and 2 m (2 h 40 min). The owner rejected it:
-  large landforms looked hand-drawn, and the canyon country and karst came out
-  flat. The 2 m export stays in `data/exports/caldera-island-2m` for comparison.
-- **Housekeeping (2026-09-29):** pruned superseded releases (v5–v7), weights of
-  runs 1–3 and the smoke run, run 4's intermediate snapshots, download chunks,
-  caches, unreferenced review output and the rejected sketch worlds. `data/`
-  went from 146 GB to 80 GB.
+  LOD levels, mask tiles and COG masters, streamed row by row (32 km at 1 m in
+  13 min, under 200 MB), and a loopback 3D viewer.
+- **First cascade world (in progress):** Howe Sound layout, 32 km, L1–L3 at 4 m
+  in about an hour → `data/worlds/cascade-world-1-howe-sound`, 4 m export
+  `data/exports/cascade-world-1-howe-sound-4m`.
 
 ## Next
 
-The [terrain cascade](plans/terrain-cascade-v1.md) replaces the single 32 m →
-1 m step with levels at 128 m, 32 m, 4 m and 1 m, each trained on real terrain at
-its scale.
-
-1. [World layout spec](plans/world-layout-spec-v1.md): brief, spec, fit check
-   and reference sheet before any generation.
-2. GLO-30 context regions and the 128 m / 32 m models: done as pilots. 64 of 74
-   regions accepted; L2 run 1 (3 h) passed the blind review 30/32 (both No were
-   open-sea windows), L1 run 1 (2 h) 7/7.
-3. Reduced 4 m lidar regions and the 4 m model: done as a pilot. 36 lidar regions
-   (USGS 3DEP and LINZ averaged to 4 m) accepted; L3 run 1 (3 h) passed the blind
-   review 32/32.
-4. Chain test (`cascade_chain`, Howe Sound layout): L1 → L2 → L3 with drainage,
-   lakes and streams works; coasts still read wrong. **Direction change
-   (2026-10-02): terrain continues under water** ([master plan §8](plans/terrain-design-master-plan.md),
-   [cascade plan, Water](plans/terrain-cascade-v1.md#water)). Next: GEBCO layer for
-   the context regions, retrain L1 and L2 on continuous terrain, rerun the chain.
-5. Run 5 of the 1 m model on the 4 m surface (fixes for local shape, glaciers
-   and flats).
-6. Banded 1 m generation, then the first cascade world.
-
-Open reviews: the run 4 twin-free blind review (`data/models/diffusion-run-4/eval-2`)
-and the Milford pilot world's mid scale.
+1. Owner review of the first world at 4 m; then L4 at 1 m (about 12 h of GPU, or
+   a 16 km square in about 3 h first) and export.
+2. [World layout spec](plans/world-layout-spec-v1.md): authored layouts rendered to
+   L0 rasters (class map, envelope, feature lines) instead of layouts derived from
+   real regions.
+3. Open cascade issues: rivers entering from outside the world need a layout
+   input; generated mesas and dunes are softer than real at L1/L2; some generated
+   islands have rounded outlines.
 
 Details: [source coverage](reports/pilot-source-coverage-v1.md),
 [automatic preparation](reports/automatic-preparation-rollout-v1.md),

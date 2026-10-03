@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status: preset/metadata validation, raw DEM acquisition/import, native-grid review, curation, regional quality checks, bounded same-survey native preparation, evaluation-only dataset releases and CPU numeric evaluation are implemented. Thirty real regions are qualified under the supplier-QA pilot rule; the original twelve belong to the numeric release. The first image-codec experiment completed and rejected its tested representation. Model-training admission and terrain-specific modeling remain open. Sources checked 13 September 2026, with subsequent dataset checks in the linked reports; implementation checkpoint updated 22 September 2026. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status (2026-10-03): source acquisition, gallery review, automatic preparation and game cover are implemented for a 167-tile accepted library. The [terrain cascade](terrain-cascade-v1.md) (128 m, 32 m, 4 m and 1 m diffusion models) passes blind review at every level, generates worlds with drainage and continuous seabed, and exports streamed 16-bit heightmap tiles. Authored layouts, regional reruns and editing remain open; see [progress](../progress.md). Sources checked 13 September 2026, with subsequent dataset checks in the linked reports. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 Project stance (2026-09-25): this is game terrain. Prefer plausible results,
 automation and judgment calls over scientific evidence gathering; where later
@@ -303,7 +303,7 @@ This baseline is a real fallback, not only a comparison point. If diffusion trai
 
 **Current direction (2026-09-25).** The two representation checks above ran on CPU with absolute-height normalization and a 200-step fitting budget; they rejected those configurations, not learned terrain generation. The [terrain diffusion pilot](terrain-diffusion-v1.md) skips the autoencoder: pixel-space conditional diffusion on the GPU generates 1 m residuals relative to a 32 m coarse surface, conditioned on terrain class, authored water and snow/ice and vegetation coverage (run 4 onward; runs 1–3 predicted the cover masks instead). Its human gate is a blind Yes/No batch of real and generated patches, with at most three training runs before the fallback below applies.
 
-**Status (2026-09-29).** Run 4 passed the gate (32/32 Yes). The 1 m model still has open issues (local shape mostly ignored, smooth glaciers, hummocky flats) and becomes level L4 of the [terrain cascade](terrain-cascade-v1.md); its next run (run 5) conditions on a 4 m surface with slope channels. A 32 km test world built on a procedural sketch base was rejected: large landforms need real-data models above 1 m.
+**Status (2026-10-03).** Run 4 passed the gate (32/32 Yes) but mostly ignored the local shape. A 32 km test world built on a procedural sketch base was rejected: large landforms need real-data models above 1 m. The 1 m model became level L4 of the [terrain cascade](terrain-cascade-v1.md); run 5 conditions on a 4 m surface with slope channels and dropout and passed its blind review (32/32 Yes), as did the 128 m, 32 m and 4 m levels.
 
 Record model and dataset versions, normalization, seeds, scheduler, control strengths, training settings, checkpoints, GPU memory, runtime, and software versions. Use checkpointed experiments with identical evaluation layouts. Promote a model only after a human accepts examples and the defined numeric and structural checks pass.
 
@@ -439,8 +439,9 @@ at 16 m for repetition, visible joins and an uninteresting layout. The current
 [source coverage](../reports/pilot-source-coverage-v1.md) supports initial technical
 checks, not a representative world-quality pilot. Expand independent geographic
 coverage and connected context under §§6–7 before another world-quality review.
-The later authored experiment remains internal; the reusable world composer and
-fine-resolution pilot are incomplete.
+The later authored experiment remains internal. World generation now follows the
+[terrain cascade](terrain-cascade-v1.md); curated patches and blending remain the
+fallback.
 
 Source expansion added two accepted wider Puerto Rico contexts and three
 [qualified Banks Peninsula crops](../reports/banks-peninsula-qualification-v1.md).
@@ -470,23 +471,22 @@ attention. Gallery v10 preserves all choices and reports preparation status.
 The versioned snow/ice and optional vegetation implementation in §4 passes
 synthetic workflow verification and independent review. See the
 [implementation checkpoint](../reports/surface-cover-workflow-v2.md).
-Next, backfill public source evidence before
-claiming that existing tiles satisfy those added requirements. Prioritize
-the accepted St. Helens crater as a snow/ice case, plus mixed and confirmed-absent
-tiles. Reuse public source layers and preserve existing selections. Existing
-products remain unchanged until new derived revisions have been verified.
+Game cover (2026-09-25 onward) replaced the evidence backfill: cover comes
+automatically from public layers, and the gallery worker upgrades accepted tiles
+without another vote.
 
-- [ ] Establish the initial candidate-class legend (nine as a working target), world presets and source metadata contract.
-- [ ] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.
+- [x] Establish the initial candidate-class legend (nine as a working target), world presets and source metadata contract.
+- [x] Implement one numeric DEM acquisition path and one manual-import path; produce reviewable regional rasters before expanding provider coverage.
 - [x] Run an early karst acquisition trial, tracing source data through to several inspectable high-detail crops. Keep a failed candidate report if the geometry is not supported.
 - [ ] Add the highest-value agency adapters, regional quality checks, human crop selection, and label editing.
 - [x] Version and implement snow/ice and optional vegetation quality/preparation contracts, automatic profiles, gallery status and numeric dataset propagation.
-- [ ] Automate source-layer acquisition, add useful optional cover overlays and backfill accepted tiles without repeating review.
+- [x] Automate source-layer acquisition, add useful optional cover overlays and backfill accepted tiles without repeating review.
 - [ ] Verify present, confirmed-absent, partial, unavailable, fully ice-covered and fully vegetated cases, including boundary/date uncertainty, missing artifacts, downstream mask propagation and zero-ground windows.
 - [x] Release a geographically split pilot dataset and complete numeric loader/autoencoder round-trip evaluation.
 - [x] Train and gate the [pixel-space residual diffusion pilot](terrain-diffusion-v1.md) (LoRA/ControlNet on an image VAE was rejected by the codec check); benchmark quality, memory, and runtime. Run 4 passed; 4 km pilot world, 16-bit export and 3D viewer done.
 - [ ] Establish the [layout spec process](world-layout-spec-v1.md) and render specs to a 256 m layout.
-- [ ] Build the [terrain cascade](terrain-cascade-v1.md): GLO-30 context regions and 128 m/32 m models, reduced 4 m lidar regions and a 4 m model, 1 m run 5 on the 4 m surface, banded 1 m generation.
+- [x] Build the [terrain cascade](terrain-cascade-v1.md): GLO-30 context regions and 128 m/32 m models, reduced 4 m lidar regions and a 4 m model, 1 m run 5 on the 4 m surface, banded 1 m generation, streamed export.
+- [ ] Generate, review and export the first 32 km cascade world (in progress: L1–L3 done for a Howe Sound layout).
 - [ ] Build a 4,096 × 4,096 m pilot with several biome boundaries, a connected water feature, one protected landmark, and a demonstrably local rerun.
 - [ ] Expand to all finalized classes (nine as a working target, adjusted per §1's acquisition-driven exceptions) and test coherent coarse-to-fine generation at the full extent, with human review between scales.
 - [ ] Finalize editing, restart/rebuild behavior, export validation, provenance, and documentation.

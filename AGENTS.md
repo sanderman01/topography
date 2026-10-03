@@ -6,13 +6,13 @@ Topography is a human-directed terrain workshop for a dirigible game. It will
 acquire and curate Earth elevation, compose editable worlds, evaluate optional
 diffusion models, and export terrain with reproducible provenance.
 
-The Rust CLI validates presets/metadata, discovers USGS DEM candidates, acquires
-and imports raw Float32 GeoTIFFs, verifies raw storage and creates small native-grid
-review crops through GDAL. Eligible sources now support aligned native regional
-preparation with immutable outputs, scoped dataset releases, and bounded CPU
-numeric/model experiments. Batch acquisition, a persistent review gallery and
-profile-driven automatic preparation after acceptance are implemented. Production
-training, reusable world generation and export remain planned.
+The Rust CLI acquires public USGS/LINZ DEMs, runs the Yes/No review gallery and
+prepares accepted tiles with game cover automatically; it also builds context
+regions, training releases and streamed 16-bit heightmap exports. The Python
+`training/` package trains and runs the four-level terrain cascade (128 m, 32 m,
+4 m, 1 m diffusion models, all passing blind review) and generates worlds from a
+layout, with 1 m detail in resumable bands. Authored layouts, regional reruns and
+editing remain planned.
 Preset values remain draft pilot choices; processing does not create human acceptance.
 
 Read [README.md](README.md) for setup and the

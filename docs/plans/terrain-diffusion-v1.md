@@ -3,7 +3,10 @@
 Status: planned 2026-09-25. Run 4 passed the human gate on 2026-09-29; the pilot
 world and export are done. On 2026-09-29 this model became the last level (L4) of
 the [terrain cascade](terrain-cascade-v1.md), which adds coarser models above it.
-Run 5 (known issues below) is cascade step 6. Supersedes the "continue without a
+Run 5 (known issues below) was cascade step 6: trained 2026-10-03 as L4 on the 4 m
+surface with unit-range shape, slope channels and cover/coarse dropout; it passed
+the blind review 32/32 and same-seed correlation fell from 0.99 to 0.29 (issue 1).
+Supersedes the "continue without a
 model" decision in the [scalar fitting report](../reports/scalar-codec-fit-v1.md)
 and [image-codec report](../reports/image-codec-pilot-v1.md). Curated patches and
 blending stay the fallback (master plan §7).

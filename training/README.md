@@ -1,12 +1,11 @@
 # Training and evaluation
 
-The Python package implements a bounded CPU numeric evaluation worker and the
-GPU [terrain diffusion pilot](#terrain-diffusion). It
-loads scalar Float32 metre elevations and separate masks from a versioned Rust
-request, then measures Float32/Float16 normalization error on real terrain and
-synthetic features. A separate bounded CPU experiment evaluates a pinned image
-autoencoder. One narrowly scoped scalar-autoencoder fitting trial is implemented;
-production training and diffusion remain unimplemented.
+The Python package implements a bounded CPU numeric evaluation worker, two
+finished CPU representation experiments (image codec, scalar fitting) and the GPU
+[terrain models](#terrain-diffusion): the 1 m diffusion pilot and the four-level
+terrain cascade. The numeric worker loads scalar Float32 metre elevations and
+separate masks from a versioned Rust request, then measures Float32/Float16
+normalization error on real terrain and synthetic features.
 
 ```sh
 python3 -m venv training/.venv
@@ -28,9 +27,8 @@ See the [workflow](../docs/workflows/numeric-evaluation.md),
 [v1 contracts](../schemas/numeric-evaluation-v1.md),
 [v2 surface-cover contracts](../schemas/numeric-evaluation-v2.md), and the
 [implementation plan](../docs/plans/numeric-evaluation-v1.md).
-Future model jobs retain the 16 GB VRAM ceiling and require numeric representation
-validation before expensive training. The current metric results do not approve
-a model, vehicle clearance or generated terrain.
+Model jobs keep the 16 GB VRAM ceiling. Metric results do not approve a model or
+generated terrain; blind human review does.
 
 The optional [image-codec workflow](../docs/workflows/image-codec-evaluation.md)
 uses its own CPU-only environment in `data/models/codec-environment-v1/.venv`.
@@ -48,10 +46,11 @@ Normal checks include tiny fitting checks when the optional environment exists.
 
 ## Terrain diffusion
 
-`topography_training.diffusion` trains a pixel-space residual denoiser on a
-training release and generates terrain for world inputs; see the
-[plan](../docs/plans/terrain-diffusion-v1.md) and
-[workflow](../docs/workflows/terrain-diffusion.md). It needs a GPU PyTorch in its
+`topography_training.diffusion` trains pixel-space residual denoisers and generates
+terrain with them. The [cascade workflow](../docs/workflows/terrain-cascade.md)
+covers the current models (`train --level l1..l4`, `cascade_eval`,
+`cascade_chain`, `cascade_l4`); the [diffusion workflow](../docs/workflows/terrain-diffusion.md)
+covers the 1 m training release and the original pilot. It needs a GPU PyTorch in its
 own environment. For AMD RDNA4 (RX 9060 XT, gfx1200) use the ROCm 7.2 wheels:
 
 ```sh

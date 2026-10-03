@@ -1,42 +1,46 @@
 # Topography
 
-A terrain workshop for a dirigible game: collect detailed Earth elevation,
-curate terrain, and compose an editable world with human review throughout.
+A terrain workshop for a dirigible game: collect detailed Earth elevation, curate
+it with whole-tile Yes/No review, train coarse-to-fine diffusion models on it, and
+generate and export 1 m heightmap worlds.
 
-The [master plan](docs/plans/terrain-design-master-plan.md) defines the project.
-See the [progress summary](docs/progress.md) for completed work, verification and
-the remaining implementation order.
-The Rust CLI validates presets and metadata, discovers USGS DEM candidates,
-acquires/imports raw Float32 GeoTIFFs, verifies stored bytes, and creates small
-native-grid review crops through GDAL. SQLite curation records crop labels, evidence
-and explicit human decisions. Regional mask assessment and preparation eligibility
-checks compare measured coverage with pinned decisions. Eligible areas from the
-same survey can be composed on an exact native grid into immutable prepared
-regions. Evaluation-only dataset releases and a reusable CPU numeric worker now
-check scalar precision. A separate, bounded scalar-autoencoder fitting trial is
-implemented; production training, generation and export remain planned.
-Processing success never approves terrain.
-Review crops include a self-contained browser preview with multiple hillshades,
-cross-sections and metric low-altitude views where the source metadata supports them.
+The [master plan](docs/plans/terrain-design-master-plan.md) defines the project;
+[progress](docs/progress.md) lists what is done and what comes next.
+
+## What works
+
+- **Source library:** a Rust CLI discovers, downloads and imports public USGS and
+  LINZ DEMs as raw Float32 GeoTIFFs with checksums. A local review gallery shows
+  native crops for Yes/No votes; a Yes queues preparation, technical checks and
+  game cover (snow/ice, vegetation, water, land cover) automatically.
+- **Context regions:** 32 m Copernicus GLO-30 regions with a GEBCO seabed and
+  4 m regions averaged from public lidar, each voted on, train the coarse levels.
+- **Terrain cascade:** four residual diffusion models (128 m, 32 m, 4 m, 1 m)
+  refine a layout level by level. Drainage, lakes, tarns and streams come from the
+  generated terrain; terrain continues under the sea. A 32 km world generates at
+  4 m in about an hour and at 1 m in bands overnight.
+- **Export:** 16-bit heightmap tiles (default 257² `shared_edge`), quadtree LOD
+  levels, mask tiles and Float32 COG masters, plus a local 3D viewer.
+
+Processing success never approves terrain: source tiles, regions and models each
+pass an explicit human review.
+
+## Workflows
+
+| Task | Guide |
+| --- | --- |
+| Add source tiles and vote on them | [Batch download and gallery](docs/workflows/batch-source-review.md) |
+| Acquire or import a single DEM | [DEM acquisition](docs/workflows/dem-acquisition.md) |
+| Build and vote on context regions | [Context regions](docs/workflows/context-regions.md) |
+| Train cascade levels, generate and export a world | [Terrain cascade](docs/workflows/terrain-cascade.md) |
+| Build the 1 m training release | [Terrain diffusion](docs/workflows/terrain-diffusion.md) |
+| Draft cover masks for one crop | [Cover acquisition](docs/workflows/cover-acquisition.md) |
+
+Curation, regional quality, aligned preparation, numeric evaluation and the
+codec experiments have their own guides in [docs/workflows](docs/workflows/);
+findings are in [docs/reports](docs/reports/).
 
 ## Directory layout
-
-For source expansion, use the [batch download and gallery workflow](docs/workflows/batch-source-review.md).
-A target list drives downloads and native crops. One local gallery provides
-thumbnail browsing, terrain inspection, Yes/No shortcuts and saved catalog votes.
-Existing source decisions remain visible; technical qualification is separate.
-Reusable source assessments let the batch tool check new tiles automatically.
-A saved Yes queues native preparation in the background; the gallery shows
-Preparing, Ready or Needs technical attention without asking for another vote.
-Version-2 preparation keeps snow/ice and available vegetation masks alongside
-ground and measured surface elevations. Legacy products show Surface assessment
-pending until backed by a new source assessment; their saved choices remain.
-[GLO-30 context regions](docs/workflows/context-regions.md) provide 32 m real
-terrain over tens of kilometres for the coarse cascade levels, with their own
-Yes/No review page.
-The [cover acquisition workflow](docs/workflows/cover-acquisition.md) drafts
-snow/ice and vegetation masks from public sources for one crop and merges them
-into a version-2 profile; it writes no catalog records or votes.
 
 ```text
 catalog/                 Versioned provider descriptions, areas, and label legends
@@ -49,6 +53,7 @@ data/
   raw/                   Immutable source files and original metadata
   prepared/              Regional elevation rasters and masks
   review/                Previews, metrics, and working annotations
+  context/               GLO-30 and 4 m lidar context regions with votes
   datasets/              Versioned dataset releases
   models/                Training runs, checkpoints, and evaluations
   worlds/                World revisions, controls, edits, and locks
@@ -60,7 +65,7 @@ examples/manifests/      Synthetic source record; future batch examples
 schemas/                 Versioned metadata and Rust/Python batch contracts
 scripts/                 Small Bash orchestration and development checks
 tests/fixtures/          Small synthetic fixtures shared across components
-training/                Python numeric evaluation; future model jobs
+training/                Python numeric evaluation and diffusion models (GPU)
 ```
 
 Each directory includes a README or a tracked placeholder so a fresh checkout
@@ -107,42 +112,7 @@ GDAL lacks it (`gdalinfo` reports "missing codec LERC"), build GDAL from source 
 `cmake -DGDAL_USE_LERC_INTERNAL=ON -DGDAL_USE_TIFF_INTERNAL=ON
 -DGDAL_USE_GEOTIFF_INTERNAL=ON -DCMAKE_INSTALL_PREFIX=$HOME/.local/opt/gdal-lerc
 -DCMAKE_INSTALL_RPATH=$HOME/.local/opt/gdal-lerc/lib`, install it, and run
-`topography` with `PATH=$HOME/.local/opt/gdal-lerc/bin:$PATH`. Use QGIS to inspect review rasters. The
-optional ground-support probe uses PDAL. Training dependencies and GPU settings will be selected during the feasibility pilot,
-within the plan's 16 GB VRAM limit.
-
-The [configuration contract](configs/README.md),
-[candidate legend](schemas/legend-v1.md), [source record](schemas/source-v1.md)
-and [technical checks and whole-tile review](docs/design/pilot-acceptance-v1.md)
-start the first plan item. Terrain suitability uses whole-tile Yes/No decisions.
-Follow the [acquisition and import workflow](docs/workflows/dem-acquisition.md)
-for discovery, bounded downloads, integrity checks and review crops. A real USGS
-coastal DEM has been imported locally and the native-grid crop path is verified;
-the live TNM search API returned HTTP 504 during development. The
-[early karst trial](docs/reports/rio-abajo-karst-trial.md) now provides three
-native 0.5 m crops from the Río Abajo area. The
-[curation workflow](docs/workflows/source-curation.md) now preserves crop decisions
-and evidence. The [regional quality workflow](docs/workflows/regional-quality.md)
-measures whole-crop masks and checks current preparation eligibility.
-[Aligned native preparation](docs/workflows/aligned-preparation.md) now preserves
-eligible regions without resampling or cross-survey joins. Twenty-eight accepted terrain
-regions are prepared under the [simple supplier-QA pilot policy](docs/design/source-quality-pilot-v1.md),
-with exact native ground elevation preserved and water masked separately.
-[Batch 3](docs/reports/pilot-tile-batch-3.md) is accepted and prepared. A
-[numeric pilot proposal](docs/reports/numeric-pilot-proposal-v1.md) groups the six
-source areas for evaluation. The owner assented to initial evaluation and left
-technical decisions to the implementer. The [numeric workflow](docs/workflows/numeric-evaluation.md)
-publishes the selected collection, verifies current sources and measures height
-and slope error while excluding masked water. The
-[image-codec experiment](docs/reports/image-codec-pilot-v1.md) measured large height
-errors and rejected that representation before LoRA training. The subsequent
-[scalar fitting trial](docs/reports/scalar-codec-fit-v1.md) also failed to preserve
-terrain detail. The next world pilot uses the plan's curated-patch-and-blending
-fallback; no further model tuning is scheduled.
-
-The owner rejected the [first coarse world proposal](docs/reports/world-layout-proposal-v1.md)
-for repetition, visible joins and an uninteresting layout. The
-[source library](docs/reports/pilot-source-coverage-v1.md) needs broader geography
-and larger connected landscapes before another world-quality review. The original
-twelve small crops support initial numeric checks; reusable world composition, finer
-terrain and export remain planned.
+`topography` with `PATH=$HOME/.local/opt/gdal-lerc/bin:$PATH`. Use QGIS to inspect review rasters.
+The optional ground-support probe uses PDAL. Model training and generation need
+a GPU PyTorch environment within the 16 GB VRAM limit; see
+[training/README.md](training/README.md#terrain-diffusion).
