@@ -89,7 +89,8 @@ def main(argv=None) -> int:
     if level.name == "l1":
         for n, (r, f) in enumerate(zip(val.regions, val.fields)):
             classes = np.full(f.coarse.shape, f.class_id, np.int64)
-            cond = cascade.condition(level, f.coarse, [cascade.decode(e) for e in f.extra], classes)
+            extra = [cascade.decode(e) for e in f.extra] + (cascade.mark_channels(f.marks) if f.marks else [])
+            cond = cascade.condition(level, f.coarse, extra, classes)
             gen = generate(f.coarse, cond, args.seed + n)
             items.append((r.name, r.class_id, f.target, f.coarse, gen))
             print(f"{n + 1}/{len(val.regions)} {r.name}", flush=True)

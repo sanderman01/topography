@@ -50,8 +50,9 @@ class Level:
 
 # Smoothing is half a block, like the 1 m model's 16 m on 32 m blocks.
 # Layout 4 (land/sea channel, flat sea) is retired; L1 runs before 2026-10-02 used it.
+# L1 layout 6 adds landmark channels (valleys, peaks) to layout 5; chains run either.
 LEVELS = {
-    "l1": Level("l1", 128, 5, 32),
+    "l1": Level("l1", 128, 6, 32),
     "l2": Level("l2", 32, 3, 32, block=4, smooth_cells=2.0),
     "l3": Level("l3", 4, 3, 4, block=8, smooth_cells=4.0, margin=32, stride=32),
     "l4": Level("l4", 1, 3, 1, block=4, smooth_cells=2.0, margin=16, stride=16, water_in_loss=False),
@@ -221,7 +222,65 @@ class Fields:
     coarse: np.ndarray | None  # None: computed per window
     extra: list[np.ndarray]  # conditioning channels after shape, slopes and absolute height
     class_id: int
+    marks: tuple | None = None  # L1 layout 6 landmarks (see `landmarks`)
 
+
+# Landmarks (L1 layout 6): deep valleys and prominent peaks of the true surface, so an
+# author's canyon line or summit has a learned meaning. Training windows are told about a
+# random subset, so a missing mark never means "no valley here".
+VALLEY_KM2 = 20.0  # drainage area of a marked valley
+VALLEY_INCISION_M = 250.0  # below the highest ground within 1 km
+VALLEY_DECAY_M = 300.0
+PEAK_RADIUS_M = 1500.0  # highest point within this radius
+PEAK_PROMINENCE_M = 300.0  # above the lowest ground within 3 km
+PEAK_DECAY_M = 400.0
+MARK_KEEP = 0.4  # share of valley networks and peaks a training window is told about
+MARK_NONE = 0.2  # share of training windows told about none
+
+
+def landmarks(h: np.ndarray, cell_m: float) -> tuple:
+    """(valley value, valley labels, peak value, peak labels): values in km of incision or
+    prominence on the marked cells, labels for choosing subsets."""
+    from scipy import ndimage
+
+    from . import hydrology
+
+    h = np.nan_to_num(h, nan=0.0).astype(np.float32)
+    sea = open_sea(h)
+    _, parent, order = hydrology.flood(h, sea)
+    area = hydrology.accumulate(parent, order).reshape(h.shape) * cell_m * cell_m / 1e6
+    r = int(1000 / cell_m)
+    incision = ndimage.maximum_filter(h, size=2 * r + 1) - h
+    valley = (area >= VALLEY_KM2) & (incision >= VALLEY_INCISION_M) & ~sea
+    vlab, _ = ndimage.label(valley, structure=np.ones((3, 3)))
+    rp, rm = int(PEAK_RADIUS_M / cell_m), int(3000 / cell_m)
+    prominence = h - ndimage.minimum_filter(h, size=2 * rm + 1)
+    peak = (h == ndimage.maximum_filter(h, size=2 * rp + 1)) & (prominence >= PEAK_PROMINENCE_M) & (h > 0)
+    plab, _ = ndimage.label(peak)
+    return (np.where(valley, incision / 1000, 0).astype(np.float32), vlab,
+            np.where(peak, prominence / 1000, 0).astype(np.float32), plab, cell_m)
+
+
+def mark_channels(marks: tuple, sl=np.s_[:, :], rng: np.random.Generator | None = None) -> list[np.ndarray]:
+    """Valley and peak channels of a window: each mark's value decaying with distance.
+    With `rng` (training) only a random subset of marks is kept."""
+    from scipy import ndimage
+
+    vval, vlab, pval, plab, cell_m = marks
+    out = []
+    for val, lab, decay in ((vval, vlab, VALLEY_DECAY_M), (pval, plab, PEAK_DECAY_M)):
+        v, lb = val[sl], lab[sl]
+        keep = lb > 0
+        if rng is not None:
+            ids = np.unique(lb[keep])
+            chosen = ids[rng.random(len(ids)) < MARK_KEEP] if rng.random() >= MARK_NONE else ids[:0]
+            keep &= np.isin(lb, chosen)
+        if not keep.any():
+            out.append(np.zeros(v.shape, np.float32))
+            continue
+        d, (iy, ix) = ndimage.distance_transform_edt(~keep, return_indices=True)
+        out.append((v[iy, ix] * np.exp(-d * cell_m / decay)).astype(np.float32))
+    return out
 
 def _nan_blocks(a: np.ndarray, k: int) -> np.ndarray:
     """Block means over surveyed cells; blocks under a quarter surveyed are filled."""
@@ -269,7 +328,8 @@ def l1_fields(r: Region) -> Fields:
     h = block_mean(r.height, 4)
     lo, hi = envelope(h)
     mid = (lo + hi) / 2
-    return Fields(h, mid.astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)], r.class_id)
+    marks = landmarks(h, 128.0) if LEVELS["l1"].conditioning == 6 else None
+    return Fields(h, mid.astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)], r.class_id, marks)
 
 
 def refine_mask(mask: np.ndarray, k: int, sigma_cells: float) -> np.ndarray:
@@ -386,7 +446,8 @@ class Sampler:
         else:
             c = f.coarse[sl]
         classes = np.full((s, s), f.class_id, np.int64)
-        return f.target[sl], c, condition(self.level, c, [decode(e[sl]) for e in f.extra], classes)
+        extra = [decode(e[sl]) for e in f.extra] + (mark_channels(f.marks, sl, rng) if f.marks else [])
+        return f.target[sl], c, condition(self.level, c, extra, classes)
 
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
         h, c, cond = self.window(index, rng)

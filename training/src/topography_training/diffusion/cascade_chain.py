@@ -120,6 +120,7 @@ class Source:
     reference: tuple[str, np.ndarray, float, np.ndarray]  # picture name, surface, cell, water
     crs: str
     origin: tuple[float, float]  # north-west corner of the field
+    marks_from: np.ndarray  # 128 m surface whose valleys and peaks are the L1 landmarks
     l0: layout.L0 | None = None
 
     def classes_at(self, k: int):
@@ -154,7 +155,7 @@ def _region_source(release: Path, region: str) -> Source | None:
     sea = r.water | cascade.open_sea(np.nan_to_num(r.height))
     return Source(region, f1.coarse, f1.extra, r.class_id, hydrology.WATER.get(r.class_id, hydrology.WATER[0]),
                   r.snow, r.vegetation, ("real.png", np.nan_to_num(r.height), 32.0, sea), meta["crs"],
-                  tuple(meta["origin"]))
+                  tuple(meta["origin"]), f1.target)
 
 
 def _layout_source(l0: layout.L0) -> Source:
@@ -170,7 +171,7 @@ def _layout_source(l0: layout.L0) -> Source:
     extent = l0.cell_m * l0.mid.shape[0]
     return Source(l0.spec["name"], ((lo + hi) / 2).astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)],
                   l0.cls, hydrology.Water(**mean), None, None,
-                  ("layout.png", l0.mid, l0.cell_m, (l0.mid < 0) | l0.lake), LAYOUT_CRS, (0.0, extent), l0)
+                  ("layout.png", l0.mid, l0.cell_m, (l0.mid < 0) | l0.lake), LAYOUT_CRS, (0.0, extent), l0.mid, l0)
 
 
 def _reach(src: Source, h: np.ndarray, cell_m: float, out: Path, name: str):
@@ -249,10 +250,13 @@ def main(argv=None) -> int:
     t = time.time()
     model, config = _load(args.l1_run, device)
     level = cascade.LEVELS["l1"]
-    if config["conditioning"] != level.conditioning:
+    if config["conditioning"] not in (5, 6):
         print("error: the L1 run uses a retired layout", file=sys.stderr)
         return 2
-    cond = _condition(level, src.coarse, src.extra, src.classes)
+    extra = src.extra
+    if config["conditioning"] == 6:  # landmarks of the authored (or real) surface, all kept
+        extra = extra + cascade.mark_channels(cascade.landmarks(src.marks_from, 128.0))
+    cond = _condition(level, src.coarse, extra, src.classes)
     hold = (src.l0.mid, src.l0.hold) if src.l0 is not None and src.l0.hold.any() else None
     h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch, hold)
     authored = src.l0.lake if src.l0 else None
