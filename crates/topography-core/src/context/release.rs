@@ -47,6 +47,8 @@ fn seabed(m: &Value) -> Result<(Vec<u8>, Value)> {
     )
 }
 
+const VALIDATION_TWO_FROM: usize = 8;
+
 /// `min_per_class`: classes with at least this many accepted regions lend one to validation.
 pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result<PathBuf> {
     ensure(!output.exists(), "release output already exists")?;
@@ -58,7 +60,9 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
         let manifest: Value = serde_json::from_slice(&bytes)?;
         regions.push((dir, digest(&bytes), manifest));
     }
-    // One validation region per well-covered class, chosen by a stable hash of its id.
+    // Validation regions per well-covered class, chosen by a stable hash of their ids:
+    // two where a class has VALIDATION_TWO_FROM or more regions, so class gates can test
+    // it on more than one place (docs/plans/class-conditioning-v1.md).
     let mut by_class: BTreeMap<i64, Vec<&str>> = BTreeMap::new();
     for (_, _, m) in &regions {
         by_class
@@ -70,7 +74,16 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
     let validation: Vec<&str> = by_class
         .values()
         .filter(|ids| ids.len() >= min_per_class)
-        .filter_map(|ids| ids.iter().min_by_key(|id| digest(id.as_bytes())).copied())
+        .flat_map(|ids| {
+            let mut sorted = ids.clone();
+            sorted.sort_by_key(|id| digest(id.as_bytes()));
+            let take = if ids.len() >= VALIDATION_TWO_FROM {
+                2
+            } else {
+                1
+            };
+            sorted.into_iter().take(take)
+        })
         .collect();
 
     let parent = output
@@ -135,7 +148,7 @@ pub fn build_release(root: &Path, output: &Path, min_per_class: usize) -> Result
         "kind": "context_training_release",
         "regions_root": root.canonicalize().map(|p| p.display().to_string()).unwrap_or_default(),
         "decisions_sha256": digest(&decisions),
-        "split": format!("whole regions; one validation region per class with {min_per_class}+ accepted regions"),
+        "split": format!("whole regions; one validation region per class with {min_per_class}+ accepted regions, two with {VALIDATION_TWO_FROM}+"),
         "attribution": [
             "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
             gebco::ATTRIBUTION, "ESA WorldCover 2021 (CC BY 4.0)", "GLIMS Glacier Database", "© OpenStreetMap contributors, ODbL"],

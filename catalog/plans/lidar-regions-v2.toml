@@ -1,0 +1,318 @@
+# Public 1 m lidar regions added for class conditioning (docs/plans/class-conditioning-v1.md):
+# at least 5 training and 1 validation region per class for L3. Same format and sources
+# as lidar-regions-v1.toml (USGS 3DEP, LINZ); coverage is checked on build and regions
+# without a public 1 m DEM are dropped.
+schema_version = 1
+name = "lidar-regions-v2"
+source = "lidar"
+
+# 1 Karst
+[[regions]]
+id = "pepino"
+class_id = 1
+center = [-66.98, 18.35]
+reference = "San Sebastian and Pepino karst, Puerto Rico"
+
+[[regions]]
+id = "ciales"
+class_id = 1
+center = [-66.47, 18.33]
+reference = "Ciales mogote karst, Puerto Rico"
+
+[[regions]]
+id = "waitomo"
+class_id = 1
+center = [175.1, -38.27]
+reference = "Waitomo karst, Waikato"
+
+[[regions]]
+id = "punakaiki"
+class_id = 1
+center = [171.38, -42.1]
+reference = "Punakaiki and Paparoa karst, West Coast"
+
+[[regions]]
+id = "oparara"
+class_id = 1
+center = [172.15, -41.2]
+reference = "Oparara basin karst, West Coast"
+
+
+# 2 Gorges and canyons
+[[regions]]
+id = "black-canyon"
+class_id = 2
+center = [-107.72, 38.57]
+reference = "Black Canyon of the Gunnison, Colorado"
+
+[[regions]]
+id = "canyon-de-chelly"
+class_id = 2
+center = [-109.42, 36.13]
+reference = "Canyon de Chelly, Arizona"
+
+[[regions]]
+id = "owyhee"
+class_id = 2
+center = [-117.25, 42.95]
+reference = "Owyhee canyons, Oregon"
+
+
+# 3 Fjords and glacial troughs
+[[regions]]
+id = "doubtful-sound"
+class_id = 3
+center = [167.1, -45.3]
+reference = "Doubtful Sound, Fiordland"
+
+[[regions]]
+id = "lake-chelan"
+class_id = 3
+center = [-120.65, 48.35]
+reference = "Stehekin and upper Lake Chelan trough, Washington"
+
+[[regions]]
+id = "hetch-hetchy"
+class_id = 3
+center = [-119.75, 37.95]
+reference = "Hetch Hetchy and Tuolumne troughs, California"
+
+[[regions]]
+id = "kings-canyon"
+class_id = 3
+center = [-118.6, 36.8]
+reference = "Kings Canyon glacial trough, California"
+
+
+# 4 Calderas and craters
+[[regions]]
+id = "newberry"
+class_id = 4
+center = [-121.23, 43.72]
+reference = "Newberry caldera, Oregon"
+
+[[regions]]
+id = "medicine-lake"
+class_id = 4
+center = [-121.55, 41.58]
+reference = "Medicine Lake volcano, California"
+
+[[regions]]
+id = "long-valley"
+class_id = 4
+center = [-118.85, 37.7]
+reference = "Long Valley caldera rim, California"
+
+
+# 5 Archipelagos and dissected coasts
+[[regions]]
+id = "bay-of-islands"
+class_id = 5
+center = [174.15, -35.22]
+reference = "Bay of Islands, Northland"
+
+[[regions]]
+id = "waiheke"
+class_id = 5
+center = [175.05, -36.8]
+reference = "Waiheke and the inner Hauraki Gulf"
+
+[[regions]]
+id = "great-barrier"
+class_id = 5
+center = [175.4, -36.2]
+reference = "Great Barrier Island, Hauraki Gulf"
+
+[[regions]]
+id = "abel-tasman"
+class_id = 5
+center = [173.0, -40.85]
+reference = "Abel Tasman coast, Tasman"
+
+[[regions]]
+id = "penobscot-bay"
+class_id = 5
+center = [-68.8, 44.15]
+reference = "Penobscot Bay islands, Maine"
+
+[[regions]]
+id = "pelorus-sound"
+class_id = 5
+center = [173.75, -41.05]
+reference = "Pelorus Sound, Marlborough"
+
+
+# 6 Alpine ridges and cirques
+[[regions]]
+id = "maroon-bells"
+class_id = 6
+center = [-107.0, 39.08]
+reference = "Elk Mountains and Maroon Bells, Colorado"
+
+[[regions]]
+id = "remarkables"
+class_id = 6
+center = [168.82, -45.05]
+reference = "The Remarkables, Otago"
+
+[[regions]]
+id = "palisades"
+class_id = 6
+center = [-118.5, 37.1]
+reference = "Palisades of the Sierra Nevada, California"
+
+
+# 7 Badlands, mesas and eroded gullies
+[[regions]]
+id = "badlands-sd"
+class_id = 7
+center = [-102.2, 43.85]
+reference = "Badlands National Park, South Dakota"
+
+[[regions]]
+id = "bisti"
+class_id = 7
+center = [-108.25, 36.27]
+reference = "Bisti De-Na-Zin badlands, New Mexico"
+
+[[regions]]
+id = "bryce-canyon"
+class_id = 7
+center = [-112.17, 37.6]
+reference = "Bryce Canyon hoodoos, Utah"
+
+
+# 8 Dunes and sand ridges
+[[regions]]
+id = "algodones"
+class_id = 8
+center = [-115.1, 32.95]
+reference = "Algodones Dunes, California"
+
+[[regions]]
+id = "coral-pink"
+class_id = 8
+center = [-112.72, 37.03]
+reference = "Coral Pink Sand Dunes, Utah"
+
+[[regions]]
+id = "st-anthony"
+class_id = 8
+center = [-111.85, 44.0]
+reference = "St Anthony Sand Dunes, Idaho"
+
+[[regions]]
+id = "eureka-dunes"
+class_id = 8
+center = [-117.68, 37.1]
+reference = "Eureka Dunes, California"
+
+
+# 9 Braided rivers in mountain valleys (no open floodplains)
+[[regions]]
+id = "godley"
+class_id = 9
+center = [170.48, -43.65]
+reference = "Godley valley, Canterbury"
+
+[[regions]]
+id = "dart"
+class_id = 9
+center = [168.35, -44.65]
+reference = "Dart River valley, Otago"
+
+[[regions]]
+id = "matukituki"
+class_id = 9
+center = [168.78, -44.5]
+reference = "Matukituki valleys, Otago"
+
+[[regions]]
+id = "hopkins"
+class_id = 9
+center = [169.85, -43.85]
+reference = "Hopkins and Dobson valleys, Canterbury"
+
+[[regions]]
+id = "hoh-valley"
+class_id = 9
+center = [-123.95, 47.82]
+reference = "Hoh River valley, Washington"
+
+[[regions]]
+id = "queets"
+class_id = 9
+center = [-123.85, 47.6]
+reference = "Queets River valley, Washington"
+
+
+# 10 Glaciers and ice fields
+[[regions]]
+id = "tasman-glacier"
+class_id = 10
+center = [170.2, -43.65]
+reference = "Tasman and Murchison glaciers, Canterbury"
+
+[[regions]]
+id = "mount-adams"
+class_id = 10
+center = [-121.49, 46.2]
+reference = "Mount Adams glaciers, Washington"
+
+[[regions]]
+id = "mount-olympus"
+class_id = 10
+center = [-123.71, 47.8]
+reference = "Mount Olympus glaciers, Washington"
+
+[[regions]]
+id = "mount-hood"
+class_id = 10
+center = [-121.7, 45.37]
+reference = "Mount Hood glaciers, Oregon"
+
+
+# 11 Volcanic cones and lava fields
+[[regions]]
+id = "lassen"
+class_id = 11
+center = [-121.5, 40.49]
+reference = "Lassen Peak and Chaos Crags, California"
+
+[[regions]]
+id = "sunset-crater"
+class_id = 11
+center = [-111.5, 35.37]
+reference = "Sunset Crater cinder cone field, Arizona"
+
+[[regions]]
+id = "mauna-kea"
+class_id = 11
+center = [-155.47, 19.82]
+reference = "Mauna Kea summit cones, Hawaii"
+
+
+# 12 Coastal cliffs and sea stacks
+[[regions]]
+id = "lost-coast"
+class_id = 12
+center = [-124.05, 40.15]
+reference = "Lost Coast, California"
+
+[[regions]]
+id = "cape-kidnappers"
+class_id = 12
+center = [177.1, -39.63]
+reference = "Cape Kidnappers cliffs, Hawke's Bay"
+
+[[regions]]
+id = "banks-peninsula"
+class_id = 12
+center = [172.95, -43.8]
+reference = "Banks Peninsula sea cliffs, Canterbury"
+
+[[regions]]
+id = "molokai-cliffs"
+class_id = 12
+center = [-156.95, 21.18]
+reference = "North Molokai sea cliffs, Hawaii"

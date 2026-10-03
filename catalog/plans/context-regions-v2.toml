@@ -1,0 +1,413 @@
+# GLO-30 context regions added for class conditioning (docs/plans/class-conditioning-v1.md):
+# at least 8 training and 2 validation regions per class for L1 and L2. Same format as
+# context-regions-v1.toml; build into the same regions directory. Picked for strong
+# relief and clear class character; no open floodplains or mostly-water areas.
+schema_version = 1
+name = "context-regions-v2"
+
+# 1 Karst
+[[regions]]
+id = "phong-nha"
+class_id = 1
+center = [106.2, 17.55]
+reference = "Phong Nha-Ke Bang karst, Quang Binh"
+
+[[regions]]
+id = "khao-sok"
+class_id = 1
+center = [98.6, 8.95]
+reference = "Khao Sok karst towers, Surat Thani"
+
+[[regions]]
+id = "vang-vieng"
+class_id = 1
+center = [102.45, 18.95]
+reference = "Vang Vieng tower karst, Laos"
+
+[[regions]]
+id = "chocolate-hills"
+class_id = 1
+center = [124.17, 9.85]
+reference = "Chocolate Hills cone karst, Bohol"
+
+[[regions]]
+id = "shilin"
+class_id = 1
+center = [103.33, 24.82]
+reference = "Shilin stone forest and karst, Yunnan"
+
+
+# 2 Gorges and canyons
+[[regions]]
+id = "colca-canyon"
+class_id = 2
+center = [-71.95, -15.6]
+reference = "Colca Canyon, Arequipa"
+
+[[regions]]
+id = "blyde-river"
+class_id = 2
+center = [30.82, -24.6]
+reference = "Blyde River Canyon, Mpumalanga"
+
+[[regions]]
+id = "taroko"
+class_id = 2
+center = [121.5, 24.17]
+reference = "Taroko Gorge, Hualien"
+
+[[regions]]
+id = "vikos"
+class_id = 2
+center = [20.75, 39.95]
+reference = "Vikos Gorge and the Pindus, Epirus"
+
+[[regions]]
+id = "snake-hells-canyon"
+class_id = 2
+center = [-116.72, 45.3]
+reference = "Hells Canyon of the Snake River"
+
+
+# 3 Fjords and glacial troughs
+[[regions]]
+id = "hardangerfjord"
+class_id = 3
+center = [6.6, 60.25]
+reference = "Hardangerfjord and Sorfjorden, Norway"
+
+[[regions]]
+id = "kenai-fjords"
+class_id = 3
+center = [-150.0, 59.85]
+reference = "Kenai Fjords, Alaska"
+
+[[regions]]
+id = "westfjords"
+class_id = 3
+center = [-22.8, 66.0]
+reference = "Westfjords, Iceland"
+
+
+# 4 Calderas and craters
+[[regions]]
+id = "bromo-tengger"
+class_id = 4
+center = [112.95, -7.94]
+reference = "Tengger caldera and Bromo, East Java"
+
+[[regions]]
+id = "okmok"
+class_id = 4
+center = [-168.1, 53.43]
+reference = "Okmok caldera, Umnak Island"
+
+[[regions]]
+id = "rinjani"
+class_id = 4
+center = [116.46, -8.41]
+reference = "Rinjani and the Segara Anak caldera, Lombok"
+
+[[regions]]
+id = "cerro-galan"
+class_id = 4
+center = [-66.9, -25.95]
+reference = "Cerro Galan caldera, Catamarca"
+
+[[regions]]
+id = "mashu"
+class_id = 4
+center = [144.55, 43.57]
+reference = "Mashu and Kussharo calderas, Hokkaido"
+
+
+# 5 Archipelagos and dissected coasts
+[[regions]]
+id = "phang-nga-bay"
+class_id = 5
+center = [98.5, 8.2]
+reference = "Phang Nga Bay towers, Thailand"
+
+[[regions]]
+id = "el-nido"
+class_id = 5
+center = [119.4, 11.15]
+reference = "Bacuit archipelago, El Nido, Palawan"
+
+[[regions]]
+id = "misool"
+class_id = 5
+center = [130.1, -1.95]
+reference = "Misool islands, Raja Ampat"
+
+[[regions]]
+id = "kornati"
+class_id = 5
+center = [15.3, 43.8]
+reference = "Kornati islands, Dalmatia"
+
+[[regions]]
+id = "gwaii-haanas"
+class_id = 5
+center = [-131.5, 52.6]
+reference = "Gwaii Haanas, Haida Gwaii"
+
+[[regions]]
+id = "senja"
+class_id = 5
+center = [17.5, 69.3]
+reference = "Senja and its skerries, Troms"
+
+[[regions]]
+id = "small-isles"
+class_id = 5
+center = [-6.3, 57.0]
+reference = "Skye and the Small Isles, Hebrides"
+
+[[regions]]
+id = "bay-of-islands"
+class_id = 5
+center = [174.2, -35.2]
+reference = "Bay of Islands, Northland"
+
+
+# 6 Alpine ridges and cirques
+[[regions]]
+id = "mont-blanc"
+class_id = 6
+center = [6.87, 45.88]
+reference = "Mont Blanc massif, Chamonix"
+
+[[regions]]
+id = "wind-river"
+class_id = 6
+center = [-109.6, 43.1]
+reference = "Wind River Range, Wyoming"
+
+[[regions]]
+id = "julian-alps"
+class_id = 6
+center = [13.8, 46.38]
+reference = "Julian Alps, Triglav"
+
+[[regions]]
+id = "ecrins"
+class_id = 6
+center = [6.35, 44.9]
+reference = "Ecrins massif, Dauphine"
+
+
+# 7 Badlands, mesas and eroded gullies
+[[regions]]
+id = "painted-desert"
+class_id = 7
+center = [-109.8, 35.05]
+reference = "Painted Desert, Arizona"
+
+[[regions]]
+id = "bryce-canyon"
+class_id = 7
+center = [-112.17, 37.6]
+reference = "Bryce Canyon hoodoos and the Paunsaugunt rim, Utah"
+
+[[regions]]
+id = "ischigualasto"
+class_id = 7
+center = [-67.9, -30.15]
+reference = "Ischigualasto badlands, San Juan"
+
+[[regions]]
+id = "tabernas"
+class_id = 7
+center = [-2.4, 37.05]
+reference = "Tabernas badlands, Almeria"
+
+[[regions]]
+id = "makhtesh-ramon"
+class_id = 7
+center = [34.8, 30.6]
+reference = "Makhtesh Ramon, Negev"
+
+[[regions]]
+id = "dinosaur-provincial"
+class_id = 7
+center = [-111.5, 50.75]
+reference = "Red Deer River badlands, Alberta"
+
+
+# 8 Dunes and sand ridges
+[[regions]]
+id = "grand-erg-oriental"
+class_id = 8
+center = [8.5, 30.5]
+reference = "Grand Erg Oriental star dunes, Algeria"
+
+[[regions]]
+id = "taklamakan"
+class_id = 8
+center = [82.5, 39.0]
+reference = "Taklamakan megadunes, Xinjiang"
+
+[[regions]]
+id = "issaouane"
+class_id = 8
+center = [7.5, 27.0]
+reference = "Erg Issaouane, Algeria"
+
+[[regions]]
+id = "rig-e-yalan"
+class_id = 8
+center = [59.3, 30.2]
+reference = "Rig-e Yalan sand sea, Lut Desert"
+
+[[regions]]
+id = "skeleton-coast-dunes"
+class_id = 8
+center = [13.0, -18.5]
+reference = "Skeleton Coast dune field, Namibia"
+
+
+# 9 Braided rivers in mountain valleys (no open floodplains)
+[[regions]]
+id = "alsek"
+class_id = 9
+center = [-137.7, 60.0]
+reference = "Alsek River in the St Elias Mountains"
+
+[[regions]]
+id = "copper-river"
+class_id = 9
+center = [-144.6, 61.0]
+reference = "Copper River valley, Chugach Mountains"
+
+[[regions]]
+id = "knik"
+class_id = 9
+center = [-148.7, 61.5]
+reference = "Knik River and glacier valley, Alaska"
+
+[[regions]]
+id = "toklat"
+class_id = 9
+center = [-149.9, 63.6]
+reference = "Toklat and Teklanika rivers, Denali"
+
+[[regions]]
+id = "slims-river"
+class_id = 9
+center = [-138.6, 60.85]
+reference = "Slims River and Kaskawulsh valley, Yukon"
+
+[[regions]]
+id = "wilkin-makarora"
+class_id = 9
+center = [169.1, -44.25]
+reference = "Wilkin and Makarora valleys, Otago"
+
+[[regions]]
+id = "hoh-valley"
+class_id = 9
+center = [-123.95, 47.82]
+reference = "Hoh River valley, Olympic Mountains"
+
+
+# 10 Glaciers and ice fields
+[[regions]]
+id = "baltoro"
+class_id = 10
+center = [76.4, 35.75]
+reference = "Baltoro Glacier, Karakoram"
+
+[[regions]]
+id = "jostedalsbreen"
+class_id = 10
+center = [6.9, 61.65]
+reference = "Jostedalsbreen outlets, Norway"
+
+[[regions]]
+id = "bagley"
+class_id = 10
+center = [-141.5, 60.4]
+reference = "Bagley Icefield, St Elias Mountains"
+
+[[regions]]
+id = "fedchenko"
+class_id = 10
+center = [72.3, 38.8]
+reference = "Fedchenko Glacier, Pamir"
+
+[[regions]]
+id = "upsala"
+class_id = 10
+center = [-73.3, -49.9]
+reference = "Upsala and Viedma glaciers, Patagonia"
+
+
+# 11 Volcanic cones and lava fields
+[[regions]]
+id = "mayon"
+class_id = 11
+center = [123.68, 13.26]
+reference = "Mayon, Albay"
+
+[[regions]]
+id = "kilimanjaro"
+class_id = 11
+center = [37.35, -3.07]
+reference = "Kilimanjaro, Tanzania"
+
+[[regions]]
+id = "taranaki-glo"
+class_id = 11
+center = [174.06, -39.3]
+reference = "Taranaki Maunga, New Zealand"
+
+[[regions]]
+id = "ararat"
+class_id = 11
+center = [44.3, 39.7]
+reference = "Mount Ararat, Turkey"
+
+[[regions]]
+id = "villarrica"
+class_id = 11
+center = [-71.9, -39.42]
+reference = "Villarrica and Quetrupillan, Araucania"
+
+
+# 12 Coastal cliffs and sea stacks
+[[regions]]
+id = "molokai-cliffs"
+class_id = 12
+center = [-156.95, 21.15]
+reference = "North Molokai sea cliffs, Hawaii"
+
+[[regions]]
+id = "sao-jorge"
+class_id = 12
+center = [-28.0, 38.65]
+reference = "Sao Jorge cliffs and faja, Azores"
+
+[[regions]]
+id = "slieve-league"
+class_id = 12
+center = [-8.7, 54.63]
+reference = "Slieve League cliffs, Donegal"
+
+[[regions]]
+id = "tasman-peninsula"
+class_id = 12
+center = [147.9, -43.1]
+reference = "Tasman Peninsula dolerite cliffs, Tasmania"
+
+[[regions]]
+id = "etretat"
+class_id = 12
+center = [0.2, 49.7]
+reference = "Etretat chalk cliffs, Normandy"
+
+[[regions]]
+id = "hoy"
+class_id = 12
+center = [-3.35, 58.87]
+reference = "Hoy cliffs and the Old Man of Hoy, Orkney"

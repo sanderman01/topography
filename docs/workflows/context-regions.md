@@ -76,7 +76,11 @@ target/release/topography context release data/context/regions-v1 data/datasets/
 
 The release hard-links the files of every region whose latest vote is Yes and pins
 their digests and the votes file. Whole regions are held out for validation: one per
-class with at least six accepted regions, picked by a stable hash of the id.
+class with at least six accepted regions and two per class with eight or more, picked
+by a stable hash of the id. `context-regions-v2.toml` and `lidar-regions-v2.toml` add
+regions toward the per-class targets of the
+[class conditioning plan](../plans/class-conditioning-v1.md); build them into the
+same regions directories.
 
 GLO-30 regions also get `seabed.f32`: the GEBCO 2025 grid (15 arc-second) read over
 HTTPS from the public CEDA tiles and resampled to the region grid (cubic spline). The
