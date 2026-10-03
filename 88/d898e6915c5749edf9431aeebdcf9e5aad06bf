@@ -1,0 +1,23 @@
+crates/topography-core/src/export/heightmap.rs
+  s_21c3c478897d44::t_fce3c62c6f34e5 83-88,150-158,198-206,210-217,265-266
+  s_21c3c478897d44::t_972fd309bbbd97 34-40,43-82,89-93,120-122,125-140,166
+  s_21c3c478897d44::t_37ce65f26b7824 4,196,209,219,222-230,235-236,253-264,267-274,277,282-287,302-303,305,336-339,358
+docs/plans/terrain-cascade-v1.md
+  s_21c3c478897d44::t_9b9061d9ea732a 237-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "88d898e6915c5749edf9431aeebdcf9e5aad06bf",
+  "prompts": {},
+  "sessions": {
+    "s_21c3c478897d44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3072ead1-6c31-44d2-ba91-49f45d230d34",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
