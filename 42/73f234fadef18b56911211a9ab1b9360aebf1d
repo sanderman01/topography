@@ -1,0 +1,26 @@
+crates/topography-core/src/context/release.rs
+  s_822b2940d42397::t_be37e30e714c8a 5,53-59,61-75,159
+  s_822b2940d42397::t_426c037f33cbb6 170
+crates/topography-core/src/context/gallery.rs
+  s_822b2940d42397::t_be37e30e714c8a 74-86,92-96
+crates/topography-cli/src/main.rs
+  s_822b2940d42397::t_be37e30e714c8a 42,327,329-338,345-351
+docs/workflows/context-regions.md
+  s_822b2940d42397::t_ed6439921b08b4 83-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4273f234fadef18b56911211a9ab1b9360aebf1d",
+  "prompts": {},
+  "sessions": {
+    "s_822b2940d42397": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffc5a568-d430-445e-acf0-937d21ff16ca",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
