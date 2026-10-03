@@ -31,6 +31,8 @@ H_MIN_M, H_MAX_M = -1000.0, 5000.0  # 16-bit height: 0 is H_MIN_M, 65535 is H_MA
 RELIEF_MAX_M = 2000.0  # roughness 255
 BORDER_M = 1500.0  # the outer band of the map is sea
 BORDER_EDGE_M = -200.0  # depth at the map edge
+BORDER_HOLD_M = 3000.0  # sampling is steered toward sea over this distance from the edge
+SEA_RELIEF_M = 600.0  # relief fades out over this distance offshore (except archipelagos)
 CELL_M = 128.0
 # Judgment defaults by class (from the Fujion regions): local relief (m) and forest share.
 RELIEF = {0: 300, 1: 300, 2: 400, 3: 1000, 4: 300, 5: 300, 6: 1200, 7: 300, 8: 150, 9: 200, 10: 300, 11: 250,
@@ -65,6 +67,18 @@ def border_limit(n: int, cell_m: float) -> np.ndarray:
     edge = np.minimum(c, n * cell_m - c)
     d = np.minimum(edge[:, None], edge[None, :])
     return np.where(d < BORDER_M, BORDER_EDGE_M * (1 - d / BORDER_M) - 20.0, (d - BORDER_M) * 2.0 - 20.0)
+
+
+def border_hold(mid: np.ndarray, cell_m: float) -> tuple[np.ndarray, np.ndarray]:
+    """(target, weight) steering sampling toward sea near the map edge, so the coast
+    forms naturally before the border band instead of being cut by the final clamp."""
+    n = mid.shape[0]
+    c = (np.arange(n) + 0.5) * cell_m
+    edge = np.minimum(c, n * cell_m - c)
+    d = np.minimum(edge[:, None], edge[None, :])
+    t = np.clip(d / BORDER_HOLD_M, 0, 1)
+    weight = 1 - t * t * (3 - 2 * t)
+    return np.minimum(mid, border_limit(n, cell_m)).astype(np.float32), weight.astype(np.float32)
 
 
 LAYERS = ("classes", "roughness", "height")  # top to bottom in layout.xcf
@@ -243,7 +257,7 @@ def _import_pngs(paint: Path, meta: dict, out: Path) -> Path:
     land = mid >= 0
     # Open sea keeps little relief, or the models raise islands; archipelagos keep theirs.
     coast = np.where(land, ndimage.distance_transform_edt(land), -ndimage.distance_transform_edt(~land)) * CELL_M
-    fade = np.clip(1 + coast / 1500.0, 0, 1)
+    fade = np.clip(1 + coast / SEA_RELIEF_M, 0, 1)
     relief = np.where((coast < 0) & (cls != 5), relief * fade * fade * (3 - 2 * fade), relief).astype(np.float32)
     forest = np.rint(np.array([FOREST[i] for i in range(13)])[cls] * 255).astype(np.uint8)
     # Snowline from wind exposure across the land: windward low, lee high.

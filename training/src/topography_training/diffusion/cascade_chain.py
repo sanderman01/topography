@@ -257,7 +257,10 @@ def main(argv=None) -> int:
     if config["conditioning"] == 6:  # landmarks of the authored (or real) surface, all kept
         extra = extra + cascade.mark_channels(cascade.landmarks(src.marks_from, 128.0))
     cond = _condition(level, src.coarse, extra, src.classes)
-    hold = (src.l0.mid, src.l0.hold) if src.l0 is not None and src.l0.hold.any() else None
+    hold = None
+    if src.l0 is not None:  # authored landmarks, and sea toward the map border
+        target, border = paint.border_hold(src.l0.mid, 128.0)
+        hold = (target, np.maximum(src.l0.hold, border))
     h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch, hold)
     if src.l0 is not None:  # the map border stays sea
         h128 = np.minimum(h128, paint.border_limit(h128.shape[0], 128.0)).astype(np.float32)
