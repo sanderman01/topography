@@ -64,7 +64,9 @@ def _sample(model, config, coarse, cond, steps, seed, batch):
     from .model import sample_field
 
     size = config["crop"]
-    out = sample_field(model, torch.from_numpy(cond)[None], steps=steps, window=size, stride=size // 2,
+    if isinstance(cond, np.ndarray):
+        cond = torch.from_numpy(cond)[None]
+    out = sample_field(model, cond, steps=steps, window=size, stride=size // 2,
                        batch=batch, seed=seed)
     return coarse + out[0, 0].numpy() * config["residual_scale_m"]
 
@@ -183,10 +185,9 @@ def main(argv=None) -> int:
     snow4, veg4 = _nearest(snow32[sl], 8), _nearest(veg32[sl], 8)
     extra = [np.where(sea4 | lake4 | stream4, 255, 0).astype(np.uint8), cascade.soft_u8(snow4, 1.0),
              cascade.soft_u8(veg4, 1.0)]
-    cond = _condition(level, coarse, extra, r.class_id)
-    del extra
-    h4 = _sample(model, config, coarse, cond, args.steps, args.seed + 2, args.batch).astype(np.float32)
-    del cond
+    field = cascade.LazyField(level, coarse, extra, r.class_id)
+    h4 = _sample(model, config, coarse, field, args.steps, args.seed + 2, args.batch).astype(np.float32)
+    del field, extra
     w = np.clip(-coarse / L3_SEABED_M, 0, 1)
     h4 = ((1 - w) * h4 + w * coarse).astype(np.float32)
     sea4 = cascade.open_sea(h4)

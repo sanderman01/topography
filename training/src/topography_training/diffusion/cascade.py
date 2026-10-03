@@ -304,6 +304,29 @@ def drop(cond: np.ndarray, rng: np.random.Generator, coarse: float, cover: float
     return cond
 
 
+class LazyField:
+    """Conditioning of a big field assembled per window (see model.sample_field), so host
+    memory holds the coarse surface, its slopes and uint8 layers, not every channel."""
+
+    def __init__(self, level: Level, coarse: np.ndarray, extra: list[np.ndarray], class_id: int):
+        self.coarse, self.extra, self.class_id = coarse, extra, class_id
+        self.ex, self.ny = slopes(coarse, level.cell_m)
+        self.shape, self.device = coarse.shape, "cpu"
+
+    def windows(self, boxes, size, device):
+        import torch
+
+        out = np.zeros((len(boxes), 4 + len(self.extra) + NUM_CLASSES, size, size), np.float32)
+        for i, (y, x) in enumerate(boxes):
+            sl = np.s_[y : y + size, x : x + size]
+            c = self.coarse[sl]
+            out[i, 0], out[i, 1], out[i, 2], out[i, 3] = c, self.ex[sl], self.ny[sl], c / 4096.0
+            for j, e in enumerate(self.extra):
+                out[i, 4 + j] = decode(e[sl])
+            out[i, 4 + len(self.extra) + self.class_id] = 1.0
+        return torch.from_numpy(out).to(device)
+
+
 def normalise(cond: np.ndarray) -> np.ndarray:
     cond = cond.copy()
     cond[0] = unit_range(cond[0])

@@ -24,34 +24,11 @@ from pathlib import Path
 import numpy as np
 
 from . import cascade
-from .data import NUM_CLASSES, smooth, soft_cover
+from .data import smooth, soft_cover
 
 NOISE_ROWS = 256  # starting noise is drawn per block of rows, so overlapping bands agree
 MARGIN_4M = 16  # 4 m context cells around a band for the smoothing
 WATER_SIGMA_M = 3.0  # rounds 4 m water corners at 1 m
-
-
-class BandField:
-    """Layout 3 conditioning of one band, assembled per window to keep host memory low."""
-
-    def __init__(self, coarse, water, snow, veg, class_id):
-        self.coarse, self.water, self.snow, self.veg = coarse, water, snow, veg
-        self.ex, self.ny = cascade.slopes(coarse, 1.0)
-        self.class_id = class_id
-        self.shape, self.device = coarse.shape, "cpu"
-
-    def windows(self, boxes, size, device):
-        import torch
-
-        out = np.zeros((len(boxes), 7 + NUM_CLASSES, size, size), np.float32)
-        for i, (y, x) in enumerate(boxes):
-            sl = np.s_[y : y + size, x : x + size]
-            c = self.coarse[sl]
-            out[i, 0], out[i, 1], out[i, 2], out[i, 3] = c, self.ex[sl], self.ny[sl], c / 4096.0
-            out[i, 4] = np.where(self.water[sl], 1.0, -1.0)
-            out[i, 5], out[i, 6] = cascade.decode(self.snow[sl]), cascade.decode(self.veg[sl])
-            out[i, 7 + self.class_id] = 1.0
-        return torch.from_numpy(out).to(device)
 
 
 def _noise(seed: int, g0: int, g1: int, cols: int):
@@ -178,7 +155,7 @@ def main(argv=None) -> int:
             return soft_cover(np.repeat(np.repeat(_rows_4m(mask, r0, r1, -m, c4 + m), 4, 0), 4, 1))[crop]
 
         snow, veg = cover(snow4), cover(veg4)
-        field = BandField(coarse, water, snow, veg, class_id)
+        field = cascade.LazyField(level, coarse, [np.where(water, 255, 0).astype(np.uint8), snow, veg], class_id)
         res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
                            noise=_noise(args.seed, g0, g1, n))[0, 0].numpy()
         # L4 learned land only: water keeps the 4 m surface, with a soft shore.
