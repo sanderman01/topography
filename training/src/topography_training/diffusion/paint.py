@@ -4,6 +4,9 @@ them back as an L0 that holds nothing but ground height, terrain classes and rou
 python -m topography_training.diffusion.paint export <l0-dir> <new-paint-dir>
 python -m topography_training.diffusion.paint import <paint-dir> <new-l0-dir>
 
+The paint dir holds one GIMP file, layout.xcf, with the layers height, roughness and
+classes; GIMP's batch mode (gimp-console) converts between it and PNG layers losslessly.
+
 The painted layout places no lakes, rivers, troughs or held shapes: the cascade models and
 the drainage pass make all of those. A band along the map border is always sea.
 """
@@ -13,7 +16,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -61,6 +67,64 @@ def border_limit(n: int, cell_m: float) -> np.ndarray:
     return np.where(d < BORDER_M, BORDER_EDGE_M * (1 - d / BORDER_M) - 20.0, (d - BORDER_M) * 2.0 - 20.0)
 
 
+LAYERS = ("classes", "roughness", "height")  # top to bottom in layout.xcf
+
+
+def _gimp(script: str):
+    exe = shutil.which("gimp-console")
+    if exe is None:
+        raise RuntimeError("gimp-console (GIMP 3) is needed to read and write layout.xcf")
+    head = "from gi.repository import Gimp, Gio\nF = lambda p: Gio.File.new_for_path(p)\nNI = Gimp.RunMode.NONINTERACTIVE\n"
+    run = subprocess.run([exe, "-i", "--batch-interpreter", "python-fu-eval", "-b", head + script, "--quit"],
+                         capture_output=True, text=True, timeout=300)
+    if run.returncode or "batch command executed successfully" not in run.stdout + run.stderr:
+        raise RuntimeError(f"GIMP batch failed:\n{run.stdout}\n{run.stderr}")
+
+
+def _to_xcf(pngs: Path, xcf: Path):
+    """One 16-bit RGB GIMP image: classes at 60% over the height, roughness hidden."""
+    _gimp(f"""
+img = Gimp.file_load(NI, F({str(pngs / 'height.png')!r}))
+img.convert_rgb()
+img.get_layers()[0].set_name('height')
+for name in ('roughness', 'classes'):
+    layer = Gimp.file_load_layer(NI, img, F({str(pngs)!r} + '/' + name + '.png'))
+    layer.set_name(name)
+    img.insert_layer(layer, None, 0)
+    layer.set_visible(name == 'classes')
+    layer.set_opacity(60.0 if name == 'classes' else 100.0)
+Gimp.file_save(NI, img, F({str(xcf)!r}), None)
+""")
+
+
+def _from_xcf(xcf: Path, pngs: Path):
+    """Each named layer of layout.xcf as its own PNG (height 16-bit gray, roughness 8-bit
+    gray, classes 8-bit RGB); other layers are ignored."""
+    _gimp(f"""
+img = Gimp.file_load(NI, F({str(xcf)!r}))
+for layer in img.get_layers():
+    name = layer.get_name()
+    if name not in {LAYERS!r}:
+        continue
+    out = Gimp.Image.new_with_precision(img.get_width(), img.get_height(), Gimp.ImageBaseType.RGB,
+                                        img.get_precision())
+    copy = Gimp.Layer.new_from_drawable(layer, out)
+    out.insert_layer(copy, None, 0)
+    copy.set_visible(True)
+    copy.set_opacity(100.0)
+    copy.set_offsets(0, 0)
+    out.flatten()
+    if name != 'classes':
+        out.convert_grayscale()
+    out.convert_precision(Gimp.Precision.U16_NON_LINEAR if name == 'height' else Gimp.Precision.U8_NON_LINEAR)
+    Gimp.file_save(NI, out, F({str(pngs)!r} + '/' + name + '.png'), None)
+    out.delete()
+""")
+    missing = [n for n in ("height", "classes") if not (pngs / f"{n}.png").exists()]
+    if missing:
+        raise ValueError(f"layout.xcf has no layer named {', '.join(missing)}")
+
+
 def export(l0_dir: Path, out: Path) -> Path:
     from PIL import Image
 
@@ -68,14 +132,17 @@ def export(l0_dir: Path, out: Path) -> Path:
 
     l0 = load(l0_dir)
     out.mkdir(parents=True)
+    pngs = Path(tempfile.mkdtemp(dir=out))
     h = np.clip(_resize(l0.mid, PX), H_MIN_M, H_MAX_M)
     gray = np.rint((h - H_MIN_M) / (H_MAX_M - H_MIN_M) * 65535).astype(np.uint16)
-    Image.fromarray(gray).save(out / "height.png")  # uint16 -> 16-bit grayscale PNG
+    Image.fromarray(gray).save(pngs / "height.png")  # uint16 -> 16-bit grayscale PNG
     k = PX // l0.cls.shape[0]
     cls = np.repeat(np.repeat(l0.cls, k, 0), k, 1)
-    Image.fromarray(np.array([COLORS[i] for i in range(13)], np.uint8)[cls]).save(out / "classes.png")
+    Image.fromarray(np.array([COLORS[i] for i in range(13)], np.uint8)[cls]).save(pngs / "classes.png")
     rough = np.clip(_resize(l0.relief, PX) / RELIEF_MAX_M * 255, 0, 255)
-    Image.fromarray(np.rint(rough).astype(np.uint8)).save(out / "roughness.png")
+    Image.fromarray(np.rint(rough).astype(np.uint8)).save(pngs / "roughness.png")
+    _to_xcf(pngs, out / "layout.xcf")
+    shutil.rmtree(pngs)
     (out / "terrain-v2.gpl").write_text(
         "GIMP Palette\nName: Terrain legend v2\nColumns: 4\n#\n"
         + "".join(f"{r:3d} {g:3d} {b:3d}\t{i} {NAMES.get(i, 'Unknown / sea')}\n" for i, (r, g, b) in COLORS.items()))
@@ -89,23 +156,26 @@ def export(l0_dir: Path, out: Path) -> Path:
     sea = (0 - H_MIN_M) / (H_MAX_M - H_MIN_M)
     (out / "README.txt").write_text(f"""Paint a layout for {settings['name']}
 
+Open layout.xcf in GIMP. It has three layers, read by name; any other layers you add
+(sketches, references) are ignored. Keep the image at 16-bit integer precision.
+
 The map is {l0.cell_m * l0.mid.shape[0] / 1000:.1f} km square, {PX} px: {l0.cell_m * l0.mid.shape[0] / PX:.0f} m per pixel, north up.
 The models see this through a 2 km envelope: paint broad shapes. Valleys, fjord channels,
 lakes, rivers and shorelines finer than about 2 km are drawn by the models.
 The outer {BORDER_M / 1000:.1f} km of the map is always sea, whatever is painted there.
 
-height.png      16-bit grayscale: black {H_MIN_M:.0f} m, white {H_MAX_M:.0f} m.
-                Sea level is {sea:.1%} gray (16-bit {round(sea * 65535)}, 8-bit {round(sea * 255)}).
-                1,000 m is {1000 / (H_MAX_M - H_MIN_M):.1%} of the range ({65535 * 1000 / (H_MAX_M - H_MIN_M):.0f} in 16 bit).
-                Ground below sea level connected to the edge is sea; terrain continues under it.
-classes.png     terrain class per pixel in the colours of terrain-v2.gpl. Use the pencil tool
-                without antialiasing; mixed colours snap to the nearest class.
-roughness.png   optional, 8-bit grayscale: local relief, white = {RELIEF_MAX_M:.0f} m. Delete it to use
-                each class's default.
+height      gray: black {H_MIN_M:.0f} m, white {H_MAX_M:.0f} m. Sea level is {sea:.1%} gray
+            ({round(sea * 255)} of 255); 1,000 m is {1000 / (H_MAX_M - H_MIN_M):.1%} of the range
+            ({255 * 1000 / (H_MAX_M - H_MIN_M):.1f} of 255). Ground below sea level connected to the
+            edge is sea; terrain continues under it.
+classes     terrain class per pixel in the colours of terrain-v2.gpl, shown at 60% opacity
+            over the height (opacity is ignored on import). Use the pencil tool without
+            antialiasing; mixed colours snap to the nearest class.
+roughness   hidden; local relief, white = {RELIEF_MAX_M:.0f} m. Delete the layer to use each
+            class's default.
 
-GIMP: Image > Precision must stay "16 bit integer" for height.png, and Image > Mode
-"Grayscale". Export with File > Export As > PNG, "Save as 16bpc" pixel format "16bpc GRAY".
-Import the palette in Windows > Dockable Dialogs > Palettes > Import Palette.
+Palette: Windows > Dockable Dialogs > Palettes > Import Palette > terrain-v2.gpl.
+Save with File > Save (layout.xcf); no export needed.
 
 Then: python -m topography_training.diffusion.paint import <this dir> <new L0 dir>
 """)
@@ -143,10 +213,19 @@ def _toml(settings: dict) -> str:
 
 
 def import_(paint: Path, out: Path) -> Path:
+    meta = json.loads((paint / "paint.json").read_text())
+    extent, settings = float(meta["extent_m"]), meta["settings"]
+    if (paint / "layout.xcf").exists():
+        with tempfile.TemporaryDirectory() as tmp:
+            _from_xcf(paint / "layout.xcf", Path(tmp))
+            return _import_pngs(Path(tmp), meta, out)
+    return _import_pngs(paint, meta, out)
+
+
+def _import_pngs(paint: Path, meta: dict, out: Path) -> Path:
     from PIL import Image
     from scipy import ndimage
 
-    meta = json.loads((paint / "paint.json").read_text())
     extent, settings = float(meta["extent_m"]), meta["settings"]
     n = int(extent / CELL_M)
     height = _read_height(paint / "height.png")
