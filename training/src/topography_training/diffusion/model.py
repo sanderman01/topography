@@ -6,13 +6,16 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .data import channels, class_start
+from .data import NUM_CLASSES, channels, class_start
 
 SIGMA_DATA = 0.5
 DEFAULT_ARCH = {
     "block_out_channels": [64, 128, 256, 384, 512],
     "layers_per_block": 2,
     "attention_levels": 2,
+    # Class shares of each window, through learned vectors, added to the timestep
+    # embedding so the class reaches every block (docs/plans/class-conditioning-v1.md).
+    "class_embedding": False,
 }
 
 
@@ -41,7 +44,11 @@ class Denoiser(nn.Module):
             ),
             attention_head_dim=64,
             norm_num_groups=32,
+            class_embed_type="identity" if arch["class_embedding"] else None,
         )
+        self.class_embed = None
+        if arch["class_embedding"]:
+            self.class_embed = nn.Linear(NUM_CLASSES, arch["block_out_channels"][0] * 4, bias=False)
 
     def forward(self, x, sigma, cond):
         sigma = sigma.reshape(-1, 1, 1, 1).to(x.dtype)
@@ -50,7 +57,10 @@ class Denoiser(nn.Module):
         c_out = sigma * SIGMA_DATA / s2.sqrt()
         c_in = 1 / s2.sqrt()
         c_noise = 250.0 * sigma.log().flatten()
-        f = self.unet(torch.cat([c_in * x, cond], dim=1), c_noise).sample
+        labels = None
+        if self.class_embed is not None:  # classes are the last channels of every layout
+            labels = self.class_embed(cond[:, -NUM_CLASSES:].mean(dim=(2, 3)).to(self.class_embed.weight.dtype))
+        f = self.unet(torch.cat([c_in * x, cond], dim=1), c_noise, class_labels=labels).sample
         return c_skip * x + c_out * f.to(x.dtype)
 
 

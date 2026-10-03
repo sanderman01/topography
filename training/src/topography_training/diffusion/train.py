@@ -36,6 +36,9 @@ def _parse(argv):
     p.add_argument("--coarse-dropout", type=float, default=0.1, help="cascade layout 3: zero shape and slopes")
     p.add_argument("--cover-dropout", type=float, default=0.1, help="cascade layout 3: zero snow/ice and vegetation")
     p.add_argument("--channels", type=str, default="64,128,256,384,512")
+    p.add_argument("--class-embedding", action="store_true", help="learned class embedding in every block")
+    p.add_argument("--balanced", action="store_true", help="cascade: draw windows class-balanced by region")
+    p.add_argument("--mix", type=float, default=0.0, help="cascade: share of windows joining two classes")
     p.add_argument("--val-every", type=int, default=1000)
     p.add_argument("--save-every", type=int, default=2000)
     p.add_argument("--log-every", type=int, default=50)
@@ -81,7 +84,10 @@ def main(argv=None) -> int:
             print("error: the run uses a retired layout; start a new run", file=sys.stderr)
             return 2
         regions = cascade.load_regions(args.release)
-        train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"])
+        balanced = saved.get("balanced", False) if saved else args.balanced
+        mix = saved.get("mix", 0.0) if saved else args.mix
+        train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"],
+                                balanced=balanced, mix=mix)
         val = cascade.Sampler(regions, "validation", level, train.size)
         level_config = {"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
                         "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
@@ -89,6 +95,7 @@ def main(argv=None) -> int:
                         "smooth_cells": level.smooth_cells,
                         "coarse_dropout": args.coarse_dropout if level.conditioning == 3 else 0.0,
                         "cover_dropout": args.cover_dropout if level.conditioning == 3 else 0.0,
+                        "balanced": balanced, "mix": mix,
                         "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
     else:
         tiles = data.load_release(args.release)
@@ -101,7 +108,8 @@ def main(argv=None) -> int:
             "kind": "terrain_diffusion_run",
             "release": str(args.release.resolve()),
             "crop": args.crop,
-            "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")]},
+            "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")],
+                     "class_embedding": args.class_embedding},
             "conditioning": data.CONDITIONING,
             "class_dropout": args.class_dropout,
             "seed": args.seed,
@@ -157,6 +165,24 @@ def main(argv=None) -> int:
     vsig = torch.tensor([0.05, 0.2, 0.5, 1.0, 2.0, 5.0], device=device).repeat(8)
     vnoise = torch.from_numpy(vrng.standard_normal(vt.shape).astype(np.float32)).to(device)
 
+    def class_swap():
+        """Mean correlation of residuals generated for 4 classes from the same validation
+        windows and seed; near 1 means the class is ignored (class-conditioning gate)."""
+        from .model import sample_field
+
+        size, out = vc.shape[-1], []
+        k = data.class_start(vc)
+        for i in range(2):
+            res = []
+            for cls in (2, 6, 8, 11):
+                c = vc[i : i + 1].clone()
+                c[:, k:] = 0
+                c[:, k + cls] = 1
+                res.append(sample_field(ema, c, steps=8, window=size, stride=size // 2, batch=1, seed=0)[0, 0].flatten())
+            corr = torch.corrcoef(torch.stack(res).float())
+            out.append(corr[torch.triu(torch.ones_like(corr, dtype=torch.bool), 1)].mean())
+        return float(torch.stack(out).mean())
+
     def val_loss():
         from .model import SIGMA_DATA
 
@@ -211,7 +237,7 @@ def main(argv=None) -> int:
             }
             last, losses = now, []
         if step % args.val_every == 0:
-            record = (record or {"step": step}) | {"val_loss": val_loss()}
+            record = (record or {"step": step}) | {"val_loss": val_loss(), "class_swap_corr": class_swap()}
         if record:
             log.write(json.dumps(record) + "\n")
             log.flush()

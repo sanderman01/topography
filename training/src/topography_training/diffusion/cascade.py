@@ -407,7 +407,12 @@ def normalise(cond: np.ndarray) -> np.ndarray:
 class Sampler:
     """Random windows of one split with the CropSampler interface of the 1 m model."""
 
-    def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None):
+    def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None,
+                 balanced: bool = False, mix: float = 0.0):
+        """`balanced` draws a class, then a region of it, then a window (not by area);
+        `mix` is the share of windows joined with a window of another class along a
+        soft border, so the model sees class borders."""
+        self.balanced, self.mix = balanced, mix
         self.level, self.size = level, size
         stride = stride or level.stride
         role = {"train": 1, "validation": 2}[split]  # data.TRAIN, data.VALIDATION
@@ -449,8 +454,10 @@ class Sampler:
         extra = [decode(e[sl]) for e in f.extra] + (mark_channels(f.marks, sl, rng) if f.marks else [])
         return f.target[sl], c, condition(self.level, c, extra, classes)
 
-    def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool):
+    def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool, partner: int | None = None):
         h, c, cond = self.window(index, rng)
+        if partner is not None:
+            h, c, cond = _join((h, c, cond), self.window(partner, rng), rng)
         valid = ~np.isnan(h)
         if not self.level.water_in_loss:
             valid &= cond[4] < 0  # water channel: 1 water, -1 dry
@@ -463,10 +470,58 @@ class Sampler:
             cond = _rotate_slopes(cond, int(k), int(flip))
         return target, cond, mask
 
+    def _groups(self):
+        if not hasattr(self, "_by_class"):
+            self._by_class: dict[int, dict[int, list[int]]] = {}
+            for idx, (ri, _, _) in enumerate(self.positions):
+                self._by_class.setdefault(self.fields[ri].class_id, {}).setdefault(ri, []).append(idx)
+        return self._by_class
+
+    def pick(self, rng: np.random.Generator, exclude_class: int | None = None) -> int:
+        groups = {c: g for c, g in self._groups().items() if c != exclude_class}
+        if not self.balanced and exclude_class is None:
+            return int(rng.integers(len(self.positions)))
+        if not groups:
+            return int(rng.integers(len(self.positions)))
+        classes = sorted(groups)
+        regions = groups[classes[int(rng.integers(len(classes)))]]
+        idxs = regions[sorted(regions)[int(rng.integers(len(regions)))]]
+        return idxs[int(rng.integers(len(idxs)))]
+
     def batch(self, n: int, scale: float, rng: np.random.Generator, augment=True):
-        picks = rng.integers(len(self.positions), size=n)
-        parts = [self.crop(int(p), scale, rng, augment) for p in picks]
+        parts = []
+        for _ in range(n):
+            p = self.pick(rng)
+            partner = None
+            if self.mix and rng.random() < self.mix:
+                partner = self.pick(rng, exclude_class=self.fields[self.positions[p][0]].class_id)
+            parts.append(self.crop(p, scale, rng, augment, partner))
         return tuple(np.stack(a) for a in zip(*parts))
+
+
+def _join(a, b, rng: np.random.Generator):
+    """Two windows joined along a random soft line: heights, coarse surfaces and
+    continuous channels blend over about an eighth of the window; classes and water
+    switch at the line."""
+    (h1, c1, k1), (h2, c2, k2) = a, b
+    s = h1.shape[0]
+    angle, offset = rng.uniform(0, np.pi), rng.uniform(-0.25, 0.25) * s
+    yy, xx = np.mgrid[0:s, 0:s] - (s - 1) / 2
+    d = xx * np.cos(angle) + yy * np.sin(angle) - offset
+    t = np.clip(0.5 + d / (s / 8), 0, 1)
+    m = (t * t * (3 - 2 * t)).astype(np.float32)
+    h = m * h1 + (1 - m) * h2
+    c = m * c1 + (1 - m) * c2
+    cond = m * k1 + (1 - m) * k2
+    hard = d > 0
+    first = class_start_of(k1)
+    cond[first:] = np.where(hard, k1[first:], k2[first:])
+    cond[4] = np.where(hard, k1[4], k2[4])  # water (L2-L4) or relief (L1): switch, not blend
+    return h.astype(np.float32), c.astype(np.float32), cond.astype(np.float32)
+
+
+def class_start_of(cond: np.ndarray) -> int:
+    return cond.shape[0] - NUM_CLASSES
 
 
 def _dihedral(a: np.ndarray, k: int, flip: int) -> np.ndarray:
