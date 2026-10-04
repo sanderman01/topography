@@ -75,7 +75,7 @@ def main(argv=None) -> int:
     model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
     model.load_state_dict(load_file(str(weights), device=str(device)))
     scale, size = config["residual_scale_m"], config["crop"]
-    regions = cascade.load_regions(Path(config["release"]))
+    regions = cascade.load_regions(Path(config["release"]), lazy=True)
     val = cascade.Sampler(regions, "validation", level, size, stride=size)
     train = cascade.Sampler(regions, "train", level, size, stride=size // 4)
 

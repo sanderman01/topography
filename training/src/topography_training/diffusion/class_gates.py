@@ -144,7 +144,7 @@ def main(argv=None) -> int:
         model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
         model.load_state_dict(load_file(str(args.weights or _latest(args.run_dir)), device=str(device)))
     scale, size, cell = config["residual_scale_m"], config["crop"], float(level.cell_m)
-    regions = cascade.load_regions(Path(config["release"]))
+    regions = cascade.load_regions(Path(config["release"]), lazy=True)
     rng = np.random.default_rng(args.seed)
     windows = []
     for split in ("train", "validation"):

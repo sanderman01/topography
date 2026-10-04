@@ -79,6 +79,7 @@ class Region:
     vegetation: np.ndarray  # bool, or uint8 soft coverage for library tiles
     cells: np.ndarray | None = None  # per-cell split of library tiles (data.TRAIN, data.VALIDATION)
     fields: Fields | None = None  # built once, shared by the train and validation samplers
+    source: tuple | None = None  # lazy regions: (release manifest path, region entry); arrays load on demand
 
 
 def _read(release: Path, layer: dict, shape) -> np.ndarray:
@@ -89,18 +90,21 @@ def _read(release: Path, layer: dict, shape) -> np.ndarray:
     return np.frombuffer(data, dtype=dtype).reshape(shape)
 
 
-def load_regions(manifest_path: Path) -> list[Region]:
-    """Regions of a context release, or the tiles of a 1 m library release (L4)."""
+def load_regions(manifest_path: Path, lazy: bool = False) -> list[Region]:
+    """Regions of a context release, or the tiles of a 1 m library release (L4); `lazy`
+    applies to context releases (see `load_release`)."""
     if json.loads(manifest_path.read_text()).get("kind") != "diffusion_training_release":
-        return load_release(manifest_path)
+        return load_release(manifest_path, lazy=lazy)
     from .data import load_release as load_tiles
 
     return [Region(t.name, t.class_id, "tile", 1, t.height, t.water, t.snow, t.vegetation, t.split)
             for t in load_tiles(manifest_path)]
 
 
-def load_release(manifest_path: Path, ids: set[str] | None = None) -> list[Region]:
-    """Regions of a context release; `ids` reads only those."""
+def load_release(manifest_path: Path, ids: set[str] | None = None, lazy: bool = False) -> list[Region]:
+    """Regions of a context release; `ids` reads only those. `lazy` returns regions without
+    arrays: samplers build their fields from disk one region at a time and keep them
+    memory-mapped (see `region_fields`), so a large release need not fit in RAM."""
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("kind") != "context_training_release" or manifest.get("schema_version") != 1:
         raise ValueError("unsupported context release")
@@ -108,18 +112,71 @@ def load_release(manifest_path: Path, ids: set[str] | None = None) -> list[Regio
     for r in manifest["regions"]:
         if ids is not None and r["id"] not in ids:
             continue
-        shape = (r["size"][1], r["size"][0])
-        layers = {k: _read(manifest_path.parent, v, shape) for k, v in r["layers"].items()}
-        height = layers["height"].astype(np.float32)
-        if "validity" in layers:
-            height = np.where(layers["validity"] == 255, height, np.nan).astype(np.float32)
-        water = layers["water"] == 255
-        if "seabed" in layers:
-            height, sea = join_seabed(height, water, layers["seabed"], float(r["spacing_m"]))
-            water &= ~sea
-        out.append(Region(r["id"], int(r["class_id"]), r["split"], int(r["spacing_m"]), height,
-                          water, layers["snow-ice"] == 2, layers["vegetation"] == 2))
+        if lazy:
+            out.append(Region(r["id"], int(r["class_id"]), r["split"], int(r["spacing_m"]), None, None, None,
+                              None, source=(manifest_path, r)))
+        else:
+            out.append(_load_region(manifest_path, r))
     return out
+
+
+def _load_region(manifest_path: Path, r: dict) -> Region:
+    shape = (r["size"][1], r["size"][0])
+    layers = {k: _read(manifest_path.parent, v, shape) for k, v in r["layers"].items()}
+    height = layers["height"].astype(np.float32)
+    if "validity" in layers:
+        height = np.where(layers["validity"] == 255, height, np.nan).astype(np.float32)
+    water = layers["water"] == 255
+    if "seabed" in layers:
+        height, sea = join_seabed(height, water, layers["seabed"], float(r["spacing_m"]))
+        water &= ~sea
+    return Region(r["id"], int(r["class_id"]), r["split"], int(r["spacing_m"]), height,
+                  water, layers["snow-ice"] == 2, layers["vegetation"] == 2)
+
+
+# Bump when field construction changes, so cached fields are rebuilt.
+FIELDS_VERSION = 1
+
+
+def region_fields(r: Region, level: "Level", make) -> Fields:
+    """Fields of a region. Lazy regions are built once per release and level into
+    data/cache/cascade-fields/<release>/ and memory-mapped from there."""
+    if r.source is None:
+        f = make(r)
+        r.water = r.snow = r.vegetation = None
+        return f
+    manifest_path, entry = r.source
+    release = Path(manifest_path).resolve().parent
+    key = hashlib.sha256(json.dumps([FIELDS_VERSION, level.name, level.block, level.smooth_cells,
+                                     sorted((k, v["sha256"]) for k, v in entry["layers"].items())]).encode()).hexdigest()
+    cache = release.parents[1] / "cache" / "cascade-fields" / release.name / f"{entry['id']}-{level.name}"
+    meta = cache / "fields.json"
+    if not (meta.exists() and json.loads(meta.read_text()).get("key") == key):
+        f = make(_load_region(Path(manifest_path), entry))
+        if f.marks is not None:  # landmarks are small and not cached
+            r.height = f.target
+            return f
+        tmp = cache.with_name(cache.name + ".tmp")
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True)
+        np.save(tmp / "target.npy", f.target)
+        if f.coarse is not None:
+            np.save(tmp / "coarse.npy", f.coarse)
+        for i, e in enumerate(f.extra):
+            np.save(tmp / f"extra-{i}.npy", e)
+        (tmp / "fields.json").write_text(json.dumps({"key": key, "extra": len(f.extra), "coarse": f.coarse is not None,
+                                                    "class_id": f.class_id}))
+        del f
+        shutil.rmtree(cache, ignore_errors=True)
+        tmp.rename(cache)
+    m = json.loads(meta.read_text())
+    load = lambda name: np.load(cache / name, mmap_mode="r")  # noqa: E731
+    f = Fields(load("target.npy"), load("coarse.npy") if m["coarse"] else None,
+               [load(f"extra-{i}.npy") for i in range(m["extra"])], int(m["class_id"]))
+    r.height = f.target
+    return f
 
 
 def join_seabed(height: np.ndarray, water: np.ndarray, seabed: np.ndarray, cell_m: float):
@@ -430,8 +487,7 @@ class Sampler:
         make = l1_fields if level.name == "l1" else refine_fields
         for r in self.regions:  # the fields hold everything the windows need
             if r.fields is None:
-                r.fields = make(r)
-                r.water = r.snow = r.vegetation = None
+                r.fields = region_fields(r, level, make)
         self.fields = [r.fields for r in self.regions]
         self.positions = []
         for i, (r, f) in enumerate(zip(self.regions, self.fields)):

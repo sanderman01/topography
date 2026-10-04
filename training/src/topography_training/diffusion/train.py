@@ -85,7 +85,7 @@ def main(argv=None) -> int:
         if saved and saved["conditioning"] != level.conditioning:
             print("error: the run uses a retired layout; start a new run", file=sys.stderr)
             return 2
-        regions = cascade.load_regions(args.release)
+        regions = cascade.load_regions(args.release, lazy=True)
         only = saved.get("only_class") if saved else args.only_class
         if only is not None:
             regions = [r for r in regions if r.class_id == only]
