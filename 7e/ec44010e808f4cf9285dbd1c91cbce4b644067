@@ -1,0 +1,28 @@
+training/src/topography_training/diffusion/class_gates.py
+  s_63e041542fef52::t_c48e322fb8ecd4 165-166
+  s_63e041542fef52::t_d5cbfdfd9f89db 5-10,14-15,17-19,22-24,122-125,127,162,164,167-174,178,181-194,196,206,212-213,216-236,241-243,255-260,262-263,266-267,288,290-296
+training/src/topography_training/diffusion/train.py
+  s_63e041542fef52::t_bbf9d471228d0c 40,118
+  s_63e041542fef52::t_7778973da8acc9 202-203,213,217-218
+training/src/topography_training/diffusion/model.py
+  s_63e041542fef52::t_bbf9d471228d0c 19-21,51
+  s_63e041542fef52::t_1497f240fc8ec6 179,184-186,204-209,224-228,239,247-248,266,270
+catalog/plans/lidar-regions-v2.toml
+  s_63e041542fef52::t_5263862ada281b 249-261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7eec44010e808f4cf9285dbd1c91cbce4b644067",
+  "prompts": {},
+  "sessions": {
+    "s_63e041542fef52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aff05194-4b9c-4c73-afd0-b85dbe6c39d1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
