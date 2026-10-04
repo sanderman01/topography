@@ -266,6 +266,18 @@ center = [-123.71, 47.8]
 reference = "Mount Olympus glaciers, Washington"
 
 [[regions]]
+id = "three-sisters"
+class_id = 10
+center = [-121.77, 44.13]
+reference = "Three Sisters glaciers, Oregon"
+
+[[regions]]
+id = "mount-jefferson"
+class_id = 10
+center = [-121.8, 44.67]
+reference = "Mount Jefferson glaciers, Oregon"
+
+[[regions]]
 id = "mount-hood"
 class_id = 10
 center = [-121.7, 45.37]
