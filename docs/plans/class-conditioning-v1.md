@@ -174,6 +174,42 @@ passes at every w, but partly because the window's own coarse surface already ca
 its class. Next: change training, not sampling (coarse blur augmentation, AdaGN), as in
 L3 run 2.
 
+### L3 run 2 (2026-10-04)
+
+Recipe:
+- Data: `lidar-v3`, with balanced and mixed windows.
+- Class conditioning: class embedding with `--scale-shift`.
+- Coarse input: 25% coarse dropout and 50% coarse blur.
+- Budget: 5 h, 7,810 steps, 6.0 GB VRAM.
+
+The training-time roughness rank rose to 0.83 by step 2,000, then varied 0.43–0.84.
+
+Gates v2, final weights:
+
+| Gate | Result |
+| --- | --- |
+| Roughness, coarse hidden | rank 0.69 [0.59, 0.79]: narrow fail against 0.7 |
+| Roughness, coarse shown | rank 0.69 (L2 run 5: −0.13) |
+| Own recognition | 0.25 against real 0.23: pass |
+
+With the coarse input shown, the class now orders roughness at L3, which no earlier
+run managed. The range is still compressed: 1.35–1.83 m generated against
+0.64–3.24 m real.
+
+Fujion chains (L1 run 4 → L2 run 5 → L3, 16 km; `data/worlds/fujion-painted-chain-5-l3r1`
+and `-l3r2`), median residual std per class on 1 km windows:
+
+| Measure | Run 1 | Run 2 |
+| --- | --- | --- |
+| Classes within ±30% of real | 4/9 | 7/9 |
+| Mean \|log ratio\| | 0.35 | 0.25 |
+| Rank correlation | 0.50 | 0.43 |
+
+Several classes have only 1–2 windows, so the ranks are noisy. Visually (`l3-detail.png`),
+run 1 has the uniform crumpled texture everywhere. Run 2 has smoother slopes with
+distinct gullies and ridges. Gates v2 for run 1 and for run 2's step-4,000 weights are
+queued (`data/models/after-pipeline-gates.sh`).
+
 ## Data
 
 Releases `context-v3` (L1/L2) and `lidar-v3` (L3) meet the per-class counts. All
