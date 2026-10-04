@@ -154,12 +154,36 @@ run 5: rugged fjord and alpine coasts, a smooth cone, gentle lee plateau
 Checkpoints are tested during training (at each validation step), so a run that is
 not learning the class is stopped early instead of finishing its full budget.
 
+### Gates v2 and the guidance experiment (2026-10-04)
+
+`class_gates` now generates from validation regions only, uses 8 roughness windows ×
+2 seeds with a bootstrap interval, gates on roughness with the coarse input hidden and
+on own-class recognition, and reports swap and shown-coarse roughness. `--direction w`
+adds the class direction learned with the coarse input hidden while it is shown
+(`model.denoise_field`). L2 run 5 (context-v3):
+
+| Direction w | Hidden rank [90%] | Shown rank | Shown roughness by class (m) | Own recognition (real 0.30) |
+| --- | --- | --- | --- | --- |
+| 0 | 0.83 [0.78, 0.85] | −0.13 | 9.3–9.6 | 0.43 |
+| 1 | 0.81 [0.78, 0.86] | 0.38 | 9.1–10.1 | 0.46 |
+| 2 | 0.81 [0.78, 0.86] | 0.50 | 8.9–10.8 | 0.48 |
+
+Real roughness spans 4.4–11.0 m. The direction moves the shown-coarse ranking the right
+way, but the range stays far too narrow: sampling alone is not enough. Own recognition
+passes at every w, but partly because the window's own coarse surface already carries
+its class. Next: change training, not sampling (coarse blur augmentation, AdaGN), as in
+L3 run 2.
+
 ## Data
 
-Releases `context-v3` (L1/L2) and `lidar-v2` (L3) exist and meet the per-class
-counts; their owner votes are not complete (2026-10-04):
+Releases `context-v3` (L1/L2) and `lidar-v3` (L3) meet the per-class counts. All
+lidar regions have an owner vote: 78 Yes, 2 No (matukituki, mount-adams), plus the
+replacement rangitata (Yes). `lidar-v3` holds only accepted regions. Its validation
+regions are bisti, cape-kidnappers, eureka-dunes, glacier-np, glacier-peak,
+hells-canyon, marlborough-sounds, mount-shasta, mount-st-helens, palisades, punakaiki
+and rangitata (2026-10-04):
 
-| Class | context-v3 train / val | lidar-v2 train / val | L4 1 m tiles |
+| Class | context-v3 train / val | lidar-v3 train / val | L4 1 m tiles |
 | --- | --- | --- | --- |
 | 1 Karst | 9 / 2 | 6 / 1 | 7 |
 | 2 Gorges and canyons | 9 / 2 | 6 / 1 | 15 |
@@ -170,18 +194,16 @@ counts; their owner votes are not complete (2026-10-04):
 | 7 Badlands and mesas | 9 / 2 | 6 / 1 | 9 |
 | 8 Dunes | 8 / 2 | 6 / 1 | 10 |
 | 9 Braided rivers | 8 / 2 | 5 / 1 | 7 |
-| 10 Glaciers | 9 / 2 | 6 / 1 | 10 |
+| 10 Glaciers | 9 / 2 | 5 / 1 | 10 |
 | 11 Cones and lava | 9 / 2 | 6 / 1 | 16 |
 | 12 Coastal cliffs | 8 / 2 | 6 / 1 | 8 |
 
 - `context-v3`: 64 of its regions are unreviewed, including 11 validation regions.
   Validation `waimakariri-upper` overlaps training `rakaia-upper` (about 16% of the
   region); fix this in the next release.
-- `lidar-v2`: 44 of 80 regions are unreviewed, including 6 of the 12 validation
-  regions: bisti, cape-kidnappers, eureka-dunes, matukituki, palisades and
-  punakaiki. Matukituki (braided rivers) has about 9k valid cells, too few for one
-  256² crop, and must be replaced. Do not train L3 on `lidar-v1`: it has 1 training
-  region for some classes and no validation region for 7 classes.
+- `lidar-v3` replaces `lidar-v2`, which included 44 unreviewed regions. Do not train
+  L3 on `lidar-v1` or `lidar-v2`. A second replacement, waimakariri-braid, failed:
+  the local GDAL cannot read LERC-compressed LINZ tiles.
 
 Targets per class: L1/L2 at least 8 training and 2 validation GLO-30 regions; L3 at
 least 5 training and 1 validation lidar regions; L4 at least 15 tiles from at least 4
@@ -212,28 +234,32 @@ The [expert review](../reports/expert-review-2026-10-04.md) changes the next ste
 ## Steps
 
 1. **Instrument.** Done: the gates and class grid; failing baseline recorded.
-2. **Data.** Done: `context-v3` and `lidar-v2` released. Owner votes are open (see
-   Data).
+2. **Data.** Done: `context-v3` and `lidar-v3` released. The `context-v3` votes are
+   still open (see Data).
 3. **Pilot at L2.** Done: runs 3–5, and L1 run 4. Class orders roughness only with the
    coarse input hidden.
 4. **Next, in order:**
-   1. **Fix the gates** (`class_gates.py`, `train.py`):
+   1. **Done: fix the gates** (`class_gates.py`, `train.py`):
       - Use validation windows only.
       - Use at least 8 windows × 2 seeds at the production step count, with bootstrap
          confidence intervals over regions.
       - Make the training-time roughness rank use several windows and seeds.
-   2. **Guidance experiment (no training).** Sample with
+   2. **Done: guidance experiment (no training);** not enough on its own (see above). Sample with
       `D(c,k) + w·[D(c_hidden,k) − D(c_hidden,∅)]`: the class direction learned with
       the coarse input hidden, added while it is shown. This needs a 3-call
       extension of `denoise_field` (`model.py:204`). Measure the shown-coarse
       roughness gate on L2 run 5 and L1 run 4 for a few `w`, and run Fujion L1–L2
       with the best `w`. Also try class guidance with the coarse input hidden in both
       terms, to widen the compressed range.
-   3. **Owner votes on the lidar-v2 validation regions:**
+   3. **Done: owner votes on the lidar-v2 validation regions**, giving `lidar-v3`:
       - Vote on the 6 unreviewed validation regions.
       - Replace matukituki.
       - Rebuild the release, keeping its geographic split.
-   4. **Model changes before the L3 run:**
+   4. **Done: model changes before the L3 run.** `--scale-shift` and
+      `--coarse-blur` (the coarse surface of a share of windows smoothed by 0.5–2
+      blocks; the target stays truth minus that coarse surface). The explicit hidden
+      flag is deferred: an exactly 0 m flat painted window is the only case it
+      affects:
       - Switch class conditioning to `resnet_time_scale_shift="scale_shift"`
         (AdaGN/FiLM).
       - Replace the all-zero "hidden" sentinel (`model.py:167`) with an explicit
@@ -241,7 +267,7 @@ The [expert review](../reports/expert-review-2026-10-04.md) changes the next ste
       - If the guidance experiment is not enough, replace binary coarse dropout with
         conditioning augmentation (Ho et al. 2021): blur and noise the coarse input
         at a random strength, and give the strength as an input.
-   5. **L3 run 2** (see below).
+   5. **L3 run 2** (see below), started 2026-10-04.
    6. **Retrain L2, then L1 and L4,** with whatever passed, using longer runs and a
       larger batch where VRAM allows. Then regenerate Fujion and review L2, L3,
       then L4.
@@ -256,8 +282,12 @@ The [expert review](../reports/expert-review-2026-10-04.md) changes the next ste
 ### L3 run 2
 
 - **Data and model:**
-  - `lidar-v2` after step 4.3. Fields are cached at
-    `data/cache/cascade-fields/lidar-v2`; the build peaked at 4.96 GB RSS.
+  - `lidar-v3`.
+  - Command: `train --level l3 --channels 64,96,128,192,256 --class-embedding
+    --scale-shift --balanced --mix 0.25 --coarse-dropout 0.25 --coarse-blur 0.5
+    --hours 5`.
+  - Batch 12 with gradient checkpointing: 6.0 GB VRAM, 0.48 steps/s. Without
+    checkpointing it ran out of the 16 GB VRAM.
   - Fresh weights: no `--init-from` run 1.
   - Class embedding with `scale_shift`, balanced and mixed windows.
 - **Coarse handling:** 25% coarse dropout (L3 always receives L2's coarse output in

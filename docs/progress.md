@@ -44,11 +44,12 @@ Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md
 
 0. **Class conditioning** comes first:
    [class conditioning, step 4](plans/class-conditioning-v1.md#steps).
-   1. Fix the gates (validation windows only, more windows and seeds).
-   2. Run the guidance experiment on L2 run 5 and L1 run 4 (no training).
-   3. Owner votes on the 6 unreviewed `lidar-v2` validation regions, and replace
-      matukituki.
-   4. Make the model changes, then run L3 run 2 on `lidar-v2`, not `lidar-v1`.
+   1. Done (2026-10-04): gates v2, the guidance experiment (not enough alone), the
+      fully voted `lidar-v3`, `--scale-shift` and `--coarse-blur`.
+   2. L3 run 2 on `lidar-v3` (started 2026-10-04, 5 h), then its gates and an owner
+      review.
+   3. If it works, retrain L2 and L1 with the same changes, then L4; regenerate
+      Fujion.
 
    Background: [expert review](reports/expert-review-2026-10-04.md).
 1. Owner review of the first world at 4 m; then L4 at 1 m (about 12 h of GPU, or
