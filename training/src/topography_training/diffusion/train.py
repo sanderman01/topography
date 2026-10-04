@@ -93,7 +93,7 @@ def main(argv=None) -> int:
                         "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
                         "block": level.block,
                         "smooth_cells": level.smooth_cells,
-                        "coarse_dropout": args.coarse_dropout if level.conditioning == 3 else 0.0,
+                        "coarse_dropout": args.coarse_dropout if level.conditioning in (3, 6) else 0.0,
                         "cover_dropout": args.cover_dropout if level.conditioning == 3 else 0.0,
                         "balanced": balanced, "mix": mix,
                         "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
@@ -182,7 +182,7 @@ def main(argv=None) -> int:
     def class_rough():
         """Rank correlation between real and generated residual roughness per class, from
         one validation window with the coarse input hidden (class-conditioning gate)."""
-        from .cascade import SHAPE_CHANNELS
+        from .cascade import DROP_CHANNELS
         from .model import sample_field
 
         if len(real_sd) < 3:
@@ -192,7 +192,7 @@ def main(argv=None) -> int:
         gen = []
         for cid in cls:
             c = vc[:1].clone()
-            c[:, list(SHAPE_CHANNELS)] = 0
+            c[:, list(DROP_CHANNELS[config["conditioning"]][0])] = 0
             c[:, k:] = 0
             c[:, k + cid] = 1
             gen.append(float(sample_field(ema, c, steps=8, window=size, stride=size // 2, batch=1, seed=0)[0, 0].std()))
@@ -242,7 +242,7 @@ def main(argv=None) -> int:
         cond[drop, k:] = 0
         cond[drop, k] = 1
         if config.get("coarse_dropout") or config.get("cover_dropout"):
-            cascade.drop(cond, rng, config["coarse_dropout"], config["cover_dropout"])
+            cascade.drop(cond, rng, config["coarse_dropout"], config["cover_dropout"], config["conditioning"])
         target, cond, mask = (torch.from_numpy(a).to(device, non_blocking=True) for a in (target, cond, mask))
         for g in opt.param_groups:
             g["lr"] = args.lr * min(1.0, (step + 1) / args.warmup)

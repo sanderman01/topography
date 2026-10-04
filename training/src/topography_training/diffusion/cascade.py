@@ -60,7 +60,10 @@ LEVELS = {
 # Layout 3 channels set to 0 when dropped in training, for guidance at generation.
 # Coarse dropout hides shape, slopes and absolute height: absolute height alone carries
 # the whole coarse surface (L2 pilot of 2026-10-04 learned no class with it left in).
-SHAPE_CHANNELS, COVER_CHANNELS = (0, 1, 2, 3), (5, 6)
+# Per conditioning layout: (coarse channels, cover channels). L1 (layout 6) hides its
+# envelope mid surface and relief, so a painted, featureless envelope still gets class style.
+DROP_CHANNELS = {3: ((0, 1, 2, 3), (5, 6)), 6: ((0, 1, 2, 3, 4), ())}
+SHAPE_CHANNELS, COVER_CHANNELS = DROP_CHANNELS[3]
 MIN_VALID = 0.9  # share of surveyed cells a training window needs
 
 
@@ -359,10 +362,11 @@ def condition(level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes
     return np.concatenate(parts).astype(np.float32)
 
 
-def drop(cond: np.ndarray, rng: np.random.Generator, coarse: float, cover: float) -> np.ndarray:
-    """Zero the shape or cover channels of some layout 3 windows, in place."""
+def drop(cond: np.ndarray, rng: np.random.Generator, coarse: float, cover: float, conditioning: int = 3) -> np.ndarray:
+    """Zero the coarse or cover channels of some windows, in place."""
     n = len(cond)
-    for rate, chans in ((coarse, SHAPE_CHANNELS), (cover, COVER_CHANNELS)):
+    shape, cover_chans = DROP_CHANNELS[conditioning]
+    for rate, chans in ((coarse, shape), (cover, cover_chans)):
         hit = rng.random(n) < rate
         for c in chans:
             cond[hit, c] = 0

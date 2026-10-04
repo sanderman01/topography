@@ -173,13 +173,13 @@ def main(argv=None) -> int:
                for c in CLASSES if any(k == c for _, k, _, _, _ in windows)}
     shown = {c: [] for c in real_sd}
     hidden = {c: [] for c in real_sd}
-    from .cascade import SHAPE_CHANNELS
+    from .cascade import DROP_CHANNELS
 
     for _, _, _, coarse, cond in picks[:3]:
         for c in real_sd:
             shown[c].append(float(generate(coarse, _with_class(cond, c), args.seed).std()))
             k = _with_class(cond, c)
-            k[list(SHAPE_CHANNELS)] = 0
+            k[list(DROP_CHANNELS[config["conditioning"]][0])] = 0
             hidden[c].append(float(generate(coarse, k, args.seed).std()))
     cls = sorted(real_sd)
     r_real = rank(np.array([real_sd[c] for c in cls]))
