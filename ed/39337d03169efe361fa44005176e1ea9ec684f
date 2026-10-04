@@ -1,0 +1,21 @@
+docs/plans/class-conditioning-v1.md
+  s_63e041542fef52::t_f93318ef90115c 202-205,273-282
+docs/plans/terrain-cascade-v1.md
+  s_63e041542fef52::t_9c7988982d49a5 256-262,265-266,274-279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ed39337d03169efe361fa44005176e1ea9ec684f",
+  "prompts": {},
+  "sessions": {
+    "s_63e041542fef52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aff05194-4b9c-4c73-afd0-b85dbe6c39d1",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
