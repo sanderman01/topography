@@ -253,19 +253,17 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
 - **Expert review (2026-10-04).** The [expert review](../reports/expert-review-2026-10-04.md)
   found the following open issues. The class work and the L3 run are tracked in
   [class conditioning](class-conditioning-v1.md).
-  - **Stream thresholds.** They are applied per cell, so channels vanish across class
-    borders. Thresholds should start channels, and channels should continue downstream
-    (`hydrology.py:106`).
-  - **Lake outlets.** Lakes end flow routing. Draining lakes need an explicit outlet
-    through which accumulation continues.
-  - **Closed basins.** Every depression beyond the lake allowance is carved open
-    (`hydrology.py:199`), which erases karst dolines, interdune basins and craters.
-    Keep selected dry basins.
+  - **Stream thresholds.** Fixed 2026-10-04: a threshold starts a stream, and the
+    stream continues to its outlet.
+  - **Lake outlets.** Fixed 2026-10-04: flow passes through lakes to their spill point
+    (`streams(..., outlet=sea | dry basins)`).
+  - **Closed basins.** Fixed 2026-10-04: `Water.dry_share` (karst 1%, calderas 0.5%,
+    dunes 0.5%, lava 0.3% of the land) keeps the deepest compact depressions of those
+    classes closed and dry after L2. Streams sink into them.
   - **Braided rivers.** Single-parent flow routing cannot branch and rejoin. Braided
     rivers need a channel belt with bars.
-  - **Water through refinement.** River profiles and lake IDs are not enforced after
-    L2. Lake-level propagation takes the maximum nearby level
-    (`cascade_chain.py:90`), so adjacent lakes can contaminate each other.
+  - **Water through refinement.** River profiles and lake IDs are not enforced after L2
+    (open). The lake-level spread now keeps each lake's own level (fixed 2026-10-04).
   - **Seabed join.** It suits fjords but oversteepens beaches and shallow shelves.
     Exclude extrapolated seabed from land class statistics.
   - **Lidar averaging.** Lidar is averaged with `-ovr AUTO-1` (`lidar.rs:105`), so
@@ -273,11 +271,12 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
     crests against a native-resolution average.
   - **Geographic diversity.** Canyons, badlands and dunes are mostly from the western
     US; archipelago and braided rivers are mostly from New Zealand. The validation
-    split hashes region IDs with no geographic grouping (`release.rs:82`). Split by
-    landform or survey cluster with spatial buffers.
-  - **Mixed-class windows.** `_join` blends regions whose levels can differ by
-    kilometres (`cascade.py:575`), which teaches steep ramps at class borders.
-    Match the mean levels along the border.
+    split now keeps regions within 5 km of each other on one side (2026-10-04;
+    `context-v4` moves jostedalsbreen and waimakariri-upper to training). Clustering by
+    survey or landform beyond that is open.
+  - **Mixed-class windows.** Fixed 2026-10-04: `_join` shifts the second window to the
+    first's level along the border, except near the sea. L3 run 2 was started before
+    this fix.
 
 ## Gates and fallbacks
 

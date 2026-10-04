@@ -199,8 +199,10 @@ and rangitata (2026-10-04):
 | 12 Coastal cliffs | 8 / 2 | 6 / 1 | 8 |
 
 - `context-v3`: 64 of its regions are unreviewed, including 11 validation regions.
-  Validation `waimakariri-upper` overlaps training `rakaia-upper` (about 16% of the
-  region); fix this in the next release.
+  Validation `waimakariri-upper` overlapped training `rakaia-upper`, and
+  jostedalsbreen overlapped geirangerfjord. `context-v4` (2026-10-04) has the same
+  regions with the cluster-aware split; use it for new L1/L2 runs. Its unreviewed
+  regions still need owner votes.
 - `lidar-v3` replaces `lidar-v2`, which included 44 unreviewed regions. Do not train
   L3 on `lidar-v1` or `lidar-v2`. A second replacement, waimakariri-braid, failed:
   the local GDAL cannot read LERC-compressed LINZ tiles.
@@ -268,7 +270,16 @@ The [expert review](../reports/expert-review-2026-10-04.md) changes the next ste
         conditioning augmentation (Ho et al. 2021): blur and noise the coarse input
         at a random strength, and give the strength as an input.
    5. **L3 run 2** (see below), started 2026-10-04.
-   6. **Retrain L2, then L1 and L4,** with whatever passed, using longer runs and a
+   6. **Queued after L3 run 2** (`data/models/after-l3-run-2.sh`):
+      - gates v2 on L3 run 2;
+      - Fujion chains with L3 runs 1 and 2 (`data/worlds/fujion-painted-chain-5-l3r1`,
+        `-l3r2`);
+      - L2 run 6 on `context-v4` with the L3 run 2 recipe (4 h), then its gates and a
+        Fujion chain (`fujion-painted-chain-6`).
+
+      L1 run 4 already passes the roughness gate with the envelope shown and hidden.
+      Coarse blur does not apply at L1.
+   7. **Retrain L2, then L1 and L4,** with whatever passed, using longer runs and a
       larger batch where VRAM allows. Then regenerate Fujion and review L2, L3,
       then L4.
 5. **Fallbacks**, in order:
