@@ -137,6 +137,19 @@ recognition 0.10 still fail. Next: L1 and L3 with the same recipe, then the whol
 cascade on the painted Fujion layout, where L1 sees a featureless envelope. Per-class
 fine-tunes (`--only-class`, `--init-from`, `ClassMixture`) are ready as the fallback.
 
+### L1 run 4 (2026-10-04)
+
+Same recipe at L1 (envelope dropout hides mid surface and relief), 3 hours (5,717 steps).
+Roughness gate passes with the envelope shown and hidden (rank 0.91 both); generated
+fine relief follows the real per-class order with a compressed range (108–203 m against
+42–307 m). Recognition 0.19 (gate 0.25). The swap gate (0.98 between classes, 0.10 for
+another seed) is the wrong test at L1: a whole-field L1 changes completely with the seed,
+and the class shows as amplitude, which correlation ignores; roughness is the measure.
+On the painted Fujion envelope the old L1 gave every class about 150 m of fine relief
+(2–6x real); run 4 gives 37–66 m, ordered by class. Fujion L1–L2 with L1 run 4 and L2
+run 5: rugged fjord and alpine coasts, a smooth cone, gentle lee plateau
+(`data/worlds/fujion-painted-chain-4`).
+
 Checkpoints are tested during training (at each validation step), so a run that is
 not learning the class is stopped early instead of finishing its full budget.
 
