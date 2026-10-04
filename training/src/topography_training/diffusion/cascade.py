@@ -471,11 +471,13 @@ class Sampler:
     """Random windows of one split with the CropSampler interface of the 1 m model."""
 
     def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None,
-                 balanced: bool = False, mix: float = 0.0):
+                 balanced: bool = False, mix: float = 0.0, blur: float = 0.0):
         """`balanced` draws a class, then a region of it, then a window (not by area);
         `mix` is the share of windows joined with a window of another class along a
-        soft border, so the model sees class borders."""
-        self.balanced, self.mix = balanced, mix
+        soft border, so the model sees class borders; `blur` is the share of refining
+        windows whose coarse surface is smoothed further (conditioning augmentation), so
+        a smooth coarse input does not imply smooth terrain."""
+        self.balanced, self.mix, self.blur = balanced, mix, blur
         self.level, self.size = level, size
         stride = stride or level.stride
         role = {"train": 1, "validation": 2}[split]  # data.TRAIN, data.VALIDATION
@@ -510,6 +512,9 @@ class Sampler:
             k = self.level.block
             oy, ox = (int(v) for v in rng.integers(k, size=2)) if rng is not None else (0, 0)
             c = refine_coarse(self.level, f.target, y, x, s, oy, ox)
+            if rng is not None and self.blur and rng.random() < self.blur:
+                # Target stays truth minus this coarse, so the model learns to add the lost relief.
+                c = smooth(c, float(rng.uniform(0.5, 2.0)) * k)
         else:
             c = f.coarse[sl]
         classes = np.full((s, s), f.class_id, np.int64)

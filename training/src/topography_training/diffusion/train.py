@@ -40,6 +40,8 @@ def _parse(argv):
     p.add_argument("--scale-shift", action="store_true", help="embeddings scale and shift every norm (AdaGN)")
     p.add_argument("--balanced", action="store_true", help="cascade: draw windows class-balanced by region")
     p.add_argument("--mix", type=float, default=0.0, help="cascade: share of windows joining two classes")
+    p.add_argument("--coarse-blur", type=float, default=0.0,
+                   help="cascade L2-L4: share of windows whose coarse surface is smoothed further")
     p.add_argument("--only-class", type=int, help="cascade: train on regions of this class only (per-class fine-tune)")
     p.add_argument("--init-from", type=Path, help="start a new run from this run's EMA weights (same arch and layout)")
     p.add_argument("--val-every", type=int, default=1000)
@@ -92,8 +94,9 @@ def main(argv=None) -> int:
             regions = [r for r in regions if r.class_id == only]
         balanced = saved.get("balanced", False) if saved else args.balanced
         mix = saved.get("mix", 0.0) if saved else args.mix
+        blur = saved.get("coarse_blur", 0.0) if saved else args.coarse_blur
         train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"],
-                                balanced=balanced, mix=mix)
+                                balanced=balanced, mix=mix, blur=blur)
         val = cascade.Sampler(regions, "validation", level, train.size)
         level_config = {"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
                         "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
@@ -101,7 +104,7 @@ def main(argv=None) -> int:
                         "smooth_cells": level.smooth_cells,
                         "coarse_dropout": args.coarse_dropout if level.conditioning in (3, 6) else 0.0,
                         "cover_dropout": args.cover_dropout if level.conditioning == 3 else 0.0,
-                        "balanced": balanced, "mix": mix, "only_class": only,
+                        "balanced": balanced, "mix": mix, "coarse_blur": blur, "only_class": only,
                         "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
     else:
         tiles = data.load_release(args.release)
