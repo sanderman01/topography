@@ -64,6 +64,56 @@ class Denoiser(nn.Module):
         return c_skip * x + c_out * f.to(x.dtype)
 
 
+class ClassMixture(nn.Module):
+    """Per-class fine-tuned denoisers behind one interface: each output cell blends the
+    models of the classes around it, weighted by class shares smoothed over
+    `blend_cells`, so class borders are soft. Cells of a class without its own model
+    (and class 0, the guidance-dropped condition) use the base model."""
+
+    def __init__(self, base: Denoiser, per_class: dict[int, Denoiser], blend_cells: float = 8.0):
+        super().__init__()
+        self.base, self.per_class = base, nn.ModuleDict({str(k): m for k, m in per_class.items()})
+        self.conditioning, self.target_channels = base.conditioning, base.target_channels
+        self.blend_cells = blend_cells
+
+    def forward(self, x, sigma, cond):
+        shares = cond[:, -NUM_CLASSES:].float()
+        r = max(1, int(3 * self.blend_cells))
+        k = torch.exp(-torch.arange(-r, r + 1, device=x.device, dtype=torch.float32) ** 2 / (2 * self.blend_cells**2))
+        k = (k / k.sum()).view(1, 1, 1, -1).repeat(NUM_CLASSES, 1, 1, 1)
+        shares = F.conv2d(F.pad(shares, (r, r, 0, 0), mode="replicate"), k, groups=NUM_CLASSES)
+        shares = F.conv2d(F.pad(shares, (0, 0, r, r), mode="replicate"), k.transpose(2, 3), groups=NUM_CLASSES)
+        out = torch.zeros_like(x, dtype=torch.float32)
+        rest = torch.ones_like(shares[:, :1])
+        for c in range(1, NUM_CLASSES):
+            model = self.per_class[str(c)] if str(c) in self.per_class else None
+            w = shares[:, c : c + 1]
+            if model is None or float(w.max()) < 1e-3:
+                continue
+            out += w * model(x, sigma, cond).float()
+            rest -= w
+        if float(rest.max()) > 1e-3:
+            out += rest.clamp(min=0) * self.base(x, sigma, cond).float()
+        return out.to(x.dtype)
+
+
+def load_mixture(base_run, class_runs: dict[int, "Path"], device, blend_cells: float = 8.0) -> ClassMixture:
+    """A ClassMixture from a base run and per-class fine-tuned runs (latest EMA weights)."""
+    import json
+
+    from safetensors.torch import load_file
+
+    from .evaluate import _latest
+
+    def one(run):
+        config = json.loads((run / "config.json").read_text())
+        m = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
+        m.load_state_dict(load_file(str(_latest(run)), device=str(device)))
+        return m
+
+    return ClassMixture(one(base_run), {c: one(r) for c, r in class_runs.items()}, blend_cells).to(device).eval()
+
+
 def edm_loss(model, target, cond, mask, p_mean=-1.2, p_std=1.2):
     """Masked EDM loss; mask weights each target channel's known cells."""
     sigma = (torch.randn(target.shape[0], device=target.device) * p_std + p_mean).exp()

@@ -108,6 +108,8 @@ def main(argv=None) -> int:
     p.add_argument("--run-dir", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--weights", type=Path)
+    p.add_argument("--class-runs", type=Path,
+                   help="directory of per-class fine-tuned runs c1..c12 over --run-dir (a ClassMixture)")
     p.add_argument("--steps", type=int, default=12)
     p.add_argument("--guidance", type=float, default=1.0)
     p.add_argument("--swap-windows", type=int, default=6)
@@ -132,8 +134,15 @@ def main(argv=None) -> int:
     config = json.loads((args.run_dir / "config.json").read_text())
     level = cascade.LEVELS[config["level"]]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
-    model.load_state_dict(load_file(str(args.weights or _latest(args.run_dir)), device=str(device)))
+    if args.class_runs:
+        from .model import load_mixture
+
+        runs = {c: args.class_runs / f"c{c}" for c in CLASSES if (args.class_runs / f"c{c}" / "config.json").exists()}
+        model = load_mixture(args.run_dir, runs, device)
+        print(f"mixture of {len(runs)} per-class runs over {args.run_dir.name}", flush=True)
+    else:
+        model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
+        model.load_state_dict(load_file(str(args.weights or _latest(args.run_dir)), device=str(device)))
     scale, size, cell = config["residual_scale_m"], config["crop"], float(level.cell_m)
     regions = cascade.load_regions(Path(config["release"]))
     rng = np.random.default_rng(args.seed)
