@@ -89,10 +89,12 @@ def _sample(model, config, coarse, cond, steps, seed, batch, hold=None):
 
 def _spread(level: np.ndarray, mask: np.ndarray, cells: int) -> np.ndarray:
     """Lake levels carried `cells` cells beyond their mask, for rounded shores."""
-    out = np.where(mask, level, -np.inf).astype(np.float32)
+    own = np.where(mask, level, -np.inf).astype(np.float32)
+    out = own
     for _ in range(cells):
         out = np.maximum(out, hydrology._maxpool3(out))
-    return out
+    # Lake cells keep their own level; a higher neighbouring lake must not raise them.
+    return np.where(mask, own, out)
 
 
 def _nearest(a: np.ndarray, k: int) -> np.ndarray:
@@ -135,6 +137,13 @@ class Source:
         veg = land & ~snow & (_nearest(self.l0.forest, k) >= 128) & (h < self.l0.spec["treeline_m"])
         return snow, veg
 
+    def dry_at(self, k: int):
+        """Cells of classes with dry basins (authored layouts; a real region has one class)."""
+        if isinstance(self.classes, int):
+            return None
+        return np.array([hydrology.WATER.get(c, hydrology.WATER[0]).dry_share > 0
+                         for c in range(NUM_CLASSES)])[self.classes_at(k)]
+
     def streams_at(self, k: int, water: hydrology.Water):
         """Stream start area and width: the class profile per cell for authored layouts."""
         if self.l0 is None or water is not self.water:
@@ -167,7 +176,7 @@ def _layout_source(l0: layout.L0) -> Source:
     share = np.bincount(l0.cls[land], minlength=NUM_CLASSES) / max(int(land.sum()), 1)
     profiles = [hydrology.WATER.get(c, hydrology.WATER[0]) for c in range(NUM_CLASSES)]
     mean = {f: float(sum(share[c] * getattr(profiles[c], f) for c in range(NUM_CLASSES)))
-            for f in ("lake_share", "tarn_share", "stream_km2", "stream_width")}
+            for f in ("lake_share", "tarn_share", "stream_km2", "stream_width", "dry_share")}
     extent = l0.cell_m * l0.mid.shape[0]
     return Source(l0.spec["name"], ((lo + hi) / 2).astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)],
                   l0.cls, hydrology.Water(**mean), None, None,
@@ -265,7 +274,8 @@ def main(argv=None) -> int:
     if src.l0 is not None:  # the map border stays sea
         h128 = np.minimum(h128, paint.border_limit(h128.shape[0], 128.0)).astype(np.float32)
     authored = src.l0.lake if src.l0 else None
-    h128, lake128, level128 = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0, keep_at=authored)
+    h128, lake128, level128, _ = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0,
+                                                 keep_at=authored)
     sea128 = cascade.open_sea(h128)
     lake128 &= ~sea128
     times["l1_s"] = time.time() - t
@@ -294,14 +304,17 @@ def main(argv=None) -> int:
     h32[lake32] = lake_level32[lake32]
     raw32 = h32.copy()
     # Small lakes (tarns, kettles) from L2's own hollows; the rest are carved through.
-    h32, tarn32, _ = hydrology.drain(h32, sea32 | lake32, water.tarn_share, 1.0, tarns=True)
+    h32, tarn32, _, dry32 = hydrology.drain(h32, sea32 | lake32, water.tarn_share, 1.0, tarns=True,
+                                            dry_share=water.dry_share, dry_at=src.dry_at(4))
     sea32 = cascade.open_sea(h32)
     lake32 = (lake32 | tarn32) & ~sea32
     snow32, veg32 = src.cover(h32, 4)
     snow32, veg32 = snow32 & ~sea32, veg32 & ~sea32
-    stream32, parent32, width32 = hydrology.streams(h32, sea32 | lake32, 32.0, *src.streams_at(4, water))
+    # Flow passes through lakes and sinks into dry basins.
+    stream32, parent32, width32 = hydrology.streams(h32, sea32 | lake32, 32.0, *src.streams_at(4, water),
+                                                    outlet=sea32 | dry32)
     times["l2_s"] = time.time() - t
-    print(f"L2 {h32.shape} in {times['l2_s']:.0f} s; tarns {tarn32.mean():.2%}, streams {stream32.sum()} cells", flush=True)
+    print(f"L2 {h32.shape} in {times['l2_s']:.0f} s; tarns {tarn32.mean():.2%}, dry basins {dry32.mean():.2%}, streams {stream32.sum()} cells", flush=True)
     _reach(src, h32, 32.0, args.out, "l2")
     ref_name, ref_h, ref_cell, ref_water = src.reference
     _png(args.out / ref_name, ref_h, ref_cell, ref_water)
