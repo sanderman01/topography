@@ -10,7 +10,10 @@ python -m topography_training.diffusion.class_gates --run-dir <dir> --out <new-d
    recognise generated residuals as their requested class. Real accuracy is measured
    leaving one region out; generated windows come from regions of other classes
    (swapped) and of the class itself (own). Gate: swapped recognition >= 70% of real.
-3. A class grid: one window generated in every class, as a hillshade sheet.
+3. Class roughness: correlation is blind to amplitude, so the residual roughness (std)
+   generated for each class from the same windows must follow the real per-class
+   roughness (rank correlation >= 0.7), with the coarse input shown and hidden.
+4. A class grid: one window generated in every class, as a hillshade sheet.
 
 Writes gates.json and class-grid.png; exit status 1 when a gate fails.
 """
@@ -26,6 +29,7 @@ import numpy as np
 
 CLASSES = list(range(1, 13))
 RECOGNITION_SHARE = 0.7
+ROUGHNESS_RANK = 0.7
 
 
 def features(r: np.ndarray, cell_m: float) -> np.ndarray:
@@ -161,6 +165,33 @@ def main(argv=None) -> int:
             "mean_correlation_other_seed": float(np.mean(seeds)), "windows": len(picks)}
     swap["pass"] = swap["mean_correlation_between_classes"] < swap["mean_correlation_other_seed"]
 
+    # 3. Class roughness (computed before recognition, which reuses the windows).
+    def rank(v):
+        return np.argsort(np.argsort(v)).astype(float)
+
+    real_sd = {c: float(np.median([np.nanstd(r - co) for _, k, r, co, _ in windows if k == c]))
+               for c in CLASSES if any(k == c for _, k, _, _, _ in windows)}
+    shown = {c: [] for c in real_sd}
+    hidden = {c: [] for c in real_sd}
+    from .cascade import SHAPE_CHANNELS
+
+    for _, _, _, coarse, cond in picks[:3]:
+        for c in real_sd:
+            shown[c].append(float(generate(coarse, _with_class(cond, c), args.seed).std()))
+            k = _with_class(cond, c)
+            k[list(SHAPE_CHANNELS)] = 0
+            hidden[c].append(float(generate(coarse, k, args.seed).std()))
+    cls = sorted(real_sd)
+    r_real = rank(np.array([real_sd[c] for c in cls]))
+    rough = {"real_std_m": real_sd, "generated_std_m_coarse_shown": {c: float(np.mean(shown[c])) for c in cls},
+             "generated_std_m_coarse_hidden": {c: float(np.mean(hidden[c])) for c in cls}}
+    for key in ("coarse_shown", "coarse_hidden"):
+        g = rank(np.array([rough[f"generated_std_m_{key}"][c] for c in cls]))
+        rough[f"rank_correlation_{key}"] = float(np.corrcoef(r_real, g)[0, 1])
+    rough["pass"] = min(rough["rank_correlation_coarse_shown"], rough["rank_correlation_coarse_hidden"]) >= ROUGHNESS_RANK
+    print(f"roughness rank correlation: shown {rough['rank_correlation_coarse_shown']:.2f}, "
+          f"hidden {rough['rank_correlation_coarse_hidden']:.2f}", flush=True)
+
     # 2. Class recognition.
     x = np.stack([features(np.nan_to_num(real - coarse), cell) for _, _, real, coarse, _ in windows])
     y = np.array([c for _, c, _, _, _ in windows])
@@ -207,13 +238,15 @@ def main(argv=None) -> int:
     sheet.save(args.out / "class-grid.png")
 
     result = {"run": str(args.run_dir.resolve()), "level": level.name, "steps": args.steps, "guidance": args.guidance,
-              "class_swap": swap, "class_recognition": recognition,
-              "pass": bool(swap["pass"] and recognition["pass"])}
+              "class_swap": swap, "class_recognition": recognition, "class_roughness": rough,
+              "pass": bool(swap["pass"] and recognition["pass"] and rough["pass"])}
     (args.out / "gates.json").write_text(json.dumps(result, indent=1))
     print(f"class swap: between classes {swap['mean_correlation_between_classes']:.2f} vs other seed "
           f"{swap['mean_correlation_other_seed']:.2f} -> {'PASS' if swap['pass'] else 'FAIL'}")
     print(f"recognition: real {real_acc:.2f}, generated swapped {recognition['generated_swapped']:.2f}, own "
           f"{recognition['generated_own']:.2f} -> {'PASS' if recognition['pass'] else 'FAIL'}")
+    print(f"roughness: rank correlation shown {rough['rank_correlation_coarse_shown']:.2f}, hidden "
+          f"{rough['rank_correlation_coarse_hidden']:.2f} -> {'PASS' if rough['pass'] else 'FAIL'}")
     return 0 if result["pass"] else 1
 
 

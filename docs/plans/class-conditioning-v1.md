@@ -99,6 +99,25 @@ leave-one-region-out accuracy on real windows):
 The classifier's real accuracy (chance is 0.08) is low with 3–7 regions per class; it
 must rise with the new data before the recognition gate means much.
 
+### L2 pilot (2026-10-04)
+
+- Run 3 hid shape and slopes but left absolute height, which carries the whole coarse
+  surface; it learned no class (swap 0.98 at step 1,000). Coarse dropout now hides all
+  four channels.
+- Run 4 (class embedding, balanced and mixed windows, 25% coarse dropout): swap 0.97–0.98
+  through step 2,000. The true class lowered the denoising error by only 1–2% (L1 run 3:
+  3–5%), and class guidance up to 6 barely changed samples.
+- Root cause: real residual roughness differs almost 3x by class (dunes 4 m, fjords 11 m
+  at L2), but generated roughness is the same 10.4 m for every class with the coarse
+  input shown. In real data the coarse surface always reveals the class, so the model
+  reads style from it; a painted layout's smooth coarse surface carries none. With the
+  coarse input hidden, run 4 had not yet learned per-class roughness.
+- Correlation is blind to amplitude, so a roughness gate was added: generated per-class
+  residual roughness must follow the real per-class roughness (rank correlation 0.7),
+  with the coarse input shown and hidden; training logs it at every validation.
+- Next: coarse dropout 50% and longer training. If class style still does not appear,
+  fine-tune one model per class, which cannot ignore its class by construction.
+
 Checkpoints are tested during training (at each validation step), so a run that is
 not learning the class is stopped early instead of finishing its full budget.
 

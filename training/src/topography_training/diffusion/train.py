@@ -165,6 +165,40 @@ def main(argv=None) -> int:
     vsig = torch.tensor([0.05, 0.2, 0.5, 1.0, 2.0, 5.0], device=device).repeat(8)
     vnoise = torch.from_numpy(vrng.standard_normal(vt.shape).astype(np.float32)).to(device)
 
+    # Real residual roughness per class, for the training-time roughness check.
+    real_sd = {}
+    if level_config is not None:
+        rr = np.random.default_rng(99)
+        by_class = {}
+        for cid, regions_ in train._groups().items():
+            vals = []
+            for ri, idxs in regions_.items():
+                for i in rr.choice(idxs, size=min(3, len(idxs)), replace=False):
+                    h_, c_, _ = train.window(int(i))
+                    vals.append(float(np.nanstd(h_ - c_)))
+            by_class[cid] = float(np.median(vals))
+        real_sd = by_class
+
+    def class_rough():
+        """Rank correlation between real and generated residual roughness per class, from
+        one validation window with the coarse input hidden (class-conditioning gate)."""
+        from .cascade import SHAPE_CHANNELS
+        from .model import sample_field
+
+        if len(real_sd) < 3:
+            return None
+        size, k = vc.shape[-1], data.class_start(vc)
+        cls = sorted(real_sd)
+        gen = []
+        for cid in cls:
+            c = vc[:1].clone()
+            c[:, list(SHAPE_CHANNELS)] = 0
+            c[:, k:] = 0
+            c[:, k + cid] = 1
+            gen.append(float(sample_field(ema, c, steps=8, window=size, stride=size // 2, batch=1, seed=0)[0, 0].std()))
+        rank = lambda v: np.argsort(np.argsort(v)).astype(float)  # noqa: E731
+        return float(np.corrcoef(rank(np.array([real_sd[c] for c in cls])), rank(np.array(gen)))[0, 1])
+
     def class_swap():
         """Mean correlation of residuals generated for 4 classes from the same validation
         windows and seed; near 1 means the class is ignored (class-conditioning gate)."""
@@ -237,7 +271,8 @@ def main(argv=None) -> int:
             }
             last, losses = now, []
         if step % args.val_every == 0:
-            record = (record or {"step": step}) | {"val_loss": val_loss(), "class_swap_corr": class_swap()}
+            record = (record or {"step": step}) | {"val_loss": val_loss(), "class_swap_corr": class_swap(),
+                                                "class_rough_rank": class_rough()}
         if record:
             log.write(json.dumps(record) + "\n")
             log.flush()
