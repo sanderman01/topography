@@ -162,7 +162,10 @@ def _shape(cs: torch.Tensor, conditioning: int) -> torch.Tensor:
         from .cascade import MIN_RANGE_M
 
         lo, hi = c.amin(dim=(1, 2), keepdim=True), c.amax(dim=(1, 2), keepdim=True)
-        cs[:, 0] = (c - lo) / (hi - lo).clamp(min=MIN_RANGE_M) * 2 - 1
+        # A window whose coarse input was hidden (all zeros, as coarse dropout leaves it in
+        # training) stays zero; normalising it would give -1, which training never shows.
+        hidden = (cs[:, 0:4].abs().amax(dim=(1, 2, 3)) == 0).view(-1, 1, 1)
+        cs[:, 0] = torch.where(hidden, c, (c - lo) / (hi - lo).clamp(min=MIN_RANGE_M) * 2 - 1)
     else:
         cs[:, 0] = c - c.mean(dim=(1, 2), keepdim=True)
     return cs
