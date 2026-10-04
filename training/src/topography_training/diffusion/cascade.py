@@ -577,6 +577,14 @@ def _join(a, b, rng: np.random.Generator):
     d = xx * np.cos(angle) + yy * np.sin(angle) - offset
     t = np.clip(0.5 + d / (s / 8), 0, 1)
     m = (t * t * (3 - 2 * t)).astype(np.float32)
+    # Match the second window's level to the first along the border, so the join does not
+    # teach kilometre ramps; skipped near the sea, where the level decides what is sea.
+    band = np.abs(d) < s / 16
+    if band.any() and min(np.nanmin(c1), np.nanmin(c2)) > 0:
+        shift = float(np.nanmean(c1[band]) - np.nanmean(c2[band]))
+        h2, c2, k2 = h2 + shift, c2 + shift, k2.copy()
+        k2[0] += shift
+        k2[3] += shift / 4096.0
     h = m * h1 + (1 - m) * h2
     c = m * c1 + (1 - m) * c2
     cond = m * k1 + (1 - m) * k2
