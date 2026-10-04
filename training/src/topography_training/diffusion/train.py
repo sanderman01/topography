@@ -37,6 +37,7 @@ def _parse(argv):
     p.add_argument("--cover-dropout", type=float, default=0.1, help="cascade layout 3: zero snow/ice and vegetation")
     p.add_argument("--channels", type=str, default="64,128,256,384,512")
     p.add_argument("--class-embedding", action="store_true", help="learned class embedding in every block")
+    p.add_argument("--scale-shift", action="store_true", help="embeddings scale and shift every norm (AdaGN)")
     p.add_argument("--balanced", action="store_true", help="cascade: draw windows class-balanced by region")
     p.add_argument("--mix", type=float, default=0.0, help="cascade: share of windows joining two classes")
     p.add_argument("--only-class", type=int, help="cascade: train on regions of this class only (per-class fine-tune)")
@@ -114,7 +115,7 @@ def main(argv=None) -> int:
             "release": str(args.release.resolve()),
             "crop": args.crop,
             "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")],
-                     "class_embedding": args.class_embedding},
+                     "class_embedding": args.class_embedding, "scale_shift": args.scale_shift},
             "conditioning": data.CONDITIONING,
             "class_dropout": args.class_dropout,
             "seed": args.seed,
@@ -198,7 +199,8 @@ def main(argv=None) -> int:
 
     def class_rough():
         """Rank correlation between real and generated residual roughness per class, from
-        one validation window with the coarse input hidden (class-conditioning gate)."""
+        4 validation windows x 2 seeds with the coarse input hidden (class-conditioning
+        gate; one window alone swung 0.4-0.8 between checkpoints)."""
         from .cascade import DROP_CHANNELS
         from .model import sample_field
 
@@ -208,11 +210,12 @@ def main(argv=None) -> int:
         cls = sorted(real_sd)
         gen = []
         for cid in cls:
-            c = vc[:1].clone()
+            c = vc[:4].clone()
             c[:, list(DROP_CHANNELS[config["conditioning"]][0])] = 0
             c[:, k:] = 0
             c[:, k + cid] = 1
-            gen.append(float(sample_field(ema, c, steps=8, window=size, stride=size // 2, batch=1, seed=0)[0, 0].std()))
+            gen.append(np.mean([float(sample_field(ema, c[i : i + 1], steps=8, window=size, stride=size // 2, batch=1,
+                                                   seed=seed)[0, 0].std()) for i in range(4) for seed in (0, 1)]))
         rank = lambda v: np.argsort(np.argsort(v)).astype(float)  # noqa: E731
         return float(np.corrcoef(rank(np.array([real_sd[c] for c in cls])), rank(np.array(gen)))[0, 1])
 

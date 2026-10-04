@@ -16,6 +16,9 @@ DEFAULT_ARCH = {
     # Class shares of each window, through learned vectors, added to the timestep
     # embedding so the class reaches every block (docs/plans/class-conditioning-v1.md).
     "class_embedding": False,
+    # Timestep and class embedding scale and shift every norm (AdaGN, as in ADM) instead
+    # of adding a bias; a stronger path for the class.
+    "scale_shift": False,
 }
 
 
@@ -45,6 +48,7 @@ class Denoiser(nn.Module):
             attention_head_dim=64,
             norm_num_groups=32,
             class_embed_type="identity" if arch["class_embedding"] else None,
+            resnet_time_scale_shift="scale_shift" if arch["scale_shift"] else "default",
         )
         self.class_embed = None
         if arch["class_embedding"]:
@@ -172,12 +176,14 @@ def _shape(cs: torch.Tensor, conditioning: int) -> torch.Tensor:
 
 
 @torch.no_grad()
-def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, negative=None):
+def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, negative=None, direction=None):
     """One MultiDiffusion evaluation: average window predictions over the field.
 
     `cond` and `negative` provide conditioning windows (see TensorField); only a batch of
     windows is on the model's device at a time, so the field may stay in host memory.
-    Guidance pushes away from `negative` or, without it, from the class-dropped condition."""
+    Guidance pushes away from `negative` or, without it, from the class-dropped condition.
+    `direction` = (weight, channels): adds weight * [D(hidden) - D(hidden, no class)], the
+    class effect the model learned with those (coarse) channels hidden."""
     _, _, h, w = x.shape
     device = next(model.parameters()).device
     out = torch.zeros_like(x)
@@ -195,7 +201,12 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
     for i in range(0, len(boxes), batch):
         part = boxes[i : i + batch]
         xs = torch.cat([x[:, :, y : y + size, xx : xx + size] for y, xx in part]).to(device)
-        cs = _shape(cond.windows(part, size, device), model.conditioning)
+        raw = cond.windows(part, size, device)
+        if direction is not None:
+            hs = raw.clone()
+            hs[:, list(direction[1])] = 0
+            hs = _shape(hs, model.conditioning)
+        cs = _shape(raw, model.conditioning)
         if negative is not None:
             ns = _shape(negative.windows(part, size, device), model.conditioning)
         sig = torch.full((len(part),), sigma, device=device)
@@ -210,6 +221,11 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
                     uncond[:, k] = 1
                 du = model(xs, sig, uncond).float()
                 d = du + guidance * (d - du)
+            if direction is not None:
+                hu, k = hs.clone(), class_start(hs)
+                hu[:, k:] = 0
+                hu[:, k] = 1
+                d = d + direction[0] * (model(xs, sig, hs).float() - model(xs, sig, hu).float())
         d = d.to(x.device)
         for j, (y, xx) in enumerate(part):
             out[:, :, y : y + size, xx : xx + size] += d[j : j + 1] * wt
@@ -220,7 +236,7 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
 
 @torch.no_grad()
 def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None,
-                 noise=None, hold=None):
+                 noise=None, hold=None, direction=None):
     """Heun EDM sampling over a field of any size.
 
     cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`.
@@ -228,7 +244,8 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     hold: optional (known [1, T, H, W], weight [1, 1, H, W] in 0-1, sigma_cells): low-frequency
     guidance (ILVR, Choi et al. 2021). After every step the Gaussian low-pass of the sample
     is moved toward that of the known target, noised to the step's level, by the weight;
-    detail finer than sigma_cells stays the model's own."""
+    detail finer than sigma_cells stays the model's own.
+    direction: optional (weight, hidden channels), see denoise_field."""
     if isinstance(cond, torch.Tensor):
         cond = TensorField(cond)
     if isinstance(negative, torch.Tensor):
@@ -246,11 +263,11 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     # In-place updates keep at most four field-sized tensors alive.
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]
-        d = denoise_field(model, x, s, cond, window, stride, batch, guidance, negative)
+        d = denoise_field(model, x, s, cond, window, stride, batch, guidance, negative, direction)
         d.sub_(x).div_(-s)  # d = (x - D) / s
         if s_next > 0:
             x_next = x + (s_next - s) * d
-            d2 = denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance, negative)
+            d2 = denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance, negative, direction)
             d2.sub_(x_next).div_(-s_next)
             del x_next
             d.add_(d2)

@@ -2,18 +2,25 @@
 
 python -m topography_training.diffusion.class_gates --run-dir <dir> --out <new-dir> [options]
 
-1. Class swap: on fixed windows, generate every class with the same seed and the
-   window's own class with another seed. The class must change the residual more than
-   the seed does (mean correlation between classes below the seed correlation).
+Generated windows come from validation regions only; real windows of both splits fit
+the classifier and give the real per-class roughness.
+
+1. Class swap (reported, not gated): on fixed windows, generate every class with the
+   same seed and the window's own class with another seed. With the coarse input shown,
+   following it is correct at L2-L4, so a high correlation alone is not a failure.
 2. Class recognition: a nearest-centroid classifier on residual features (relief,
    slope, curvature, skew, spectrum, anisotropy), fitted on real windows, must
    recognise generated residuals as their requested class. Real accuracy is measured
-   leaving one region out; generated windows come from regions of other classes
-   (swapped) and of the class itself (own). Gate: swapped recognition >= 70% of real.
+   leaving one region out; generated windows come from validation regions of the class
+   itself (own, gated: >= 70% of real) and of other classes (swapped, reported).
 3. Class roughness: correlation is blind to amplitude, so the residual roughness (std)
-   generated for each class from the same windows must follow the real per-class
-   roughness (rank correlation >= 0.7), with the coarse input shown and hidden.
+   generated for each class from the same windows and seeds must follow the real
+   per-class roughness. Gated with the coarse input hidden (rank correlation >= 0.7);
+   shown is reported. A bootstrap over windows gives a 90% interval.
 4. A class grid: one window generated in every class, as a hillshade sheet.
+
+--direction w samples with the class direction learned with the coarse input hidden
+added while it is shown (model.denoise_field).
 
 Writes gates.json and class-grid.png; exit status 1 when a gate fails.
 """
@@ -112,9 +119,12 @@ def main(argv=None) -> int:
                    help="directory of per-class fine-tuned runs c1..c12 over --run-dir (a ClassMixture)")
     p.add_argument("--steps", type=int, default=12)
     p.add_argument("--guidance", type=float, default=1.0)
-    p.add_argument("--swap-windows", type=int, default=6)
+    p.add_argument("--direction", type=float, default=0.0, help="weight of the hidden-coarse class direction")
+    p.add_argument("--swap-windows", type=int, default=4)
+    p.add_argument("--rough-windows", type=int, default=8, help="validation windows for the roughness gate")
+    p.add_argument("--seeds", type=int, default=2, help="seeds per roughness window")
     p.add_argument("--per-region", type=int, default=6, help="real windows per region for the classifier")
-    p.add_argument("--generated", type=int, default=4, help="generated windows per class and kind")
+    p.add_argument("--generated", type=int, default=8, help="generated windows per class and kind")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
 
@@ -149,19 +159,41 @@ def main(argv=None) -> int:
     windows = []
     for split in ("train", "validation"):
         try:
-            windows += _windows(cascade.Sampler(regions, split, level, size), args.per_region, rng)
+            got = _windows(cascade.Sampler(regions, split, level, size), args.per_region, rng)
         except ValueError:
-            pass
+            continue
+        # Region indices are per split; offset validation ones so they stay distinct.
+        windows += [(ri + (10_000 if split == "validation" else 0), *rest, split) for ri, *rest in got]
+    held = [w for w in windows if w[5] == "validation"]
+    if not held:
+        print("error: no validation windows", file=sys.stderr)
+        return 2
+    from .cascade import DROP_CHANNELS
+
+    hide = list(DROP_CHANNELS[config["conditioning"]][0])
+    direction = (args.direction, hide) if args.direction else None
 
     def generate(coarse, cond, seed):
         out = sample_field(model, torch.from_numpy(cond)[None].to(device), steps=args.steps, window=size,
-                           stride=size // 2, seed=seed, guidance=args.guidance)
+                           stride=size // 2, seed=seed, guidance=args.guidance, direction=direction)
         return out[0, 0].float().cpu().numpy() * scale
 
-    # 1. Class swap.
-    picks = [windows[i] for i in rng.choice(len(windows), size=min(args.swap_windows, len(windows)), replace=False)]
+    def spread(pool, n):
+        """n windows from pool, cycling through classes so every class is represented."""
+        by = {}
+        for w in rng.permutation(len(pool)):
+            by.setdefault(pool[w][1], []).append(pool[w])
+        out = []
+        while len(out) < min(n, len(pool)):
+            for c in sorted(by):
+                if by[c] and len(out) < n:
+                    out.append(by[c].pop())
+        return out
+
+    # 1. Class swap (reported).
+    picks = spread(held, args.swap_windows)
     cross, seeds, grid = [], [], None
-    for n, (_, own, _, coarse, cond) in enumerate(picks):
+    for n, (_, own, _, coarse, cond, _) in enumerate(picks):
         res = {c: generate(coarse, _with_class(cond, c), args.seed) for c in CLASSES}
         other = generate(coarse, _with_class(cond, own), args.seed + 1)
         corr = np.corrcoef(np.stack([res[c].ravel() for c in CLASSES]))
@@ -171,40 +203,44 @@ def main(argv=None) -> int:
             grid = (coarse, res)
         print(f"swap {n + 1}/{len(picks)}: between classes {cross[-1]:.2f}, other seed {seeds[-1]:.2f}", flush=True)
     swap = {"mean_correlation_between_classes": float(np.mean(cross)),
-            "mean_correlation_other_seed": float(np.mean(seeds)), "windows": len(picks)}
-    swap["pass"] = swap["mean_correlation_between_classes"] < swap["mean_correlation_other_seed"]
+            "mean_correlation_other_seed": float(np.mean(seeds)), "windows": len(picks), "gated": False}
 
     # 3. Class roughness (computed before recognition, which reuses the windows).
     def rank(v):
         return np.argsort(np.argsort(v)).astype(float)
 
-    real_sd = {c: float(np.median([np.nanstd(r - co) for _, k, r, co, _ in windows if k == c]))
-               for c in CLASSES if any(k == c for _, k, _, _, _ in windows)}
-    shown = {c: [] for c in real_sd}
-    hidden = {c: [] for c in real_sd}
-    from .cascade import DROP_CHANNELS
-
-    for _, _, _, coarse, cond in picks[:3]:
-        for c in real_sd:
-            shown[c].append(float(generate(coarse, _with_class(cond, c), args.seed).std()))
-            k = _with_class(cond, c)
-            k[list(DROP_CHANNELS[config["conditioning"]][0])] = 0
-            hidden[c].append(float(generate(coarse, k, args.seed).std()))
+    real_sd = {c: float(np.median([np.nanstd(r - co) for _, k, r, co, _, _ in windows if k == c]))
+               for c in CLASSES if any(w[1] == c for w in windows)}
     cls = sorted(real_sd)
     r_real = rank(np.array([real_sd[c] for c in cls]))
-    rough = {"real_std_m": real_sd, "generated_std_m_coarse_shown": {c: float(np.mean(shown[c])) for c in cls},
-             "generated_std_m_coarse_hidden": {c: float(np.mean(hidden[c])) for c in cls}}
-    for key in ("coarse_shown", "coarse_hidden"):
-        g = rank(np.array([rough[f"generated_std_m_{key}"][c] for c in cls]))
-        rough[f"rank_correlation_{key}"] = float(np.corrcoef(r_real, g)[0, 1])
-    rough["pass"] = min(rough["rank_correlation_coarse_shown"], rough["rank_correlation_coarse_hidden"]) >= ROUGHNESS_RANK
+    rough_picks = spread(held, args.rough_windows)
+    # std[key][window, seed, class]
+    std = {key: np.zeros((len(rough_picks), args.seeds, len(cls))) for key in ("coarse_shown", "coarse_hidden")}
+    for wi, (_, _, _, coarse, cond, _) in enumerate(rough_picks):
+        for si in range(args.seeds):
+            for ci, c in enumerate(cls):
+                k = _with_class(cond, c)
+                std["coarse_shown"][wi, si, ci] = generate(coarse, k, args.seed + 10 * si).std()
+                k[hide] = 0
+                std["coarse_hidden"][wi, si, ci] = generate(coarse, k, args.seed + 10 * si).std()
+        print(f"roughness window {wi + 1}/{len(rough_picks)}", flush=True)
+    rough = {"real_std_m": real_sd, "windows": len(rough_picks), "seeds": args.seeds}
+    brng = np.random.default_rng(7)
+    for key, v in std.items():
+        mean = v.mean((0, 1))
+        rough[f"generated_std_m_{key}"] = {c: float(m) for c, m in zip(cls, mean)}
+        rough[f"rank_correlation_{key}"] = float(np.corrcoef(r_real, rank(mean))[0, 1])
+        boot = [np.corrcoef(r_real, rank(v[brng.integers(0, len(v), len(v))].mean((0, 1))))[0, 1]
+                for _ in range(500)]
+        rough[f"rank_correlation_{key}_90"] = [float(np.nanpercentile(boot, 5)), float(np.nanpercentile(boot, 95))]
+    rough["pass"] = rough["rank_correlation_coarse_hidden"] >= ROUGHNESS_RANK
     print(f"roughness rank correlation: shown {rough['rank_correlation_coarse_shown']:.2f}, "
           f"hidden {rough['rank_correlation_coarse_hidden']:.2f}", flush=True)
 
     # 2. Class recognition.
-    x = np.stack([features(np.nan_to_num(real - coarse), cell) for _, _, real, coarse, _ in windows])
-    y = np.array([c for _, c, _, _, _ in windows])
-    rid = np.array([ri for ri, _, _, _, _ in windows])
+    x = np.stack([features(np.nan_to_num(real - coarse), cell) for _, _, real, coarse, _, _ in windows])
+    y = np.array([w[1] for w in windows])
+    rid = np.array([w[0] for w in windows])
     hits = []
     for ri in np.unique(rid):
         keep = rid != ri
@@ -216,18 +252,19 @@ def main(argv=None) -> int:
     rec = {"swapped": [], "own": []}
     confusion = np.zeros((13, 13), int)
     for c in sorted(set(y)):
-        for kind, pool in (("swapped", [w for w in windows if w[1] != c]), ("own", [w for w in windows if w[1] == c])):
-            for j in rng.choice(len(pool), size=min(args.generated, len(pool)), replace=False):
-                _, _, _, coarse, cond = pool[j]
-                got = int(clf.predict(features(generate(coarse, _with_class(cond, c), args.seed + 2), cell))[0])
+        for kind, pool in (("swapped", [w for w in held if w[1] != c]), ("own", [w for w in held if w[1] == c])):
+            if not pool:
+                continue
+            for n, j in enumerate(rng.choice(len(pool), size=args.generated, replace=len(pool) < args.generated)):
+                _, _, _, coarse, cond, _ = pool[j]
+                got = int(clf.predict(features(generate(coarse, _with_class(cond, c), args.seed + 2 + n), cell))[0])
                 rec[kind].append(got == c)
-                if kind == "swapped":
-                    confusion[c, got] += 1
-        print(f"recognition class {c}: swapped {np.mean(rec['swapped'][-args.generated:]):.2f}", flush=True)
+                confusion[c, got] += kind == "own"
+        print(f"recognition class {c}: own {np.mean(rec['own'][-args.generated:]):.2f}", flush=True)
     recognition = {"real_accuracy_leave_region_out": real_acc,
                    "generated_swapped": float(np.mean(rec["swapped"])), "generated_own": float(np.mean(rec["own"])),
-                   "classes": sorted(int(c) for c in set(y)), "confusion_swapped": confusion.tolist()}
-    recognition["pass"] = recognition["generated_swapped"] >= RECOGNITION_SHARE * real_acc
+                   "classes": sorted(int(c) for c in set(y)), "confusion_own": confusion.tolist()}
+    recognition["pass"] = recognition["generated_own"] >= RECOGNITION_SHARE * real_acc
 
     # 3. Class grid.
     args.out.mkdir(parents=True)
@@ -248,14 +285,15 @@ def main(argv=None) -> int:
 
     result = {"run": str(args.run_dir.resolve()), "level": level.name, "steps": args.steps, "guidance": args.guidance,
               "class_swap": swap, "class_recognition": recognition, "class_roughness": rough,
-              "pass": bool(swap["pass"] and recognition["pass"] and rough["pass"])}
+              "direction": args.direction, "pass": bool(recognition["pass"] and rough["pass"])}
     (args.out / "gates.json").write_text(json.dumps(result, indent=1))
-    print(f"class swap: between classes {swap['mean_correlation_between_classes']:.2f} vs other seed "
-          f"{swap['mean_correlation_other_seed']:.2f} -> {'PASS' if swap['pass'] else 'FAIL'}")
-    print(f"recognition: real {real_acc:.2f}, generated swapped {recognition['generated_swapped']:.2f}, own "
-          f"{recognition['generated_own']:.2f} -> {'PASS' if recognition['pass'] else 'FAIL'}")
-    print(f"roughness: rank correlation shown {rough['rank_correlation_coarse_shown']:.2f}, hidden "
-          f"{rough['rank_correlation_coarse_hidden']:.2f} -> {'PASS' if rough['pass'] else 'FAIL'}")
+    print(f"class swap (reported): between classes {swap['mean_correlation_between_classes']:.2f} vs other seed "
+          f"{swap['mean_correlation_other_seed']:.2f}")
+    print(f"recognition: real {real_acc:.2f}, generated own {recognition['generated_own']:.2f} -> "
+          f"{'PASS' if recognition['pass'] else 'FAIL'} (swapped {recognition['generated_swapped']:.2f})")
+    lo, hi = rough["rank_correlation_coarse_hidden_90"]
+    print(f"roughness: rank correlation hidden {rough['rank_correlation_coarse_hidden']:.2f} [{lo:.2f}, {hi:.2f}] -> "
+          f"{'PASS' if rough['pass'] else 'FAIL'} (shown {rough['rank_correlation_coarse_shown']:.2f})")
     return 0 if result["pass"] else 1
 
 

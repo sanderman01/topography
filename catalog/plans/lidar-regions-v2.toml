@@ -246,6 +246,19 @@ center = [-123.85, 47.6]
 reference = "Queets River valley, Washington"
 
 
+# Replacements for matukituki (rejected 2026-10-04)
+[[regions]]
+id = "waimakariri-braid"
+class_id = 9
+center = [171.62, -43.05]
+reference = "Upper Waimakariri braided river, Canterbury"
+
+[[regions]]
+id = "rangitata"
+class_id = 9
+center = [170.98, -43.6]
+reference = "Upper Rangitata braided river, Canterbury"
+
 # 10 Glaciers and ice fields
 [[regions]]
 id = "tasman-glacier"
