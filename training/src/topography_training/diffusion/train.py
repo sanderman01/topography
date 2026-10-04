@@ -39,6 +39,8 @@ def _parse(argv):
     p.add_argument("--class-embedding", action="store_true", help="learned class embedding in every block")
     p.add_argument("--balanced", action="store_true", help="cascade: draw windows class-balanced by region")
     p.add_argument("--mix", type=float, default=0.0, help="cascade: share of windows joining two classes")
+    p.add_argument("--only-class", type=int, help="cascade: train on regions of this class only (per-class fine-tune)")
+    p.add_argument("--init-from", type=Path, help="start a new run from this run's EMA weights (same arch and layout)")
     p.add_argument("--val-every", type=int, default=1000)
     p.add_argument("--save-every", type=int, default=2000)
     p.add_argument("--log-every", type=int, default=50)
@@ -84,6 +86,9 @@ def main(argv=None) -> int:
             print("error: the run uses a retired layout; start a new run", file=sys.stderr)
             return 2
         regions = cascade.load_regions(args.release)
+        only = saved.get("only_class") if saved else args.only_class
+        if only is not None:
+            regions = [r for r in regions if r.class_id == only]
         balanced = saved.get("balanced", False) if saved else args.balanced
         mix = saved.get("mix", 0.0) if saved else args.mix
         train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"],
@@ -95,7 +100,7 @@ def main(argv=None) -> int:
                         "smooth_cells": level.smooth_cells,
                         "coarse_dropout": args.coarse_dropout if level.conditioning in (3, 6) else 0.0,
                         "cover_dropout": args.cover_dropout if level.conditioning == 3 else 0.0,
-                        "balanced": balanced, "mix": mix,
+                        "balanced": balanced, "mix": mix, "only_class": only,
                         "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
     else:
         tiles = data.load_release(args.release)
@@ -141,6 +146,18 @@ def main(argv=None) -> int:
     print(f"train_positions={len(train.positions)} val_positions={len(val.positions)} scale={scale} m", flush=True)
 
     model = Denoiser(config["arch"], config["conditioning"]).to(device)
+    if args.init_from and not ckpt_path.exists():
+        from safetensors.torch import load_file
+
+        from .evaluate import _latest
+
+        source = json.loads((args.init_from / "config.json").read_text())
+        if source["arch"] != config["arch"] or source["conditioning"] != config["conditioning"]:
+            print("error: --init-from run has another arch or layout", file=sys.stderr)
+            return 2
+        model.load_state_dict(load_file(str(_latest(args.init_from)), device="cuda"))
+        config["init_from"] = str(_latest(args.init_from).resolve())
+        config_path.write_text(json.dumps(config, indent=2))
     if not args.no_checkpointing:
         model.unet.enable_gradient_checkpointing()
     ema = copy.deepcopy(model).eval().requires_grad_(False)
