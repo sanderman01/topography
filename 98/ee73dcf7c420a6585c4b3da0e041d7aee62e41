@@ -1,0 +1,23 @@
+training/src/topography_training/diffusion/train.py
+  s_822b2940d42397::t_7bbb4084b84060 168-201,274-275
+training/src/topography_training/diffusion/class_gates.py
+  s_822b2940d42397::t_2c10c924d9f5f8 13-16,32,168-194,241-242,248-249
+docs/plans/class-conditioning-v1.md
+  s_822b2940d42397::t_7cf2f369fadda9 102-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "98ee73dcf7c420a6585c4b3da0e041d7aee62e41",
+  "prompts": {},
+  "sessions": {
+    "s_822b2940d42397": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ffc5a568-d430-445e-acf0-937d21ff16ca",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
