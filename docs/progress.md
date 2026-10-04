@@ -42,12 +42,21 @@ Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md
 
 ## Next
 
+0. **Class conditioning** comes first:
+   [class conditioning, step 4](plans/class-conditioning-v1.md#steps).
+   1. Fix the gates (validation windows only, more windows and seeds).
+   2. Run the guidance experiment on L2 run 5 and L1 run 4 (no training).
+   3. Owner votes on the 6 unreviewed `lidar-v2` validation regions, and replace
+      matukituki.
+   4. Make the model changes, then run L3 run 2 on `lidar-v2`, not `lidar-v1`.
+
+   Background: [expert review](reports/expert-review-2026-10-04.md).
 1. Owner review of the first world at 4 m; then L4 at 1 m (about 12 h of GPU, or
    a 16 km square in about 3 h first) and export.
 2. [World layout spec](plans/world-layout-spec-v1.md): authored layouts rendered to
    L0 rasters (class map, envelope, feature lines) instead of layouts derived from
    real regions.
-3. Open cascade issues: rivers entering from outside the world need a layout
+3. Open cascade issues ([hydrology and data issues from the expert review](plans/terrain-cascade-v1.md#gates-and-fallbacks)): rivers entering from outside the world need a layout
    input; generated mesas and dunes are softer than real at L1/L2; some generated
    islands have rounded outlines.
 

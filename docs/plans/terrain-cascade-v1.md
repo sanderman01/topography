@@ -250,6 +250,35 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
   coarse inputs. Retraining with a class signal the models cannot ignore, new gates
   and more data per class: [class conditioning](class-conditioning-v1.md).
 
+- **Expert review (2026-10-04).** The [expert review](../reports/expert-review-2026-10-04.md)
+  found the following open issues. The class work and the L3 run are tracked in
+  [class conditioning](class-conditioning-v1.md).
+  - **Stream thresholds.** They are applied per cell, so channels vanish across class
+    borders. Thresholds should start channels, and channels should continue downstream
+    (`hydrology.py:106`).
+  - **Lake outlets.** Lakes end flow routing. Draining lakes need an explicit outlet
+    through which accumulation continues.
+  - **Closed basins.** Every depression beyond the lake allowance is carved open
+    (`hydrology.py:199`), which erases karst dolines, interdune basins and craters.
+    Keep selected dry basins.
+  - **Braided rivers.** Single-parent flow routing cannot branch and rejoin. Braided
+    rivers need a channel belt with bars.
+  - **Water through refinement.** River profiles and lake IDs are not enforced after
+    L2. Lake-level propagation takes the maximum nearby level
+    (`cascade_chain.py:90`), so adjacent lakes can contaminate each other.
+  - **Seabed join.** It suits fjords but oversteepens beaches and shallow shelves.
+    Exclude extrapolated seabed from land class statistics.
+  - **Lidar averaging.** Lidar is averaged with `-ovr AUTO-1` (`lidar.rs:105`), so
+    the result depends on the supplier's overviews. Spot-check cliff edges and dune
+    crests against a native-resolution average.
+  - **Geographic diversity.** Canyons, badlands and dunes are mostly from the western
+    US; archipelago and braided rivers are mostly from New Zealand. The validation
+    split hashes region IDs with no geographic grouping (`release.rs:82`). Split by
+    landform or survey cluster with spatial buffers.
+  - **Mixed-class windows.** `_join` blends regions whose levels can differ by
+    kilometres (`cascade.py:575`), which teaches steep ramps at class borders.
+    Match the mean levels along the border.
+
 ## Gates and fallbacks
 
 - Every level must pass the class-swap and class-recognition gates of the

@@ -1,6 +1,7 @@
 # Class conditioning v1
 
-Status: planned 2026-10-03. Retrain every cascade level (L1–L4) so that terrain class
+Status: in progress; next steps revised after the expert review of 2026-10-04.
+Retrain every cascade level (L1–L4) so that terrain class
 changes what the models generate. Supersedes the class handling in the
 [terrain cascade plan](terrain-cascade-v1.md); its levels, data and water handling stay.
 
@@ -155,42 +156,127 @@ not learning the class is stopped early instead of finishing its full budget.
 
 ## Data
 
-Current independent training regions per class (train / validation):
+Releases `context-v3` (L1/L2) and `lidar-v2` (L3) exist and meet the per-class
+counts; their owner votes are not complete (2026-10-04):
 
-| Class | L1/L2 GLO-30 | L3 lidar | L4 1 m tiles |
+| Class | context-v3 train / val | lidar-v2 train / val | L4 1 m tiles |
 | --- | --- | --- | --- |
-| 1 Karst | 5 / 1 | 2 / 0 | 7 |
-| 2 Gorges and canyons | 5 / 1 | 3 / 1 | 15 |
-| 3 Fjords | 7 / 1 | 3 / 0 | 12 |
-| 4 Calderas and craters | 5 / 1 | 3 / 1 | 14 |
-| 5 Archipelago | 3 / 0 | 1 / 0 | 10 |
-| 6 Alpine | 5 / 1 | 3 / 1 | 14 |
-| 7 Badlands and mesas | 5 / 0 | 3 / 1 | 9 |
-| 8 Dunes | 5 / 0 | 3 / 0 | 10 |
-| 9 Braided rivers | 3 / 0 | 1 / 0 | 7 |
-| 10 Glaciers | 5 / 1 | 3 / 0 | 10 |
-| 11 Cones and lava | 5 / 1 | 3 / 1 | 16 |
-| 12 Coastal cliffs | 4 / 0 | 3 / 0 | 8 |
+| 1 Karst | 9 / 2 | 6 / 1 | 7 |
+| 2 Gorges and canyons | 9 / 2 | 6 / 1 | 15 |
+| 3 Fjords | 9 / 2 | 5 / 1 | 12 |
+| 4 Calderas and craters | 9 / 2 | 5 / 1 | 14 |
+| 5 Archipelago | 9 / 2 | 5 / 1 | 10 |
+| 6 Alpine | 8 / 2 | 6 / 1 | 14 |
+| 7 Badlands and mesas | 9 / 2 | 6 / 1 | 9 |
+| 8 Dunes | 8 / 2 | 6 / 1 | 10 |
+| 9 Braided rivers | 8 / 2 | 5 / 1 | 7 |
+| 10 Glaciers | 9 / 2 | 6 / 1 | 10 |
+| 11 Cones and lava | 9 / 2 | 6 / 1 | 16 |
+| 12 Coastal cliffs | 8 / 2 | 6 / 1 | 8 |
+
+- `context-v3`: 64 of its regions are unreviewed, including 11 validation regions.
+  Validation `waimakariri-upper` overlaps training `rakaia-upper` (about 16% of the
+  region); fix this in the next release.
+- `lidar-v2`: 44 of 80 regions are unreviewed, including 6 of the 12 validation
+  regions: bisti, cape-kidnappers, eureka-dunes, matukituki, palisades and
+  punakaiki. Matukituki (braided rivers) has about 9k valid cells, too few for one
+  256² crop, and must be replaced. Do not train L3 on `lidar-v1`: it has 1 training
+  region for some classes and no validation region for 7 classes.
 
 Targets per class: L1/L2 at least 8 training and 2 validation GLO-30 regions; L3 at
 least 5 training and 1 validation lidar regions; L4 at least 15 tiles from at least 4
-independent areas, 1 held out. Classes without a validation region cannot pass gate
-2 and get one first. More public data is acquired where a class falls short, through
-the existing catalog plans and the gallery Yes/No.
+independent areas, 1 held out. More public data is acquired where a class falls short,
+through the existing catalog plans and the gallery Yes/No.
+
+## Expert review (2026-10-04)
+
+The [expert review](../reports/expert-review-2026-10-04.md) changes the next steps:
+
+- **The recipe trains a mode the chain never uses.** The chain always passes the coarse
+  input and uses no guidance (`cascade_chain._sample`). With the coarse input shown,
+  L2 run 5 gives every class the same roughness, so the class only works when the
+  coarse input is hidden, which never happens in a real world.
+- **Split the jobs by level.** L1 (painted input) sets each class's amplitude. L2–L4
+  add each class's form (spectrum, anisotropy, steps, crests) on a coarse surface that
+  already matches the class.
+- **Shown-coarse swap correlation is reported, not gated.** Roughness and recognition
+  are the gates.
+- **The gates are noisy and leak.** They mix training and validation windows
+  (`class_gates.py:147`). The training-time roughness rank (1 window × 1 seed) swings
+  0.42–0.80 between checkpoints, so early stopping on it is unreliable.
+- **Runs are undertrained.** Validation loss was still falling at about 6k steps, and
+  VRAM use is 5.8 of 16 GB.
+- **Region-wide class labels.** Every window takes its region's class, so background
+  ground around the feature also counts as that class (`cascade.py:504`).
 
 ## Steps
 
-1. **Instrument.** Add the class-swap and class-recognition gates to `cascade_eval`
-   for all levels, plus the class grid page. Record the failing baseline of the
-   current runs.
-2. **Data.** Catalog plans for the missing GLO-30 and lidar regions; gallery votes;
-   new releases (`context-v3`, `lidar-v2`, L4 tiles).
-3. **Pilot at L2** (32 m, about an hour). Class embedding, coarse dropout, balanced
-   and mixed windows. Watch the gates at each checkpoint; stop when the class effect
-   is absent after a fixed budget and revise the design.
-4. **Retrain L1, L3 and L4** with the design that passed, each through its gates and
-   an owner review.
-5. **Regenerate Fujion** from the painted layout and review L2, L3, then L4.
+1. **Instrument.** Done: the gates and class grid; failing baseline recorded.
+2. **Data.** Done: `context-v3` and `lidar-v2` released. Owner votes are open (see
+   Data).
+3. **Pilot at L2.** Done: runs 3–5, and L1 run 4. Class orders roughness only with the
+   coarse input hidden.
+4. **Next, in order:**
+   1. **Fix the gates** (`class_gates.py`, `train.py`):
+      - Use validation windows only.
+      - Use at least 8 windows × 2 seeds at the production step count, with bootstrap
+         confidence intervals over regions.
+      - Make the training-time roughness rank use several windows and seeds.
+   2. **Guidance experiment (no training).** Sample with
+      `D(c,k) + w·[D(c_hidden,k) − D(c_hidden,∅)]`: the class direction learned with
+      the coarse input hidden, added while it is shown. This needs a 3-call
+      extension of `denoise_field` (`model.py:204`). Measure the shown-coarse
+      roughness gate on L2 run 5 and L1 run 4 for a few `w`, and run Fujion L1–L2
+      with the best `w`. Also try class guidance with the coarse input hidden in both
+      terms, to widen the compressed range.
+   3. **Owner votes on the lidar-v2 validation regions:**
+      - Vote on the 6 unreviewed validation regions.
+      - Replace matukituki.
+      - Rebuild the release, keeping its geographic split.
+   4. **Model changes before the L3 run:**
+      - Switch class conditioning to `resnet_time_scale_shift="scale_shift"`
+        (AdaGN/FiLM).
+      - Replace the all-zero "hidden" sentinel (`model.py:167`) with an explicit
+        flag.
+      - If the guidance experiment is not enough, replace binary coarse dropout with
+        conditioning augmentation (Ho et al. 2021): blur and noise the coarse input
+        at a random strength, and give the strength as an input.
+   5. **L3 run 2** (see below).
+   6. **Retrain L2, then L1 and L4,** with whatever passed, using longer runs and a
+      larger batch where VRAM allows. Then regenerate Fujion and review L2, L3,
+      then L4.
+5. **Fallbacks**, in order:
+   - **Explicit roughness channel at L2–L4.** From the truth in training (with
+     dropout); from a per-class table or the painter at generation.
+   - **Per-cell class modulation (SPADE)** for class borders.
+   - **Per-class adapters or LoRA.** `ClassMixture` with full per-class models is
+     the last resort: it memorises 5–6 regions and runs up to 13 models per window,
+     which is unaffordable at L3/L4 world scale.
+
+### L3 run 2
+
+- **Data and model:**
+  - `lidar-v2` after step 4.3. Fields are cached at
+    `data/cache/cascade-fields/lidar-v2`; the build peaked at 4.96 GB RSS.
+  - Fresh weights: no `--init-from` run 1.
+  - Class embedding with `scale_shift`, balanced and mixed windows.
+- **Coarse handling:** 25% coarse dropout (L3 always receives L2's coarse output in
+  the chain), or conditioning augmentation if step 4.4 adopted it.
+- **Budget:** 4–6 h. Warn the owner first; check host memory in the first minutes.
+- **Validation regions:** do not compare run 1 on the `lidar-v2` validation set.
+  glacier-np, glacier-peak and marlborough-sounds were run 1 training regions.
+- **Cache key:** a change to `refine_fields`, `soft_u8` or `join_seabed` needs a
+  `FIELDS_VERSION` bump (`cascade.py:138`), because the cache key does not cover them.
+- **Success criteria:**
+  - On validation windows only: roughness rank ≥ 0.7 with the coarse input hidden,
+    and recognition ≥ 70% of the real classifier's accuracy.
+  - Fujion chain (L1 run 4 → L2 run 5 → L3): per-class residual roughness and
+    spectral slope rank-correlate ≥ 0.7 with real, and roughness falls within about
+    ±30% of real.
+  - L3 evaluated on generated L2 input, not only on averaged lidar: L2 learned from
+    GLO-30, which includes trees and buildings, while L3 trains on bare-earth lidar.
+  - No regression in slope, curvature, cross-window correlation or
+    nearest-training-window distance; blind review and class-grid Yes/No.
 
 Warn the owner before each training run (expected time, VRAM, disk), as for all
 heavy work.
