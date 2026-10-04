@@ -48,6 +48,35 @@ fn seabed(m: &Value) -> Result<(Vec<u8>, Value)> {
 }
 
 const VALIDATION_TWO_FROM: usize = 8;
+/// Regions closer than this share terrain and stay on one side of the split.
+const SPLIT_BUFFER_M: f64 = 5_000.0;
+
+/// Cluster index per region: regions whose WGS84 boxes, grown by SPLIT_BUFFER_M, overlap.
+fn clusters(boxes: &[[f64; 4]]) -> Vec<usize> {
+    let near = |a: &[f64; 4], b: &[f64; 4]| {
+        if a.iter().chain(b).any(|v| v.is_nan()) {
+            return false;
+        }
+        let dy = SPLIT_BUFFER_M / 111_000.0;
+        let dx = dy / ((a[1] + a[3]) / 2.0).to_radians().cos().max(0.1);
+        !(a[2] + dx < b[0] || b[2] + dx < a[0] || a[3] + dy < b[1] || b[3] + dy < a[1])
+    };
+    let mut cluster: Vec<usize> = (0..boxes.len()).collect();
+    // Few regions; relabel until stable.
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for i in 0..boxes.len() {
+            for j in 0..boxes.len() {
+                if near(&boxes[i], &boxes[j]) && cluster[j] > cluster[i] {
+                    cluster[j] = cluster[i];
+                    changed = true;
+                }
+            }
+        }
+    }
+    cluster
+}
 
 /// `min_per_class`: classes with at least this many accepted regions lend one to validation.
 /// `include_unreviewed` also releases regions without a vote, marked as unreviewed.
@@ -81,29 +110,44 @@ pub fn build_release(
     }
     // Validation regions per well-covered class, chosen by a stable hash of their ids:
     // two where a class has VALIDATION_TWO_FROM or more regions, so class gates can test
-    // it on more than one place (docs/plans/class-conditioning-v1.md).
-    let mut by_class: BTreeMap<i64, Vec<&str>> = BTreeMap::new();
-    for (_, _, m) in &regions {
+    // it on more than one place (docs/plans/class-conditioning-v1.md). Regions within
+    // SPLIT_BUFFER_M of each other form a cluster that stays on one side of the split:
+    // isolated regions are preferred, and a chosen clustered one takes its cluster along.
+    ensure(min_per_class >= 2, "min-per-class must be at least 2")?;
+    let ids: Vec<&str> = regions
+        .iter()
+        .map(|(_, _, m)| m["id"].as_str().unwrap_or_default())
+        .collect();
+    let boxes: Vec<[f64; 4]> = regions
+        .iter()
+        .map(|(_, _, m)| [0, 1, 2, 3].map(|i| m["wgs84_bbox"][i].as_f64().unwrap_or(f64::NAN)))
+        .collect();
+    let cluster = clusters(&boxes);
+    let mut by_class: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
+    for (i, (_, _, m)) in regions.iter().enumerate() {
         by_class
             .entry(m["class_id"].as_i64().unwrap_or(0))
             .or_default()
-            .push(m["id"].as_str().unwrap_or_default());
+            .push(i);
     }
-    ensure(min_per_class >= 2, "min-per-class must be at least 2")?;
-    let validation: Vec<&str> = by_class
-        .values()
-        .filter(|ids| ids.len() >= min_per_class)
-        .flat_map(|ids| {
-            let mut sorted = ids.clone();
-            sorted.sort_by_key(|id| digest(id.as_bytes()));
-            let take = if ids.len() >= VALIDATION_TWO_FROM {
-                2
-            } else {
-                1
-            };
-            sorted.into_iter().take(take)
-        })
-        .collect();
+    let mut validation: Vec<&str> = Vec::new();
+    for members in by_class.values().filter(|m| m.len() >= min_per_class) {
+        let take = if members.len() >= VALIDATION_TWO_FROM {
+            2
+        } else {
+            1
+        };
+        let mut sorted = members.clone();
+        let alone = |i: &usize| cluster.iter().filter(|c| **c == cluster[*i]).count() == 1;
+        sorted.sort_by_key(|i| (!alone(i), digest(ids[*i].as_bytes())));
+        for i in sorted.into_iter().take(take) {
+            for (j, c) in cluster.iter().enumerate() {
+                if *c == cluster[i] && !validation.contains(&ids[j]) {
+                    validation.push(ids[j]);
+                }
+            }
+        }
+    }
 
     let parent = output
         .parent()
@@ -168,7 +212,7 @@ pub fn build_release(
         "regions_root": root.canonicalize().map(|p| p.display().to_string()).unwrap_or_default(),
         "decisions_sha256": digest(&decisions),
         "unreviewed_included": include_unreviewed,
-        "split": format!("whole regions; one validation region per class with {min_per_class}+ accepted regions, two with {VALIDATION_TWO_FROM}+"),
+        "split": format!("whole regions; one validation region per class with {min_per_class}+ accepted regions, two with {VALIDATION_TWO_FROM}+; regions within {SPLIT_BUFFER_M} m of each other stay together"),
         "attribution": [
             "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
             gebco::ATTRIBUTION, "ESA WorldCover 2021 (CC BY 4.0)", "GLIMS Glacier Database", "© OpenStreetMap contributors, ODbL"],
