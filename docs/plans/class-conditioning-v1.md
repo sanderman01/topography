@@ -118,6 +118,25 @@ must rise with the new data before the recognition gate means much.
 - Next: coarse dropout 50% and longer training. If class style still does not appear,
   fine-tune one model per class, which cannot ignore its class by construction.
 
+### L2 run 5 (2026-10-04)
+
+50% coarse dropout, 3 hours (5,946 steps). A sampling bug hid the result at first: the
+sampler normalised a hidden (all-zero) shape channel to -1, while training kept it at 0,
+so every "coarse hidden" measurement, including the training-time roughness rank, ran on
+inputs the model never saw. Fixed in `model._shape`. With the fix:
+
+| Class | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Real roughness (m) | 10.7 | 9.5 | 10.7 | 5.9 | 7.4 | 11.0 | 4.9 | 4.4 | 9.3 | 10.1 | 4.5 | 5.6 |
+| Coarse hidden | 6.1 | 6.1 | 5.5 | 4.3 | 4.7 | 6.7 | 4.4 | 4.6 | 6.4 | 5.8 | 3.5 | 3.1 |
+| Coarse shown | 8.8 | 8.6 | 8.5 | 8.5 | 8.5 | 8.5 | 8.8 | 8.7 | 8.5 | 8.6 | 8.6 | 8.5 |
+
+With the coarse input hidden the class orders roughness correctly (rank 0.76) but with a
+compressed range; with it shown the model still follows the coarse input. Swap 1.00 and
+recognition 0.10 still fail. Next: L1 and L3 with the same recipe, then the whole
+cascade on the painted Fujion layout, where L1 sees a featureless envelope. Per-class
+fine-tunes (`--only-class`, `--init-from`, `ClassMixture`) are ready as the fallback.
+
 Checkpoints are tested during training (at each validation step), so a run that is
 not learning the class is stopped early instead of finishing its full budget.
 
