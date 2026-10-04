@@ -1,0 +1,22 @@
+training/src/topography_training/diffusion/hydrology.py
+  s_63e041542fef52::t_82dbd35083a707 34,40,43,47,50,108-114,116-121,210,218-220,227,242-251,253,255,257
+training/src/topography_training/diffusion/cascade_chain.py
+  s_63e041542fef52::t_0f4390240e4476 92-93,96-97,317
+  s_63e041542fef52::t_82dbd35083a707 140-146,179,277-278,307-308,313-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "57cca0faac3bdb72b02b0bed195237d2d1465a80",
+  "prompts": {},
+  "sessions": {
+    "s_63e041542fef52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aff05194-4b9c-4c73-afd0-b85dbe6c39d1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
