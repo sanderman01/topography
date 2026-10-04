@@ -1,0 +1,236 @@
+# Library expansion batch 5: 1 m tiles toward 15 per class for the L4 class retraining
+# (docs/plans/class-conditioning-v1.md). Areas sit inside lidar regions that built,
+# so public 1 m coverage is known.
+schema_version = 1
+crop_cells = 2048
+
+[[areas]]
+name = "Pepino karst"
+provider = "usgs"
+bbox = [-67.03, 18.31, -66.93, 18.39]
+class = 1
+max_crops = 2
+
+[[areas]]
+name = "Ciales mogotes"
+provider = "usgs"
+bbox = [-66.52, 18.29, -66.42, 18.37]
+class = 1
+max_crops = 2
+
+[[areas]]
+name = "Waitomo karst"
+provider = "linz"
+bbox = [175.05, -38.31, 175.15, -38.23]
+class = 1
+max_crops = 2
+
+[[areas]]
+name = "Punakaiki karst"
+provider = "linz"
+bbox = [171.33, -42.14, 171.43, -42.06]
+class = 1
+max_crops = 2
+
+[[areas]]
+name = "Oparara karst"
+provider = "linz"
+bbox = [172.10, -41.24, 172.20, -41.16]
+class = 1
+max_crops = 2
+
+[[areas]]
+name = "Stehekin trough"
+provider = "usgs"
+bbox = [-120.70, 48.31, -120.60, 48.39]
+class = 3
+max_crops = 2
+
+[[areas]]
+name = "Hetch Hetchy"
+provider = "usgs"
+bbox = [-119.80, 37.91, -119.70, 37.99]
+class = 3
+max_crops = 2
+
+[[areas]]
+name = "Kings Canyon trough"
+provider = "usgs"
+bbox = [-118.65, 36.76, -118.55, 36.84]
+class = 3
+max_crops = 2
+
+[[areas]]
+name = "Bay of Islands"
+provider = "linz"
+bbox = [174.10, -35.26, 174.20, -35.18]
+class = 5
+max_crops = 2
+
+[[areas]]
+name = "Waiheke"
+provider = "linz"
+bbox = [175.00, -36.84, 175.10, -36.76]
+class = 5
+max_crops = 2
+
+[[areas]]
+name = "Great Barrier"
+provider = "linz"
+bbox = [175.35, -36.24, 175.45, -36.16]
+class = 5
+max_crops = 2
+
+[[areas]]
+name = "Abel Tasman coast"
+provider = "linz"
+bbox = [172.95, -40.89, 173.05, -40.81]
+class = 5
+max_crops = 2
+
+[[areas]]
+name = "Penobscot Bay"
+provider = "usgs"
+bbox = [-68.85, 44.11, -68.75, 44.19]
+class = 5
+max_crops = 2
+
+[[areas]]
+name = "Badlands South Dakota"
+provider = "usgs"
+bbox = [-102.25, 43.81, -102.15, 43.89]
+class = 7
+max_crops = 3
+
+[[areas]]
+name = "Bisti badlands"
+provider = "usgs"
+bbox = [-108.30, 36.23, -108.20, 36.31]
+class = 7
+max_crops = 3
+
+[[areas]]
+name = "Bryce Canyon"
+provider = "usgs"
+bbox = [-112.22, 37.56, -112.12, 37.64]
+class = 7
+max_crops = 3
+
+[[areas]]
+name = "Algodones Dunes"
+provider = "usgs"
+bbox = [-115.15, 32.91, -115.05, 32.99]
+class = 8
+max_crops = 2
+
+[[areas]]
+name = "Coral Pink dunes"
+provider = "usgs"
+bbox = [-112.77, 36.99, -112.67, 37.07]
+class = 8
+max_crops = 2
+
+[[areas]]
+name = "St Anthony dunes"
+provider = "usgs"
+bbox = [-111.90, 43.96, -111.80, 44.04]
+class = 8
+max_crops = 2
+
+[[areas]]
+name = "Eureka Dunes"
+provider = "usgs"
+bbox = [-117.73, 37.06, -117.63, 37.14]
+class = 8
+max_crops = 2
+
+[[areas]]
+name = "Godley valley"
+provider = "linz"
+bbox = [170.43, -43.69, 170.53, -43.61]
+class = 9
+max_crops = 2
+
+[[areas]]
+name = "Matukituki valleys"
+provider = "linz"
+bbox = [168.73, -44.54, 168.83, -44.46]
+class = 9
+max_crops = 2
+
+[[areas]]
+name = "Hopkins valley"
+provider = "linz"
+bbox = [169.80, -43.89, 169.90, -43.81]
+class = 9
+max_crops = 2
+
+[[areas]]
+name = "Hoh valley"
+provider = "usgs"
+bbox = [-124.00, 47.78, -123.90, 47.86]
+class = 9
+max_crops = 2
+
+[[areas]]
+name = "Queets valley"
+provider = "usgs"
+bbox = [-123.90, 47.56, -123.80, 47.64]
+class = 9
+max_crops = 2
+
+[[areas]]
+name = "Tasman Glacier"
+provider = "linz"
+bbox = [170.15, -43.69, 170.25, -43.61]
+class = 10
+max_crops = 2
+
+[[areas]]
+name = "Mount Adams"
+provider = "usgs"
+bbox = [-121.54, 46.16, -121.44, 46.24]
+class = 10
+max_crops = 2
+
+[[areas]]
+name = "Three Sisters"
+provider = "usgs"
+bbox = [-121.82, 44.09, -121.72, 44.17]
+class = 10
+max_crops = 2
+
+[[areas]]
+name = "Mount Jefferson"
+provider = "usgs"
+bbox = [-121.85, 44.63, -121.75, 44.71]
+class = 10
+max_crops = 2
+
+[[areas]]
+name = "Lost Coast"
+provider = "usgs"
+bbox = [-124.10, 40.11, -124.00, 40.19]
+class = 12
+max_crops = 3
+
+[[areas]]
+name = "Cape Kidnappers"
+provider = "linz"
+bbox = [177.05, -39.67, 177.15, -39.59]
+class = 12
+max_crops = 3
+
+[[areas]]
+name = "Banks Peninsula cliffs"
+provider = "linz"
+bbox = [172.90, -43.84, 173.00, -43.76]
+class = 12
+max_crops = 3
+
+[[areas]]
+name = "North Molokai cliffs"
+provider = "usgs"
+bbox = [-157.00, 21.14, -156.90, 21.22]
+class = 12
+max_crops = 3
