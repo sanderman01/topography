@@ -83,8 +83,11 @@ def main(argv=None) -> int:
         print("error: --world must be a 4 m world output", file=sys.stderr)
         return 2
     class_id = args.class_id if args.class_id is not None else world.get("class_id")
+    per_cell = class_id is None and (args.world / "classes.u8").exists()
+    if per_cell:
+        class_id = "per cell"
     if class_id is None:
-        print("error: the world has no class_id; pass --class-id", file=sys.stderr)
+        print("error: the world has no class_id or classes.u8; pass --class-id", file=sys.stderr)
         return 2
     if args.band_m % 64 or args.halo_m % 64 or args.halo_m > args.band_m:
         print("error: band and halo must be multiples of 64 m, the halo no wider than a band", file=sys.stderr)
@@ -127,6 +130,7 @@ def main(argv=None) -> int:
     h4 = read4("elevation.f32", "<f4")
     water4 = read4("water.u8", np.uint8) == 255
     snow4, veg4 = read4("snow-ice.u8", np.uint8) == 2, read4("vegetation.u8", np.uint8) == 2
+    classes4 = read4("classes.u8", np.uint8) if per_cell else None
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, config = _load(args.run, device)
@@ -155,7 +159,10 @@ def main(argv=None) -> int:
             return soft_cover(np.repeat(np.repeat(_rows_4m(mask, r0, r1, -m, c4 + m), 4, 0), 4, 1))[crop]
 
         snow, veg = cover(snow4), cover(veg4)
-        field = cascade.LazyField(level, coarse, [np.where(water, 255, 0).astype(np.uint8), snow, veg], class_id)
+        classes = class_id
+        if per_cell:
+            classes = np.repeat(np.repeat(_rows_4m(classes4, r0, r1, -m, c4 + m), 4, 0), 4, 1)[crop].astype(np.int64)
+        field = cascade.LazyField(level, coarse, [np.where(water, 255, 0).astype(np.uint8), snow, veg], classes)
         res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
                            noise=_noise(args.seed, g0, g1, n))[0, 0].numpy()
         # L4 learned land only: water keeps the 4 m surface, with a soft shore.

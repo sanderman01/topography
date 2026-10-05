@@ -385,6 +385,8 @@ def main(argv=None) -> int:
         "snow-ice.u8": np.where(snow4, 2, 1).astype(np.uint8).tobytes(),
         "vegetation.u8": np.where(veg4, 2, 1).astype(np.uint8).tobytes(),
     }
+    if not isinstance(classes4, int):  # authored layouts: the class per 4 m cell, for L4
+        layers["classes.u8"] = classes4.astype(np.uint8).tobytes()
     digests = {}
     for name, data in layers.items():
         (args.out / name).write_bytes(data)
