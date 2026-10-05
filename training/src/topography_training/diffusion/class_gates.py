@@ -81,8 +81,9 @@ class Centroids:
 
 
 def _windows(sampler, per_region: int, rng) -> list[tuple]:
-    """(region index, class, real, coarse, cond) for up to per_region mostly-land,
-    fully surveyed windows of every region."""
+    """(region index, class, residual, load) for up to per_region mostly-land, fully
+    surveyed windows of every region; load() rebuilds (coarse, cond), so only the
+    residual is kept in memory (a 1 m library has thousands of windows)."""
     by_region: dict[int, list[int]] = {}
     for idx, (ri, y, x) in enumerate(sampler.positions):
         by_region.setdefault(ri, []).append(idx)
@@ -95,8 +96,9 @@ def _windows(sampler, per_region: int, rng) -> list[tuple]:
                     f.target[sampler.positions[i][1]: sampler.positions[i][1] + s,
                              sampler.positions[i][2]: sampler.positions[i][2] + s])]
         for i in good[:per_region]:
-            real, coarse, cond = sampler.window(int(i))
-            out.append((ri, sampler.regions[ri].class_id, real, coarse, cond))
+            real, coarse, _ = sampler.window(int(i))
+            out.append((ri, sampler.regions[ri].class_id, (real - coarse).astype(np.float32),
+                        lambda i=int(i): sampler.window(i)[1:]))
     return out
 
 
@@ -164,7 +166,7 @@ def main(argv=None) -> int:
             continue
         # Region indices are per split; offset validation ones so they stay distinct.
         windows += [(ri + (10_000 if split == "validation" else 0), *rest, split) for ri, *rest in got]
-    held = [w for w in windows if w[5] == "validation"]
+    held = [w for w in windows if w[4] == "validation"]
     if not held:
         print("error: no validation windows", file=sys.stderr)
         return 2
@@ -193,7 +195,8 @@ def main(argv=None) -> int:
     # 1. Class swap (reported).
     picks = spread(held, args.swap_windows)
     cross, seeds, grid = [], [], None
-    for n, (_, own, _, coarse, cond, _) in enumerate(picks):
+    for n, (_, own, _, load, _) in enumerate(picks):
+        coarse, cond = load()
         res = {c: generate(coarse, _with_class(cond, c), args.seed) for c in CLASSES}
         other = generate(coarse, _with_class(cond, own), args.seed + 1)
         corr = np.corrcoef(np.stack([res[c].ravel() for c in CLASSES]))
@@ -209,14 +212,15 @@ def main(argv=None) -> int:
     def rank(v):
         return np.argsort(np.argsort(v)).astype(float)
 
-    real_sd = {c: float(np.median([np.nanstd(r - co) for _, k, r, co, _, _ in windows if k == c]))
+    real_sd = {c: float(np.median([np.nanstd(r) for _, k, r, _, _ in windows if k == c]))
                for c in CLASSES if any(w[1] == c for w in windows)}
     cls = sorted(real_sd)
     r_real = rank(np.array([real_sd[c] for c in cls]))
     rough_picks = spread(held, args.rough_windows)
     # std[key][window, seed, class]
     std = {key: np.zeros((len(rough_picks), args.seeds, len(cls))) for key in ("coarse_shown", "coarse_hidden")}
-    for wi, (_, _, _, coarse, cond, _) in enumerate(rough_picks):
+    for wi, (_, _, _, load, _) in enumerate(rough_picks):
+        coarse, cond = load()
         for si in range(args.seeds):
             for ci, c in enumerate(cls):
                 k = _with_class(cond, c)
@@ -238,7 +242,7 @@ def main(argv=None) -> int:
           f"hidden {rough['rank_correlation_coarse_hidden']:.2f}", flush=True)
 
     # 2. Class recognition.
-    x = np.stack([features(np.nan_to_num(real - coarse), cell) for _, _, real, coarse, _, _ in windows])
+    x = np.stack([features(np.nan_to_num(r), cell) for _, _, r, _, _ in windows])
     y = np.array([w[1] for w in windows])
     rid = np.array([w[0] for w in windows])
     hits = []
@@ -256,7 +260,7 @@ def main(argv=None) -> int:
             if not pool:
                 continue
             for n, j in enumerate(rng.choice(len(pool), size=args.generated, replace=len(pool) < args.generated)):
-                _, _, _, coarse, cond, _ = pool[j]
+                coarse, cond = pool[j][3]()
                 got = int(clf.predict(features(generate(coarse, _with_class(cond, c), args.seed + 2 + n), cell))[0])
                 rec[kind].append(got == c)
                 confusion[c, got] += kind == "own"

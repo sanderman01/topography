@@ -142,9 +142,13 @@ def region_fields(r: Region, level: "Level", make) -> Fields:
     """Fields of a region. Lazy regions are built once per release and level into
     data/cache/cascade-fields/<release>/ and memory-mapped from there."""
     if r.source is None:
-        f = make(r)
-        r.water = r.snow = r.vegetation = None
-        return f
+        # Built once per region and level, so train and validation samplers of tiles with
+        # cells in both splits share one copy.
+        memo = r.__dict__.setdefault("_fields", {})
+        if level.name not in memo:
+            memo[level.name] = make(r)
+            r.water = r.snow = r.vegetation = None
+        return memo[level.name]
     manifest_path, entry = r.source
     release = Path(manifest_path).resolve().parent
     key = hashlib.sha256(json.dumps([FIELDS_VERSION, level.name, level.block, level.smooth_cells,
