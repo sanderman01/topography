@@ -210,6 +210,57 @@ run 1 has the uniform crumpled texture everywhere. Run 2 has smoother slopes wit
 distinct gullies and ridges. Gates v2 for run 1 and for run 2's step-4,000 weights are
 queued (`data/models/after-pipeline-gates.sh`).
 
+### L2 run 6 and Fujion chain 6 (2026-10-05)
+
+Recipe: L3 run 2's recipe on `context-v4` (cluster-aware split), 4 h, 5,000 steps,
+0.34 steps/s.
+
+Gates v2:
+
+| Gate | Result |
+| --- | --- |
+| Roughness, coarse hidden | rank 0.82 [0.70, 0.82]: pass |
+| Own recognition | 0.46 against real 0.29: pass |
+| Roughness, coarse shown | rank 0.57 (run 5: −0.13) |
+
+With the coarse input shown, generated roughness spans only 7.1–8.0 m on the gate
+windows, against 4.4–11.2 m real. The class changes amplitude little given the same
+coarse surface.
+
+On the painted layout, what matters is whether the coarse surface from L1 run 4
+carries the class. Median residual std per class on Fujion at L2 (painted L0, 1 km
+windows):
+
+| Measure | L2 run 5 (chain 5) | L2 run 6 (chain 6) |
+| --- | --- | --- |
+| Rank correlation with real | 0.75 | 0.82 |
+| Classes within ±30% | 7/11 | 6/11 |
+| Mean \|log ratio\| | 0.27 | 0.27 |
+
+Run 6 is less over-rough in fjords, alpine and coastal cliffs, and smoother than real
+in lava and badlands. L3 run 2 in chain 6 (16 km at 4 m): rank 0.43, 7/9 within ±30%.
+Braided rivers (one window) and gorges are too smooth.
+
+Comparison weights under gates v2:
+
+| Weights | Hidden rank | Shown rank |
+| --- | --- | --- |
+| L3 run 1 | 0.15 | 0.31 |
+| L3 run 2, step 4,000 | 0.50 | 0.63 |
+| L3 run 2, final | 0.69 | 0.69 |
+
+Current cascade for Fujion: L1 run 4, L2 run 6, L3 run 2
+(`data/worlds/fujion-painted-chain-6`).
+
+Next:
+1. Owner review of Fujion chain 6 at L2 and L3: `l2.png`, `l3.png` and
+   `l3-detail.png`, against chain 5 (`fujion-painted-chain-5-l3r1` and `-l3r2`).
+2. L4: data to the per-class tile targets (gallery votes), then retrain with class
+   embedding and `--scale-shift` through the gates (about 8 h). Coarse blur is not
+   implemented for the L4 tile sampler yet.
+3. If the class amplitude range at L2/L3 still looks too uniform in review, add the
+   explicit roughness channel (fallback 1).
+
 ## Data
 
 Releases `context-v3` (L1/L2) and `lidar-v3` (L3) meet the per-class counts. All

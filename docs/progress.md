@@ -46,10 +46,11 @@ Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md
    [class conditioning, step 4](plans/class-conditioning-v1.md#steps).
    1. Done (2026-10-04): gates v2, the guidance experiment (not enough alone), the
       fully voted `lidar-v3`, `--scale-shift` and `--coarse-blur`.
-   2. L3 run 2 on `lidar-v3` (started 2026-10-04, 5 h), then its gates and an owner
-      review.
-   3. If it works, retrain L2 and L1 with the same changes, then L4; regenerate
-      Fujion.
+   2. Done (2026-10-05): L3 run 2 and L2 run 6 with the new recipe. On the painted
+      Fujion layout, per-class roughness follows real terrain at L2 (rank 0.82) and
+      is within ±30% for 7 of 9 classes at L3. Current cascade: L1 run 4, L2 run 6,
+      L3 run 2 (`data/worlds/fujion-painted-chain-6`).
+   3. Owner review of chain 6 (L2, L3); then L4 data and retraining.
 
    Background: [expert review](reports/expert-review-2026-10-04.md).
 1. Owner review of the first world at 4 m; then L4 at 1 m (about 12 h of GPU, or
