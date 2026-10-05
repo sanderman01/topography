@@ -287,8 +287,9 @@ Results (2026-10-05):
 - **Fujion 1 m:** the central 4 km (`fujion-painted-chain-6-l4r5-4km` and `-l4r6-4km`)
   covers only lava, glaciers and calderas, and the two runs come out nearly the same
   (1 m residual std: lava 0.13 against real 0.07, glaciers 0.25 against 0.65). At this
-  scale the hillshade is dominated by the 4 m surface. The 16 km world with run 6 is
-  `fujion-painted-chain-6-l4r6`.
+  scale the hillshade is dominated by the 4 m surface. The 16 km world with run 6
+  (`fujion-painted-chain-6-l4r6`, 178 min of bands) is exported to
+  `data/exports/fujion-painted-chain-6-l4r6` (899 MB).
 - **Memory:** class gates on L4 needed over 7 GB and twice brought the session down.
   Fixed in 73fd590: tile fields are shared between samplers, and the gates keep only
   window residuals. Run heavy jobs in a capped scope
