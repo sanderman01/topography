@@ -50,7 +50,9 @@ Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md
       Fujion layout, per-class roughness follows real terrain at L2 (rank 0.82) and
       is within ±30% for 7 of 9 classes at L3. Current cascade: L1 run 4, L2 run 6,
       L3 run 2 (`data/worlds/fujion-painted-chain-6`).
-   3. Owner review of chain 6 (L2, L3); then L4 data and retraining.
+   3. Done: owner review of chain 6 (better, but biomes still too similar; accepted
+      for now). `context-v5` and `diffusion-v9` released.
+   4. L4 run 6 (2026-10-05, 8 h), then 1 m on Fujion and an owner review.
 
    Background: [expert review](reports/expert-review-2026-10-04.md).
 1. Owner review of the first world at 4 m; then L4 at 1 m (about 12 h of GPU, or

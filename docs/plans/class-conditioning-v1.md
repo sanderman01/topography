@@ -252,14 +252,31 @@ Comparison weights under gates v2:
 Current cascade for Fujion: L1 run 4, L2 run 6, L3 run 2
 (`data/worlds/fujion-painted-chain-6`).
 
+Owner review (2026-10-05): L2 and L3 look better than previous runs. The crumpled
+look is less pronounced and rivers and streams look better, but biomes still look too
+similar to each other. Accepted for now.
+
+### Data and L4 run 6 (2026-10-05)
+
+- `context-v5`: all 127 GLO-30 regions have an owner vote (ararat No). Same split as
+  `context-v4`. Use it for new L1/L2 runs.
+- `diffusion-v9` (`library-gallery-v22`: v21 plus the 30 expansion-5 tiles, minus two
+  duplicate Bisti crops): 160 tiles, 11–17 per class. Classes 1, 5, 7, 9, 10 and 12 are
+  still below 15 tiles.
+- L4 run 6: `diffusion-v9`, channels 64–512, `--class-embedding --scale-shift
+  --balanced --mix 0.25 --coarse-dropout 0.25 --coarse-blur 0.5`, 8 h. L4 uses the
+  cascade sampler, so blur and balancing apply.
+- `cascade_chain` writes `classes.u8` (class per 4 m cell) for authored layouts, and
+  `cascade_l4` uses it per cell. Chain 6 got the same layer, written from the layout.
+- Queued after training (`data/models/after-l4-run-6.sh`):
+  - gates v2 for L4 runs 6 and 5;
+  - 1 m on Fujion chain 6 with both runs (central 4 km), and 16 km with run 6.
+
 Next:
-1. Owner review of Fujion chain 6 at L2 and L3: `l2.png`, `l3.png` and
-   `l3-detail.png`, against chain 5 (`fujion-painted-chain-5-l3r1` and `-l3r2`).
-2. L4: data to the per-class tile targets (gallery votes), then retrain with class
-   embedding and `--scale-shift` through the gates (about 8 h). Coarse blur is not
-   implemented for the L4 tile sampler yet.
-3. If the class amplitude range at L2/L3 still looks too uniform in review, add the
-   explicit roughness channel (fallback 1).
+1. Owner review of Fujion at 1 m.
+2. If biomes still look too alike, add the explicit roughness channel (fallback 1)
+   at L2–L4. A roughness value per class (from real data), or painted, would set
+   each biome's amplitude directly.
 
 ## Data
 
