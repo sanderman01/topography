@@ -1,0 +1,19 @@
+docs/plans/class-conditioning-v1.md
+  s_63e041542fef52::t_60ba28a0fa8014 290-292
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85d3946085d542616f2718380c20d39b81766dcf",
+  "prompts": {},
+  "sessions": {
+    "s_63e041542fef52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aff05194-4b9c-4c73-afd0-b85dbe6c39d1",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
