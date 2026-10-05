@@ -284,6 +284,12 @@ Results (2026-10-05):
 
   Run 6 follows the class with the coarse input shown, which is the mode the chain
   uses. The range is still compressed: 0.23–0.29 m generated against 0.07–0.65 m real.
+- **World size:** chains 5 and 6 ran L3 (and so L4) on only the central 16 km, because
+  of `--l3-km 16`, the chain's old default. The Fujion spec is 32 km. Chain 7
+  (`fujion-painted-chain-7`, L1 run 4, L2 run 6, L3 run 2) covers the whole 32 km, and
+  L4 run 6 refines it to 1 m (`fujion-painted-chain-7-l4`, export
+  `data/exports/fujion-painted-chain-7-l4`). The chain now refines the whole world by
+  default (18c3577).
 - **Fujion 1 m:** the central 4 km (`fujion-painted-chain-6-l4r5-4km` and `-l4r6-4km`)
   covers only lava, glaciers and calderas, and the two runs come out nearly the same
   (1 m residual std: lava 0.13 against real 0.07, glaciers 0.25 against 0.65). At this

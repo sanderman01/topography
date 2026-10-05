@@ -66,7 +66,8 @@ $P -m topography_training.diffusion.cascade_chain \
 ```
 
 L1 and L2 cover the whole 48 km region; L3 covers a central square of `--l3-km`
-× 1,024 m. After L1 the land is made to drain (largest depressions kept as lakes,
+× 1,024 m. Without `--l3-km`, L3 covers the whole field: the default for authored
+layouts, which specify the world size. After L1 the land is made to drain (largest depressions kept as lakes,
 others carved); after L2 compact deep hollows become tarns and streams are traced.
 Water amounts follow the region class (`hydrology.WATER`) unless overridden with
 `--lake-share`, `--tarn-share` and `--stream-km2`. The output is a 4 m world
