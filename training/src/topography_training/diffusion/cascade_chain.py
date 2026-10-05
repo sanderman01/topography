@@ -7,7 +7,7 @@ The layout (envelope, relief, classes) is either derived from a real GLO-30 regi
 author's L0 would give it, with snow/ice and vegetation from the same region; or an
 authored L0 from `topography world layout`, with a class per cell, its lakes, and
 snow/ice and vegetation from its snowline, treeline and forest share. L1 and L2 cover the
-whole field, L3 a square in its middle (`--l3-km 0` stops after L2). Terrain continues under water: after
+whole field; L3 the whole field too, or a central square with `--l3-km` (0 stops after L2). Terrain continues under water: after
 each level the sea is the ground below 0 m connected to the field edge. After L1 the
 land is made to drain (lakes kept, other depressions carved), and streams traced on the
 L2 surface are water for L3.
@@ -225,8 +225,8 @@ def main(argv=None) -> int:
     p.add_argument("--region", help="derive the layout from this real region")
     p.add_argument("--layout", type=Path, help="authored L0 (`topography world layout`) instead of --release/--region")
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--l3-km", type=int, default=16,
-                   help="side of the central L3 square in units of 1,024 m (power of two); 0 stops after L2")
+    p.add_argument("--l3-km", type=int,
+                   help="side of a central L3 square in units of 1,024 m (power of two); default the whole world; 0 stops after L2")
     p.add_argument("--steps", type=int, default=12)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--seed", type=int, default=0)
@@ -334,7 +334,8 @@ def main(argv=None) -> int:
     t = time.time()
     level = cascade.LEVELS["l3"]
     model, config = _load(args.l3_run, device)
-    n32 = args.l3_km * 1024 // 32  # 16 -> 512 cells of 32 m, 4,096 of 4 m
+    # Default: the whole world, as the layout specifies; 16 -> 512 cells of 32 m, 4,096 of 4 m.
+    n32 = h32.shape[0] if args.l3_km is None else args.l3_km * 1024 // 32
     m = 16
     y0 = x0 = (h32.shape[0] - n32) // 2
     # The smoothing margin repeats the edge where the square reaches the field's edge.
