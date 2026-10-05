@@ -272,6 +272,28 @@ similar to each other. Accepted for now.
   - gates v2 for L4 runs 6 and 5;
   - 1 m on Fujion chain 6 with both runs (central 4 km), and 16 km with run 6.
 
+Results (2026-10-05):
+
+- **L4 run 6:** 10,066 steps in 8 h at 0.35 steps/s, 8.8 GB VRAM. Gates v2:
+
+  | Gate | Run 6 | Run 5 (`diffusion-v8`) |
+  | --- | --- | --- |
+  | Roughness, coarse hidden | 0.73 [0.68, 0.78]: pass | 0.88: pass |
+  | Roughness, coarse shown | **0.95** | 0.48 |
+  | Own recognition | 0.44 against real 0.30: pass | 0.34 against real 0.33: pass |
+
+  Run 6 follows the class with the coarse input shown, which is the mode the chain
+  uses. The range is still compressed: 0.23–0.29 m generated against 0.07–0.65 m real.
+- **Fujion 1 m:** the central 4 km (`fujion-painted-chain-6-l4r5-4km` and `-l4r6-4km`)
+  covers only lava, glaciers and calderas, and the two runs come out nearly the same
+  (1 m residual std: lava 0.13 against real 0.07, glaciers 0.25 against 0.65). At this
+  scale the hillshade is dominated by the 4 m surface. The 16 km world with run 6 is
+  `fujion-painted-chain-6-l4r6`.
+- **Memory:** class gates on L4 needed over 7 GB and twice brought the session down.
+  Fixed in 73fd590: tile fields are shared between samplers, and the gates keep only
+  window residuals. Run heavy jobs in a capped scope
+  (`systemd-run --user --scope -p MemoryMax=7G`) so an overrun kills only the job.
+
 Next:
 1. Owner review of Fujion at 1 m.
 2. If biomes still look too alike, add the explicit roughness channel (fallback 1)
