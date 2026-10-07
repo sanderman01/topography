@@ -1,0 +1,21 @@
+docs/plans/biome-forms-v1.md
+  s_b205be2fbe95a4::t_a5505d3591099a 61-62,68-69
+docs/workflows/terrain-cascade.md
+  s_b205be2fbe95a4::t_6d0e12777ea39b 91,95-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1119e17d600a34452b7ec4eca08ee4609d139818",
+  "prompts": {},
+  "sessions": {
+    "s_b205be2fbe95a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa259070-228b-4039-a53e-dab93c687e8f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
