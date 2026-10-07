@@ -58,13 +58,15 @@ and 1 m crops.
 
 Small hero landforms come from real terrain:
 
-- **Where:** wherever a summit crater, caldera or cinder-cone field is painted.
+- **Where:** wherever a summit crater, caldera, cinder cone or drowned tower karst is
+  painted.
 - **What:** the 128 m residual of a real example from the GLO-30 releases.
 - **How:** L1 holds the example at about 128 m, scaled to the painted blob, and the
   model blends the seams.
 
 The examples are listed in `catalog/exemplars/exemplars-v1.toml`: region, position,
-size and kind (crater, caldera, cone field). Picking among them is seeded. This is
+size and kind (crater, caldera, cone, cone field, drowned karst; found automatically
+and checked by eye). Picking among them is seeded. This is
 also the cheapest form of the curated-patch fallback. The owner still paints only a
 class and a height.
 

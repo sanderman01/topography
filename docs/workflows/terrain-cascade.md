@@ -88,11 +88,12 @@ guidance at every level (1: off).
 
 For authored layouts, L1 holds the painted shape above about 400 m (the `hold` layer
 and the map border), painted craters (class 4) at 128 m, and fills painted calderas,
-craters and cinder cones (classes 4 and 17) with the 128 m relief of real exemplars
+craters, cinder cones and drowned tower karst (classes 4, 17 and 15) with the 128 m relief of real exemplars
 from `catalog/exemplars/exemplars-v1.toml` (`--no-exemplars` turns this off). The
 catalog is rebuilt from a context release with
 `$P -m topography_training.diffusion.exemplar find --release data/datasets/context-v5/release.json`;
-check the picks by eye.
+check the picks by eye. Craters are made at least as deep as painted; painted crater
+hollows always stay dry basins through drainage.
 
 To move a painted layout to the legend v3 subclasses, copy it with renamed classes and
 import the copy:
