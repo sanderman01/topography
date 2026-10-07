@@ -27,17 +27,21 @@ from pathlib import Path
 
 import numpy as np
 
-from . import cascade, hydrology, layout, paint
+from . import cascade, hydrology, layout, legend, paint
 from .cascade_eval import shade
-from .data import NUM_CLASSES
 from .evaluate import _latest
+
+NUM_CLASSES = legend.NUM_CLASSES
 
 # The local plane of authored worlds (as `topography world sketch`): metres east and north.
 LAYOUT_CRS = ('ENGCRS["Topography sketch plane",EDATUM["Topography sketch"],CS[Cartesian,2],'
               'AXIS["easting (X)",east,ORDER[1],LENGTHUNIT["metre",1]],'
               'AXIS["northing (Y)",north,ORDER[2],LENGTHUNIT["metre",1]]]')
-# Landmarks are held above this scale (cells of the level held: 3 x 128 m at L1).
+# Landmarks are held above this scale (cells of the level held: 3 x 128 m at L1); craters,
+# calderas and real exemplars at 1 cell (128 m), so a 600-800 m crater is not blurred away.
 HOLD_SIGMA_CELLS = 3.0
+FINE_HOLD_SIGMA_CELLS = 1.0
+CRATER_CLASSES = (4,)
 # L3 learned land only (lidar stops at the shore); deeper than this its seabed is the L2 surface.
 L3_SEABED_M = 5.0
 
@@ -53,11 +57,18 @@ def _load(run: Path, device):
     return model, config
 
 
-def _condition(level, coarse, extra, classes) -> np.ndarray:
+def _model_classes(config, classes):
+    """Legend v3 classes (one id or one per cell) as the run's model classes."""
+    n, lut = legend.model_lut(config)
+    return n, (int(lut[classes]) if isinstance(classes, (int, np.integer)) else lut[classes])
+
+
+def _condition(level, coarse, extra, classes, config) -> np.ndarray:
     """Like cascade.condition, but filled in place so big fields are not copied. `classes`
-    is one class id or a class per cell."""
+    is one legend v3 class id or a class per cell."""
     h, w = coarse.shape
-    cond = np.zeros((4 + len(extra) + NUM_CLASSES, h, w), np.float32)
+    n, classes = _model_classes(config, classes)
+    cond = np.zeros((4 + len(extra) + n, h, w), np.float32)
     cond[0] = coarse
     cond[1], cond[2] = cascade.slopes(coarse, level.cell_m)
     cond[3] = coarse / 4096.0
@@ -67,9 +78,9 @@ def _condition(level, coarse, extra, classes) -> np.ndarray:
     return cond
 
 
-def _sample(model, config, coarse, cond, steps, seed, batch, hold=None):
-    """Sample a level; `hold` = (target surface, weight 0-1) guides the large-scale shape of
-    held cells toward the target (see model.sample_field)."""
+def _sample(model, config, coarse, cond, steps, seed, batch, holds=(), guidance=1.0):
+    """Sample a level; each hold (target surface, weight 0-1, sigma cells) guides the shape
+    of held cells above that scale toward the target (see model.sample_field)."""
     import torch
 
     from .model import sample_field
@@ -77,13 +88,10 @@ def _sample(model, config, coarse, cond, steps, seed, batch, hold=None):
     size = config["crop"]
     if isinstance(cond, np.ndarray):
         cond = torch.from_numpy(cond)[None]
-    if hold is not None:
-        target, weight = hold
-        known = ((target - coarse) / config["residual_scale_m"]).astype(np.float32)
-        hold = (torch.from_numpy(known)[None, None], torch.from_numpy(weight.astype(np.float32))[None, None],
-                HOLD_SIGMA_CELLS)
+    hold = [(torch.from_numpy(((target - coarse) / config["residual_scale_m"]).astype(np.float32))[None, None],
+             torch.from_numpy(weight.astype(np.float32))[None, None], sigma) for target, weight, sigma in holds]
     out = sample_field(model, cond, steps=steps, window=size, stride=size // 2,
-                       batch=batch, seed=seed, hold=hold)
+                       batch=batch, seed=seed, hold=hold or None, guidance=guidance)
     return coarse + out[0, 0].numpy() * config["residual_scale_m"]
 
 
@@ -243,6 +251,8 @@ def main(argv=None) -> int:
     p.add_argument("--steps", type=int, default=12)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--guidance", type=float, default=1.0, help="class guidance scale (1: off)")
+    p.add_argument("--no-exemplars", action="store_true", help="authored layouts: do not hold real exemplars")
     # Water amounts default to the class profiles (hydrology.WATER).
     p.add_argument("--lake-share", type=float, help="share of land kept as lakes after L1")
     p.add_argument("--tarn-share", type=float, help="share of land kept as small lakes after L2")
@@ -278,17 +288,31 @@ def main(argv=None) -> int:
     extra = src.extra
     if config["conditioning"] == 6:  # landmarks of the authored (or real) surface, all kept
         extra = extra + cascade.mark_channels(cascade.landmarks(src.marks_from, 128.0))
-    cond = _condition(level, src.coarse, extra, src.classes)
-    hold = None
+    cond = _condition(level, src.coarse, extra, src.classes, config)
+    holds = []
     if src.l0 is not None:  # authored landmarks, and sea toward the map border
         target, border = paint.border_hold(src.l0.mid, 128.0)
-        hold = (target, np.maximum(src.l0.hold, border))
-    h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch, hold)
+        holds.append((target, np.maximum(src.l0.hold, border), HOLD_SIGMA_CELLS))
+        # Held craters keep their painted shape at 128 m; real exemplars fill painted
+        # calderas and cinder-cone fields (catalog/exemplars).
+        fine = np.where(np.isin(src.l0.cls, CRATER_CLASSES), src.l0.hold, 0.0).astype(np.float32)
+        fine_target = target
+        if not args.no_exemplars:
+            from . import exemplar
+
+            fine_target, w, used = exemplar.compose(src.l0, target, seed=args.seed)
+            fine = np.maximum(fine, w)
+            for line in used:
+                print(f"exemplar: {line}", flush=True)
+        if fine.any():
+            holds.append((fine_target, fine, FINE_HOLD_SIGMA_CELLS))
+    h128 = _sample(model, config, src.coarse, cond, args.steps, args.seed, args.batch, holds, args.guidance)
     if src.l0 is not None:  # the map border stays sea
         h128 = np.minimum(h128, paint.border_limit(h128.shape[0], 128.0)).astype(np.float32)
     authored = src.l0.lake if src.l0 else None
+    # Craters, dolines and interdune hollows stay dry basins here too, not lakes or carved valleys.
     h128, lake128, level128, _ = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0,
-                                                 keep_at=authored)
+                                                 keep_at=authored, dry_share=water.dry_share, dry_at=src.dry_at(1))
     sea128 = cascade.open_sea(h128)
     lake128 &= ~sea128
     times["l1_s"] = time.time() - t
@@ -308,8 +332,8 @@ def main(argv=None) -> int:
     river32 = layout.rivers(src.l0.spec, 32.0, coarse.shape[0]) & (coarse >= 0) if src.l0 else lake32 & False
     extra = [np.where(lake32 | river32, 255, 0).astype(np.uint8), cascade.soft_u8(snow_in, 1.0),
              cascade.soft_u8(veg_in, 1.0)]
-    h32 = _sample(model, config, coarse, _condition(level, coarse, extra, src.classes_at(4)), args.steps,
-                  args.seed + 1, args.batch)
+    h32 = _sample(model, config, coarse, _condition(level, coarse, extra, src.classes_at(4), config), args.steps,
+                  args.seed + 1, args.batch, guidance=args.guidance)
     if src.l0 is not None:
         h32 = np.minimum(h32, paint.border_limit(h32.shape[0], 32.0)).astype(np.float32)
     sea32 = cascade.open_sea(h32)
@@ -370,8 +394,10 @@ def main(argv=None) -> int:
              cascade.soft_u8(veg4, 1.0)]
     classes32 = src.classes_at(4)
     classes4 = classes32 if isinstance(classes32, int) else _nearest(classes32[sl], 8)
-    field = cascade.LazyField(level, coarse, extra, classes4)
-    h4 = _sample(model, config, coarse, field, args.steps, args.seed + 2, args.batch).astype(np.float32)
+    n_classes, model4 = _model_classes(config, classes4)
+    field = cascade.LazyField(level, coarse, extra, model4, n_classes)
+    h4 = _sample(model, config, coarse, field, args.steps, args.seed + 2, args.batch,
+                 guidance=args.guidance).astype(np.float32)
     del field, extra
     w = np.clip(-coarse / L3_SEABED_M, 0, 1)
     h4 = ((1 - w) * h4 + w * coarse).astype(np.float32)

@@ -32,13 +32,18 @@ RELIEF_MAX_M = 2000.0  # roughness 255
 BORDER_M = 1500.0  # the outer band of the map is sea
 BORDER_EDGE_M = -200.0  # depth at the map edge
 BORDER_HOLD_M = 3000.0  # sampling is steered toward sea over this distance from the edge
-SEA_RELIEF_M = 600.0  # relief fades out over this distance offshore (except archipelagos)
+SEA_RELIEF_M = 600.0  # relief fades out over this distance offshore (except island classes)
 CELL_M = 128.0
-# Judgment defaults by class (from the Fujion regions): local relief (m) and forest share.
-RELIEF = {0: 300, 1: 300, 2: 400, 3: 1000, 4: 300, 5: 300, 6: 1200, 7: 300, 8: 150, 9: 200, 10: 300, 11: 250,
-          12: 800}
+# Judgment defaults by legend v3 class (from the Fujion regions): local relief (m) and forest share.
+# Dunes: the real 128 m dune residual is about 40 m.
+RELIEF = {0: 300, 1: 300, 2: 400, 3: 1000, 4: 300, 5: 300, 6: 1200, 7: 300, 8: 100, 9: 200, 10: 300, 11: 250,
+          12: 800, 13: 500, 14: 300, 15: 250, 16: 60, 17: 150, 18: 80}
 FOREST = {0: 0.3, 1: 0.9, 2: 0.1, 3: 0.9, 4: 0.3, 5: 0.9, 6: 0.7, 7: 0.1, 8: 0.0, 9: 0.5, 10: 0.0, 11: 0.4,
-          12: 0.8}
+          12: 0.8, 13: 0.1, 14: 0.9, 15: 0.9, 16: 0.0, 17: 0.2, 18: 0.4}
+ISLAND_CLASSES = (5, 15)  # keep their relief offshore, so islands rise from the sea
+DROWNED_KARST = 15
+DROWNED_SEABED_M = (-40.0, -10.0)  # drowned karst sits on a shallow seabed, so towers break the surface
+PALETTE = "terrain-v3.gpl"
 
 
 def _resize(a: np.ndarray, size: int, nearest: bool = False) -> np.ndarray:
@@ -56,7 +61,7 @@ def _blocks(a: np.ndarray, k: int) -> np.ndarray:
 def _majority(c: np.ndarray, k: int) -> np.ndarray:
     n = c.shape[0] // k
     b = c[: n * k, : n * k].reshape(n, k, n, k).transpose(0, 2, 1, 3).reshape(n, n, k * k)
-    counts = np.stack([(b == i).sum(-1) for i in range(13)], -1)
+    counts = np.stack([(b == i).sum(-1) for i in range(len(COLORS))], -1)
     return counts.argmax(-1).astype(np.uint8)
 
 
@@ -176,30 +181,34 @@ def export(l0_dir: Path, out: Path) -> Path:
     Image.fromarray(gray).save(pngs / "height.png")  # uint16 -> 16-bit grayscale PNG
     k = PX // l0.cls.shape[0]
     cls = np.repeat(np.repeat(l0.cls, k, 0), k, 1)
-    Image.fromarray(np.array([COLORS[i] for i in range(13)], np.uint8)[cls]).save(pngs / "classes.png")
+    Image.fromarray(np.array([COLORS[i] for i in range(len(COLORS))], np.uint8)[cls]).save(pngs / "classes.png")
     rough = np.clip(_resize(l0.relief, PX) / RELIEF_MAX_M * 255, 0, 255)
     Image.fromarray(np.rint(rough).astype(np.uint8)).save(pngs / "roughness.png")
     held = np.clip(_resize(l0.hold, PX) * 255, 0, 255)
     Image.fromarray(np.rint(held).astype(np.uint8)).save(pngs / "hold.png")
     _to_xcf(pngs, out / "layout.xcf")
     shutil.rmtree(pngs)
-    (out / "terrain-v2.gpl").write_text(
-        "GIMP Palette\nName: Terrain legend v2\nColumns: 4\n#\n"
-        + "".join(f"{r:3d} {g:3d} {b:3d}\t{i} {NAMES.get(i, 'Unknown / sea')}\n" for i, (r, g, b) in COLORS.items()))
+    write_palette(out)
     spec = l0.spec
     settings = {k: spec[k] for k in ("name", "wind_from_deg", "windward_snowline_m", "lee_snowline_m", "treeline_m")}
+    settings["hemisphere"] = spec.get("hemisphere", "north")
     settings["tiers"] = spec.get("tiers", {"starter_ceiling_m": 1500, "mid_ceiling_m": 3000, "clearance_m": 100})
     (out / "paint.json").write_text(json.dumps({
         "kind": "world_layout_paint", "schema_version": 1, "extent_m": l0.cell_m * l0.mid.shape[0], "px": PX,
         "height": {"black_m": H_MIN_M, "white_m": H_MAX_M}, "roughness_255_m": RELIEF_MAX_M,
         "settings": settings, "from": str(l0_dir.resolve())}, indent=1))
+    write_readme(out, settings, l0.cell_m * l0.mid.shape[0])
+    return out
+
+
+def write_readme(out: Path, settings: dict, extent_m: float) -> None:
     sea = (0 - H_MIN_M) / (H_MAX_M - H_MIN_M)
     (out / "README.txt").write_text(f"""Paint a layout for {settings['name']}
 
 Open layout.xcf in GIMP. It has three layers, read by name; any other layers you add
 (sketches, references) are ignored. Keep the image at 16-bit integer precision.
 
-The map is {l0.cell_m * l0.mid.shape[0] / 1000:.1f} km square, {PX} px: {l0.cell_m * l0.mid.shape[0] / PX:.0f} m per pixel, north up.
+The map is {extent_m / 1000:.1f} km square, {PX} px: {extent_m / PX:.0f} m per pixel, north up.
 The models see this through a 2 km envelope: paint broad shapes. Valleys, fjord channels,
 lakes, rivers and shorelines finer than about 2 km are drawn by the models.
 The outer {BORDER_M / 1000:.1f} km of the map is always sea, whatever is painted there.
@@ -208,21 +217,34 @@ height      gray: black {H_MIN_M:.0f} m, white {H_MAX_M:.0f} m. Sea level is {se
             ({round(sea * 255)} of 255); 1,000 m is {1000 / (H_MAX_M - H_MIN_M):.1%} of the range
             ({255 * 1000 / (H_MAX_M - H_MIN_M):.1f} of 255). Ground below sea level connected to the
             edge is sea; terrain continues under it.
-classes     terrain class per pixel in the colours of terrain-v2.gpl, shown at 60% opacity
+classes     terrain class per pixel in the colours of {PALETTE}, shown at 60% opacity
             over the height (opacity is ignored on import). Use the pencil tool without
-            antialiasing; mixed colours snap to the nearest class.
+            antialiasing; mixed colours snap to the nearest class. Subclasses name a look:
+            13 layered canyons (Grand Canyon), 14 cone and tower karst, 15 drowned tower
+            karst (paint it in shallow sea; its seabed is set to {DROWNED_SEABED_M[0]:.0f} to
+            {DROWNED_SEABED_M[1]:.0f} m), 16 crest-train dunes, 17 cinder cones and lava, 18 plain.
+            Calderas (4) and cinder cones (17) are filled with real examples
+            (catalog/exemplars).
 roughness   hidden; local relief, white = {RELIEF_MAX_M:.0f} m. Delete the layer to use each
             class's default.
 hold        hidden; white holds the height layer's large-scale shape (above about 400 m)
             while L1 samples, black leaves the model free. Use it sparingly, for landmarks
             the model would otherwise flatten (the volcano). Optional.
 
-Palette: Windows > Dockable Dialogs > Palettes > Import Palette > terrain-v2.gpl.
+Palette: Windows > Dockable Dialogs > Palettes > Import Palette > {PALETTE}.
 Save with File > Save (layout.xcf); no export needed.
 
 Then: python -m topography_training.diffusion.paint import <this dir> <new L0 dir>
 """)
-    return out
+
+
+def write_palette(out: Path) -> Path:
+    """The legend v3 GIMP palette in `out`."""
+    path = out / PALETTE
+    path.write_text("GIMP Palette\nName: Terrain legend v3\nColumns: 4\n#\n"
+                    + "".join(f"{r:3d} {g:3d} {b:3d}\t{i} {NAMES.get(i, 'Unknown / sea')}\n"
+                              for i, (r, g, b) in COLORS.items()))
+    return path
 
 
 def _read_height(path: Path) -> np.ndarray:
@@ -241,7 +263,7 @@ def _read_classes(path: Path) -> np.ndarray:
     from PIL import Image
 
     rgb = np.asarray(Image.open(path).convert("RGB")).astype(np.int32)
-    palette = np.array([COLORS[i] for i in range(13)], np.int32)
+    palette = np.array([COLORS[i] for i in range(len(COLORS))], np.int32)
     d = ((rgb[..., None, :] - palette[None, None]) ** 2).sum(-1)
     return d.argmin(-1).astype(np.uint8)
 
@@ -249,6 +271,7 @@ def _read_classes(path: Path) -> np.ndarray:
 def _toml(settings: dict) -> str:
     t = settings["tiers"]
     return (f'schema_version = 1\nname = "{settings["name"]}"\npainted = true\n'
+            f'hemisphere = "{settings.get("hemisphere", "north")}"\n'
             f'wind_from_deg = {settings["wind_from_deg"]}\nwindward_snowline_m = {settings["windward_snowline_m"]}\n'
             f'lee_snowline_m = {settings["lee_snowline_m"]}\ntreeline_m = {settings["treeline_m"]}\n\n[tiers]\n'
             f'starter_ceiling_m = {t["starter_ceiling_m"]}\nmid_ceiling_m = {t["mid_ceiling_m"]}\n'
@@ -282,13 +305,17 @@ def _import_pngs(paint: Path, meta: dict, out: Path) -> Path:
         r = np.asarray(Image.open(rough_path).convert("L")).astype(np.float32) / 255 * RELIEF_MAX_M
         relief = _blocks(r, r.shape[0] // n).astype(np.float32)
     else:
-        relief = np.array([RELIEF[i] for i in range(13)], np.float32)[cls]
+        relief = np.array([RELIEF[i] for i in range(len(COLORS))], np.float32)[cls]
+    # Drowned karst stands on a shallow seabed, so its towers can break the surface.
+    drowned = (cls == DROWNED_KARST) & (mid < 0)
+    mid = np.minimum(np.where(drowned, np.clip(mid, *DROWNED_SEABED_M), mid), border_limit(n, CELL_M)).astype(np.float32)
     land = mid >= 0
-    # Open sea keeps little relief, or the models raise islands; archipelagos keep theirs.
+    # Open sea keeps little relief, or the models raise islands; island classes keep theirs.
     coast = np.where(land, ndimage.distance_transform_edt(land), -ndimage.distance_transform_edt(~land)) * CELL_M
     fade = np.clip(1 + coast / SEA_RELIEF_M, 0, 1)
-    relief = np.where((coast < 0) & (cls != 5), relief * fade * fade * (3 - 2 * fade), relief).astype(np.float32)
-    forest = np.rint(np.array([FOREST[i] for i in range(13)])[cls] * 255).astype(np.uint8)
+    islands = np.isin(cls, ISLAND_CLASSES)
+    relief = np.where((coast < 0) & ~islands, relief * fade * fade * (3 - 2 * fade), relief).astype(np.float32)
+    forest = np.rint(np.array([FOREST[i] for i in range(len(COLORS))])[cls] * 255).astype(np.uint8)
     hold_path = paint / "hold.png"
     hold = np.zeros((n, n), np.uint8)
     if hold_path.exists():
@@ -327,6 +354,45 @@ def _import_pngs(paint: Path, meta: dict, out: Path) -> Path:
     return out
 
 
+def relabel(paint_dir: Path, out: Path, mapping: dict[int, int], small: list[tuple[int, int, float]],
+            hemisphere: str | None = None) -> Path:
+    """A copy of a paint dir with its classes layer relabelled: every class in `mapping` to
+    its new class, and patches of class a smaller than `km2` to class b (`small`), for
+    example the cones dotted around a volcano. Other layers stay as painted."""
+    from PIL import Image
+    from scipy import ndimage
+
+    shutil.copytree(paint_dir, out)
+    meta = json.loads((out / "paint.json").read_text())
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _from_xcf(out / "layout.xcf", tmp)
+        cls = _read_classes(tmp / "classes.png")
+        new = cls.copy()
+        for a, b in mapping.items():
+            new[cls == a] = b
+        px_km2 = (float(meta["extent_m"]) / cls.shape[0] / 1000) ** 2
+        for a, b, km2 in small:
+            labels, count = ndimage.label(cls == a)
+            sizes = ndimage.sum(np.ones(cls.shape), labels, np.arange(1, count + 1)) * px_km2
+            new[np.isin(labels, np.flatnonzero(sizes < km2) + 1)] = b
+        Image.fromarray(np.array([COLORS[i] for i in range(len(COLORS))], np.uint8)[new]).save(tmp / "classes.png")
+        replace_layers(out / "layout.xcf", {"classes": tmp / "classes.png"})
+    if hemisphere:
+        meta["settings"]["hemisphere"] = hemisphere
+    meta["relabelled_from"] = {"paint": str(paint_dir.resolve()), "map": {str(k): v for k, v in mapping.items()},
+                               "small": [list(s) for s in small]}
+    (out / "paint.json").write_text(json.dumps(meta, indent=1))
+    for old in out.glob("terrain-v*.gpl"):
+        old.unlink()
+    write_palette(out)
+    write_readme(out, meta["settings"], float(meta["extent_m"]))
+    changed = {f"{a}->{b}": int(((cls == a) & (new == b)).sum()) for a, b in
+               list(mapping.items()) + [(a, b) for a, b, _ in small]}
+    print(f"relabelled pixels: {changed}")
+    return out
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
@@ -336,10 +402,21 @@ def main(argv=None) -> int:
     i = sub.add_parser("import")
     i.add_argument("paint", type=Path)
     i.add_argument("out", type=Path)
+    r = sub.add_parser("relabel", help="copy a paint dir with classes renamed (for example to legend v3 subclasses)")
+    r.add_argument("paint", type=Path)
+    r.add_argument("out", type=Path)
+    r.add_argument("--map", default="", help="from:to class pairs, comma separated (2:13,8:16)")
+    r.add_argument("--small", default="", help="from:to:km2 - patches of a class below km2 become the other (11:17:3)")
+    r.add_argument("--hemisphere", choices=["north", "south"])
     args = p.parse_args(argv)
     if args.out.exists():
         print("error: output directory exists", file=sys.stderr)
         return 2
+    if args.command == "relabel":
+        mapping = dict(tuple(int(v) for v in pair.split(":")) for pair in args.map.split(",") if pair)
+        small = [(int(a), int(b), float(k)) for a, b, k in (s.split(":") for s in args.small.split(",") if s)]
+        print(relabel(args.paint, args.out, mapping, small, args.hemisphere))
+        return 0
     print(export(args.l0, args.out) if args.command == "export" else import_(args.paint, args.out))
     return 0
 

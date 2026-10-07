@@ -1,0 +1,141 @@
+# Real exemplars for held hero landforms (docs/plans/biome-forms-v1.md), found by
+# `python -m topography_training.diffusion.exemplar find`; positions are 128 m cells
+# of the region (row 0 north). Review by eye before relying on an entry.
+schema_version = 1
+release = "data/datasets/context-v5/release.json"
+
+[[exemplars]]
+kind = "crater"
+region = "fuji"
+row = 189.0
+col = 192.0
+radius_m = 320
+depth_m = 142
+
+[[exemplars]]
+kind = "crater"
+region = "kilimanjaro"
+row = 187.3
+col = 198.7
+radius_m = 448
+depth_m = 41
+
+[[exemplars]]
+kind = "caldera"
+region = "crater-lake"
+row = 189.9
+col = 186.8
+radius_m = 5184
+depth_m = 154
+
+[[exemplars]]
+kind = "caldera"
+region = "aniakchak"
+row = 152.5
+col = 209.1
+radius_m = 6464
+depth_m = 15
+
+[[exemplars]]
+kind = "caldera"
+region = "mashu"
+row = 181.2
+col = 183.2
+radius_m = 3392
+depth_m = 128
+
+[[exemplars]]
+kind = "caldera"
+region = "valles-caldera"
+row = 208.3
+col = 242.3
+radius_m = 7360
+depth_m = 29
+
+[[exemplars]]
+kind = "caldera"
+region = "ngorongoro"
+row = 170.4
+col = 210.0
+radius_m = 10816
+depth_m = 382
+
+[[exemplars]]
+kind = "caldera"
+region = "bromo-tengger"
+row = 209.6
+col = 211.1
+radius_m = 2240
+depth_m = 35
+
+[[exemplars]]
+kind = "caldera"
+region = "rinjani"
+row = 190.3
+col = 144.7
+radius_m = 3136
+depth_m = 17
+
+[[exemplars]]
+kind = "caldera"
+region = "tambora"
+row = 188.4
+col = 186.6
+radius_m = 3520
+depth_m = 879
+
+[[exemplars]]
+kind = "cone"
+region = "craters-of-the-moon"
+row = 234.0
+col = 203.0
+radius_m = 700
+score = 48
+
+[[exemplars]]
+kind = "cone"
+region = "etna"
+row = 205.0
+col = 103.0
+radius_m = 700
+score = 41
+
+[[exemplars]]
+kind = "cone"
+region = "teide"
+row = 100.0
+col = 43.0
+radius_m = 700
+score = 57
+
+[[exemplars]]
+kind = "cone"
+region = "kilimanjaro"
+row = 173.0
+col = 86.0
+radius_m = 700
+score = 51
+
+[[exemplars]]
+kind = "cone"
+region = "mayon"
+row = 221.0
+col = 112.0
+radius_m = 700
+score = 53
+
+[[exemplars]]
+kind = "cone-field"
+region = "kilimanjaro"
+row = 88.0
+col = 50.0
+radius_m = 3000
+cones = 6
+
+[[exemplars]]
+kind = "cone-field"
+region = "etna"
+row = 331.0
+col = 47.0
+radius_m = 3000
+cones = 10
