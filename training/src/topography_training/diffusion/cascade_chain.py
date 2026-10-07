@@ -124,18 +124,21 @@ class Source:
     origin: tuple[float, float]  # north-west corner of the field
     marks_from: np.ndarray  # 128 m surface whose valleys and peaks are the L1 landmarks
     l0: layout.L0 | None = None
+    cover_sampler: object = None
 
     def classes_at(self, k: int):
         return self.classes if isinstance(self.classes, int) else _nearest(self.classes, k)
 
-    def cover(self, h: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
-        """Snow/ice and vegetation on a surface at 128/k m."""
+    def cover(self, h: np.ndarray, k: int, y0_m: float = 0.0, x0_m: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+        """Snow/ice and vegetation on a surface at 128/k m whose corner lies (y0_m, x0_m) from
+        the layout's; layout grids are read smoothly (see cover.Sampler)."""
         if self.l0 is None:
             return self.snow, self.vegetation
-        land = h >= 0
-        snow = land & ((h > _nearest(self.l0.snowline, k)) | (self.classes_at(k) == 10))
-        veg = land & ~snow & (_nearest(self.l0.forest, k) >= 128) & (h < self.l0.spec["treeline_m"])
-        return snow, veg
+        if self.cover_sampler is None:
+            from .cover import Sampler
+
+            self.cover_sampler = Sampler(self.l0)
+        return self.cover_sampler.cover(h, y0_m, x0_m, self.l0.cell_m / k)
 
     def dry_at(self, k: int):
         """Cells of classes with dry basins (authored layouts; a real region has one class)."""
@@ -346,7 +349,10 @@ def main(argv=None) -> int:
     lake4 = cascade.refine_mask(lake32[sl], 8, 6.0) & ~sea4
     level4 = _spread(_nearest(h32[sl], 8), _nearest(lake32[sl], 8), 12)
     stream4 = hydrology.draw_streams(stream32, parent32, width32, 8, 32.0, y0, x0, n32) & ~sea4 & ~lake4
-    snow4, veg4 = _nearest(snow32[sl], 8), _nearest(veg32[sl], 8)
+    if src.l0 is not None:  # at 4 m from the layout, not 32 m steps
+        snow4, veg4 = src.cover(coarse, 32, y0 * 32.0, x0 * 32.0)
+    else:
+        snow4, veg4 = _nearest(snow32[sl], 8), _nearest(veg32[sl], 8)
     extra = [np.where(sea4 | lake4 | stream4, 255, 0).astype(np.uint8), cascade.soft_u8(snow4, 1.0),
              cascade.soft_u8(veg4, 1.0)]
     classes32 = src.classes_at(4)
@@ -361,6 +367,8 @@ def main(argv=None) -> int:
     stream4 &= ~sea4
     h4[lake4] = level4[lake4]
     water4 = sea4 | lake4 | stream4
+    if src.l0 is not None:  # cover of the final surface
+        snow4, veg4 = src.cover(h4, 32, y0 * 32.0, x0 * 32.0)
     times["l3_s"] = time.time() - t
     print(f"L3 {h4.shape} in {times['l3_s']:.0f} s", flush=True)
 
@@ -396,7 +404,8 @@ def main(argv=None) -> int:
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 4.0, "size": [h4.shape[1], h4.shape[0]],
         "method": f"cascade chain L1 -> L2 -> L3 from {'an authored' if src.l0 else 'a derived'} layout", "water_fill": "ground continues under the sea; lakes flat at their spill level",
-        "source": src.name, "class_id": src.classes if isinstance(src.classes, int) else None, "steps": args.steps, "water": vars(water), "times": times,
+        "source": src.name, "layout": str(args.layout.resolve()) if args.layout else None,
+        "class_id": src.classes if isinstance(src.classes, int) else None, "steps": args.steps, "water": vars(water), "times": times,
         "runs": {k: str(getattr(args, f"{k}_run").resolve()) for k in ("l1", "l2", "l3")},
         "layers": digests}, indent=1))
     print(f"wrote {args.out}", flush=True)

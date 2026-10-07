@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-METHOD = "landcover v1: rules from water, snow/ice, vegetation, slope, treeline and terrain class (borders warped ~150 m)"
+METHOD = "landcover v1: rules from water, snow/ice, vegetation, slope, treeline and terrain class (classes as in cover v1)"
 TREE, SHRUB, GRASS, BARE, SNOW, WATER = 10, 20, 30, 60, 70, 80
 STEEP_DEG = 35.0  # bare rock above this slope
 ALPINE_BAND_M = 400.0  # grassland this far above the treeline, bare ground beyond
@@ -46,49 +46,17 @@ def classify(h: np.ndarray, water: np.ndarray, snow: np.ndarray, veg: np.ndarray
     return np.where(water, WATER, out).astype(np.uint8)
 
 
-def _classes(world: Path, manifest: dict, n: int, cell: float):
-    """Class per cell: (memory-mapped map, its cells per world cell factor k, offset of the
-    world inside it in world cells; L4 crops sit in the middle of their 4 m world)."""
-    for d in (world, Path(manifest.get("source_world", world))):
-        p = d / "classes.u8"
-        if p.exists():
-            m = int(round(p.stat().st_size ** 0.5))
-            k = int(round(json.loads((d / "manifest.json").read_text())["spacing_m"] / cell))
-            return np.memmap(p, np.uint8, "r", shape=(m, m)), k, (m * k - n) // 2
-    cid = manifest.get("class_id")
-    return (int(cid) if isinstance(cid, int) else 0), 1, 0
+def _layout(world: Path, manifest: dict):
+    """The world's authored layout, if any: recorded by `cover`, the chain, or its source world."""
+    for m in (manifest, json.loads((Path(manifest["source_world"]) / "manifest.json").read_text())
+              if "source_world" in manifest else {}):
+        path = m.get("layout") or m.get("cover", {}).get("layout")
+        if path:
+            return Path(path)
+    return None
 
 
-WARP_M = 150.0  # class borders follow smooth noise this far instead of the painted grid
-WARP_CELL_M = 32.0
-
-
-def _warp_field(n: int, cell: float, seed: int = 0) -> np.ndarray:
-    """Smooth displacement (2, N, N) in metres on a WARP_CELL_M grid over the world."""
-    from scipy import ndimage
-
-    m = max(2, int(np.ceil(n * cell / WARP_CELL_M)) + 1)
-    d = ndimage.gaussian_filter(np.random.default_rng(seed).standard_normal((2, m, m)), (0, 4, 4))
-    return (d / d.std() * WARP_M).astype(np.float32)
-
-
-def _warped(cls: np.ndarray, k: int, off: int, a: int, b: int, n: int, cell: float, warp: np.ndarray):
-    """Classes of world rows a..b looked up at noise-displaced positions, so painted
-    class borders become irregular instead of following the class grid."""
-    from scipy import ndimage
-
-    ys, xs = np.mgrid[a:b, 0:n].astype(np.float32)
-    s = cell / WARP_CELL_M
-    dy = ndimage.map_coordinates(warp[0], [ys * s, xs * s], order=1, mode="nearest")
-    dx = ndimage.map_coordinates(warp[1], [ys * s, xs * s], order=1, mode="nearest")
-    m = cls.shape[0]
-    cy = np.clip(((ys + dy / cell + off) // k).astype(np.int64), 0, m - 1)
-    cx = np.clip(((xs + dx / cell + off) // k).astype(np.int64), 0, m - 1)
-    r0, r1 = int(cy.min()), int(cy.max()) + 1
-    return np.asarray(cls[r0:r1])[cy - r0, cx]
-
-
-def add(world: Path, treeline_m: float, rows: int = 1024) -> Path:
+def add(world: Path, treeline_m: float | None = None, layout_dir: Path | None = None, rows: int = 1024) -> Path:
     manifest_path = world / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     n = manifest["size"][0]
@@ -99,15 +67,25 @@ def add(world: Path, treeline_m: float, rows: int = 1024) -> Path:
 
     h, water = layer("elevation.f32", "<f4"), layer("water.u8", np.uint8)
     snow, veg = layer("snow-ice.u8", np.uint8), layer("vegetation.u8", np.uint8)
-    cls, k, off = _classes(world, manifest, n, cell)
-    warp = _warp_field(n, cell)
+    layout_dir = layout_dir or _layout(world, manifest)
+    sampler = None
+    if layout_dir is not None:  # classes read the way `cover` reads them, borders warped alike
+        from .cover import Sampler
+        from .layout import load
+
+        sampler = Sampler(load(layout_dir))
+        off = (sampler.extent_m - n * cell) / 2
+        treeline_m = treeline_m if treeline_m is not None else float(sampler.l0.spec["treeline_m"])
+    cid = manifest.get("class_id")
+    if treeline_m is None:
+        treeline_m = 1000.0
     out = np.memmap(world / "land-cover.u8", np.uint8, "w+", shape=(n, n))
     for y in range(0, n, rows):
         a, b = max(y - 1, 0), min(y + rows + 1, n)  # one-row margin for the slope
-        if isinstance(cls, int):
-            c = np.full((b - a, n), cls, np.uint8)
+        if sampler is not None:
+            c = sampler.classes(off + a * cell, off, b - a, n, cell)
         else:
-            c = _warped(cls, k, off, a, b, n, cell, warp)
+            c = np.full((b - a, n), cid if isinstance(cid, int) else 0, np.uint8)
         lc = classify(np.asarray(h[a:b], np.float32), water[a:b] == 255, snow[a:b] == 2, veg[a:b] == 2, c,
                       cell, treeline_m)
         out[y : min(y + rows, n)] = lc[y - a : y - a + min(rows, n - y)]
@@ -126,12 +104,13 @@ def add(world: Path, treeline_m: float, rows: int = 1024) -> Path:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--world", type=Path, required=True, help="world output (cascade_chain or cascade_l4)")
-    p.add_argument("--treeline-m", type=float, default=1000.0, help="the layout's treeline_m")
+    p.add_argument("--layout", type=Path, help="L0 directory; default the one the world records")
+    p.add_argument("--treeline-m", type=float, help="default the layout's treeline_m, else 1000")
     args = p.parse_args(argv)
     if not (args.world / "manifest.json").exists():
         print("error: --world has no manifest.json", file=sys.stderr)
         return 2
-    path = add(args.world, args.treeline_m)
+    path = add(args.world, args.treeline_m, args.layout)
     counts = np.bincount(np.memmap(path, np.uint8, "r")[:: 97], minlength=101)
     share = {int(c): round(float(counts[c]) / counts.sum(), 3) for c in np.nonzero(counts)[0]}
     print(f"wrote {path}; share by code (sampled): {share}")
