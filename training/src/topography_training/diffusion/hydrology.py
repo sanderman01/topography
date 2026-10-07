@@ -323,7 +323,8 @@ def _pick(order, area, budget) -> list[int]:
 
 
 def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float, tarns: bool = False,
-          keep_at: np.ndarray | None = None, dry_share: float = 0.0, dry_at: np.ndarray | None = None):
+          keep_at: np.ndarray | None = None, dry_share: float = 0.0, dry_at: np.ndarray | None = None,
+          dry_keep_at: np.ndarray | None = None):
     """Make a generated surface drain like real terrain.
 
     Depressions are kept as lakes (flat at their spill level) until they cover
@@ -332,7 +333,8 @@ def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float,
     depression is carved through and the cut is widened into a valley floor. Depressions
     touching `keep_at` (authored lakes) are always kept and count toward the share.
     With `dry_share`, the deepest compact remaining depressions centred in `dry_at` stay
-    closed and dry (dolines, craters, interdune hollows) up to that share of the land.
+    closed and dry (dolines, craters, interdune hollows) up to that share of the land;
+    depressions centred in `dry_keep_at` (painted craters) always stay closed and dry.
     Returns (surface, lake mask, lake level, dry basin mask)."""
     from scipy import ndimage
 
@@ -368,6 +370,9 @@ def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float,
                 ok &= ndimage.mean(dry_at.astype(np.float32), labels, idx) > 0.5
             order = [k for k in np.argsort(-deepest) if ok[k] and k + 1 not in lakes]
             dry = np.isin(labels, _pick(order, area, dry_share * (~sea).sum()))
+        if dry_keep_at is not None:
+            craters = ndimage.mean(dry_keep_at.astype(np.float32), labels, idx) > 0.5
+            dry |= np.isin(labels, [k + 1 for k in np.flatnonzero(craters) if k + 1 not in lakes])
     work = np.where(keep, filled, h)
     cut = work - carve(work, sea | keep | dry)
     widened = np.maximum(cut, smooth(_maxpool3(cut).astype(np.float32), widen_sigma))

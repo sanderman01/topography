@@ -139,3 +139,19 @@ row = 331.0
 col = 47.0
 radius_m = 3000
 cones = 10
+
+[[exemplars]]
+kind = "drowned-karst"
+region = "ha-long-bay"
+row = 201.0
+col = 105.0
+radius_m = 3000
+island_cells = 439
+
+[[exemplars]]
+kind = "drowned-karst"
+region = "phang-nga-bay"
+row = 162.0
+col = 180.0
+radius_m = 3000
+island_cells = 156

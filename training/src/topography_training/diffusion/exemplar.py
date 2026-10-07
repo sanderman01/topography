@@ -25,6 +25,7 @@ import numpy as np
 CATALOG = Path(__file__).resolve().parents[4] / "catalog" / "exemplars" / "exemplars-v1.toml"
 CELL_M = 128.0
 CALDERA, CRATER, CONE, CONE_FIELD = "caldera", "crater", "cone", "cone-field"
+DROWNED = "drowned-karst"  # towers and islands rising from a shallow sea
 # Where each kind is searched for (accepted context-v5 regions).
 SEARCH = {
     CRATER: ["fuji", "kilimanjaro", "mayon", "taranaki-glo", "villarrica", "etna", "teide", "shasta"],
@@ -33,11 +34,13 @@ SEARCH = {
     # Checked by eye (2026-10-07): these give round cones and cone clusters at 128 m.
     CONE: ["craters-of-the-moon", "etna", "teide", "kilimanjaro", "mayon"],
     CONE_FIELD: ["kilimanjaro", "etna"],
+    DROWNED: ["ha-long-bay", "phang-nga-bay"],
 }
+CLASS_KINDS = {4: (CRATER, CALDERA), 17: (CONE, CONE_FIELD), 15: (DROWNED,)}
 CRATER_MAX_M = 2500.0  # painted class 4 patches narrower than this are summit craters
 CONE_MAX_M = 1500.0  # painted class 17 patches narrower than this are single cones
 FIELD_M = 6000.0  # side of a cone-field exemplar window
-HOLD_WEIGHT = 0.85
+HOLD_WEIGHT = 0.95
 MIN_CELLS = 4  # painted patches smaller than this are ignored
 MAX_ELONGATION = 4.0  # bounding-box side squared over area
 
@@ -124,6 +127,16 @@ def find(release: Path) -> list[dict]:
                 radius = _rim_radius(h, y, x, float(np.sqrt(area[k] / np.pi)))
                 found.append({"kind": kind, "region": name, "row": round(float(y), 1), "col": round(float(x), 1),
                               "radius_m": round(radius), "depth_m": round(float(depth[labels == k + 1].max()))})
+            elif kind == DROWNED:  # the window with the most islands
+                labels, count = ndimage.label(h > 0)
+                size = ndimage.sum(np.ones_like(h), labels, np.arange(1, count + 1)) * CELL_M**2
+                isl = np.isin(labels, np.flatnonzero(size < 2e6) + 1)  # towers and islets, not big islands
+                m = int(FIELD_M / CELL_M)
+                dens = ndimage.uniform_filter(isl.astype(np.float32), m) * m * m
+                dens[: m // 2], dens[-m // 2 :], dens[:, : m // 2], dens[:, -m // 2 :] = 0, 0, 0, 0
+                y, x = np.unravel_index(int(dens.argmax()), dens.shape)
+                found.append({"kind": kind, "region": name, "row": float(y), "col": float(x),
+                              "radius_m": round(FIELD_M / 2), "island_cells": int(round(dens.max()))})
             else:
                 score = _peaks(h)
                 m = int(FIELD_M / CELL_M)
@@ -185,6 +198,14 @@ def _base_sigma(radius_m: float) -> float:
     return max(2.0, 1.2 * radius_m / CELL_M)
 
 
+def _hollow(h: np.ndarray) -> float:
+    """Depth of the deepest closed depression (m)."""
+    from . import hydrology
+
+    filled, _, _ = hydrology.flood(h.astype(np.float64), np.zeros(h.shape, bool))
+    return float((filled - h).max())
+
+
 def compose(l0, target: np.ndarray, seed: int = 0, path: Path = CATALOG):
     """(fine target, weight, report lines): painted calderas, craters and cinder cones of an
     authored layout filled with real exemplars in `target` (the 128 m hold target)."""
@@ -197,20 +218,22 @@ def compose(l0, target: np.ndarray, seed: int = 0, path: Path = CATALOG):
         return out, weight, ["no exemplar catalog"]
     release, entries = load(path)
     rng = np.random.default_rng(seed)
-    for cls in (4, 17):
+    for cls, kinds in CLASS_KINDS.items():
         labels, count = ndimage.label(l0.cls == cls)
         for k in range(1, count + 1):
             patch = labels == k
             area = float(patch.sum()) * CELL_M**2
             ys, xs = np.nonzero(patch)
             span = max(np.ptp(ys), np.ptp(xs)) + 1
-            if patch.sum() < MIN_CELLS or span * span / patch.sum() > MAX_ELONGATION:
+            if patch.sum() < MIN_CELLS or (cls != 15 and span * span / patch.sum() > MAX_ELONGATION):
                 continue  # slivers and painted outlines are not landforms
             d = 2 * np.sqrt(area / np.pi)
             if cls == 4:
                 kind = CRATER if d < CRATER_MAX_M else CALDERA
-            else:
+            elif cls == 17:
                 kind = CONE if d < CONE_MAX_M else CONE_FIELD
+            else:
+                kind = kinds[0]
             pool = [e for e in entries if e["kind"] == kind]
             if not pool:
                 continue
@@ -218,7 +241,7 @@ def compose(l0, target: np.ndarray, seed: int = 0, path: Path = CATALOG):
                 pool = sorted(pool, key=lambda e: abs(np.log(2 * e["radius_m"] / d)))[:2]
             e = pool[int(rng.integers(len(pool)))]
             cy, cx = ndimage.center_of_mass(patch)
-            if kind != CONE_FIELD:  # scaled to the painted patch, height with it
+            if kind not in (CONE_FIELD, DROWNED):  # scaled to the painted patch, height with it
                 s = d / (2 * e["radius_m"])
                 res = residual(release, e, 2.0 * e["radius_m"])
                 res = ndimage.zoom(res, s, order=1) * float(np.clip(s, 0.5, 2.0))
@@ -239,9 +262,21 @@ def compose(l0, target: np.ndarray, seed: int = 0, path: Path = CATALOG):
             ex[ty, tx] = res[ty.start - y0 : ty.stop - y0, tx.start - x0 : tx.stop - x0]
             have[ty, tx] = True
             m = np.clip(smooth((reach & have).astype(np.float32), 1.5), 0, 1)
-            # Single cones keep the painted cone and gain a real one's crater and flanks;
-            # craters, calderas and fields replace the painted local shape.
-            base = target.astype(np.float32) if kind == CONE else smooth(target.astype(np.float32), sigma)
+            if kind in (CRATER, CALDERA):  # at least as deep as painted (128 m blurs real craters)
+                box = np.s_[max(int(cy) - n, 0) : int(cy) + n, max(int(cx) - n, 0) : int(cx) + n]
+                base0 = smooth(target.astype(np.float32), sigma)
+                painted = _hollow(target[box])
+                if _hollow((base0 + ex)[box]) < painted:  # bisect the factor that matches it
+                    lo, hi = 1.0, 3.0
+                    for _ in range(8):
+                        f = (lo + hi) / 2
+                        lo, hi = (f, hi) if _hollow((base0 + f * ex)[box]) < painted else (lo, f)
+                    ex *= (lo + hi) / 2
+            # Cones, cone fields and drowned karst keep the painted height and gain the real
+            # relief on top (a wide smoothing would pull in neighbouring mountains); craters
+            # and calderas replace the painted local shape.
+            keep = kind in (CONE, CONE_FIELD, DROWNED)
+            base = target.astype(np.float32) if keep else smooth(target.astype(np.float32), sigma)
             out = (out + m * (base + ex - out)).astype(np.float32)
             weight = np.maximum(weight, m * HOLD_WEIGHT)
             used.append(f"class {cls} patch at ({cy:.0f}, {cx:.0f}), {d:.0f} m: {kind} from {e['region']}")

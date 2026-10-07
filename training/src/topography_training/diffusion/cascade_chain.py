@@ -158,6 +158,12 @@ class Source:
         return np.array([hydrology.WATER.get(c, hydrology.WATER[0]).dry_share > 0
                          for c in range(NUM_CLASSES)])[self.classes_at(k)]
 
+    def craters_at(self, k: int):
+        """Painted crater cells, whose hollows always stay dry (authored layouts)."""
+        if isinstance(self.classes, int):
+            return None
+        return np.isin(self.classes_at(k), CRATER_CLASSES)
+
     def sinks_at(self, k: int):
         """Cells whose dry basins swallow streams (karst); None where there are none."""
         sinks = np.array([hydrology.WATER.get(c, hydrology.WATER[0]).sinks for c in range(NUM_CLASSES)])
@@ -312,7 +318,8 @@ def main(argv=None) -> int:
     authored = src.l0.lake if src.l0 else None
     # Craters, dolines and interdune hollows stay dry basins here too, not lakes or carved valleys.
     h128, lake128, level128, _ = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0,
-                                                 keep_at=authored, dry_share=water.dry_share, dry_at=src.dry_at(1))
+                                                 keep_at=authored, dry_share=water.dry_share, dry_at=src.dry_at(1),
+                                                 dry_keep_at=src.craters_at(1))
     sea128 = cascade.open_sea(h128)
     lake128 &= ~sea128
     times["l1_s"] = time.time() - t
@@ -342,7 +349,8 @@ def main(argv=None) -> int:
     raw32 = h32.copy()
     # Small lakes (tarns, kettles) from L2's own hollows; the rest are carved through.
     h32, tarn32, _, dry32 = hydrology.drain(h32, sea32 | lake32, water.tarn_share, 1.0, tarns=True,
-                                            dry_share=water.dry_share, dry_at=src.dry_at(4))
+                                            dry_share=water.dry_share, dry_at=src.dry_at(4),
+                                            dry_keep_at=src.craters_at(4))
     sea32 = cascade.open_sea(h32)
     lake32 = (lake32 | tarn32) & ~sea32
     snow32, veg32 = src.cover(h32, 4)
