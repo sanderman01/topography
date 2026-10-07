@@ -42,6 +42,9 @@ CONE_MAX_M = 1500.0  # painted class 17 patches narrower than this are single co
 FIELD_M = 6000.0  # side of a cone-field exemplar window
 HOLD_WEIGHT = 0.95
 MIN_CELLS = 4  # painted patches smaller than this are ignored
+DROWNED_SHORE_M = 2000.0  # drowned-karst exemplars reach this far onto neighbouring karst
+KARST_CLASSES = (1, 14)
+ANY_SHORE_M = 800.0  # and this far onto any other shore of the bay
 MAX_ELONGATION = 4.0  # bounding-box side squared over area
 
 
@@ -252,7 +255,10 @@ def compose(l0, target: np.ndarray, seed: int = 0, path: Path = CATALOG):
                 half = max(e["radius_m"], CELL_M * (max(np.ptp(ys), np.ptp(xs)) / 2 + 4))
                 res = residual(release, e, half)
                 sigma = _base_sigma(e["radius_m"])
-                reach = patch | (ndimage.distance_transform_edt(~patch) * CELL_M < 300.0)
+                near = ndimage.distance_transform_edt(~patch) * CELL_M
+                reach = patch | (near < 300.0)
+                if kind == DROWNED:  # the karst shore too, so the coast breaks into towers and inlets
+                    reach |= ((near < DROWNED_SHORE_M) & np.isin(l0.cls, KARST_CLASSES)) | (near < ANY_SHORE_M)
             # Place the exemplar centred on the patch.
             n = res.shape[0]
             y0, x0 = int(round(cy)) - n // 2, int(round(cx)) - n // 2

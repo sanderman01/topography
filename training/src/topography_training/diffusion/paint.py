@@ -412,6 +412,64 @@ def _write_height(h: np.ndarray, path: Path) -> None:
     Image.fromarray(gray).save(path)
 
 
+def roughen(paint_dir: Path, out: Path, class_id: int, amp_m: float = 2000.0, wave_m: float = 6000.0,
+            band_m: float = 3000.0, seed: int = 0) -> Path:
+    """A copy of a paint dir whose layers are warped by smooth noise near the outline of
+    one class (for example a drowned-karst bay painted as a half disc), so the painted
+    shoreline gets embayments and headlands. Displacement is about `amp_m` at a wavelength
+    of about `wave_m`, plus a third of that at a third of the wavelength, fading to nothing
+    `band_m` from the outline."""
+    from PIL import Image
+    from scipy import ndimage
+
+    from .data import smooth
+
+    shutil.copytree(paint_dir, out)
+    meta = json.loads((out / "paint.json").read_text())
+    px_m = float(meta["extent_m"]) / PX
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _from_xcf(out / "layout.xcf", tmp)
+        h = _read_height(tmp / "height.png")
+        cls = _read_classes(tmp / "classes.png")
+        area = cls == class_id
+        if not area.any():
+            raise ValueError(f"no class {class_id} painted")
+        edge = np.minimum(ndimage.distance_transform_edt(area), ndimage.distance_transform_edt(~area)) * px_m
+        taper = np.clip(1 - edge / band_m, 0, 1) ** 2
+        # No warping near the map border, which must stay sea.
+        c = (np.arange(h.shape[0]) + 0.5) * px_m
+        border = np.minimum(c, h.shape[0] * px_m - c)
+        taper *= np.clip((np.minimum(border[:, None], border[None, :]) - BORDER_M - amp_m) / band_m, 0, 1)
+        rng = np.random.default_rng(seed)
+        d = []
+        for _ in range(2):  # two octaves: bays and headlands, then smaller coves
+            a = np.zeros(h.shape, np.float32)
+            for f in (1.0, 3.0):
+                n = smooth(rng.standard_normal(h.shape).astype(np.float32), wave_m / f / 4 / px_m)
+                a += n / n.std() / f
+            d.append(a * amp_m / px_m * taper)
+        yy, xx = np.indices(h.shape).astype(np.float32)
+        at = [yy + d[0], xx + d[1]]
+        layers = {"height": ndimage.map_coordinates(h, at, order=1, mode="nearest"),
+                  "classes": ndimage.map_coordinates(cls, at, order=0, mode="nearest")}
+        _write_height(layers["height"], tmp / "height.png")
+        Image.fromarray(np.array([COLORS[i] for i in range(len(COLORS))], np.uint8)[layers["classes"]]).save(
+            tmp / "classes.png")
+        pngs = {"height": tmp / "height.png", "classes": tmp / "classes.png"}
+        for name in ("roughness", "hold"):
+            if (tmp / f"{name}.png").exists():
+                g = np.asarray(Image.open(tmp / f"{name}.png").convert("L")).astype(np.float32)
+                Image.fromarray(np.rint(ndimage.map_coordinates(g, at, order=1, mode="nearest")).astype(np.uint8)).save(
+                    tmp / f"{name}.png")
+                pngs[name] = tmp / f"{name}.png"
+        replace_layers(out / "layout.xcf", pngs)
+    meta.setdefault("roughened", []).append({"class": class_id, "amp_m": amp_m, "wave_m": wave_m, "band_m": band_m,
+                                             "seed": seed})
+    (out / "paint.json").write_text(json.dumps(meta, indent=1))
+    return out
+
+
 def transplant(paint_dir: Path, out: Path, region: str, release: Path, base: Path | None = None,
                cone_km: float = 12.0) -> Path:
     """A copy of a paint dir whose painted volcano is replaced by a real one. The real
@@ -518,10 +576,21 @@ def main(argv=None) -> int:
     v.add_argument("--release", type=Path, default=Path("data/datasets/context-v5/release.json"))
     v.add_argument("--base", type=Path, help="layout.xcf of the same map before the cone was painted")
     v.add_argument("--cone-km", type=float, default=12.0, help="radius of the real cone")
+    g = sub.add_parser("roughen", help="copy a paint dir with the outline of one class warped by noise")
+    g.add_argument("paint", type=Path)
+    g.add_argument("out", type=Path)
+    g.add_argument("--class", dest="class_id", type=int, required=True)
+    g.add_argument("--amp-m", type=float, default=2000.0)
+    g.add_argument("--wave-m", type=float, default=6000.0)
+    g.add_argument("--band-m", type=float, default=3000.0)
+    g.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
     if args.out.exists():
         print("error: output directory exists", file=sys.stderr)
         return 2
+    if args.command == "roughen":
+        print(roughen(args.paint, args.out, args.class_id, args.amp_m, args.wave_m, args.band_m, args.seed))
+        return 0
     if args.command == "transplant":
         print(transplant(args.paint, args.out, args.region, args.release, args.base, args.cone_km))
         return 0

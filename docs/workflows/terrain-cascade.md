@@ -116,8 +116,18 @@ $P -m topography_training.diffusion.paint transplant data/worlds/fujion-paint-v3
     --base data/worlds/fujion-paint/layout.before-volcano.xcf
 ```
 
+A painted outline that looks drawn (a half-disc bay, say) can be broken up with
+`paint roughen`: it warps the layers within 3 km of one class's outline by smooth noise
+(about 2 km at a 6 km wavelength, plus a finer octave), away from the map border:
+
+```sh
+$P -m topography_training.diffusion.paint roughen data/worlds/fujion-paint-v3b data/worlds/fujion-paint-v3c --class 15
+```
+
 Drowned tower karst (15) is painted in shallow sea: import sets its seabed to −40 to
-−10 m (fading out over about 1 km past the painted area) and keeps its relief offshore, so L1 raises towers above the water.
+−10 m (fading out over about 1 km past the painted area) and keeps its relief offshore.
+Its Ha Long exemplar also reaches 2 km onto neighbouring karst and 800 m onto any other
+shore, so the coast breaks into towers, coves and islets, so L1 raises towers above the water.
 
 `cascade_l4` refines that 4 m world to 1 m in bands of rows:
 

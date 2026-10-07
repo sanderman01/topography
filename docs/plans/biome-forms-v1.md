@@ -217,7 +217,14 @@ patch. `paint transplant` replaces it with Fuji's real relief, scaled to the pai
 cone (radius 8.4 km, scale 0.70, summit 3,775 m) and faded out at the edge of the volcano
 biome. The glaciers are redrawn on the real cone. The current layout is
 `data/worlds/fujion-paint-v3b` (L0 `data/worlds/fujion-painted-l0-4`). The south bay's
-coast is still a smooth painted arc.
+smooth painted arc was then broken up:
+
+- `paint roughen` adds bays and headlands of a few kilometres;
+- the Ha Long exemplar now also reaches the bay's shores, adding towers, coves and
+  islets.
+
+The current layout is `data/worlds/fujion-paint-v3c` (L0 `data/worlds/fujion-painted-l0-5`, L1–L2 check
+`data/worlds/fujion-v3-chain-9`).
 
 ## Not in this plan
 
