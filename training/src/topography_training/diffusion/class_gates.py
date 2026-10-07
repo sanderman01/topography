@@ -260,7 +260,7 @@ def main(argv=None) -> int:
     real_acc = float(np.mean(hits))
     clf = Centroids(x, y)
     rec = {"swapped": [], "own": []}
-    confusion = np.zeros((13, 13), int)
+    confusion = np.zeros((n_classes, n_classes), int)
     for c in sorted(set(y)):
         for kind, pool in (("swapped", [w for w in held if w[1] != c]), ("own", [w for w in held if w[1] == c])):
             if not pool:
