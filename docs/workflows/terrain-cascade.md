@@ -46,6 +46,14 @@ layout 3, the shape and slopes (10%) and snow/ice and vegetation (10%), so
 guidance can push against them at generation time. Rerunning `train` with the
 same run directory resumes.
 
+Runs started after 2026-10-07 use terrain legend v3 (`catalog/labels/terrain-v3.toml`,
+[biome forms](../plans/biome-forms-v1.md)): 19 class channels, sources relabelled to
+subclasses by `catalog/labels/subclasses-v1.toml` (for example Grand Canyon, Zion and
+Canyonlands as layered canyons), ice cells as glaciers and quiet ground as plain, per
+cell. A class trains at a level only with at least three sources there; the run's
+`class_map` sends every other class to its first trained fallback. Older runs keep 13
+channels and see subclasses as their parents.
+
 `cascade_eval` writes a blind review (`review.html`; keep `key.json` and
 `compare.html` closed until the votes are in), terrain statistics, a
 nearest-training-window distance and a same-seed check: different windows
@@ -68,11 +76,35 @@ $P -m topography_training.diffusion.cascade_chain \
 L1 and L2 cover the whole 48 km region; L3 covers a central square of `--l3-km`
 × 1,024 m. Without `--l3-km`, L3 covers the whole field: the default for authored
 layouts, which specify the world size. After L1 the land is made to drain (largest depressions kept as lakes,
-others carved); after L2 compact deep hollows become tarns and streams are traced.
+others carved; hollows of crater, karst and dune cells stay dry basins); after L2
+compact deep hollows become tarns and streams are traced. Streams flow through lakes
+and dry basins to the sea (only karst basins swallow them), follow smoothed paths, are
+continued to the water after L3 refines the coast, and their beds are carved to descend.
 Water amounts follow the region class (`hydrology.WATER`) unless overridden with
 `--lake-share`, `--tarn-share` and `--stream-km2`. The output is a 4 m world
 (`manifest.json`, layers, hillshades of each level and the real region) that
-exports directly. A 32 km L3 takes about an hour.
+exports directly. A 32 km L3 takes about an hour. `--guidance w` applies class
+guidance at every level (1: off).
+
+For authored layouts, L1 holds the painted shape above about 400 m (the `hold` layer
+and the map border), painted craters (class 4) at 128 m, and fills painted calderas,
+craters and cinder cones (classes 4 and 17) with the 128 m relief of real exemplars
+from `catalog/exemplars/exemplars-v1.toml` (`--no-exemplars` turns this off). The
+catalog is rebuilt from a context release with
+`$P -m topography_training.diffusion.exemplar find --release data/datasets/context-v5/release.json`;
+check the picks by eye.
+
+To move a painted layout to the legend v3 subclasses, copy it with renamed classes and
+import the copy:
+
+```sh
+$P -m topography_training.diffusion.paint relabel data/worlds/fujion-paint data/worlds/fujion-paint-v3 \
+    --map 2:13,1:14,5:15,8:16 --small 11:17:3 --hemisphere south
+$P -m topography_training.diffusion.paint import data/worlds/fujion-paint-v3 data/worlds/fujion-painted-l0-3
+```
+
+Drowned tower karst (15) is painted in shallow sea: import sets its seabed to −40 to
+−10 m and keeps its relief offshore, so L1 raises towers above the water.
 
 `cascade_l4` refines that 4 m world to 1 m in bands of rows:
 
@@ -103,7 +135,11 @@ Tiles are written as `{layer}/L{level}/{prefix}_L{level}_{tx}_{ty}.png`, for exa
 cell (authored layouts; written by the chain and by `cover`), and the viewer's Colours
 menu shows it with a legend. For authored layouts the chain reads the layout's forest share and snowline
 bilinearly, and its class map by nearest cell, at positions warped by about 150 m, so
-cover has no 128 m grid steps. After L4, redraw the cover at 1 m from the layout:
+cover has no 128 m grid steps. Snow and tree lines then follow the ground: snow lies
+lower on pole-facing slopes (set `hemisphere` in the paint settings) and in gullies and
+sheds from faces steeper than 40–55°; trees reach higher in gullies and on sun-facing
+slopes, thin out near their limit and on steep ground, and leave patchy edges. After
+L4, redraw the cover at 1 m from the layout:
 
 ```sh
 $PY -m topography_training.diffusion.cover --world data/worlds/<world>-l4 --layout data/worlds/<L0 dir>
@@ -118,7 +154,8 @@ $PY -m topography_training.diffusion.landcover --world data/worlds/<world> --tre
 This adds `land-cover.u8` with ESA WorldCover codes derived by rule (a recorded
 judgment call, not observed cover):
 - water 80, snow/ice 70 and forest 10, taken from the world's own masks;
-- bare 60 above 35° or more than 400 m above the treeline, grassland 30 just above it;
+- bare 60 above 35° or more than 400 m above the local tree line, grassland 30 just
+  above it (bare classes stay bare);
 - dunes, badlands, lava and glacier forelands bare, canyons and badlands shrub 20,
   other open land grassland;
 - class borders warped by about 150 m.

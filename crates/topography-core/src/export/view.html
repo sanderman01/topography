@@ -59,14 +59,17 @@ const COVER = [
   [[50], "Built-up", [.55, .51, .50]], [[60], "Bare / sparse", [.62, .59, .54]],
   [[90, 95], "Wetland / mangrove", [.33, .43, .33]], [[100], "Moss / lichen", [.55, .58, .45]],
 ];
-// Terrain classes (catalog/labels/terrain-v2.toml), shown in biome mode.
+// Terrain classes (catalog/labels/terrain-v3.toml), shown in biome mode.
 const BIOMES = [
-  [1, "Karst", [.80, .55, .85]], [2, "Gorges and canyons", [.80, .36, .20]],
+  [1, "Doline karst", [.80, .55, .85]], [2, "Gorges", [.80, .36, .20]],
   [3, "Fjords", [.20, .55, .55]], [4, "Calderas and craters", [.55, .20, .25]],
   [5, "Archipelago", [.35, .75, .80]], [6, "Alpine", [.45, .45, .70]],
-  [7, "Badlands and mesas", [.85, .62, .35]], [8, "Dunes", [.95, .85, .45]],
+  [7, "Badlands and mesas", [.85, .62, .35]], [8, "Star dunes", [.95, .85, .45]],
   [9, "Braided rivers", [.55, .75, .45]], [10, "Glaciers", [.85, .92, .98]],
-  [11, "Cones and lava", [.30, .26, .26]], [12, "Coastal cliffs", [.60, .65, .35]],
+  [11, "Stratovolcano", [.30, .26, .26]], [12, "Coastal cliffs", [.60, .65, .35]],
+  [13, "Layered canyons", [.70, .42, .16]], [14, "Cone and tower karst", [.62, .30, .70]],
+  [15, "Drowned tower karst", [.30, .70, .62]], [16, "Crest-train dunes", [.98, .90, .60]],
+  [17, "Cinder cones and lava", [.18, .12, .12]], [18, "Plain", [.55, .68, .40]],
 ];
 const vec3 = c => `vec3(${c.map(v => v.toFixed(2)).join(", ")})`;
 const FS = `#version 300 es

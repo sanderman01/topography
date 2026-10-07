@@ -355,7 +355,7 @@ pub fn heightmap(
         "encoding": {"format": "PNG grayscale 16-bit", "h_min_m": h_min, "h_max_m": h_max, "step_m": step,
             "decode": "height_m = h_min_m + code * step_m", "range_from": "all cells (ground continues under water)",
             "max_quantization_error_m": max_error},
-        "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes, biome the terrain class id (catalog/labels/terrain-v2.toml)",
+        "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes, biome the terrain class id (catalog/labels/terrain-v3.toml)",
             "layers": masks.iter().map(mask_name).collect::<Vec<_>>()},
         "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix: height, water, snow (snow-ice), veg (vegetation), landcover (land-cover), biome",
         "masters": master_files,
