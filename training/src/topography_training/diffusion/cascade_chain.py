@@ -147,6 +147,13 @@ class Source:
         return np.array([hydrology.WATER.get(c, hydrology.WATER[0]).dry_share > 0
                          for c in range(NUM_CLASSES)])[self.classes_at(k)]
 
+    def sinks_at(self, k: int):
+        """Cells whose dry basins swallow streams (karst); None where there are none."""
+        sinks = np.array([hydrology.WATER.get(c, hydrology.WATER[0]).sinks for c in range(NUM_CLASSES)])
+        if isinstance(self.classes, int):
+            return np.True_ if sinks[self.classes] else None
+        return sinks[self.classes_at(k)]
+
     def streams_at(self, k: int, water: hydrology.Water):
         """Stream start area and width: the class profile per cell for authored layouts."""
         if self.l0 is None or water is not self.water:
@@ -313,9 +320,12 @@ def main(argv=None) -> int:
     lake32 = (lake32 | tarn32) & ~sea32
     snow32, veg32 = src.cover(h32, 4)
     snow32, veg32 = snow32 & ~sea32, veg32 & ~sea32
-    # Flow passes through lakes and sinks into dry basins.
+    # Flow passes through lakes and dry basins to the sea; only karst basins swallow it.
+    sinks = src.sinks_at(4)
+    sinks32 = dry32 & sinks if sinks is not None else np.zeros_like(dry32)
     stream32, parent32, width32 = hydrology.streams(h32, sea32 | lake32, 32.0, *src.streams_at(4, water),
-                                                    outlet=sea32 | dry32)
+                                                    outlet=sea32 | sinks32)
+    pos32 = hydrology.smooth_paths(stream32, parent32, width32)
     times["l2_s"] = time.time() - t
     print(f"L2 {h32.shape} in {times['l2_s']:.0f} s; tarns {tarn32.mean():.2%}, dry basins {dry32.mean():.2%}, streams {stream32.sum()} cells", flush=True)
     _reach(src, h32, 32.0, args.out, "l2")
@@ -348,7 +358,7 @@ def main(argv=None) -> int:
     sea4 = cascade.refine_mask(sea32[sl], 8, 6.0)
     lake4 = cascade.refine_mask(lake32[sl], 8, 6.0) & ~sea4
     level4 = _spread(_nearest(h32[sl], 8), _nearest(lake32[sl], 8), 12)
-    stream4 = hydrology.draw_streams(stream32, parent32, width32, 8, 32.0, y0, x0, n32) & ~sea4 & ~lake4
+    stream4 = hydrology.draw_streams(stream32, parent32, width32, 8, 32.0, y0, x0, n32, pos32) & ~sea4 & ~lake4
     if src.l0 is not None:  # at 4 m from the layout, not 32 m steps
         snow4, veg4 = src.cover(coarse, 32, y0 * 32.0, x0 * 32.0)
     else:
@@ -366,6 +376,12 @@ def main(argv=None) -> int:
     lake4 &= ~sea4
     stream4 &= ~sea4
     h4[lake4] = level4[lake4]
+    # The refined coast can leave mouths on land: continue them, then make every bed descend.
+    sinks4 = _nearest(sinks32[sl], 8)
+    mouths = hydrology.extend_mouths(h4, sea4 | lake4, stream4, sinks4)
+    stream4 |= mouths
+    h4, lowered = hydrology.carve_streams(h4, stream4, sea4 | lake4)
+    print(f"L3 streams: {mouths.sum()} cells added to reach water, {lowered} bed cells lowered", flush=True)
     water4 = sea4 | lake4 | stream4
     if src.l0 is not None:  # cover of the final surface
         snow4, veg4 = src.cover(h4, 32, y0 * 32.0, x0 * 32.0)

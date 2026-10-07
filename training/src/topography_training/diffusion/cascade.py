@@ -398,10 +398,12 @@ def l1_fields(r: Region) -> Fields:
     return Fields(h, mid.astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)], r.class_id, marks)
 
 
-def refine_mask(mask: np.ndarray, k: int, sigma_cells: float) -> np.ndarray:
-    """A coarse mask enlarged k times with its block corners rounded."""
+def refine_mask(mask: np.ndarray, k: int, sigma_cells: float, keep_thin: bool = False) -> np.ndarray:
+    """A coarse mask enlarged k times with its block corners rounded. `keep_thin` keeps
+    one-cell lines (streams), which the rounding alone would erase."""
     big = np.repeat(np.repeat(mask, k, axis=0), k, axis=1)
-    return smooth(big.astype(np.float32), sigma_cells) > 0.5
+    s = smooth(big.astype(np.float32), sigma_cells)
+    return (s > 0.5) | (big & (s > 0.2)) if keep_thin else s > 0.5
 
 
 def open_sea(h: np.ndarray) -> np.ndarray:

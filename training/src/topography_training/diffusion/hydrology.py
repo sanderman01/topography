@@ -32,12 +32,13 @@ class Water:
     stream_km2: float
     stream_width: float = 2.5
     dry_share: float = 0.0  # closed dry basins kept after L2: dolines, craters, interdune hollows
+    sinks: bool = False  # streams end in its dry basins (karst); elsewhere they flow on to the sea
 
 
 # By class id (0: unlabelled). Dry classes keep valley floors as dry washes.
 WATER = {
     0: Water(0.010, 0.002, 8.0),
-    1: Water(0.003, 0.000, 20.0, 1.5, 0.010),  # karst: streams sink
+    1: Water(0.003, 0.000, 20.0, 1.5, 0.010, True),  # karst: streams sink
     2: Water(0.002, 0.000, 50.0, 1.0),  # gorges and canyons
     3: Water(0.020, 0.005, 4.0),  # fjords and glacial troughs
     4: Water(0.010, 0.002, 10.0, 2.5, 0.005),  # calderas and craters
@@ -123,9 +124,38 @@ def streams(h: np.ndarray, water: np.ndarray, cell_m: float, min_km2: float = ST
     return stream, parent.reshape(h.shape), width
 
 
-def draw_streams(stream, parent, width, k: int, cell_m: float, y0: int, x0: int, n: int) -> np.ndarray:
+def smooth_paths(stream: np.ndarray, parent: np.ndarray, width: np.ndarray, iterations: int = 6) -> np.ndarray:
+    """Stream cell positions (2, rows, cols) in cells, pulled toward the line through their
+    downstream and main upstream neighbours, so streams lose the 8-direction grid steps.
+    Mouths, sources and junction cells of equal branches stay put."""
+    rows, cols = stream.shape
+    pos = np.stack(np.mgrid[0:rows, 0:cols]).astype(np.float32)
+    idx = np.flatnonzero(stream.ravel())
+    if not len(idx):
+        return pos
+    par = parent.ravel()[idx]
+    ok = (par >= 0) & stream.ravel()[np.maximum(par, 0)]
+    # Main upstream neighbour: the widest stream cell draining into each cell.
+    up = np.full(rows * cols, -1, np.int64)
+    best = np.zeros(rows * cols, np.float32)
+    w = width.ravel()[idx]
+    for i, p, wi, o in zip(idx, par, w, ok):
+        if o and wi > best[p]:
+            best[p], up[p] = wi, i
+    child = up[idx]
+    move = ok & (child >= 0)
+    a, b, c = idx[move], par[move], child[move]
+    flat = pos.reshape(2, -1)
+    for _ in range(iterations):
+        flat[:, a] = 0.5 * flat[:, a] + 0.25 * (flat[:, b] + flat[:, c])
+    return pos
+
+
+def draw_streams(stream, parent, width, k: int, cell_m: float, y0: int, x0: int, n: int,
+                 pos: np.ndarray | None = None) -> np.ndarray:
     """Stream mask of the n x n window at (y0, x0), at k times the resolution: each stream
-    cell joined to its downstream neighbour by a line as wide as its stream."""
+    cell joined to its downstream neighbour by a line as wide as its stream, at `pos`
+    (see `smooth_paths`) or the cell centres."""
     cols = stream.shape[1]
     fine = np.zeros((n * k, n * k), bool)
     fine_m = cell_m / k
@@ -133,10 +163,11 @@ def draw_streams(stream, parent, width, k: int, cell_m: float, y0: int, x0: int,
     for y, x in zip(ys + y0, xs + x0):
         p = parent[y, x]
         py, px = divmod(int(p), cols) if p >= 0 else (y, x)
+        (sy, sx), (ey, ex) = ((pos[:, y, x], pos[:, py, px]) if pos is not None else ((y, x), (py, px)))
         r = max(0.5, width[y, x] / 2 / fine_m)
         for t in np.linspace(0, 1, max(2, int(k * 1.5))):
-            cy = (y + (py - y) * t - y0 + 0.5) * k
-            cx = (x + (px - x) * t - x0 + 0.5) * k
+            cy = (sy + (ey - sy) * t - y0 + 0.5) * k
+            cx = (sx + (ex - sx) * t - x0 + 0.5) * k
             ya, yb = int(max(cy - r, 0)), int(min(cy + r + 1, n * k))
             xa, xb = int(max(cx - r, 0)), int(min(cx + r + 1, n * k))
             if ya >= yb or xa >= xb:
@@ -144,6 +175,89 @@ def draw_streams(stream, parent, width, k: int, cell_m: float, y0: int, x0: int,
             gy, gx = np.ogrid[ya:yb, xa:xb]
             fine[ya:yb, xa:xb] |= (gy + 0.5 - cy) ** 2 + (gx + 0.5 - cx) ** 2 <= r * r
     return fine
+
+
+_OFFSETS = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+
+def extend_mouths(h: np.ndarray, water: np.ndarray, stream: np.ndarray, sinks: np.ndarray | None = None,
+                  max_cells: int = 4000) -> np.ndarray:
+    """Streams continued from where they stop short of water, cell by cell to the lowest
+    unvisited neighbour, until they reach water (a refined coast or lake can leave a
+    mouth stranded on land). Streams ending in `sinks` (karst) stay. Returns the new cells."""
+    from scipy import ndimage
+
+    rows, cols = h.shape
+    labels, count = ndimage.label(stream & ~water, structure=np.ones((3, 3)))
+    if not count:
+        return np.zeros(h.shape, bool)
+    near = ndimage.binary_dilation(water, np.ones((3, 3)))
+    reached = np.zeros(count + 1, bool)
+    reached[np.unique(labels[near & (labels > 0)])] = True
+    if sinks is not None:
+        reached[np.unique(labels[sinks & (labels > 0)])] = True
+    lowest = ndimage.minimum_position(np.where(labels > 0, h, np.inf), labels, np.arange(1, count + 1))
+    added = np.zeros(h.shape, bool)
+    for k, (y, x) in enumerate(lowest, start=1):
+        if reached[k]:
+            continue
+        seen = {(y, x)}
+        path = []
+        for _ in range(max_cells):
+            best = None
+            for dy, dx in _OFFSETS:
+                yy, xx = y + dy, x + dx
+                if 0 <= yy < rows and 0 <= xx < cols and (yy, xx) not in seen:
+                    if best is None or h[yy, xx] < h[best]:
+                        best = (yy, xx)
+            if best is None:
+                break
+            y, x = best
+            seen.add(best)
+            if water[y, x] or (sinks is not None and sinks[y, x]):
+                break
+            path.append(best)
+        else:
+            continue  # no water within reach: leave this stream as it was
+        for p in path:
+            added[p] = True
+    return added
+
+
+def carve_streams(h: np.ndarray, stream: np.ndarray, water: np.ndarray) -> tuple[np.ndarray, int]:
+    """Stream beds lowered so they descend all the way to the water they drain into
+    (priority-flood carving along stream cells only). Returns (surface, cells lowered)."""
+    rows, cols = h.shape
+    out = h.astype(np.float64).ravel().copy()
+    inside = stream.ravel() & ~water.ravel()
+    seen = ~inside
+    parent = np.full(out.size, -1, np.int64)
+    from scipy import ndimage
+
+    seeds = np.flatnonzero(inside & ndimage.binary_dilation(water, np.ones((3, 3))).ravel())
+    seen[seeds] = True
+    heap = [(out[i], int(i)) for i in seeds]
+    heapq.heapify(heap)
+    lowered = 0
+    while heap:
+        _, i = heapq.heappop(heap)
+        r, c = divmod(i, cols)
+        for dy, dx in _OFFSETS:
+            rr, cc = r + dy, c + dx
+            if 0 <= rr < rows and 0 <= cc < cols:
+                j = rr * cols + cc
+                if seen[j]:
+                    continue
+                seen[j] = True
+                parent[j] = i
+                target, k = out[j] - EPSILON_M, i
+                while k >= 0 and out[k] > target:
+                    out[k] = target
+                    target -= EPSILON_M
+                    lowered += 1
+                    k = parent[k]
+                heapq.heappush(heap, (out[j], j))
+    return out.reshape(h.shape).astype(np.float32), lowered
 
 
 def _maxpool3(a: np.ndarray) -> np.ndarray:

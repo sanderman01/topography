@@ -153,7 +153,7 @@ def main(argv=None) -> int:
         r0, r1 = g0 // 4 - m, g1 // 4 + m
         crop = np.s_[m * 4 : -m * 4, m * 4 : -m * 4]
         coarse = cascade.refine_surface(level, _rows_4m(h4, r0, r1, -m, c4 + m))[crop]
-        water = cascade.refine_mask(_rows_4m(water4, r0, r1, -m, c4 + m), 4, WATER_SIGMA_M)[crop]
+        water = cascade.refine_mask(_rows_4m(water4, r0, r1, -m, c4 + m), 4, WATER_SIGMA_M, keep_thin=True)[crop]
 
         def cover(mask):
             return soft_cover(np.repeat(np.repeat(_rows_4m(mask, r0, r1, -m, c4 + m), 4, 0), 4, 1))[crop]
