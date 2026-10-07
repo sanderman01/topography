@@ -396,6 +396,9 @@ def main(argv=None) -> int:
     }
     if not isinstance(classes4, int):  # authored layouts: the class per 4 m cell, for L4
         layers["classes.u8"] = classes4.astype(np.uint8).tobytes()
+    if src.l0 is not None:  # biomes for viewing and export, borders warped like the cover
+        src.cover(h4[:1], 32)  # makes the sampler
+        layers["biome.u8"] = src.cover_sampler.classes(y0 * 32.0, x0 * 32.0, *h4.shape, 4.0).tobytes()
     digests = {}
     for name, data in layers.items():
         (args.out / name).write_bytes(data)

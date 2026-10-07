@@ -89,7 +89,8 @@ def _digest(path: Path) -> str:
 
 
 def redraw(world: Path, layout_dir: Path, rows: int = 1024) -> None:
-    """Rewrite snow-ice.u8 and vegetation.u8 (2 present, 1 absent) of a world from its layout."""
+    """Rewrite snow-ice.u8 and vegetation.u8 (2 present, 1 absent) of a world from its layout,
+    and write biome.u8 (terrain class per cell, borders warped like the cover)."""
     manifest_path = world / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     n, cell = manifest["size"][0], float(manifest["spacing_m"])
@@ -98,15 +99,17 @@ def redraw(world: Path, layout_dir: Path, rows: int = 1024) -> None:
     h = np.memmap(world / "elevation.f32", "<f4", "r", shape=(n, n))
     snow_out = np.memmap(world / "snow-ice.u8", np.uint8, "r+", shape=(n, n))
     veg_out = np.memmap(world / "vegetation.u8", np.uint8, "r+", shape=(n, n))
+    biome_out = np.memmap(world / "biome.u8", np.uint8, "w+", shape=(n, n))
     for y in range(0, n, rows):
         b = min(y + rows, n)
         snow, veg = sampler.cover(np.asarray(h[y:b]), off + y * cell, off, cell)
         snow_out[y:b] = np.where(snow, 2, 1)
         veg_out[y:b] = np.where(veg, 2, 1)
-    snow_out.flush()
-    veg_out.flush()
-    del snow_out, veg_out
-    for name in ("snow-ice.u8", "vegetation.u8"):
+        biome_out[y:b] = sampler.classes(off + y * cell, off, b - y, n, cell)
+    for m in (snow_out, veg_out, biome_out):
+        m.flush()
+    del snow_out, veg_out, biome_out
+    for name in ("snow-ice.u8", "vegetation.u8", "biome.u8"):
         manifest["layers"][name] = _digest(world / name)
     manifest["cover"] = {"method": METHOD, "layout": str(layout_dir.resolve())}
     manifest_path.write_text(json.dumps(manifest, indent=1))
@@ -121,7 +124,7 @@ def main(argv=None) -> int:
         print("error: --world has no manifest.json", file=sys.stderr)
         return 2
     redraw(args.world, args.layout)
-    print(f"redrew snow-ice.u8 and vegetation.u8 in {args.world}")
+    print(f"redrew snow-ice.u8 and vegetation.u8 and wrote biome.u8 in {args.world}")
     return 0
 
 

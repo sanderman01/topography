@@ -99,7 +99,9 @@ target/release/topography export view data/exports/cascade-world-1-howe-sound-1m
 
 Tiles are written as `{layer}/L{level}/{prefix}_L{level}_{tx}_{ty}.png`, for example
 `height/L0/height_L0_0_0.png` and `vegetation/L0/veg_L0_0_0.png` (prefixes `height`,
-`water`, `snow`, `veg`, `landcover`). For authored layouts the chain reads the layout's forest share and snowline
+`water`, `snow`, `veg`, `landcover`, `biome`). `biome` holds the terrain class id per
+cell (authored layouts; written by the chain and by `cover`), and the viewer's Colours
+menu shows it with a legend. For authored layouts the chain reads the layout's forest share and snowline
 bilinearly, and its class map by nearest cell, at positions warped by about 150 m, so
 cover has no 128 m grid steps. After L4, redraw the cover at 1 m from the layout:
 

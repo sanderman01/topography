@@ -212,16 +212,12 @@ pub fn heightmap(
             if v == 2 { 255 } else { 0 }
         })?,
     ];
-    // Categorical WorldCover classes, exported as-is for render materials.
-    if layers.get("land-cover.u8").is_some() {
-        masks.push(Layer::open(
-            world,
-            "land-cover.u8",
-            layers,
-            (w, h),
-            1,
-            |v| v,
-        )?);
+    // Categorical layers exported as-is: WorldCover classes for render materials, and the
+    // terrain class (biome) of authored worlds.
+    for name in ["land-cover.u8", "biome.u8"] {
+        if layers.get(name).is_some() {
+            masks.push(Layer::open(world, name, layers, (w, h), 1, |v| v)?);
+        }
     }
     let mask_name = |layer: &Layer| layer.name.trim_end_matches(".u8");
     // Range from all ground: terrain continues under water, so the seabed is encoded too.
@@ -365,9 +361,9 @@ pub fn heightmap(
         "encoding": {"format": "PNG grayscale 16-bit", "h_min_m": h_min, "h_max_m": h_max, "step_m": step,
             "decode": "height_m = h_min_m + code * step_m", "range_from": "all cells (ground continues under water)",
             "max_quantization_error_m": max_error},
-        "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes",
+        "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes, biome the terrain class id (catalog/labels/terrain-v2.toml)",
             "layers": masks.iter().map(mask_name).collect::<Vec<_>>()},
-        "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix: height, water, snow (snow-ice), veg (vegetation), landcover (land-cover)",
+        "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix: height, water, snow (snow-ice), veg (vegetation), landcover (land-cover), biome",
         "masters": master_files,
         "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
         "levels": levels,

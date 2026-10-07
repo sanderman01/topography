@@ -28,7 +28,7 @@
   <label>Height exaggeration <input id="exag" type="range" min="1" max="3" step="0.1" value="1"></label>
   <label>Sun azimuth <input id="az" type="range" min="0" max="360" step="5" value="315"></label>
   <label>Sun elevation <input id="el" type="range" min="5" max="85" step="1" value="35"></label>
-  <label>Cover colours <input id="cover" type="checkbox" checked></label>
+  <label>Colours <select id="colours"><option value="1">Land cover</option><option value="2">Biomes</option><option value="0">Plain</option></select></label>
   <div id="legend"></div>
   <div class="muted">Drag: orbit · right/shift-drag: pan · wheel: zoom · WASD: move · double-click: load 1 m detail there</div>
   <div class="muted" id="status">Loading…</div>
@@ -59,11 +59,20 @@ const COVER = [
   [[50], "Built-up", [.55, .51, .50]], [[60], "Bare / sparse", [.62, .59, .54]],
   [[90, 95], "Wetland / mangrove", [.33, .43, .33]], [[100], "Moss / lichen", [.55, .58, .45]],
 ];
+// Terrain classes (catalog/labels/terrain-v2.toml), shown in biome mode.
+const BIOMES = [
+  [1, "Karst", [.80, .55, .85]], [2, "Gorges and canyons", [.80, .36, .20]],
+  [3, "Fjords", [.20, .55, .55]], [4, "Calderas and craters", [.55, .20, .25]],
+  [5, "Archipelago", [.35, .75, .80]], [6, "Alpine", [.45, .45, .70]],
+  [7, "Badlands and mesas", [.85, .62, .35]], [8, "Dunes", [.95, .85, .45]],
+  [9, "Braided rivers", [.55, .75, .45]], [10, "Glaciers", [.85, .92, .98]],
+  [11, "Cones and lava", [.30, .26, .26]], [12, "Coastal cliffs", [.60, .65, .35]],
+];
 const vec3 = c => `vec3(${c.map(v => v.toFixed(2)).join(", ")})`;
 const FS = `#version 300 es
 precision highp float; precision highp int;
-uniform highp sampler2D uH; uniform highp sampler2D uM;
-uniform float uSpacing, uExag; uniform vec3 uSun, uEye; uniform vec4 uHole; uniform int uCover;
+uniform highp sampler2D uH; uniform highp sampler2D uM; uniform highp sampler2D uB;
+uniform float uSpacing, uExag; uniform vec3 uSun, uEye; uniform vec4 uHole; uniform int uMode;
 in vec2 vUV; in vec3 vPos; out vec4 outColor;
 float h(ivec2 t) { ivec2 s = textureSize(uH, 0); return texelFetch(uH, clamp(t, ivec2(0), s - 1), 0).r; }
 vec3 normalAt(ivec2 t) {
@@ -75,6 +84,10 @@ vec3 cover(float code, float veg) {
 ${COVER.map(([codes, , c]) => `  if (${codes.map(k => `code == ${k}.0`).join(" || ")}) return ${vec3(c)};`).join("\n")}
   return veg > .5 ? vec3(.26, .37, .21) : vec3(.58, .56, .53);
 }
+vec3 biome(float id) {
+${BIOMES.map(([id, , c]) => `  if (id == ${id}.0) return ${vec3(c)};`).join("\n")}
+  return vec3(.70);
+}
 void main() {
   if (vPos.x > uHole.x && vPos.x < uHole.z && vPos.z > uHole.y && vPos.z < uHole.w) discard;
   vec2 f = fract(vUV); ivec2 t = ivec2(floor(vUV));
@@ -82,9 +95,12 @@ void main() {
                          mix(normalAt(t + ivec2(0, 1)), normalAt(t + ivec2(1, 1)), f.x), f.y));
   vec4 m = texelFetch(uM, ivec2(floor(vUV + .5)), 0);
   vec3 base = vec3(.80);
-  if (uCover == 1) {
+  if (uMode == 1) {
     base = cover(floor(m.a * 255.0 + .5), m.b);
     if (m.g > .5) base = ${vec3(SNOW)};
+    if (m.r > .5) base = ${vec3(WATER)};
+  } else if (uMode == 2) {
+    base = biome(floor(texelFetch(uB, ivec2(floor(vUV + .5)), 0).r * 255.0 + .5));
     if (m.r > .5) base = ${vec3(WATER)};
   }
   float diffuse = max(dot(n, uSun), 0.0);
@@ -104,7 +120,7 @@ gl.attachShader(program, shader(gl.FRAGMENT_SHADER, FS));
 gl.linkProgram(program);
 if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
 const u = {};
-for (const name of ["uH", "uM", "uW", "uOrigin", "uSpacing", "uExag", "uMVP", "uSun", "uEye", "uHole", "uCover"])
+for (const name of ["uH", "uM", "uB", "uW", "uOrigin", "uSpacing", "uExag", "uMVP", "uSun", "uEye", "uHole", "uMode"])
   u[name] = gl.getUniformLocation(program, name);
 const vao = gl.createVertexArray();
 
@@ -168,6 +184,7 @@ async function loadRegion(level, x, y, side) {
   const heights = new Float32Array(buffer, 8, n);
   const layer = name => maskIndex[name] === undefined ? null : new Uint8Array(buffer, 8 + 4 * n + maskIndex[name] * n, n);
   const water = layer("water"), snow = layer("snow-ice"), veg = layer("vegetation"), cover = layer("land-cover");
+  const biome = layer("biome") ?? new Uint8Array(n);
   const rgba = new Uint8Array(4 * n);
   for (let i = 0; i < n; i++) {
     rgba[4 * i] = water ? water[i] : 0; rgba[4 * i + 1] = snow ? snow[i] : 0;
@@ -176,9 +193,10 @@ async function loadRegion(level, x, y, side) {
   const s = spacing0 * 2 ** level;
   return {
     w, h, heights, spacing: s, x0: x * s, z0: y * s,
-    masks: { water: water ?? new Uint8Array(n), snow: snow ?? new Uint8Array(n), cover: cover ?? new Uint8Array(n) },
+    masks: { water: water ?? new Uint8Array(n), snow: snow ?? new Uint8Array(n), cover: cover ?? new Uint8Array(n), biome },
     heightTex: texture(gl.R32F, gl.RED, gl.FLOAT, w, h, heights),
     maskTex: texture(gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, w, h, rgba),
+    biomeTex: texture(gl.R8, gl.RED, gl.UNSIGNED_BYTE, w, h, biome),
   };
 }
 // Legend of the classes present, with their share of the overview samples.
@@ -187,12 +205,17 @@ function legend(masks) {
   const share = test => { let k = 0; for (let i = 0; i < n; i++) if (test(i)) k++; return k / n; };
   const plain = i => masks.water[i] < 128 && masks.snow[i] < 128;
   rows.push(["Water", WATER, share(i => masks.water[i] >= 128)]);
-  rows.push(["Snow / ice", SNOW, share(i => masks.water[i] < 128 && masks.snow[i] >= 128)]);
-  for (const [codes, name, c] of COVER) rows.push([name, c, share(i => plain(i) && codes.includes(masks.cover[i]))]);
+  if (mode() === 2) {
+    for (const [id, name, c] of BIOMES) rows.push([name, c, share(i => masks.water[i] < 128 && masks.biome[i] === id)]);
+  } else {
+    rows.push(["Snow / ice", SNOW, share(i => masks.water[i] < 128 && masks.snow[i] >= 128)]);
+    for (const [codes, name, c] of COVER) rows.push([name, c, share(i => plain(i) && codes.includes(masks.cover[i]))]);
+  }
   byId("legend").innerHTML = rows.filter(r => r[2] >= 0.0005)
     .map(([name, c, f]) => `<div><i style="background:${swatch(c)}"></i>${name}<span>${(100 * f).toFixed(1)}%</span></div>`).join("");
 }
-function release(t) { if (t) { gl.deleteTexture(t.heightTex); gl.deleteTexture(t.maskTex); } }
+function release(t) { if (t) { gl.deleteTexture(t.heightTex); gl.deleteTexture(t.maskTex); gl.deleteTexture(t.biomeTex); } }
+function mode() { return Number(byId("colours").value); }
 
 // Bilinear ground height in metres at world position (x east, z south), or null outside.
 function groundAt(x, z) {
@@ -235,8 +258,8 @@ function draw() {
   gl.uniform3fv(u.uSun, [Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az)]);
   gl.uniform3fv(u.uEye, e);
   gl.uniform1f(u.uExag, exag());
-  gl.uniform1i(u.uCover, byId("cover").checked ? 1 : 0);
-  gl.uniform1i(u.uH, 0); gl.uniform1i(u.uM, 1);
+  gl.uniform1i(u.uMode, mode());
+  gl.uniform1i(u.uH, 0); gl.uniform1i(u.uM, 1); gl.uniform1i(u.uB, 2);
   for (const t of [detail, overview]) {
     if (!t) continue;
     // The overview leaves a hole where the detail region is drawn.
@@ -249,6 +272,7 @@ function draw() {
     gl.uniform1f(u.uSpacing, t.spacing);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, t.heightTex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, t.maskTex);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, t.biomeTex);
     const idx = indices(t.w, t.h);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idx.buffer);
     gl.drawElements(gl.TRIANGLES, idx.count, gl.UNSIGNED_INT, 0);
@@ -343,8 +367,12 @@ canvas.addEventListener("dblclick", e => {
   if (p) loadDetail(p).catch(err => { byId("status").textContent = err.message; });
 });
 byId("overview").addEventListener("click", () => { release(detail); detail = null; dirty = true; });
-byId("cover").addEventListener("change", () => { byId("legend").hidden = !byId("cover").checked; });
-for (const id of ["az", "el", "cover"]) byId(id).addEventListener("input", () => { dirty = true; });
+byId("colours").addEventListener("change", () => {
+  byId("legend").hidden = mode() === 0;
+  legend(overview.masks);
+  dirty = true;
+});
+for (const id of ["az", "el"]) byId(id).addEventListener("input", () => { dirty = true; });
 byId("exag").addEventListener("input", () => { settleTarget(); dirty = true; });
 addEventListener("resize", () => { dirty = true; });
 
@@ -352,6 +380,7 @@ addEventListener("resize", () => { dirty = true; });
   manifest = await (await fetch("/manifest.json")).json();
   spacing0 = manifest.spacing_m;
   (manifest.masks?.layers ?? []).forEach((name, i) => { maskIndex[name] = i; });
+  if (maskIndex.biome === undefined) byId("colours").querySelector('[value="2"]').disabled = true;
   byId("title").textContent = manifest.world_output.split("/").pop();
   // Overview: the finest level that fits in one region.
   const level = manifest.levels.findIndex(l => l.samples_per_side <= 1025);
