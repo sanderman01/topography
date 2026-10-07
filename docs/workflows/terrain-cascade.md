@@ -113,6 +113,10 @@ judgment call, not observed cover):
   other open land grassland;
 - class borders warped by about 150 m.
 
+The export holds the tiles and `manifest.json`. Add `--masters` to also write
+full-world COGs (Float32 `elevation.tif` and the mask layers). They duplicate the
+world output, so they are only needed when the export travels without it.
+
 Export streams the world layers row by row: a 32 km world at 1 m exports in
 about 13 minutes with a peak under 200 MB. The 4 m chain output exports the same
 way for a quick 3D look before L4.

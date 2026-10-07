@@ -43,7 +43,7 @@ Usage: topography [--help | --version]
        topography world sketch <sketch.toml> <new-output-dir>
        topography world layout <layout.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
-       topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two]
+       topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
@@ -273,8 +273,13 @@ fn main() -> ExitCode {
             );
         }
         [command, action, world, output, rest @ ..]
-            if command == "export" && action == "heightmap" && rest.len() <= 2 =>
+            if command == "export" && action == "heightmap" && rest.len() <= 3 =>
         {
+            let masters = rest.iter().any(|v| v == "--masters");
+            let rest: Vec<_> = rest.iter().filter(|v| *v != "--masters").collect();
+            if rest.len() > 2 {
+                return usage_error();
+            }
             let intervals = match rest
                 .first()
                 .map(|v| v.to_str().and_then(|s| s.parse().ok()))
@@ -297,6 +302,7 @@ fn main() -> ExitCode {
                     Path::new(output),
                     intervals,
                     layout,
+                    masters,
                 )
                 .map(|p| p.display().to_string()),
             );

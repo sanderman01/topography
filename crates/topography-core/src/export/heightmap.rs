@@ -170,8 +170,15 @@ fn geotiff(
     result.map(|_| ())
 }
 
-/// Export a generated world as 16-bit height tiles, 8-bit mask tiles and COG masters.
-pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) -> Result<PathBuf> {
+/// Export a generated world as 16-bit height tiles and 8-bit mask tiles; with `masters`,
+/// also full-world COGs (Float32 elevation and the masks), which duplicate the world output.
+pub fn heightmap(
+    world: &Path,
+    output: &Path,
+    intervals: usize,
+    layout: Layout,
+    masters: bool,
+) -> Result<PathBuf> {
     ensure(!output.exists(), "export output already exists")?;
     ensure(
         intervals.is_power_of_two() && (16..=4096).contains(&intervals),
@@ -332,10 +339,15 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         (origin[0] + w as f64 * spacing).to_string(),
         (origin[1] - h as f64 * spacing).to_string(),
     ];
-    geotiff(stage.path(), &mut elevation, "elevation", h, &georef)?;
-    for layer in &mut masks {
-        let name = mask_name(layer);
-        geotiff(stage.path(), layer, name, h, &georef)?;
+    let mut master_files = Vec::new();
+    if masters {
+        geotiff(stage.path(), &mut elevation, "elevation", h, &georef)?;
+        master_files.push("elevation.tif (Float32 m COG)".to_owned());
+        for layer in &mut masks {
+            let name = mask_name(layer);
+            geotiff(stage.path(), layer, name, h, &georef)?;
+            master_files.push(format!("{name}.tif"));
+        }
     }
     let result = json!({
         "schema_version": 1,
@@ -356,7 +368,7 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
         "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes",
             "layers": masks.iter().map(mask_name).collect::<Vec<_>>()},
         "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix: height, water, snow (snow-ice), veg (vegetation), landcover (land-cover)",
-        "masters": ["elevation.tif (Float32 m COG)", "water.tif", "snow-ice.tif", "vegetation.tif", "land-cover.tif (when present)"],
+        "masters": master_files,
         "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
         "levels": levels,
         "tiles": tiles,
