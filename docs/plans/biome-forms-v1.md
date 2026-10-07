@@ -158,6 +158,57 @@ filled in from the owner's notes:
 
 The owner may repaint it. The old paint dir is kept.
 
+## Status (2026-10-07)
+
+Steps 1–3 are implemented. They were checked with the current 13-class models on Fujion
+repainted to legend v3 (`data/worlds/fujion-paint-v3`, L0 `data/worlds/fujion-painted-l0-3`,
+chain `data/worlds/fujion-v3-chain-6`, export `data/exports/fujion-v3-chain-6`; L3 on the
+central 16 km):
+
+- **Streams:** every stream in the L3 square reaches the sea or the square's edge. The
+  only inland water bodies left are standalone lakes and tarns. In chain 7, 6 of 17
+  water systems in the same square reached the sea or the edge.
+- **Summit crater:** at 32 m it is a closed hollow 55 m deep and about 600 m wide, held
+  dry (chain 7: 11 m). The exemplar is now scaled to the painted depth (156 m against
+  161 m painted). The flank cone has a crater 221 m deep.
+- **Drowned karst:** the seabed is shallow (median −56 m, chain 7 −139 m). Ha Long
+  exemplars raise 8–9 tower islands up to 311 m. Without the exemplar, the old models
+  turned the shallow bay into a flat plain.
+- **Cover:** snow and forest edges follow aspect, gullies and slope, with patchy edges.
+- **Labels:** per-cell labels split the regions as intended:
+  - Grand Canyon: 57% canyon, 43% plateau plain;
+  - Erg Chebbi: 42% dunes, 58% rocky plain;
+  - Franz Josef: 45% ice, 53% alpine.
+- **Trained classes per level:**
+
+  | Level | Not trained, so painted cells use a fallback |
+  | --- | --- |
+  | L1, L2 | 1 (→14), 17 (→11) |
+  | L3 | 2 (→13), 8 (→16), 15 (→14) |
+  | L4 | 1 (→14), 11 (→17), 15 (→14), 18 (→0) |
+
+- **Code paths:** a 20-step training smoke at L1 and L2, the chain, the gates and the
+  evaluation all ran with a 19-class run.
+
+### Proposed retraining (needs the owner's go)
+
+Each run uses the current recipe of its level on legend v3. Runs that start from scratch
+rebuild their cached fields first; L1–L3 caches are already built.
+
+| Run | Release | Recipe | Time | VRAM |
+| --- | --- | --- | --- | --- |
+| L1 run 5 | `context-v5` | L1 run 4 plus `--scale-shift` | 4 h | ~6 GB |
+| L2 run 7 | `context-v5` | L2 run 6 | 6 h | ~6 GB |
+| L3 run 3 | `lidar-v3` | L3 run 2 | 6 h | ~6 GB |
+| L4 run 7 | `diffusion-v9` | L4 run 6 | 8 h | ~9 GB |
+
+Order:
+
+1. L1 and L2, then gates and a Fujion L1–L2 chain (minutes) for the owner to look at.
+2. L3, checked on 4–8 km crops per biome.
+3. L4, checked on 4 km crops.
+4. Then a full 32 km world.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:
