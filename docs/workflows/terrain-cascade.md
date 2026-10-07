@@ -97,6 +97,22 @@ target/release/topography export heightmap data/worlds/cascade-world-1-howe-soun
 target/release/topography export view data/exports/cascade-world-1-howe-sound-1m
 ```
 
+Tiles are written as `{layer}/L{level}/{prefix}_L{level}_{tx}_{ty}.png`, for example
+`height/L0/height_L0_0_0.png` and `vegetation/L0/veg_L0_0_0.png` (prefixes `height`,
+`water`, `snow`, `veg`, `landcover`). Generated worlds get land cover before export:
+
+```sh
+$PY -m topography_training.diffusion.landcover --world data/worlds/<world> --treeline-m 1000
+```
+
+This adds `land-cover.u8` with ESA WorldCover codes derived by rule (a recorded
+judgment call, not observed cover):
+- water 80, snow/ice 70 and forest 10, taken from the world's own masks;
+- bare 60 above 35° or more than 400 m above the treeline, grassland 30 just above it;
+- dunes, badlands, lava and glacier forelands bare, canyons and badlands shrub 20,
+  other open land grassland;
+- class borders warped by about 150 m.
+
 Export streams the world layers row by row: a 32 km world at 1 m exports in
 about 13 minutes with a peak under 200 MB. The 4 m chain output exports the same
 way for a quick 3D look before L4.
