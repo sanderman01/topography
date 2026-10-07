@@ -95,10 +95,17 @@ def main(argv=None) -> int:
         balanced = saved.get("balanced", False) if saved else args.balanced
         mix = saved.get("mix", 0.0) if saved else args.mix
         blur = saved.get("coarse_blur", 0.0) if saved else args.coarse_blur
+        from . import legend
+
         train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"],
                                 balanced=balanced, mix=mix, blur=blur)
-        val = cascade.Sampler(regions, "validation", level, train.size)
-        level_config = {"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
+        # Legend v3: classes with enough training sources here; the rest use their fallbacks.
+        n_classes, lut = legend.model_lut(saved) if saved else (
+            legend.NUM_CLASSES, np.array(legend.class_map(legend.trained_classes(train.class_counts())), np.uint8))
+        train.lut, train.n_classes = lut, n_classes
+        val = cascade.Sampler(regions, "validation", level, train.size, lut=lut, n_classes=n_classes)
+        level_config = {"legend": "terrain-v3", "class_map": lut.tolist(),
+                        "class_sources": {str(k): v for k, v in sorted(train.class_counts().items())},"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
                         "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
                         "block": level.block,
                         "smooth_cells": level.smooth_cells,
@@ -118,7 +125,8 @@ def main(argv=None) -> int:
             "release": str(args.release.resolve()),
             "crop": args.crop,
             "arch": {"block_out_channels": [int(c) for c in args.channels.split(",")],
-                     "class_embedding": args.class_embedding, "scale_shift": args.scale_shift},
+                     "class_embedding": args.class_embedding, "scale_shift": args.scale_shift,
+                     "num_classes": n_classes if level_config else data.NUM_CLASSES},
             "conditioning": data.CONDITIONING,
             "class_dropout": args.class_dropout,
             "seed": args.seed,
@@ -197,7 +205,8 @@ def main(argv=None) -> int:
                 for i in rr.choice(idxs, size=min(3, len(idxs)), replace=False):
                     h_, c_, _ = train.window(int(i))
                     vals.append(float(np.nanstd(h_ - c_)))
-            by_class[cid] = float(np.median(vals))
+            by_class.setdefault(int(train.lut[cid]), []).extend(vals)
+        by_class = {c: float(np.median(v)) for c, v in by_class.items() if c > 0}
         real_sd = by_class
 
     def class_rough():
@@ -209,7 +218,7 @@ def main(argv=None) -> int:
 
         if len(real_sd) < 3:
             return None
-        size, k = vc.shape[-1], data.class_start(vc)
+        size, k = vc.shape[-1], data.class_start(vc, model.num_classes)
         cls = sorted(real_sd)
         gen = []
         for cid in cls:
@@ -228,10 +237,13 @@ def main(argv=None) -> int:
         from .model import sample_field
 
         size, out = vc.shape[-1], []
-        k = data.class_start(vc)
+        k = data.class_start(vc, model.num_classes)
+        # Four distinct trained classes (legend v2 runs: canyons, alpine, dunes, cones).
+        pick = (2, 6, 8, 11) if model.num_classes == data.NUM_CLASSES else tuple(
+            dict.fromkeys(int(c) for c in train.lut[[13, 6, 16, 17, 2, 8, 11, 1]] if c > 0))[:4]
         for i in range(2):
             res = []
-            for cls in (2, 6, 8, 11):
+            for cls in pick:
                 c = vc[i : i + 1].clone()
                 c[:, k:] = 0
                 c[:, k + cls] = 1
@@ -261,7 +273,7 @@ def main(argv=None) -> int:
     while step < args.steps and time.time() - start < args.hours * 3600:
         target, cond, mask = train.batch(args.batch, scale, rng)
         drop = rng.random(args.batch) < config["class_dropout"]
-        k = data.class_start(cond)
+        k = data.class_start(cond, model.num_classes)
         cond[drop, k:] = 0
         cond[drop, k] = 1
         if config.get("coarse_dropout") or config.get("cover_dropout"):

@@ -71,6 +71,7 @@ def main(argv=None) -> int:
     p.add_argument("--stride", type=int, default=192)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--guidance", type=float, default=1.0, help="class guidance scale (1: off)")
     args = p.parse_args(argv)
 
     import torch
@@ -103,6 +104,8 @@ def main(argv=None) -> int:
     params = {"run": str(args.run.resolve()), "world": str(args.world.resolve()), "km": args.km,
               "class_id": class_id, "band_m": args.band_m, "halo_m": args.halo_m, "steps": args.steps,
               "stride": args.stride, "seed": args.seed}
+    if args.guidance != 1.0:
+        params["guidance"] = args.guidance
     progress_path = args.out / "progress.json"
     if args.out.exists():
         if (args.out / "manifest.json").exists():
@@ -139,6 +142,9 @@ def main(argv=None) -> int:
         print("error: --run is not an L4 run", file=sys.stderr)
         return 2
     scale, window = config["residual_scale_m"], config["crop"]
+    from . import legend
+
+    n_classes, lut = legend.model_lut(config)
     m, half = MARGIN_4M, args.halo_m // 2
     bands = list(range(0, n, args.band_m))
     print(f"{n} x {n} at 1 m in {len(bands)} bands; resuming after band {done}" if done else
@@ -162,9 +168,12 @@ def main(argv=None) -> int:
         classes = class_id
         if per_cell:
             classes = np.repeat(np.repeat(_rows_4m(classes4, r0, r1, -m, c4 + m), 4, 0), 4, 1)[crop].astype(np.int64)
-        field = cascade.LazyField(level, coarse, [np.where(water, 255, 0).astype(np.uint8), snow, veg], classes)
+        # Legend v3 classes as the run's model classes (older runs see subclasses as parents).
+        classes = int(lut[classes]) if isinstance(classes, (int, np.integer)) else lut[classes].astype(np.int64)
+        field = cascade.LazyField(level, coarse, [np.where(water, 255, 0).astype(np.uint8), snow, veg], classes,
+                                  n_classes)
         res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
-                           noise=_noise(args.seed, g0, g1, n))[0, 0].numpy()
+                           noise=_noise(args.seed, g0, g1, n), guidance=args.guidance)[0, 0].numpy()
         # L4 learned land only: water keeps the 4 m surface, with a soft shore.
         land = 1.0 - np.clip(smooth(water.astype(np.float32), 2.0), 0, 1)
         h = (coarse + res * scale * land).astype(np.float32)

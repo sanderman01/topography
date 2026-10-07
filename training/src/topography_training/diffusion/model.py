@@ -19,6 +19,8 @@ DEFAULT_ARCH = {
     # Timestep and class embedding scale and shift every norm (AdaGN, as in ADM) instead
     # of adding a bias; a stronger path for the class.
     "scale_shift": False,
+    # Class channels: 13 for legend v2 runs, 19 for legend v3 (legend.py).
+    "num_classes": NUM_CLASSES,
 }
 
 
@@ -27,11 +29,12 @@ class Denoiser(nn.Module):
 
     def __init__(self, arch: dict | None = None, conditioning: int = 1):
         super().__init__()
-        cond_channels, target_channels = channels(conditioning)
+        arch = {**DEFAULT_ARCH, **(arch or {})}
+        self.num_classes = int(arch["num_classes"])
+        cond_channels, target_channels = channels(conditioning, self.num_classes)
         self.conditioning, self.target_channels = conditioning, target_channels
         from diffusers import UNet2DModel
 
-        arch = {**DEFAULT_ARCH, **(arch or {})}
         levels = len(arch["block_out_channels"])
         attn = arch["attention_levels"]
         self.unet = UNet2DModel(
@@ -52,7 +55,7 @@ class Denoiser(nn.Module):
         )
         self.class_embed = None
         if arch["class_embedding"]:
-            self.class_embed = nn.Linear(NUM_CLASSES, arch["block_out_channels"][0] * 4, bias=False)
+            self.class_embed = nn.Linear(self.num_classes, arch["block_out_channels"][0] * 4, bias=False)
 
     def forward(self, x, sigma, cond):
         sigma = sigma.reshape(-1, 1, 1, 1).to(x.dtype)
@@ -63,7 +66,7 @@ class Denoiser(nn.Module):
         c_noise = 250.0 * sigma.log().flatten()
         labels = None
         if self.class_embed is not None:  # classes are the last channels of every layout
-            labels = self.class_embed(cond[:, -NUM_CLASSES:].mean(dim=(2, 3)).to(self.class_embed.weight.dtype))
+            labels = self.class_embed(cond[:, -self.num_classes :].mean(dim=(2, 3)).to(self.class_embed.weight.dtype))
         f = self.unet(torch.cat([c_in * x, cond], dim=1), c_noise, class_labels=labels).sample
         return c_skip * x + c_out * f.to(x.dtype)
 
@@ -78,18 +81,20 @@ class ClassMixture(nn.Module):
         super().__init__()
         self.base, self.per_class = base, nn.ModuleDict({str(k): m for k, m in per_class.items()})
         self.conditioning, self.target_channels = base.conditioning, base.target_channels
+        self.num_classes = base.num_classes
         self.blend_cells = blend_cells
 
     def forward(self, x, sigma, cond):
-        shares = cond[:, -NUM_CLASSES:].float()
+        n = self.num_classes
+        shares = cond[:, -n:].float()
         r = max(1, int(3 * self.blend_cells))
         k = torch.exp(-torch.arange(-r, r + 1, device=x.device, dtype=torch.float32) ** 2 / (2 * self.blend_cells**2))
-        k = (k / k.sum()).view(1, 1, 1, -1).repeat(NUM_CLASSES, 1, 1, 1)
-        shares = F.conv2d(F.pad(shares, (r, r, 0, 0), mode="replicate"), k, groups=NUM_CLASSES)
-        shares = F.conv2d(F.pad(shares, (0, 0, r, r), mode="replicate"), k.transpose(2, 3), groups=NUM_CLASSES)
+        k = (k / k.sum()).view(1, 1, 1, -1).repeat(n, 1, 1, 1)
+        shares = F.conv2d(F.pad(shares, (r, r, 0, 0), mode="replicate"), k, groups=n)
+        shares = F.conv2d(F.pad(shares, (0, 0, r, r), mode="replicate"), k.transpose(2, 3), groups=n)
         out = torch.zeros_like(x, dtype=torch.float32)
         rest = torch.ones_like(shares[:, :1])
-        for c in range(1, NUM_CLASSES):
+        for c in range(1, n):
             model = self.per_class[str(c)] if str(c) in self.per_class else None
             w = shares[:, c : c + 1]
             if model is None or float(w.max()) < 1e-3:
@@ -216,13 +221,13 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
                 if negative is not None:
                     uncond = ns
                 else:
-                    uncond, k = cs.clone(), class_start(cs)
+                    uncond, k = cs.clone(), class_start(cs, model.num_classes)
                     uncond[:, k:] = 0
                     uncond[:, k] = 1
                 du = model(xs, sig, uncond).float()
                 d = du + guidance * (d - du)
             if direction is not None:
-                hu, k = hs.clone(), class_start(hs)
+                hu, k = hs.clone(), class_start(hs, model.num_classes)
                 hu[:, k:] = 0
                 hu[:, k] = 1
                 d = d + direction[0] * (model(xs, sig, hs).float() - model(xs, sig, hu).float())
@@ -241,10 +246,10 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
 
     cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`.
     noise: optional unit starting noise [1, T, H, W]; otherwise drawn from `seed`.
-    hold: optional (known [1, T, H, W], weight [1, 1, H, W] in 0-1, sigma_cells): low-frequency
-    guidance (ILVR, Choi et al. 2021). After every step the Gaussian low-pass of the sample
-    is moved toward that of the known target, noised to the step's level, by the weight;
-    detail finer than sigma_cells stays the model's own.
+    hold: optional (known [1, T, H, W], weight [1, 1, H, W] in 0-1, sigma_cells), or a list of
+    them: low-frequency guidance (ILVR, Choi et al. 2021). After every step the Gaussian
+    low-pass of the sample is moved toward that of the known target, noised to the step's
+    level, by the weight; detail finer than sigma_cells stays the model's own.
     direction: optional (weight, hidden channels), see denoise_field."""
     if isinstance(cond, torch.Tensor):
         cond = TensorField(cond)
@@ -256,10 +261,9 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
         gen = torch.Generator(device="cpu").manual_seed(seed)
         noise = torch.randn((1, model.target_channels, h, w), generator=gen)
     x = noise.to(cond.device) * sigmas[0]
-    if hold is not None:
-        known, weight, hold_sigma = hold
-        known, weight = known.to(cond.device), weight.to(cond.device)
-        hold_gen = torch.Generator(device="cpu").manual_seed(seed + 7919)
+    holds = [] if hold is None else [hold] if isinstance(hold, tuple) else list(hold)
+    holds = [(k.to(cond.device), w.to(cond.device), s) for k, w, s in holds]
+    hold_gen = torch.Generator(device="cpu").manual_seed(seed + 7919)
     # In-place updates keep at most four field-sized tensors alive.
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]
@@ -276,7 +280,7 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
         else:
             x.add_(d, alpha=s_next - s)
         del d
-        if hold is not None:
+        for known, weight, hold_sigma in holds:
             eps = torch.randn(x.shape, generator=hold_gen).to(x.device)
             x.add_(weight * (_low_pass(known + s_next * eps, hold_sigma) - _low_pass(x, hold_sigma)))
     return x

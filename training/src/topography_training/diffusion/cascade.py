@@ -21,7 +21,10 @@ from pathlib import Path
 
 import numpy as np
 
-from .data import NUM_CLASSES, _window_sum, smooth
+from . import legend
+from .data import _window_sum, smooth
+
+NUM_CLASSES = legend.NUM_CLASSES  # legend v3 runs; older runs have 13 (see legend.model_lut)
 
 # L0 layout scale: the envelope is soft so the model, not the painter, draws ranges,
 # valleys and coastlines.
@@ -97,8 +100,8 @@ def load_regions(manifest_path: Path, lazy: bool = False) -> list[Region]:
         return load_release(manifest_path, lazy=lazy)
     from .data import load_release as load_tiles
 
-    return [Region(t.name, t.class_id, "tile", 1, t.height, t.water, t.snow, t.vegetation, t.split)
-            for t in load_tiles(manifest_path)]
+    return [Region(t.name, legend.source_class("tiles", t.name, t.class_id), "tile", 1, t.height, t.water, t.snow,
+                   t.vegetation, t.split) for t in load_tiles(manifest_path)]
 
 
 def load_release(manifest_path: Path, ids: set[str] | None = None, lazy: bool = False) -> list[Region]:
@@ -113,11 +116,16 @@ def load_release(manifest_path: Path, ids: set[str] | None = None, lazy: bool = 
         if ids is not None and r["id"] not in ids:
             continue
         if lazy:
-            out.append(Region(r["id"], int(r["class_id"]), r["split"], int(r["spacing_m"]), None, None, None,
+            out.append(Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), None, None, None,
                               None, source=(manifest_path, r)))
         else:
             out.append(_load_region(manifest_path, r))
     return out
+
+
+def _class(r: dict) -> int:
+    """A release region's legend v3 class (its subclass if listed)."""
+    return legend.source_class(legend.source_kind(r["spacing_m"]), r["id"], int(r["class_id"]))
 
 
 def _load_region(manifest_path: Path, r: dict) -> Region:
@@ -130,12 +138,12 @@ def _load_region(manifest_path: Path, r: dict) -> Region:
     if "seabed" in layers:
         height, sea = join_seabed(height, water, layers["seabed"], float(r["spacing_m"]))
         water &= ~sea
-    return Region(r["id"], int(r["class_id"]), r["split"], int(r["spacing_m"]), height,
+    return Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), height,
                   water, layers["snow-ice"] == 2, layers["vegetation"] == 2)
 
 
 # Bump when field construction changes, so cached fields are rebuilt.
-FIELDS_VERSION = 1
+FIELDS_VERSION = 2  # 2: per-cell legend v3 classes
 
 
 def region_fields(r: Region, level: "Level", make) -> Fields:
@@ -151,7 +159,8 @@ def region_fields(r: Region, level: "Level", make) -> Fields:
         return memo[level.name]
     manifest_path, entry = r.source
     release = Path(manifest_path).resolve().parent
-    key = hashlib.sha256(json.dumps([FIELDS_VERSION, level.name, level.block, level.smooth_cells,
+    labels = hashlib.sha256((legend.LABELS / "subclasses-v1.toml").read_bytes()).hexdigest()
+    key = hashlib.sha256(json.dumps([FIELDS_VERSION, level.name, level.block, level.smooth_cells, labels,
                                      sorted((k, v["sha256"]) for k, v in entry["layers"].items())]).encode()).hexdigest()
     cache = release.parents[1] / "cache" / "cascade-fields" / release.name / f"{entry['id']}-{level.name}"
     meta = cache / "fields.json"
@@ -170,6 +179,7 @@ def region_fields(r: Region, level: "Level", make) -> Fields:
             np.save(tmp / "coarse.npy", f.coarse)
         for i, e in enumerate(f.extra):
             np.save(tmp / f"extra-{i}.npy", e)
+        np.save(tmp / "classes.npy", f.classes)
         (tmp / "fields.json").write_text(json.dumps({"key": key, "extra": len(f.extra), "coarse": f.coarse is not None,
                                                     "class_id": f.class_id}))
         del f
@@ -178,7 +188,7 @@ def region_fields(r: Region, level: "Level", make) -> Fields:
     m = json.loads(meta.read_text())
     load = lambda name: np.load(cache / name, mmap_mode="r")  # noqa: E731
     f = Fields(load("target.npy"), load("coarse.npy") if m["coarse"] else None,
-               [load(f"extra-{i}.npy") for i in range(m["extra"])], int(m["class_id"]))
+               [load(f"extra-{i}.npy") for i in range(m["extra"])], int(m["class_id"]), classes=load("classes.npy"))
     r.height = f.target
     return f
 
@@ -287,8 +297,9 @@ class Fields:
     target: np.ndarray  # true surface at the level's cell size
     coarse: np.ndarray | None  # None: computed per window
     extra: list[np.ndarray]  # conditioning channels after shape, slopes and absolute height
-    class_id: int
+    class_id: int  # the source's class: sets class-balanced sampling and mixed windows
     marks: tuple | None = None  # L1 layout 6 landmarks (see `landmarks`)
+    classes: np.ndarray | None = None  # uint8 legend v3 class per cell (see legend.cell_classes)
 
 
 # Landmarks (L1 layout 6): deep valleys and prominent peaks of the true surface, so an
@@ -386,7 +397,9 @@ def refine_fields(r: Region) -> Fields:
         return m if m.dtype == np.uint8 else soft_u8(m, 1.0)
 
     extra = [np.where(r.water, 255, 0).astype(np.uint8), cover(r.snow), cover(r.vegetation)]
-    return Fields(r.height, None, extra, r.class_id)
+    # 1 m tiles are cut around their landform; only ice is labelled per cell there.
+    classes = legend.cell_classes(r.class_id, r.height, r.snow, r.water, r.spacing_m, plain=r.spacing_m > 1)
+    return Fields(r.height, None, extra, r.class_id, classes=classes)
 
 
 def l1_fields(r: Region) -> Fields:
@@ -395,7 +408,9 @@ def l1_fields(r: Region) -> Fields:
     lo, hi = envelope(h)
     mid = (lo + hi) / 2
     marks = landmarks(h, 128.0) if LEVELS["l1"].conditioning == 6 else None
-    return Fields(h, mid.astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)], r.class_id, marks)
+    classes = legend.majority(legend.cell_classes(r.class_id, r.height, r.snow, r.water, r.spacing_m), 4)
+    return Fields(h, mid.astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)], r.class_id, marks,
+                  classes[: h.shape[0], : h.shape[1]])
 
 
 def refine_mask(mask: np.ndarray, k: int, sigma_cells: float, keep_thin: bool = False) -> np.ndarray:
@@ -416,12 +431,14 @@ def open_sea(h: np.ndarray) -> np.ndarray:
     return np.isin(labels, edge[edge > 0])
 
 
-def condition(level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes: np.ndarray) -> np.ndarray:
-    """Conditioning for one window. Channel 0 is raw coarse metres here; `normalise`
-    turns it into the per-window unit-range shape channel (training and generation)."""
+def condition(level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes: np.ndarray,
+              n_classes: int = NUM_CLASSES) -> np.ndarray:
+    """Conditioning for one window (`classes`: model class per cell). Channel 0 is raw
+    coarse metres here; `normalise` turns it into the per-window unit-range shape channel
+    (training and generation)."""
     ex, ny = slopes(coarse, level.cell_m)
     parts = [coarse[None], ex[None], ny[None], (coarse / 4096.0)[None]] + [e[None] for e in extra]
-    parts.append(np.eye(NUM_CLASSES, dtype=np.float32)[classes].transpose(2, 0, 1))
+    parts.append(np.eye(n_classes, dtype=np.float32)[classes].transpose(2, 0, 1))
     return np.concatenate(parts).astype(np.float32)
 
 
@@ -440,15 +457,17 @@ class LazyField:
     """Conditioning of a big field assembled per window (see model.sample_field), so host
     memory holds the coarse surface, its slopes and uint8 layers, not every channel."""
 
-    def __init__(self, level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes: int | np.ndarray):
-        self.coarse, self.extra, self.classes = coarse, extra, classes
+    def __init__(self, level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes: int | np.ndarray,
+                 n_classes: int = NUM_CLASSES):
+        """`classes`: one model class or a model class per cell."""
+        self.coarse, self.extra, self.classes, self.n_classes = coarse, extra, classes, n_classes
         self.ex, self.ny = slopes(coarse, level.cell_m)
         self.shape, self.device = coarse.shape, "cpu"
 
     def windows(self, boxes, size, device):
         import torch
 
-        out = np.zeros((len(boxes), 4 + len(self.extra) + NUM_CLASSES, size, size), np.float32)
+        out = np.zeros((len(boxes), 4 + len(self.extra) + self.n_classes, size, size), np.float32)
         for i, (y, x) in enumerate(boxes):
             sl = np.s_[y : y + size, x : x + size]
             c = self.coarse[sl]
@@ -460,7 +479,7 @@ class LazyField:
 
 
 def one_hot(channels: np.ndarray, classes: int | np.ndarray) -> None:
-    """Set the class channels (NUM_CLASSES x h x w, zeroed) for one class or a class per cell."""
+    """Set the class channels (classes x h x w, zeroed) for one class or a class per cell."""
     if isinstance(classes, (int, np.integer)):
         channels[int(classes)] = 1.0
     else:
@@ -477,13 +496,17 @@ class Sampler:
     """Random windows of one split with the CropSampler interface of the 1 m model."""
 
     def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None,
-                 balanced: bool = False, mix: float = 0.0, blur: float = 0.0):
+                 balanced: bool = False, mix: float = 0.0, blur: float = 0.0, lut: np.ndarray | None = None,
+                 n_classes: int = NUM_CLASSES):
         """`balanced` draws a class, then a region of it, then a window (not by area);
         `mix` is the share of windows joined with a window of another class along a
         soft border, so the model sees class borders; `blur` is the share of refining
         windows whose coarse surface is smoothed further (conditioning augmentation), so
         a smooth coarse input does not imply smooth terrain."""
         self.balanced, self.mix, self.blur = balanced, mix, blur
+        # Legend v3 class -> model class (see legend.class_map); identity until set.
+        self.lut = np.arange(NUM_CLASSES, dtype=np.uint8) if lut is None else np.asarray(lut, np.uint8)
+        self.n_classes = n_classes
         self.level, self.size = level, size
         stride = stride or level.stride
         role = {"train": 1, "validation": 2}[split]  # data.TRAIN, data.VALIDATION
@@ -523,14 +546,15 @@ class Sampler:
                 c = smooth(c, float(rng.uniform(0.5, 2.0)) * k)
         else:
             c = f.coarse[sl]
-        classes = np.full((s, s), f.class_id, np.int64)
+        cells = f.classes[sl] if f.classes is not None else np.full((s, s), f.class_id, np.uint8)
+        classes = self.lut[cells].astype(np.int64)
         extra = [decode(e[sl]) for e in f.extra] + (mark_channels(f.marks, sl, rng) if f.marks else [])
-        return f.target[sl], c, condition(self.level, c, extra, classes)
+        return f.target[sl], c, condition(self.level, c, extra, classes, self.n_classes)
 
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool, partner: int | None = None):
         h, c, cond = self.window(index, rng)
         if partner is not None:
-            h, c, cond = _join((h, c, cond), self.window(partner, rng), rng)
+            h, c, cond = _join((h, c, cond), self.window(partner, rng), rng, self.n_classes)
         valid = ~np.isnan(h)
         if not self.level.water_in_loss:
             valid &= cond[4] < 0  # water channel: 1 water, -1 dry
@@ -542,6 +566,17 @@ class Sampler:
             target, cond, mask = (_dihedral(a, k, flip) for a in (target, cond, mask))
             cond = _rotate_slopes(cond, int(k), int(flip))
         return target, cond, mask
+
+    def class_counts(self, min_share: float = 0.02) -> dict[int, int]:
+        """Sources per legend class: how many regions or tiles have at least `min_share`
+        of their cells in it (decides which classes a run trains, see legend.class_map)."""
+        counts: dict[int, int] = {}
+        for f in self.fields:
+            cells = f.classes if f.classes is not None else np.full(1, f.class_id, np.uint8)
+            share = np.bincount(np.asarray(cells).ravel(), minlength=NUM_CLASSES) / cells.size
+            for c in np.flatnonzero(share >= min_share):
+                counts[int(c)] = counts.get(int(c), 0) + 1
+        return counts
 
     def _groups(self):
         if not hasattr(self, "_by_class"):
@@ -572,7 +607,7 @@ class Sampler:
         return tuple(np.stack(a) for a in zip(*parts))
 
 
-def _join(a, b, rng: np.random.Generator):
+def _join(a, b, rng: np.random.Generator, n_classes: int = NUM_CLASSES):
     """Two windows joined along a random soft line: heights, coarse surfaces and
     continuous channels blend over about an eighth of the window; classes and water
     switch at the line."""
@@ -595,14 +630,10 @@ def _join(a, b, rng: np.random.Generator):
     c = m * c1 + (1 - m) * c2
     cond = m * k1 + (1 - m) * k2
     hard = d > 0
-    first = class_start_of(k1)
+    first = k1.shape[0] - n_classes
     cond[first:] = np.where(hard, k1[first:], k2[first:])
     cond[4] = np.where(hard, k1[4], k2[4])  # water (L2-L4) or relief (L1): switch, not blend
     return h.astype(np.float32), c.astype(np.float32), cond.astype(np.float32)
-
-
-def class_start_of(cond: np.ndarray) -> int:
-    return cond.shape[0] - NUM_CLASSES
 
 
 def _dihedral(a: np.ndarray, k: int, flip: int) -> np.ndarray:

@@ -75,9 +75,12 @@ def main(argv=None) -> int:
     model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
     model.load_state_dict(load_file(str(weights), device=str(device)))
     scale, size = config["residual_scale_m"], config["crop"]
+    from . import legend
+
+    n_classes, lut = legend.model_lut(config)
     regions = cascade.load_regions(Path(config["release"]), lazy=True)
-    val = cascade.Sampler(regions, "validation", level, size, stride=size)
-    train = cascade.Sampler(regions, "train", level, size, stride=size // 4)
+    val = cascade.Sampler(regions, "validation", level, size, stride=size, lut=lut, n_classes=n_classes)
+    train = cascade.Sampler(regions, "train", level, size, stride=size // 4, lut=lut, n_classes=n_classes)
 
     def generate(coarse, cond, seed):
         out = sample_field(model, torch.from_numpy(cond)[None].to(device), steps=args.steps,
@@ -88,9 +91,9 @@ def main(argv=None) -> int:
     items = []
     if level.name == "l1":
         for n, (r, f) in enumerate(zip(val.regions, val.fields)):
-            classes = np.full(f.coarse.shape, f.class_id, np.int64)
+            classes = lut[f.classes if f.classes is not None else np.full(f.coarse.shape, f.class_id, np.uint8)]
             extra = [cascade.decode(e) for e in f.extra] + (cascade.mark_channels(f.marks) if f.marks else [])
-            cond = cascade.condition(level, f.coarse, extra, classes)
+            cond = cascade.condition(level, f.coarse, extra, classes.astype(np.int64), n_classes)
             gen = generate(f.coarse, cond, args.seed + n)
             items.append((r.name, r.class_id, f.target, f.coarse, gen))
             print(f"{n + 1}/{len(val.regions)} {r.name}", flush=True)

@@ -1,0 +1,117 @@
+schema_version = 1
+legend_version = 3
+status = "candidate"
+retired_ids = []
+# Precedence is deliberately unset until pilot review.
+# Colors are display choices; integer IDs carry the labels.
+
+[[classes]]
+id = 1
+name = "Doline, pinnacle and plateau karst"
+color_rgb = [128, 0, 128]
+flight_experience = "Repeated silhouettes, enclosed hollows, hidden exits between isolated hills"
+
+[[classes]]
+id = 2
+name = "Gorges and slot-like canyons"
+color_rgb = [255, 165, 0]
+flight_experience = "Blind bends, branching passages, constrictions, climb-out decisions"
+
+[[classes]]
+id = 3
+name = "Fjords and glacial troughs"
+color_rgb = [0, 255, 255]
+flight_experience = "Long corridors, side valleys, hanging valleys, enclosing walls"
+
+[[classes]]
+id = 4
+name = "Volcanic calderas and craters"
+color_rgb = [139, 0, 0]
+flight_experience = "Rim crossings, bowls, isolated cones, local roughness"
+
+[[classes]]
+id = 5
+name = "Archipelagos, rias and skerries"
+color_rgb = [0, 128, 128]
+flight_experience = "Similar channels, hidden landmarks, sparse height cues"
+
+[[classes]]
+id = 6
+name = "Alpine ridges and cirques"
+color_rgb = [255, 0, 0]
+flight_experience = "Saddles, ridge crossings, false passes, disconnected valleys"
+
+[[classes]]
+id = 7
+name = "Badlands, mesas, and eroded gullies"
+color_rgb = [165, 42, 42]
+flight_experience = "Branching routes, misleading parallel drainages, abrupt escarpments"
+
+[[classes]]
+id = 8
+name = "Star and mountain dunes"
+color_rgb = [255, 255, 0]
+flight_experience = "Repeated forms, weak landmarks, distinctive ridges"
+
+[[classes]]
+id = 9
+name = "Braided river basins and floodplains"
+color_rgb = [0, 0, 255]
+flight_experience = "Channel choice, meanders, terrace edges, open recovery areas"
+
+[[classes]]
+id = 10
+name = "Glaciers and ice fields"
+color_rgb = [200, 230, 255]
+flight_experience = "Crevassed tongues, icefalls, nunataks, bright featureless snowfields"
+
+[[classes]]
+id = 11
+name = "Stratovolcanoes"
+color_rgb = [255, 90, 40]
+flight_experience = "Isolated cones as landmarks, rough flow fronts, craters to circle"
+
+[[classes]]
+id = 12
+name = "Coastal cliffs and sea stacks"
+color_rgb = [120, 90, 200]
+flight_experience = "Sheer walls above water, stacks and arches, headlands to round"
+
+# Legend v3 subclasses (docs/plans/biome-forms-v1.md): each names a look the existing
+# sources show; parents and fallbacks are in subclasses-v1.toml.
+
+[[classes]]
+id = 13
+name = "Layered plateau canyons"
+color_rgb = [190, 110, 40]
+flight_experience = "Stepped cliff bands and benches below a plateau rim, branching side canyons (Grand Canyon)"
+
+[[classes]]
+id = 14
+name = "Cone and tower karst"
+color_rgb = [200, 80, 200]
+flight_experience = "Crowded steep hills and towers with enclosed hollows between them (mogotes, Yangshuo)"
+
+[[classes]]
+id = 15
+name = "Drowned tower karst"
+color_rgb = [90, 200, 170]
+flight_experience = "Steep limestone islands and towers rising from shallow sea (Ha Long Bay)"
+
+[[classes]]
+id = 16
+name = "Crest-train dunes"
+color_rgb = [240, 220, 140]
+flight_experience = "Rolling wave-like dune ridges in long parallel trains (Algodones, Taklamakan)"
+
+[[classes]]
+id = 17
+name = "Cinder cones and lava fields"
+color_rgb = [70, 40, 40]
+flight_experience = "Fields of small cones with summit craters and rough flows (Sunset Crater)"
+
+[[classes]]
+id = 18
+name = "Plain and rolling ground"
+color_rgb = [150, 190, 110]
+flight_experience = "Quiet open ground between landforms, for recovery and orientation"

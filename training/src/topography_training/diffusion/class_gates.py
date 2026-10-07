@@ -97,16 +97,16 @@ def _windows(sampler, per_region: int, rng) -> list[tuple]:
                              sampler.positions[i][2]: sampler.positions[i][2] + s])]
         for i in good[:per_region]:
             real, coarse, _ = sampler.window(int(i))
-            out.append((ri, sampler.regions[ri].class_id, (real - coarse).astype(np.float32),
+            out.append((ri, int(sampler.lut[sampler.regions[ri].class_id]), (real - coarse).astype(np.float32),
                         lambda i=int(i): sampler.window(i)[1:]))
     return out
 
 
-def _with_class(cond: np.ndarray, class_id: int) -> np.ndarray:
+def _with_class(cond: np.ndarray, class_id: int, n_classes: int) -> np.ndarray:
     from .data import class_start
 
     c = cond.copy()
-    k = class_start(c)
+    k = class_start(c, n_classes)
     c[k:] = 0
     c[k + class_id] = 1
     return c
@@ -156,12 +156,18 @@ def main(argv=None) -> int:
         model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
         model.load_state_dict(load_file(str(args.weights or _latest(args.run_dir)), device=str(device)))
     scale, size, cell = config["residual_scale_m"], config["crop"], float(level.cell_m)
+    from . import legend
+
+    n_classes, lut = legend.model_lut(config)
+    # The classes this model was trained on (legend v2 runs: 1-12).
+    classes = CLASSES if n_classes == legend.LEGACY_CLASSES else sorted(set(int(c) for c in lut) - {0})
     regions = cascade.load_regions(Path(config["release"]), lazy=True)
     rng = np.random.default_rng(args.seed)
     windows = []
     for split in ("train", "validation"):
         try:
-            got = _windows(cascade.Sampler(regions, split, level, size), args.per_region, rng)
+            got = _windows(cascade.Sampler(regions, split, level, size, lut=lut, n_classes=n_classes), args.per_region,
+                           rng)
         except ValueError:
             continue
         # Region indices are per split; offset validation ones so they stay distinct.
@@ -197,10 +203,10 @@ def main(argv=None) -> int:
     cross, seeds, grid = [], [], None
     for n, (_, own, _, load, _) in enumerate(picks):
         coarse, cond = load()
-        res = {c: generate(coarse, _with_class(cond, c), args.seed) for c in CLASSES}
-        other = generate(coarse, _with_class(cond, own), args.seed + 1)
-        corr = np.corrcoef(np.stack([res[c].ravel() for c in CLASSES]))
-        cross.append(float(corr[np.triu_indices(len(CLASSES), 1)].mean()))
+        res = {c: generate(coarse, _with_class(cond, c, n_classes), args.seed) for c in classes}
+        other = generate(coarse, _with_class(cond, own, n_classes), args.seed + 1)
+        corr = np.corrcoef(np.stack([res[c].ravel() for c in classes]))
+        cross.append(float(corr[np.triu_indices(len(classes), 1)].mean()))
         seeds.append(float(np.corrcoef(res[own].ravel(), other.ravel())[0, 1]))
         if grid is None:
             grid = (coarse, res)
@@ -213,7 +219,7 @@ def main(argv=None) -> int:
         return np.argsort(np.argsort(v)).astype(float)
 
     real_sd = {c: float(np.median([np.nanstd(r) for _, k, r, _, _ in windows if k == c]))
-               for c in CLASSES if any(w[1] == c for w in windows)}
+               for c in classes if any(w[1] == c for w in windows)}
     cls = sorted(real_sd)
     r_real = rank(np.array([real_sd[c] for c in cls]))
     rough_picks = spread(held, args.rough_windows)
@@ -223,7 +229,7 @@ def main(argv=None) -> int:
         coarse, cond = load()
         for si in range(args.seeds):
             for ci, c in enumerate(cls):
-                k = _with_class(cond, c)
+                k = _with_class(cond, c, n_classes)
                 std["coarse_shown"][wi, si, ci] = generate(coarse, k, args.seed + 10 * si).std()
                 k[hide] = 0
                 std["coarse_hidden"][wi, si, ci] = generate(coarse, k, args.seed + 10 * si).std()
@@ -261,7 +267,7 @@ def main(argv=None) -> int:
                 continue
             for n, j in enumerate(rng.choice(len(pool), size=args.generated, replace=len(pool) < args.generated)):
                 coarse, cond = pool[j][3]()
-                got = int(clf.predict(features(generate(coarse, _with_class(cond, c), args.seed + 2 + n), cell))[0])
+                got = int(clf.predict(features(generate(coarse, _with_class(cond, c, n_classes), args.seed + 2 + n), cell))[0])
                 rec[kind].append(got == c)
                 confusion[c, got] += kind == "own"
         print(f"recognition class {c}: own {np.mean(rec['own'][-args.generated:]):.2f}", flush=True)
@@ -279,7 +285,7 @@ def main(argv=None) -> int:
 
     d = ImageDraw.Draw(sheet)
     _label(d, (8, 8), f"{args.run_dir.name}: one window, every class, same seed", _font(18))
-    for i, c in enumerate(CLASSES):
+    for i, c in enumerate(classes):
         h = coarse + res[c]
         img = Image.fromarray(shade(h, cell, cascade.open_sea(h))).resize((tile, tile))
         x0, y0 = 8 + (i % 4) * (tile + 8), 40 + (i // 4) * (tile + 30)

@@ -27,9 +27,9 @@ ALPINE_BAND_M = 400.0  # grassland this far above the treeline, bare ground beyo
 
 # Open (non-forest, non-snow) land by terrain class id (0: unlabelled).
 OPEN = np.full(256, GRASS, np.uint8)
-OPEN[[2, 7]] = SHRUB  # gorges and canyons, badlands: scrub between bare slopes
-OPEN[[8, 10, 11]] = BARE  # dunes, glacier forelands, lava fields
-BARE_CLASSES = (7, 8, 10, 11)  # bare below the steep limit too, except where forested
+OPEN[[2, 7, 13]] = SHRUB  # gorges and canyons, badlands: scrub between bare slopes
+OPEN[[8, 10, 11, 16, 17]] = BARE  # dunes, glacier forelands, lava fields
+BARE_CLASSES = (7, 8, 10, 11, 16, 17)  # bare below the steep limit too, except where forested
 
 
 def classify(h: np.ndarray, water: np.ndarray, snow: np.ndarray, veg: np.ndarray, classes: np.ndarray,

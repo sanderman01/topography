@@ -1,0 +1,77 @@
+# Legend v3 subclasses of existing sources (docs/plans/biome-forms-v1.md).
+# Each class lists the GLO-30 context regions (L1, L2), reduced lidar regions (L3) and
+# 1 m library tiles (L4, by title prefix) that show its look; a listed source takes
+# this class whatever its release class. Unlisted sources keep their release class.
+# A class trains at a level only with at least `min_sources` training sources there;
+# elsewhere a painted cell uses its first trained fallback (else 0, unconditional).
+# Classes 10 (ice) and 18 (plain) are also set per cell when training fields are built.
+schema_version = 1
+legend = "terrain-v3.toml"
+min_sources = 3
+
+[[classes]]
+id = 1
+fallback = [14]
+
+[[classes]]
+id = 2
+fallback = [13]
+
+[[classes]]
+id = 4
+fallback = [11]
+
+[[classes]]
+id = 5
+fallback = [15]
+
+[[classes]]
+id = 8
+fallback = [16]
+
+[[classes]]
+id = 11
+fallback = [17]
+
+[[classes]]
+id = 13
+parent = 2
+fallback = [2]
+context = ["grand-canyon", "fish-river-canyon", "blyde-river", "canyonlands", "zion"]
+lidar = ["grand-canyon", "canyon-de-chelly", "escalante", "zion", "canyonlands"]
+tiles = ["Grand Canyon", "Zion", "Canyonlands"]
+
+[[classes]]
+id = 14
+parent = 1
+fallback = [1]
+context = ["chocolate-hills", "cockpit-country", "gunung-mulu", "khao-sok", "phong-nha", "vang-vieng",
+           "yangshuo", "wanfenglin", "dong-van"]
+lidar = ["ciales", "pepino", "rio-abajo"]
+tiles = ["Pepino", "Utuado", "Ciales", "Río Abajo", "Camuy"]
+
+[[classes]]
+id = 15
+parent = 5
+fallback = [14, 5]
+context = ["ha-long-bay", "phang-nga-bay", "el-nido", "misool"]
+
+[[classes]]
+id = 16
+parent = 8
+fallback = [8]
+context = ["taklamakan", "skeleton-coast-dunes", "liwa", "grand-erg-oriental"]
+lidar = ["algodones", "white-sands", "st-anthony", "coral-pink"]
+tiles = ["Algodones", "White Sands", "St Anthony", "Coral Pink"]
+
+[[classes]]
+id = 17
+parent = 11
+fallback = [11]
+context = ["craters-of-the-moon"]
+lidar = ["craters-of-the-moon", "sunset-crater", "mauna-kea"]
+tiles = ["Lava Beds", "Mono Craters", "SP Crater", "Craters of the Moon", "Sunset Crater"]
+
+[[classes]]
+id = 18
+fallback = []

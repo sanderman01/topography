@@ -51,6 +51,8 @@ WATER = {
     11: Water(0.005, 0.002, 10.0, 2.5, 0.003),  # volcanic cones and lava fields
     12: Water(0.008, 0.001, 4.0),  # coastal cliffs
 }
+# Legend v3 subclasses take their parent's water (plain the default).
+WATER |= {13: WATER[2], 14: WATER[1], 15: WATER[5], 16: WATER[8], 17: WATER[11], 18: WATER[0]}
 
 # Tarns, in cells of the surface drained (32 m at L2: about 0.4 to 26 ha), at least 2 m
 # deep and compact (bounding-box side squared over area).
@@ -353,6 +355,9 @@ def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float,
             order = [k for k in np.argsort(-deepest) if ok[k]]
         else:
             order = np.argsort(-ndimage.sum(depth, labels, idx))
+        if dry_at is not None:  # hollows of dry classes (craters, dolines, interdunes) stay dry, not lakes
+            wet_ok = ndimage.mean(dry_at.astype(np.float32), labels, idx) <= 0.5
+            order = [k for k in order if wet_ok[k]]
         lakes = _pick([k for k in order if k + 1 not in forced], area, budget) + forced
         keep = np.isin(labels, lakes)
         if dry_share > 0:

@@ -21,16 +21,18 @@ from pathlib import Path
 
 import numpy as np
 
-# Terrain legend v2 display colours (catalog/labels/terrain-v2.toml), 0 = unknown.
+# Terrain legend v3 display colours (catalog/labels/terrain-v3.toml), 0 = unknown.
 COLORS = {
     0: (128, 128, 128), 1: (128, 0, 128), 2: (255, 165, 0), 3: (0, 255, 255), 4: (139, 0, 0),
     5: (0, 128, 128), 6: (255, 0, 0), 7: (165, 42, 42), 8: (255, 255, 0), 9: (0, 0, 255),
-    10: (200, 230, 255), 11: (255, 90, 40), 12: (120, 90, 200),
+    10: (200, 230, 255), 11: (255, 90, 40), 12: (120, 90, 200), 13: (190, 110, 40), 14: (200, 80, 200),
+    15: (90, 200, 170), 16: (240, 220, 140), 17: (70, 40, 40), 18: (150, 190, 110),
 }
 NAMES = {
-    1: "Karst", 2: "Gorges and canyons", 3: "Fjords", 4: "Calderas and craters", 5: "Archipelago",
-    6: "Alpine ridges", 7: "Badlands and mesas", 8: "Dunes", 9: "Braided rivers",
-    10: "Glaciers", 11: "Cones and lava", 12: "Coastal cliffs",
+    1: "Doline karst", 2: "Gorges", 3: "Fjords", 4: "Calderas and craters", 5: "Archipelago",
+    6: "Alpine ridges", 7: "Badlands and mesas", 8: "Star dunes", 9: "Braided rivers",
+    10: "Glaciers", 11: "Stratovolcano", 12: "Coastal cliffs", 13: "Layered canyons", 14: "Cone and tower karst",
+    15: "Drowned tower karst", 16: "Crest-train dunes", 17: "Cinder cones and lava", 18: "Plain",
 }
 TIERS = ("starter", "mid", "specialist")
 TIER_RGB = {0: (120, 200, 110), 1: (240, 190, 60), 2: (220, 70, 60)}
@@ -164,7 +166,7 @@ def overview(l0: L0, out: Path, px: int = 2048) -> Path:
 
     spec, n = l0.spec, l0.mid.shape[0]
     k = px / (n * l0.cell_m)  # pixels per metre
-    colors = np.array([COLORS[c] for c in range(13)], np.uint8)[l0.cls]
+    colors = np.array([COLORS[c] for c in range(len(COLORS))], np.uint8)[l0.cls]
     colors = (0.55 * colors + 0.45 * 200).astype(np.uint8)  # pastel, so the shading reads
     colors[l0.lake] = (90, 150, 220)
     img = _contours(_base(l0.mid, l0.cell_m, colors, (l0.mid < 0) & ~l0.lake, px), l0.mid, px)

@@ -22,7 +22,7 @@ MARGIN_M = 96  # context around a crop for its coarse surface
 BAND_M = 2048
 VALIDATION_M = 512
 BUFFER_M = 128
-NUM_CLASSES = 13  # 0 = unknown, 1..12 legend classes (terrain legend v2)
+NUM_CLASSES = 13  # 0 = unknown, 1..12 legend classes (terrain legend v2; v3 runs record their own)
 TRAIN, VALIDATION = 1, 2
 
 
@@ -223,17 +223,17 @@ def load_release(manifest_path: Path) -> list[Tile]:
 CONDITIONING = 2
 
 
-def channels(conditioning: int) -> tuple[int, int]:
+def channels(conditioning: int, num_classes: int = NUM_CLASSES) -> tuple[int, int]:
     """(conditioning, target) channel counts of a layout; 3 is the cascade L2/L3 layout,
     5 and 6 (with landmarks) the L1 layouts and 4 the retired L1 layout with a land/sea
-    channel (see cascade.py)."""
+    channel (see cascade.py). Legend v3 runs have 19 class channels (legend.py)."""
     extra = {1: 3, 2: 5, 3: 7, 4: 6, 5: 5, 6: 7}[conditioning]
-    return (extra + NUM_CLASSES, 3 if conditioning == 1 else 1)
+    return (extra + num_classes, 3 if conditioning == 1 else 1)
 
 
-def class_start(cond) -> int:
+def class_start(cond, num_classes: int = NUM_CLASSES) -> int:
     """First class one-hot channel; the classes are always the last channels."""
-    return cond.shape[-3] - NUM_CLASSES
+    return cond.shape[-3] - num_classes
 
 
 def condition(
