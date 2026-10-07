@@ -1,0 +1,28 @@
+training/src/topography_training/diffusion/exemplar.py
+  s_b205be2fbe95a4::t_285ec8c9f521b0 47,261
+  s_b205be2fbe95a4::t_7dc5cf88f2ed64 45-46,258-260
+training/src/topography_training/diffusion/paint.py
+  s_b205be2fbe95a4::t_7dc5cf88f2ed64 416-419,422-439,444,452-472,579-582,585-586,591-593
+  s_b205be2fbe95a4::t_285ec8c9f521b0 415,420-421,445-451,583-584
+  s_b205be2fbe95a4::t_0f0f4f27fa6461 440-443
+docs/plans/biome-forms-v1.md
+  s_b205be2fbe95a4::t_5fc95d5cc83cca 220-227
+docs/workflows/terrain-cascade.md
+  s_b205be2fbe95a4::t_503af0165df4d8 119-126,128-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f391b1ea8afb3c7dabbb9b98ef924fce73d0ed12",
+  "prompts": {},
+  "sessions": {
+    "s_b205be2fbe95a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa259070-228b-4039-a53e-dab93c687e8f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
