@@ -93,12 +93,12 @@ impl Export {
         );
         for ty in t0y..=t1y {
             for tx in t0x..=t1x {
-                let name = format!("L{level}/{tx}_{ty}.png");
                 let layers = std::iter::once("height")
                     .chain(self.masks.iter().map(String::as_str))
                     .enumerate();
                 for (index, layer) in layers {
-                    let (tw, th, pixels) = read_png(&self.root.join(layer).join(&name))?;
+                    let (tw, th, pixels) =
+                        read_png(&self.root.join(super::tile_path(layer, level, tx, ty)))?;
                     let (ox, oy) = (tx * self.intervals, ty * self.intervals);
                     // A sample belongs to the tile its index falls in; shared edges repeat.
                     let rows = oy.max(y)..(oy + th).min(y + h);

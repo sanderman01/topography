@@ -287,12 +287,11 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
                         m.extend_from_slice(&values[row..row + tw]);
                     }
                 }
-                let name = format!("L{level}/{tx}_{ty}.png");
                 let mut hashes = serde_json::Map::new();
                 hashes.insert(
                     "height".into(),
                     json!(png(
-                        &stage.path().join("height").join(&name),
+                        &stage.path().join(super::tile_path("height", level, tx, ty)),
                         tw,
                         th,
                         png::BitDepth::Sixteen,
@@ -304,7 +303,7 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
                     hashes.insert(
                         layer.into(),
                         json!(png(
-                            &stage.path().join(layer).join(&name),
+                            &stage.path().join(super::tile_path(layer, level, tx, ty)),
                             tw,
                             th,
                             png::BitDepth::Eight,
@@ -356,6 +355,7 @@ pub fn heightmap(world: &Path, output: &Path, intervals: usize, layout: Layout) 
             "max_quantization_error_m": max_error},
         "masks": {"format": "PNG grayscale 8-bit, 255 present, 0 absent; land-cover holds ESA WorldCover class codes",
             "layers": masks.iter().map(mask_name).collect::<Vec<_>>()},
+        "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix: height, water, snow (snow-ice), veg (vegetation), landcover (land-cover)",
         "masters": ["elevation.tif (Float32 m COG)", "water.tif", "snow-ice.tif", "vegetation.tif", "land-cover.tif (when present)"],
         "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
         "levels": levels,
