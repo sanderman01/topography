@@ -1,0 +1,23 @@
+crates/topography-core/src/export/heightmap.rs
+  s_63e041542fef52::t_5242d12144d2f6 173-181,342-350,371
+crates/topography-cli/src/main.rs
+  s_63e041542fef52::t_5242d12144d2f6 46,276,278-282,305
+docs/workflows/terrain-cascade.md
+  s_63e041542fef52::t_53a728a0e8726a 116-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50c19a7eac1e47842963c35dcb22750e7cc88612",
+  "prompts": {},
+  "sessions": {
+    "s_63e041542fef52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aff05194-4b9c-4c73-afd0-b85dbe6c39d1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
