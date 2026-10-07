@@ -43,6 +43,7 @@ FOREST = {0: 0.3, 1: 0.9, 2: 0.1, 3: 0.9, 4: 0.3, 5: 0.9, 6: 0.7, 7: 0.1, 8: 0.0
 ISLAND_CLASSES = (5, 15)  # keep their relief offshore, so islands rise from the sea
 DROWNED_KARST = 15
 DROWNED_SEABED_M = (-40.0, -10.0)  # drowned karst sits on a shallow seabed, so towers break the surface
+DROWNED_FADE_M = 1000.0
 PALETTE = "terrain-v3.gpl"
 
 
@@ -306,15 +307,21 @@ def _import_pngs(paint: Path, meta: dict, out: Path) -> Path:
         relief = _blocks(r, r.shape[0] // n).astype(np.float32)
     else:
         relief = np.array([RELIEF[i] for i in range(len(COLORS))], np.float32)[cls]
-    # Drowned karst stands on a shallow seabed, so its towers can break the surface.
-    drowned = (cls == DROWNED_KARST) & (mid < 0)
-    mid = np.minimum(np.where(drowned, np.clip(mid, *DROWNED_SEABED_M), mid), border_limit(n, CELL_M)).astype(np.float32)
+    # Drowned karst stands on a shallow seabed, so its towers can break the surface; the
+    # shallowing fades out over about 1 km so the painted outline leaves no shelf edge.
+    from .data import smooth
+
+    shallow = np.clip(smooth((cls == DROWNED_KARST).astype(np.float32), DROWNED_FADE_M / CELL_M) * 2 - 0.5, 0, 1)
+    shallow = np.where(mid < 0, shallow, 0)
+    mid = mid + shallow * (np.clip(mid, *DROWNED_SEABED_M) - mid)
+    mid = np.minimum(mid, border_limit(n, CELL_M)).astype(np.float32)
     land = mid >= 0
     # Open sea keeps little relief, or the models raise islands; island classes keep theirs.
     coast = np.where(land, ndimage.distance_transform_edt(land), -ndimage.distance_transform_edt(~land)) * CELL_M
     fade = np.clip(1 + coast / SEA_RELIEF_M, 0, 1)
-    islands = np.isin(cls, ISLAND_CLASSES)
-    relief = np.where((coast < 0) & ~islands, relief * fade * fade * (3 - 2 * fade), relief).astype(np.float32)
+    keep = np.maximum(np.isin(cls, ISLAND_CLASSES).astype(np.float32), shallow)  # island classes keep relief
+    faded = relief * fade * fade * (3 - 2 * fade)
+    relief = np.where(coast < 0, faded + keep * (relief - faded), relief).astype(np.float32)
     forest = np.rint(np.array([FOREST[i] for i in range(len(COLORS))])[cls] * 255).astype(np.uint8)
     hold_path = paint / "hold.png"
     hold = np.zeros((n, n), np.uint8)
@@ -393,6 +400,102 @@ def relabel(paint_dir: Path, out: Path, mapping: dict[int, int], small: list[tup
     return out
 
 
+VOLCANO_CLASSES = (11, 10, 4)  # cone, its glaciers and summit crater
+GLACIER = 10
+VOLCANO_FADE_M = 1500.0  # the real cone fades out over this distance around the volcano biome
+
+
+def _write_height(h: np.ndarray, path: Path) -> None:
+    from PIL import Image
+
+    gray = np.rint(np.clip((h - H_MIN_M) / (H_MAX_M - H_MIN_M), 0, 1) * 65535).astype(np.uint16)
+    Image.fromarray(gray).save(path)
+
+
+def transplant(paint_dir: Path, out: Path, region: str, release: Path, base: Path | None = None,
+               cone_km: float = 12.0) -> Path:
+    """A copy of a paint dir whose painted volcano is replaced by a real one. The real
+    region's cone (its relief above the ground `cone_km` from its summit) is centred on
+    the painted summit, scaled to the painted cone's footprint and summit height, and
+    faded out at the edge of the volcano biome, so it never runs into other biomes.
+    `base` is a layout.xcf of the same map without the painted cone (else the painted
+    height, smoothed across the cone, is the ground). Glaciers (class 10) are redrawn on
+    the volcano above the height that keeps their painted area."""
+    from PIL import Image
+    from scipy import ndimage
+
+    from . import cascade
+    from .data import smooth
+
+    shutil.copytree(paint_dir, out)
+    meta = json.loads((out / "paint.json").read_text())
+    px_m = float(meta["extent_m"]) / PX
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _from_xcf(out / "layout.xcf", tmp)
+        h = _read_height(tmp / "height.png").astype(np.float64)
+        cls = _read_classes(tmp / "classes.png")
+        if base is not None:
+            with tempfile.TemporaryDirectory() as tb:
+                _from_xcf(base, Path(tb))
+                ground = _read_height(Path(tb) / "height.png").astype(np.float64)
+        else:
+            ground = None
+        sy, sx = np.unravel_index(int(np.argmax(np.where(np.isin(cls, VOLCANO_CLASSES), h, -np.inf))), h.shape)
+        labels, _ = ndimage.label(np.isin(cls, VOLCANO_CLASSES))
+        biome = labels == labels[sy, sx]
+        yy, xx = np.indices(h.shape)
+        r_px = np.hypot(yy - sy, xx - sx)
+        if ground is None:  # ground under the cone: the painted height around it, filled inward
+            far = r_px * px_m > cone_km * 500
+            w = smooth(far.astype(np.float32), 2000 / px_m)
+            ground = smooth(np.where(far, h, 0).astype(np.float32), 2000 / px_m) / np.maximum(w, 1e-3)
+            ground = np.where(far, h, ground)
+        added = h - ground
+        # Painted cone radius: where its ring-mean height falls to a tenth of the summit's.
+        rings = np.bincount(np.rint(r_px).astype(int).ravel(), added.ravel()) / np.maximum(
+            np.bincount(np.rint(r_px).astype(int).ravel()), 1)
+        r_paint = float(np.argmax(rings < 0.1 * added[sy, sx])) * px_m
+        # The real cone at its own 32 m cells (GLO-30 regions are 32 m, as is the paint).
+        reg = cascade.load_release(release, {region})[0]
+        real = np.nan_to_num(reg.height).astype(np.float64)
+        ry, rx = np.unravel_index(int(np.argmax(real)), real.shape)
+        rr = np.hypot(*(np.indices(real.shape) - np.array([ry, rx])[:, None, None])) * float(reg.spacing_m)
+        ring = (rr >= cone_km * 1000) & (rr < cone_km * 1000 + 1000)
+        relief = np.clip(real - real[ring].mean(), 0, None)
+        relief *= np.clip((cone_km * 1000 - rr) / 2000.0, 0, 1)  # taper to nothing at cone_km
+        s = r_paint / (cone_km * 1000)  # painted metres per real metre
+        coords = [ry + (yy - sy) * px_m / s / reg.spacing_m, rx + (xx - sx) * px_m / s / reg.spacing_m]
+        cone = ndimage.map_coordinates(relief, coords, order=1, mode="constant", cval=0.0)
+        cone *= added[sy, sx] / max(float(relief.max()), 1.0)
+        inside = ndimage.distance_transform_edt(biome) - ndimage.distance_transform_edt(~biome)
+        fade = np.clip(0.5 + inside * px_m / VOLCANO_FADE_M, 0, 1)
+        new = ground + cone * fade * fade * (3 - 2 * fade)
+        # Glaciers keep their painted area on the volcano's highest ground, reaching lower
+        # on pole-facing slopes and in gullies, as snow does (cover.py).
+        ice = cls == GLACIER
+        if ice.any():
+            from .cover import SNOW_ASPECT_M, SNOW_HOLLOW_M, SNOW_NOISE_M, noise_field, terrain_features
+
+            south = str(meta["settings"].get("hemisphere", "north")).startswith("s")
+            _, pole, hollow = terrain_features(new.astype(np.float32), px_m, -1.0 if south else 1.0)
+            noise = ndimage.zoom(noise_field(float(meta["extent_m"]), 5.0, 1), h.shape[0] / 1025, order=1)
+            score = new + SNOW_ASPECT_M * pole + SNOW_HOLLOW_M * hollow + SNOW_NOISE_M * noise[: h.shape[0], : h.shape[1]]
+            on = biome & np.isin(cls, (10, 11))
+            line = np.quantile(score[on], 1 - ice[on].sum() / on.sum())
+            cls = np.where(on & (score >= line), GLACIER, np.where(on & ice, 11, cls)).astype(np.uint8)
+        _write_height(new, tmp / "height.png")
+        Image.fromarray(np.array([COLORS[i] for i in range(len(COLORS))], np.uint8)[cls]).save(tmp / "classes.png")
+        replace_layers(out / "layout.xcf", {"height": tmp / "height.png", "classes": tmp / "classes.png"})
+    meta["volcano"] = {"region": region, "release": str(release.resolve()), "cone_km": cone_km,
+                       "base": str(base.resolve()) if base else None, "summit_px": [int(sy), int(sx)],
+                       "painted_radius_m": round(r_paint), "scale": round(s, 3)}
+    (out / "paint.json").write_text(json.dumps(meta, indent=1))
+    print(f"volcano from {region}: painted cone radius {r_paint:.0f} m, scale {s:.2f}, "
+          f"summit {new[sy, sx]:.0f} m (painted {h[sy, sx]:.0f} m)")
+    return out
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
@@ -408,10 +511,20 @@ def main(argv=None) -> int:
     r.add_argument("--map", default="", help="from:to class pairs, comma separated (2:13,8:16)")
     r.add_argument("--small", default="", help="from:to:km2 - patches of a class below km2 become the other (11:17:3)")
     r.add_argument("--hemisphere", choices=["north", "south"])
+    v = sub.add_parser("transplant", help="copy a paint dir with its painted volcano replaced by a real one")
+    v.add_argument("paint", type=Path)
+    v.add_argument("out", type=Path)
+    v.add_argument("--region", default="fuji", help="context region with the real volcano")
+    v.add_argument("--release", type=Path, default=Path("data/datasets/context-v5/release.json"))
+    v.add_argument("--base", type=Path, help="layout.xcf of the same map before the cone was painted")
+    v.add_argument("--cone-km", type=float, default=12.0, help="radius of the real cone")
     args = p.parse_args(argv)
     if args.out.exists():
         print("error: output directory exists", file=sys.stderr)
         return 2
+    if args.command == "transplant":
+        print(transplant(args.paint, args.out, args.region, args.release, args.base, args.cone_km))
+        return 0
     if args.command == "relabel":
         mapping = dict(tuple(int(v) for v in pair.split(":")) for pair in args.map.split(",") if pair)
         small = [(int(a), int(b), float(k)) for a, b, k in (s.split(":") for s in args.small.split(",") if s)]

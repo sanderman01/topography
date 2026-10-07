@@ -104,8 +104,20 @@ $P -m topography_training.diffusion.paint relabel data/worlds/fujion-paint data/
 $P -m topography_training.diffusion.paint import data/worlds/fujion-paint-v3 data/worlds/fujion-painted-l0-3
 ```
 
+A painted volcano can be replaced by a real one: `paint transplant` centres a real cone
+(`--region`, default `fuji`, from the GLO-30 release) on the painted summit, scales it to
+the painted cone and summit height, fades it out over 1.5 km at the edge of the volcano
+biome (classes 11, 10 and 4), and redraws the glaciers on it with their painted area
+(lower on pole-facing slopes and in gullies). `--base` gives the same map before the cone
+was painted:
+
+```sh
+$P -m topography_training.diffusion.paint transplant data/worlds/fujion-paint-v3 data/worlds/fujion-paint-v3b \
+    --base data/worlds/fujion-paint/layout.before-volcano.xcf
+```
+
 Drowned tower karst (15) is painted in shallow sea: import sets its seabed to −40 to
-−10 m and keeps its relief offshore, so L1 raises towers above the water.
+−10 m (fading out over about 1 km past the painted area) and keeps its relief offshore, so L1 raises towers above the water.
 
 `cascade_l4` refines that 4 m world to 1 m in bands of rows:
 
