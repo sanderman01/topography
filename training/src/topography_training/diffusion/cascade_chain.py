@@ -129,16 +129,19 @@ class Source:
     def classes_at(self, k: int):
         return self.classes if isinstance(self.classes, int) else _nearest(self.classes, k)
 
+    def sampler(self):
+        if self.cover_sampler is None:
+            from .cover import Sampler
+
+            self.cover_sampler = Sampler(self.l0)
+        return self.cover_sampler
+
     def cover(self, h: np.ndarray, k: int, y0_m: float = 0.0, x0_m: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
         """Snow/ice and vegetation on a surface at 128/k m whose corner lies (y0_m, x0_m) from
         the layout's; layout grids are read smoothly (see cover.Sampler)."""
         if self.l0 is None:
             return self.snow, self.vegetation
-        if self.cover_sampler is None:
-            from .cover import Sampler
-
-            self.cover_sampler = Sampler(self.l0)
-        return self.cover_sampler.cover(h, y0_m, x0_m, self.l0.cell_m / k)
+        return self.sampler().cover(h, y0_m, x0_m, self.l0.cell_m / k)
 
     def dry_at(self, k: int):
         """Cells of classes with dry basins (authored layouts; a real region has one class)."""
@@ -413,8 +416,7 @@ def main(argv=None) -> int:
     if not isinstance(classes4, int):  # authored layouts: the class per 4 m cell, for L4
         layers["classes.u8"] = classes4.astype(np.uint8).tobytes()
     if src.l0 is not None:  # biomes for viewing and export, borders warped like the cover
-        src.cover(h4[:1], 32)  # makes the sampler
-        layers["biome.u8"] = src.cover_sampler.classes(y0 * 32.0, x0 * 32.0, *h4.shape, 4.0).tobytes()
+        layers["biome.u8"] = src.sampler().classes(y0 * 32.0, x0 * 32.0, *h4.shape, 4.0).tobytes()
     digests = {}
     for name, data in layers.items():
         (args.out / name).write_bytes(data)

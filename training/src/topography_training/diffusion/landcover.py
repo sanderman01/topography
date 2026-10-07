@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-METHOD = "landcover v1: rules from water, snow/ice, vegetation, slope, treeline and terrain class (classes as in cover v1)"
+METHOD = "landcover v2: rules from water, snow/ice, vegetation, slope, local tree line and terrain class (as cover v2)"
 TREE, SHRUB, GRASS, BARE, SNOW, WATER = 10, 20, 30, 60, 70, 80
 STEEP_DEG = 35.0  # bare rock above this slope
 ALPINE_BAND_M = 400.0  # grassland this far above the treeline, bare ground beyond
@@ -33,13 +33,17 @@ BARE_CLASSES = (7, 8, 10, 11)  # bare below the steep limit too, except where fo
 
 
 def classify(h: np.ndarray, water: np.ndarray, snow: np.ndarray, veg: np.ndarray, classes: np.ndarray,
-             cell_m: float, treeline_m: float) -> np.ndarray:
-    """WorldCover codes for one block of rows (masks are booleans)."""
+             cell_m: float, treeline_m) -> np.ndarray:
+    """WorldCover codes for one block of rows (masks are booleans; the tree line may vary
+    per cell). Above the tree line grass gives way to bare ground, except on ground that
+    is bare anyway (dunes, lava, badlands), which stays bare rather than turning to grass."""
     gy, gx = np.gradient(h, cell_m)
     slope = np.degrees(np.arctan(np.hypot(gx, gy)))
     out = OPEN[classes]
-    out = np.where(np.isin(classes, BARE_CLASSES) & (slope > 15), BARE, out)
-    out = np.where(h > treeline_m, np.where(h > treeline_m + ALPINE_BAND_M, BARE, GRASS), out)
+    bare_class = np.isin(classes, BARE_CLASSES)
+    out = np.where(bare_class & (slope > 15), BARE, out)
+    alpine = np.where(h > treeline_m + ALPINE_BAND_M, BARE, GRASS)
+    out = np.where((h > treeline_m) & ~bare_class, alpine, out)
     out = np.where(slope > STEEP_DEG, BARE, out)
     out = np.where(veg, TREE, out)
     out = np.where(snow, SNOW, out)
@@ -80,14 +84,19 @@ def add(world: Path, treeline_m: float | None = None, layout_dir: Path | None = 
     if treeline_m is None:
         treeline_m = 1000.0
     out = np.memmap(world / "land-cover.u8", np.uint8, "w+", shape=(n, n))
+    from .cover import MARGIN_M
+
+    margin = int(np.ceil(MARGIN_M / cell)) if sampler is not None else 1  # context for the terrain measures
     for y in range(0, n, rows):
-        a, b = max(y - 1, 0), min(y + rows + 1, n)  # one-row margin for the slope
+        a, b = max(y - margin, 0), min(y + rows + margin, n)
+        block = np.asarray(h[a:b], np.float32)
+        line = treeline_m
         if sampler is not None:
             c = sampler.classes(off + a * cell, off, b - a, n, cell)
+            line = sampler.fields(block, off + a * cell, off, cell)["treeline"]
         else:
             c = np.full((b - a, n), cid if isinstance(cid, int) else 0, np.uint8)
-        lc = classify(np.asarray(h[a:b], np.float32), water[a:b] == 255, snow[a:b] == 2, veg[a:b] == 2, c,
-                      cell, treeline_m)
+        lc = classify(block, water[a:b] == 255, snow[a:b] == 2, veg[a:b] == 2, c, cell, line)
         out[y : min(y + rows, n)] = lc[y - a : y - a + min(rows, n - y)]
     out.flush()
     del out
