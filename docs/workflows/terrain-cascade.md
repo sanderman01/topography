@@ -123,7 +123,8 @@ judgment call, not observed cover):
   other open land grassland;
 - class borders warped by about 150 m.
 
-The export holds the tiles and `manifest.json`. Add `--masters` to also write
+The export holds the tiles, `manifest.json` and `checksums.txt` (SHA-256 of every
+tile; verify with `sha256sum -c checksums.txt` in the export). Add `--masters` to also write
 full-world COGs (Float32 `elevation.tif` and the mask layers). They duplicate the
 world output, so they are only needed when the export travels without it.
 

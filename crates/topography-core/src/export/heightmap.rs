@@ -244,7 +244,7 @@ pub fn heightmap(
         .unwrap_or(Path::new("."));
     io_context("create export parent", fs::create_dir_all(parent))?;
     let stage = io_context("stage export", tempfile::tempdir_in(parent))?;
-    let mut tiles = Vec::new();
+    let mut checksums = String::new();
     let mut levels = Vec::new();
     let mut level = 0u32;
     loop {
@@ -290,34 +290,28 @@ pub fn heightmap(
                         m.extend_from_slice(&values[row..row + tw]);
                     }
                 }
-                let mut hashes = serde_json::Map::new();
-                hashes.insert(
-                    "height".into(),
-                    json!(png(
-                        &stage.path().join(super::tile_path("height", level, tx, ty)),
-                        tw,
-                        th,
-                        png::BitDepth::Sixteen,
-                        &height_px
-                    )?),
-                );
+                let path = super::tile_path("height", level, tx, ty);
+                let hash = png(
+                    &stage.path().join(&path),
+                    tw,
+                    th,
+                    png::BitDepth::Sixteen,
+                    &height_px,
+                )?;
+                checksums.push_str(&format!("{hash}  {path}\n"));
                 for (m, layer) in mask_px.iter().zip(&masks) {
-                    let layer = mask_name(layer);
-                    hashes.insert(
-                        layer.into(),
-                        json!(png(
-                            &stage.path().join(super::tile_path(layer, level, tx, ty)),
-                            tw,
-                            th,
-                            png::BitDepth::Eight,
-                            m
-                        )?),
-                    );
+                    let path = super::tile_path(mask_name(layer), level, tx, ty);
+                    let hash = png(&stage.path().join(&path), tw, th, png::BitDepth::Eight, m)?;
+                    checksums.push_str(&format!("{hash}  {path}\n"));
                 }
-                tiles.push(json!({"level": level, "x": tx, "y": ty, "width": tw, "height": th, "sha256": hashes}));
             }
         }
-        levels.push(json!({"level": level, "spacing_m": stride as f64 * spacing, "tiles_per_side": count, "samples_per_side": samples}));
+        // Only the last tile of each row and column can be smaller.
+        let edge = per_tile.min(samples - (count - 1) * intervals);
+        levels.push(
+            json!({"level": level, "spacing_m": stride as f64 * spacing, "tiles_per_side": count,
+            "samples_per_side": samples, "tile_texels": per_tile, "last_tile_texels": edge}),
+        );
         if samples <= intervals {
             break;
         }
@@ -366,9 +360,10 @@ pub fn heightmap(
         "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix: height, water, snow (snow-ice), veg (vegetation), landcover (land-cover), biome",
         "masters": master_files,
         "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
+        "checksums": "checksums.txt: SHA-256 of every tile, `sha256sum -c checksums.txt`",
         "levels": levels,
-        "tiles": tiles,
     });
+    write_new(&stage.path().join("checksums.txt"), checksums.as_bytes())?;
     write_new(
         &stage.path().join("manifest.json"),
         &serde_json::to_vec_pretty(&result)?,
