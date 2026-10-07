@@ -1,0 +1,19 @@
+docs/reports/expert-review-2026-10-07.md
+  s_b205be2fbe95a4::t_de88443c35f12b 1-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c0776c4bee05a47d043b8b1d858e0fd6cbbd34f",
+  "prompts": {},
+  "sessions": {
+    "s_b205be2fbe95a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa259070-228b-4039-a53e-dab93c687e8f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
