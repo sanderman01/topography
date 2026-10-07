@@ -209,6 +209,16 @@ Order:
 3. L4, checked on 4 km crops.
 4. Then a full 32 km world.
 
+### Volcano repair (2026-10-07)
+
+The painted volcano was a perfectly radial cone, up to 1,343 m high. It reached into the
+fjords, alpine and karst biomes and left a hard arc, together with a round glacier
+patch. `paint transplant` replaces it with Fuji's real relief, scaled to the painted
+cone (radius 8.4 km, scale 0.70, summit 3,775 m) and faded out at the edge of the volcano
+biome. The glaciers are redrawn on the real cone. The current layout is
+`data/worlds/fujion-paint-v3b` (L0 `data/worlds/fujion-painted-l0-4`). The south bay's
+coast is still a smooth painted arc.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:
