@@ -1,0 +1,25 @@
+training/src/topography_training/diffusion/cover.py
+  s_b205be2fbe95a4::t_6171dc1d069deb 1,6-10,27-28,32-38,50-90,99,101,125-136,141,143-148,150-152,154-158,169-172,184,187-190
+  s_b205be2fbe95a4::t_6ba2da18e748a8 98,100,153
+  s_b205be2fbe95a4::t_4d3c220034a37d 149
+training/src/topography_training/diffusion/landcover.py
+  s_b205be2fbe95a4::t_646ae9a711d1da 23,36-39,43-46,87-89,91-93,96,99
+training/src/topography_training/diffusion/cascade_chain.py
+  s_b205be2fbe95a4::t_4d3c220034a37d 132-138,144,419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "474f6295a00198dd267677ab9925213db73e96fd",
+  "prompts": {},
+  "sessions": {
+    "s_b205be2fbe95a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa259070-228b-4039-a53e-dab93c687e8f",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
