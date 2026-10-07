@@ -1,6 +1,8 @@
 # Class conditioning v1
 
-Status: in progress; next steps revised after the expert review of 2026-10-04.
+Status: in progress; next steps revised after the expert reviews of 2026-10-04 and
+2026-10-07. The [biome forms plan](biome-forms-v1.md) now carries the work forward:
+subclasses (legend v3), per-cell labels, exemplar holds and the generation fixes.
 Retrain every cascade level (L1–L4) so that terrain class
 changes what the models generate. Supersedes the class handling in the
 [terrain cascade plan](terrain-cascade-v1.md); its levels, data and water handling stay.
@@ -302,11 +304,12 @@ Results (2026-10-05):
   window residuals. Run heavy jobs in a capped scope
   (`systemd-run --user --scope -p MemoryMax=7G`) so an overrun kills only the job.
 
-Next:
-1. Owner review of Fujion at 1 m.
-2. If biomes still look too alike, add the explicit roughness channel (fallback 1)
-   at L2–L4. A roughness value per class (from real data), or painted, would set
-   each biome's amplitude directly.
+Owner review of Fujion at 1 m (2026-10-07): starting to look decent, but biomes
+still look alike, and canyons, dunes, karst, drowned karst, the crater and the cone
+chain are missing. The [expert review of 2026-10-07](../reports/expert-review-2026-10-07.md)
+found that roughness now matches real terrain while shape (flats, incision, peaks,
+direction) does not, and that region-wide labels mix landforms. Next: the
+[biome forms plan](biome-forms-v1.md).
 
 ## Data
 

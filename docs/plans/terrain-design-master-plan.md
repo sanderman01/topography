@@ -305,6 +305,8 @@ This baseline is a real fallback, not only a comparison point. If diffusion trai
 
 **Status (2026-10-03).** Run 4 passed the gate (32/32 Yes) but mostly ignored the local shape. A 32 km test world built on a procedural sketch base was rejected: large landforms need real-data models above 1 m. The 1 m model became level L4 of the [terrain cascade](terrain-cascade-v1.md); run 5 conditions on a 4 m surface with slope channels and dropout and passed its blind review (32/32 Yes), as did the 128 m, 32 m and 4 m levels.
 
+**Status (2026-10-07).** All levels now respond to class, but painted biomes still look alike. The [biome forms plan](biome-forms-v1.md) adds subclasses of existing sources (legend v3, for example layered plateau canyons like the Grand Canyon), per-cell labels and real exemplar holds for small hero landforms.
+
 Record model and dataset versions, normalization, seeds, scheduler, control strengths, training settings, checkpoints, GPU memory, runtime, and software versions. Use checkpointed experiments with identical evaluation layouts. Promote a model only after a human accepts examples and the defined numeric and structural checks pass.
 
 ## 8. Compose, generate, and join the world

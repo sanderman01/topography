@@ -46,7 +46,10 @@ lee snowline, treeline, height budget (lowest valley floor, highest summit).
 
 **Regions.** One entry per region:
 
-- terrain class and a short name ("Red Mesa canyonlands");
+- terrain class and a short name ("Red Mesa canyonlands"); painted layouts use the
+  legend v3 palette, whose subclasses name the look directly (layered canyon, cone
+  karst, drowned karst, crest-train dunes, cinder cones, plain; see
+  [biome forms](biome-forms-v1.md));
 - one to three real reference places, with GLO-30 coordinates;
 - position and outline as a polygon on the 256 m grid, or a centre and radii;
 - target area in km², with the fit check reporting the actual area;

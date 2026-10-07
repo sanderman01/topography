@@ -291,6 +291,15 @@ Steps 2–3 and 4–5 are independent and can alternate while GPU runs are going
 - If generated worlds repeat features across windows (the 0.99 correlation seen
   in run 4), fix it at the level where it appears before continuing down.
 
+## Biome forms (2026-10-07)
+
+L1 makes every landform between about 200 m and 2 km (calderas, cone fields, dune
+trains, karst ranges, canyon width and depth); L2 adds only what is smaller. The
+[biome forms plan](biome-forms-v1.md) changes the class labels (legend v3 subclasses,
+per-cell glacier and plain labels), holds real exemplars for craters and cone fields
+at L1, keeps drowned-karst relief offshore, and repairs river continuity and cover
+lines in the chain.
+
 ## Open choices
 
 - L1 cell size: 128 m (one window for the world) or 64 m (512², more detail,
