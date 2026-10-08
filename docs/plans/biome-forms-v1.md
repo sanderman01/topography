@@ -226,6 +226,33 @@ smooth painted arc was then broken up:
 The current layout is `data/worlds/fujion-paint-v3c` (L0 `data/worlds/fujion-painted-l0-5`, L1–L2 check
 `data/worlds/fujion-v3-chain-9`).
 
+### L1 run 5 and L2 run 7 (2026-10-08)
+
+Both runs used `context-v5` on legend v3 (queue `data/models/biome-forms-queue.sh`).
+
+| Run | Steps | Recognition (own against real) | Roughness rank, coarse hidden | Shown | Swap between classes against other seed |
+| --- | --- | --- | --- | --- | --- |
+| L1 run 5 (4 h) | 7,227 | 0.42 against 0.37: pass | 0.92: pass | 0.91 | 0.98 against 0.34 |
+| L2 run 7 (6 h) | 10,680 | 0.34 against 0.21: pass | 0.62 [0.56, 0.62]: fail (needs 0.7) | 0.50 | 0.99 against 0.67 |
+
+L2 run 6 had 0.82 hidden and 0.57 shown, over 11 classes rather than 16.
+
+Fujion with the new L1 and L2 (`data/worlds/fujion-v3-chain-10`), against the old
+models on the same layout (`fujion-v3-chain-9`): the changes are modest and hard to see
+in the hillshade. Per-class residual sd at 32 m:
+
+| Class | Old | New | Median slope, old → new |
+| --- | --- | --- | --- |
+| Layered canyons | 8.8 m | 13.0 m | 22° → 27° |
+| Badlands | 3.0 m | 6.2 m | |
+| Crest-train dunes | 5.0 m | 7.3 m | |
+| Cone karst | 10.1 m | 8.4 m | |
+
+Flat shares are unchanged (canyons 0.02, against about 0.14 on real terrain), and the
+L1 surfaces differ by only 7–60 m. Relabelling makes the classes more distinct in
+amplitude, but not yet in shape at L1 and L2. The review's model changes (local L1
+windows, form channels) address that directly.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:
