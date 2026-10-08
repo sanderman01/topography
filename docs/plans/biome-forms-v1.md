@@ -253,6 +253,35 @@ L1 surfaces differ by only 7–60 m. Relabelling makes the classes more distinct
 amplitude, but not yet in shape at L1 and L2. The review's model changes (local L1
 windows, form channels) address that directly.
 
+### Step 4: local L1 windows and form channels (owner's choice, 2026-10-08)
+
+The owner chose to train L3 run 3 on legend v3 while the L1 and L2 model changes are
+coded:
+
+- **Local L1 windows.** L1 trains on 128-cell crops (`--crop 128`). The chain then samples
+  the 256-cell world in overlapping windows, so each window's class embedding is local
+  instead of a blend of the whole island. This needs no code change.
+- **Form channels** (`--forms`, `forms.py`): six per-cell shape descriptors:
+  - log roughness;
+  - flat share;
+  - peak density and hollow share, relative to the local roughness;
+  - texture direction, as two channels.
+
+  Training takes them from the true surface of each window, with 25% of windows
+  dropped, and the dihedral augmentation turns the direction channels with the grid. The
+  run stores a per-class median table. At generation the chain builds the channels from
+  that table over the class map, blended across borders, and crest-train dunes take
+  their direction from the layout's wind. The gates swap the forms with the class.
+  Layouts 7 (L1) and 8 (L2–L4) are layouts 6 and 3 with form channels.
+
+  Measured on real windows, the descriptors separate roughness and flats strongly
+  (dunes about 0.8 flat against 0.05–0.3 elsewhere) and direction mildly (dunes
+  0.24–0.30 against 0.13–0.22). Peak and hollow shares vary more within a class than
+  between classes.
+
+Next: L1 run 6 (`--crop 128 --forms`, 4 h) and L2 run 8 (`--forms`, 6 h), with the gates
+and a Fujion chain, before L4.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:

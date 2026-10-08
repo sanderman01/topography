@@ -54,6 +54,12 @@ cell. A class trains at a level only with at least three sources there; the run'
 `class_map` sends every other class to its first trained fallback. Older runs keep 13
 channels and see subclasses as their parents.
 
+`--forms` adds six form channels (`forms.py`): roughness, flat share, peak density, hollow
+share and texture direction. Training takes them from the truth (dropped for
+`--form-dropout`, default 25%, of windows); generation takes them from the run's per-class
+table, with dune direction from the layout's wind. L1 can train on `--crop 128`, so
+the chain samples it in overlapping local windows.
+
 `cascade_eval` writes a blind review (`review.html`; keep `key.json` and
 `compare.html` closed until the votes are in), terrain statistics, a
 nearest-training-window distance and a same-seed check: different windows
