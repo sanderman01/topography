@@ -42,6 +42,9 @@ def _parse(argv):
     p.add_argument("--mix", type=float, default=0.0, help="cascade: share of windows joining two classes")
     p.add_argument("--coarse-blur", type=float, default=0.0,
                    help="cascade L2-L4: share of windows whose coarse surface is smoothed further")
+    p.add_argument("--forms", action="store_true",
+                   help="cascade: form channels (roughness, flats, peaks, hollows, direction; forms.py)")
+    p.add_argument("--form-dropout", type=float, default=0.25, help="cascade: share of windows without form channels")
     p.add_argument("--only-class", type=int, help="cascade: train on regions of this class only (per-class fine-tune)")
     p.add_argument("--init-from", type=Path, help="start a new run from this run's EMA weights (same arch and layout)")
     p.add_argument("--val-every", type=int, default=1000)
@@ -84,8 +87,12 @@ def main(argv=None) -> int:
     if name is not None:
         from . import cascade
 
+        from . import forms
+
         level = cascade.LEVELS[name]
-        if saved and saved["conditioning"] != level.conditioning:
+        use_forms = saved["conditioning"] in forms.BASE if saved else args.forms
+        conditioning = forms.LAYOUTS[level.conditioning] if use_forms else level.conditioning
+        if saved and saved["conditioning"] != conditioning:
             print("error: the run uses a retired layout; start a new run", file=sys.stderr)
             return 2
         regions = cascade.load_regions(args.release, lazy=True)
@@ -103,16 +110,24 @@ def main(argv=None) -> int:
         n_classes, lut = legend.model_lut(saved) if saved else (
             legend.NUM_CLASSES, np.array(legend.class_map(legend.trained_classes(train.class_counts())), np.uint8))
         train.lut, train.n_classes = lut, n_classes
-        val = cascade.Sampler(regions, "validation", level, train.size, lut=lut, n_classes=n_classes)
+        scale = saved["residual_scale_m"] if saved else cascade.residual_scale(train)
+        if use_forms:
+            train.form_scale = scale
+        val = cascade.Sampler(regions, "validation", level, train.size, lut=lut, n_classes=n_classes,
+                              form_scale=scale if use_forms else None)
         level_config = {"legend": "terrain-v3", "class_map": lut.tolist(),
                         "class_sources": {str(k): v for k, v in sorted(train.class_counts().items())},"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
-                        "conditioning": level.conditioning, "envelope_m": cascade.ENVELOPE_M,
+                        "conditioning": conditioning, "envelope_m": cascade.ENVELOPE_M,
                         "block": level.block,
                         "smooth_cells": level.smooth_cells,
                         "coarse_dropout": args.coarse_dropout if level.conditioning in (3, 6) else 0.0,
                         "cover_dropout": args.cover_dropout if level.conditioning == 3 else 0.0,
+                        "form_dropout": args.form_dropout if use_forms else 0.0,
                         "balanced": balanced, "mix": mix, "coarse_blur": blur, "only_class": only,
-                        "residual_scale_m": saved["residual_scale_m"] if saved else cascade.residual_scale(train)}
+                        "residual_scale_m": scale}
+        if use_forms:
+            level_config["forms"] = (saved or {}).get("forms") or {
+                "sigma": forms.FORM_SIGMA, "table": forms.table(train)}
     else:
         tiles = data.load_release(args.release)
         level_config = None
@@ -276,8 +291,9 @@ def main(argv=None) -> int:
         k = data.class_start(cond, model.num_classes)
         cond[drop, k:] = 0
         cond[drop, k] = 1
-        if config.get("coarse_dropout") or config.get("cover_dropout"):
-            cascade.drop(cond, rng, config["coarse_dropout"], config["cover_dropout"], config["conditioning"])
+        if config.get("coarse_dropout") or config.get("cover_dropout") or config.get("form_dropout"):
+            cascade.drop(cond, rng, config["coarse_dropout"], config["cover_dropout"], config["conditioning"],
+                         config.get("form_dropout", 0.0))
         target, cond, mask = (torch.from_numpy(a).to(device, non_blocking=True) for a in (target, cond, mask))
         for g in opt.param_groups:
             g["lr"] = args.lr * min(1.0, (step + 1) / args.warmup)

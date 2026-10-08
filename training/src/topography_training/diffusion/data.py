@@ -227,7 +227,7 @@ def channels(conditioning: int, num_classes: int = NUM_CLASSES) -> tuple[int, in
     """(conditioning, target) channel counts of a layout; 3 is the cascade L2/L3 layout,
     5 and 6 (with landmarks) the L1 layouts and 4 the retired L1 layout with a land/sea
     channel (see cascade.py). Legend v3 runs have 19 class channels (legend.py)."""
-    extra = {1: 3, 2: 5, 3: 7, 4: 6, 5: 5, 6: 7}[conditioning]
+    extra = {1: 3, 2: 5, 3: 7, 4: 6, 5: 5, 6: 7, 7: 13, 8: 13}[conditioning]  # 7, 8: with form channels
     return (extra + num_classes, 3 if conditioning == 1 else 1)
 
 

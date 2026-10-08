@@ -66,6 +66,7 @@ LEVELS = {
 # Per conditioning layout: (coarse channels, cover channels). L1 (layout 6) hides its
 # envelope mid surface and relief, so a painted, featureless envelope still gets class style.
 DROP_CHANNELS = {3: ((0, 1, 2, 3), (5, 6)), 6: ((0, 1, 2, 3, 4), ())}
+DROP_CHANNELS |= {7: DROP_CHANNELS[6], 8: DROP_CHANNELS[3]}  # the same with form channels (forms.py)
 SHAPE_CHANNELS, COVER_CHANNELS = DROP_CHANNELS[3]
 MIN_VALID = 0.9  # share of surveyed cells a training window needs
 
@@ -442,11 +443,15 @@ def condition(level: Level, coarse: np.ndarray, extra: list[np.ndarray], classes
     return np.concatenate(parts).astype(np.float32)
 
 
-def drop(cond: np.ndarray, rng: np.random.Generator, coarse: float, cover: float, conditioning: int = 3) -> np.ndarray:
-    """Zero the coarse or cover channels of some windows, in place."""
+def drop(cond: np.ndarray, rng: np.random.Generator, coarse: float, cover: float, conditioning: int = 3,
+         form: float = 0.0) -> np.ndarray:
+    """Zero the coarse, cover or form channels of some windows, in place."""
+    from . import forms
+
     n = len(cond)
     shape, cover_chans = DROP_CHANNELS[conditioning]
-    for rate, chans in ((coarse, shape), (cover, cover_chans)):
+    form_chans = tuple(range(forms.START, forms.START + forms.COUNT)) if conditioning in forms.BASE else ()
+    for rate, chans in ((coarse, shape), (cover, cover_chans), (form, form_chans)):
         hit = rng.random(n) < rate
         for c in chans:
             cond[hit, c] = 0
@@ -497,7 +502,7 @@ class Sampler:
 
     def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None,
                  balanced: bool = False, mix: float = 0.0, blur: float = 0.0, lut: np.ndarray | None = None,
-                 n_classes: int = NUM_CLASSES):
+                 n_classes: int = NUM_CLASSES, form_scale: float | None = None):
         """`balanced` draws a class, then a region of it, then a window (not by area);
         `mix` is the share of windows joined with a window of another class along a
         soft border, so the model sees class borders; `blur` is the share of refining
@@ -507,6 +512,8 @@ class Sampler:
         # Legend v3 class -> model class (see legend.class_map); identity until set.
         self.lut = np.arange(NUM_CLASSES, dtype=np.uint8) if lut is None else np.asarray(lut, np.uint8)
         self.n_classes = n_classes
+        # Residual scale (m) of a run with form channels (forms.py); None: no form channels.
+        self.form_scale = form_scale
         self.level, self.size = level, size
         stride = stride or level.stride
         role = {"train": 1, "validation": 2}[split]  # data.TRAIN, data.VALIDATION
@@ -549,6 +556,10 @@ class Sampler:
         cells = f.classes[sl] if f.classes is not None else np.full((s, s), f.class_id, np.uint8)
         classes = self.lut[cells].astype(np.int64)
         extra = [decode(e[sl]) for e in f.extra] + (mark_channels(f.marks, sl, rng) if f.marks else [])
+        if self.form_scale is not None:
+            from . import forms
+
+            extra += list(forms.descriptors(f.target[sl], c, self.level.cell_m, self.form_scale, s))
         return f.target[sl], c, condition(self.level, c, extra, classes, self.n_classes)
 
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool, partner: int | None = None):
@@ -565,6 +576,10 @@ class Sampler:
             k, flip = rng.integers(4), rng.integers(2)
             target, cond, mask = (_dihedral(a, k, flip) for a in (target, cond, mask))
             cond = _rotate_slopes(cond, int(k), int(flip))
+            if self.form_scale is not None:
+                from . import forms
+
+                cond = forms.rotate(cond, int(k), int(flip))
         return target, cond, mask
 
     def class_counts(self, min_share: float = 0.02) -> dict[int, int]:

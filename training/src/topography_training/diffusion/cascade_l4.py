@@ -170,8 +170,14 @@ def main(argv=None) -> int:
             classes = np.repeat(np.repeat(_rows_4m(classes4, r0, r1, -m, c4 + m), 4, 0), 4, 1)[crop].astype(np.int64)
         # Legend v3 classes as the run's model classes (older runs see subclasses as parents).
         classes = int(lut[classes]) if isinstance(classes, (int, np.integer)) else lut[classes].astype(np.int64)
-        field = cascade.LazyField(level, coarse, [np.where(water, 255, 0).astype(np.uint8), snow, veg], classes,
-                                  n_classes)
+        extra = [np.where(water, 255, 0).astype(np.uint8), snow, veg]
+        if "forms" in config:  # form channels from the run's per-class table (forms.py)
+            from . import forms
+
+            cmap = np.full(coarse.shape, classes, np.uint8) if np.ndim(classes) == 0 else classes.astype(np.uint8)
+            extra += list(forms.from_classes(cmap, config["forms"]["table"], None,
+                                             config["forms"]["sigma"] * window).astype(np.float16))
+        field = cascade.LazyField(level, coarse, extra, classes, n_classes)
         res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
                            noise=_noise(args.seed, g0, g1, n), guidance=args.guidance)[0, 0].numpy()
         # L4 learned land only: water keeps the 4 m surface, with a soft shore.

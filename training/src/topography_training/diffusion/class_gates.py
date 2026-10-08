@@ -102,10 +102,17 @@ def _windows(sampler, per_region: int, rng) -> list[tuple]:
     return out
 
 
-def _with_class(cond: np.ndarray, class_id: int, n_classes: int) -> np.ndarray:
+def _with_class(cond: np.ndarray, class_id: int, n_classes: int, form_table: dict | None = None) -> np.ndarray:
+    """A window's conditioning with another class; runs with form channels take that
+    class's forms from their table, as generation does."""
     from .data import class_start
 
     c = cond.copy()
+    if form_table is not None:
+        from . import forms
+
+        f = forms.from_classes(np.full(c.shape[1:], class_id, np.uint8), form_table, None, 1.0)
+        c[forms.START : forms.START + forms.COUNT] = f
     k = class_start(c, n_classes)
     c[k:] = 0
     c[k + class_id] = 1
@@ -159,6 +166,8 @@ def main(argv=None) -> int:
     from . import legend
 
     n_classes, lut = legend.model_lut(config)
+    tab = config.get("forms", {}).get("table")
+    form_scale = scale if tab is not None else None
     # The classes this model was trained on (legend v2 runs: 1-12).
     classes = CLASSES if n_classes == legend.LEGACY_CLASSES else sorted(set(int(c) for c in lut) - {0})
     regions = cascade.load_regions(Path(config["release"]), lazy=True)
@@ -166,8 +175,8 @@ def main(argv=None) -> int:
     windows = []
     for split in ("train", "validation"):
         try:
-            got = _windows(cascade.Sampler(regions, split, level, size, lut=lut, n_classes=n_classes), args.per_region,
-                           rng)
+            got = _windows(cascade.Sampler(regions, split, level, size, lut=lut, n_classes=n_classes,
+                                           form_scale=form_scale), args.per_region, rng)
         except ValueError:
             continue
         # Region indices are per split; offset validation ones so they stay distinct.
@@ -203,8 +212,8 @@ def main(argv=None) -> int:
     cross, seeds, grid = [], [], None
     for n, (_, own, _, load, _) in enumerate(picks):
         coarse, cond = load()
-        res = {c: generate(coarse, _with_class(cond, c, n_classes), args.seed) for c in classes}
-        other = generate(coarse, _with_class(cond, own, n_classes), args.seed + 1)
+        res = {c: generate(coarse, _with_class(cond, c, n_classes, tab), args.seed) for c in classes}
+        other = generate(coarse, _with_class(cond, own, n_classes, tab), args.seed + 1)
         corr = np.corrcoef(np.stack([res[c].ravel() for c in classes]))
         cross.append(float(corr[np.triu_indices(len(classes), 1)].mean()))
         seeds.append(float(np.corrcoef(res[own].ravel(), other.ravel())[0, 1]))
@@ -229,7 +238,7 @@ def main(argv=None) -> int:
         coarse, cond = load()
         for si in range(args.seeds):
             for ci, c in enumerate(cls):
-                k = _with_class(cond, c, n_classes)
+                k = _with_class(cond, c, n_classes, tab)
                 std["coarse_shown"][wi, si, ci] = generate(coarse, k, args.seed + 10 * si).std()
                 k[hide] = 0
                 std["coarse_hidden"][wi, si, ci] = generate(coarse, k, args.seed + 10 * si).std()
@@ -267,7 +276,7 @@ def main(argv=None) -> int:
                 continue
             for n, j in enumerate(rng.choice(len(pool), size=args.generated, replace=len(pool) < args.generated)):
                 coarse, cond = pool[j][3]()
-                got = int(clf.predict(features(generate(coarse, _with_class(cond, c, n_classes), args.seed + 2 + n), cell))[0])
+                got = int(clf.predict(features(generate(coarse, _with_class(cond, c, n_classes, tab), args.seed + 2 + n), cell))[0])
                 rec[kind].append(got == c)
                 confusion[c, got] += kind == "own"
         print(f"recognition class {c}: own {np.mean(rec['own'][-args.generated:]):.2f}", flush=True)

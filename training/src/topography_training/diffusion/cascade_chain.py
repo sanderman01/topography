@@ -63,6 +63,21 @@ def _model_classes(config, classes):
     return n, (int(lut[classes]) if isinstance(classes, (int, np.integer)) else lut[classes])
 
 
+def _forms(config, classes, shape, src) -> list[np.ndarray]:
+    """Form channels for runs that take them (forms.py): the run's per-class table over the
+    class map, dune direction from the layout's wind; [] for runs without."""
+    from . import forms
+
+    if config["conditioning"] not in forms.BASE:
+        return []
+    _, model = _model_classes(config, classes)
+    if np.ndim(model) == 0:
+        model = np.full(shape, model, np.uint8)
+    wind = src.l0.spec.get("wind_from_deg") if src.l0 is not None else None
+    f = forms.from_classes(model, config["forms"]["table"], wind, config["forms"]["sigma"] * config["crop"])
+    return list(f.astype(np.float16))
+
+
 def _condition(level, coarse, extra, classes, config) -> np.ndarray:
     """Like cascade.condition, but filled in place so big fields are not copied. `classes`
     is one legend v3 class id or a class per cell."""
@@ -288,12 +303,13 @@ def main(argv=None) -> int:
     t = time.time()
     model, config = _load(args.l1_run, device)
     level = cascade.LEVELS["l1"]
-    if config["conditioning"] not in (5, 6):
+    if config["conditioning"] not in (5, 6, 7):
         print("error: the L1 run uses a retired layout", file=sys.stderr)
         return 2
     extra = src.extra
-    if config["conditioning"] == 6:  # landmarks of the authored (or real) surface, all kept
+    if config["conditioning"] in (6, 7):  # landmarks of the authored (or real) surface, all kept
         extra = extra + cascade.mark_channels(cascade.landmarks(src.marks_from, 128.0))
+    extra = extra + _forms(config, src.classes, src.coarse.shape, src)
     cond = _condition(level, src.coarse, extra, src.classes, config)
     holds = []
     if src.l0 is not None:  # authored landmarks, and sea toward the map border
@@ -338,7 +354,7 @@ def main(argv=None) -> int:
     # Authored rivers are water for L2, which learned valley floors around rivers.
     river32 = layout.rivers(src.l0.spec, 32.0, coarse.shape[0]) & (coarse >= 0) if src.l0 else lake32 & False
     extra = [np.where(lake32 | river32, 255, 0).astype(np.uint8), cascade.soft_u8(snow_in, 1.0),
-             cascade.soft_u8(veg_in, 1.0)]
+             cascade.soft_u8(veg_in, 1.0)] + _forms(config, src.classes_at(4), coarse.shape, src)
     h32 = _sample(model, config, coarse, _condition(level, coarse, extra, src.classes_at(4), config), args.steps,
                   args.seed + 1, args.batch, guidance=args.guidance)
     if src.l0 is not None:
@@ -403,6 +419,7 @@ def main(argv=None) -> int:
     classes32 = src.classes_at(4)
     classes4 = classes32 if isinstance(classes32, int) else _nearest(classes32[sl], 8)
     n_classes, model4 = _model_classes(config, classes4)
+    extra = extra + _forms(config, classes4, coarse.shape, src)
     field = cascade.LazyField(level, coarse, extra, model4, n_classes)
     h4 = _sample(model, config, coarse, field, args.steps, args.seed + 2, args.batch,
                  guidance=args.guidance).astype(np.float32)

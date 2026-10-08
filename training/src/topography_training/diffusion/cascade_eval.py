@@ -79,8 +79,11 @@ def main(argv=None) -> int:
 
     n_classes, lut = legend.model_lut(config)
     regions = cascade.load_regions(Path(config["release"]), lazy=True)
-    val = cascade.Sampler(regions, "validation", level, size, stride=size, lut=lut, n_classes=n_classes)
-    train = cascade.Sampler(regions, "train", level, size, stride=size // 4, lut=lut, n_classes=n_classes)
+    form_scale = scale if "forms" in config else None
+    val = cascade.Sampler(regions, "validation", level, size, stride=size, lut=lut, n_classes=n_classes,
+                          form_scale=form_scale)
+    train = cascade.Sampler(regions, "train", level, size, stride=size // 4, lut=lut, n_classes=n_classes,
+                            form_scale=form_scale)
 
     def generate(coarse, cond, seed):
         out = sample_field(model, torch.from_numpy(cond)[None].to(device), steps=args.steps,
@@ -93,6 +96,10 @@ def main(argv=None) -> int:
         for n, (r, f) in enumerate(zip(val.regions, val.fields)):
             classes = lut[f.classes if f.classes is not None else np.full(f.coarse.shape, f.class_id, np.uint8)]
             extra = [cascade.decode(e) for e in f.extra] + (cascade.mark_channels(f.marks) if f.marks else [])
+            if form_scale is not None:
+                from . import forms
+
+                extra += list(forms.descriptors(f.target, f.coarse, level.cell_m, form_scale, size))
             cond = cascade.condition(level, f.coarse, extra, classes.astype(np.int64), n_classes)
             gen = generate(f.coarse, cond, args.seed + n)
             items.append((r.name, r.class_id, f.target, f.coarse, gen))
