@@ -321,6 +321,19 @@ bumpy cone karst in the south-east and less crumpled canyon country.
 Flats are still missing: canyons 0.02 against 0.12 real, badlands 0.04 against 0.32,
 dunes 0.04 against 0.25. The L1 surface stays sloped, so L2 cannot make flats from it.
 
+### L3 run 3 resumed (2026-10-09)
+
+Resumed for 3.5 h to 10,122 steps, against 7,810 for L3 run 2:
+
+- recognition 0.28 against real 0.20: pass;
+- roughness rank 0.26 [0.21, 0.42] with the coarse input hidden: fail (shown 0.42);
+- swap 0.99 between classes against 0.58 for another seed.
+
+L3 run 2 had 0.69 on both roughness measures, over 12 classes rather than the 15 that
+legend v3 trains at L3. On legend v3 labels alone L3 does not order its classes' roughness. The
+same labels with form channels raised L2's shown rank from 0.50 to 0.82, so the next L3
+run uses form channels (L3 run 4). The chain keeps L3 run 2 until then.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:
