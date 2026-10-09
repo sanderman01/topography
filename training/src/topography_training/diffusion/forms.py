@@ -43,7 +43,7 @@ def descriptors(h: np.ndarray, coarse: np.ndarray, cell_m: float, scale_m: float
     h = np.where(np.isfinite(h), h, coarse).astype(np.float32)
     s = max(1.0, FORM_SIGMA * size)
     res = h - coarse
-    sd = np.sqrt(smooth(res * res, s))
+    sd = np.sqrt(np.maximum(smooth(res * res, s), 0))  # smoothing can round slightly below 0
     rough = np.log2(np.maximum(sd, 0.01 * scale_m) / scale_m)
     gy, gx = np.gradient(h, cell_m)
     flat = smooth((np.hypot(gx, gy) < np.tan(np.radians(FLAT_DEG))).astype(np.float32), s)
