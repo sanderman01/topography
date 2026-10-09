@@ -282,6 +282,45 @@ coded:
 Next: L1 run 6 (`--crop 128 --forms`, 4 h) and L2 run 8 (`--forms`, 6 h), with the gates
 and a Fujion chain, before L4.
 
+### L1 run 6 and L2 run 8 with form channels (2026-10-09)
+
+Both runs used `context-v5` on legend v3 with form channels (queue
+`data/models/forms-queue.sh`). L1 run 6 also trained on 128-cell crops.
+
+| Run | Steps | Recognition (own against real) | Roughness hidden | Shown | Swap between classes against other seed |
+| --- | --- | --- | --- | --- | --- |
+| L1 run 6 (4 h) | 14,000 | 0.49 against 0.26: pass | 0.97: pass | 0.97 | 0.93 against 0.26 |
+| L2 run 8 (6 h) | 8,078 | 0.38 against 0.21: pass | 0.70: pass | **0.82** | 0.98 against 0.68 |
+
+These are the best gates yet: L2's coarse-shown rank was 0.50 for run 7 and 0.57 for
+run 6. Two other results:
+
+- **L3 run 3** (4,505 steps, slowed by a game sharing the GPU): roughness rank 0.26,
+  failing (L3 run 2: 0.69). It is being resumed for 3.5 h.
+- **Form table bug, fixed:** the first table counted sea cells and grouped by source
+  region. Coastal cliffs got 0.9 m roughness and 54% flat, and plain had no entry. It
+  is now taken from land cells per cell class. `python -m topography_training.diffusion.forms
+  --run-dir <run>` recomputes it without retraining; the old table stays in the config.
+
+Fujion with L1 run 6 and L2 run 8 and the corrected table
+(`data/worlds/fujion-v3-chain-12`). Per-class residual roughness at 32 m is now within
+about ±30% of the real class medians:
+
+| Class | New | Real | Old models |
+| --- | --- | --- | --- |
+| Alpine | 12.6 m | 10.8 m | 16.7 m |
+| Fjords | 10.8 m | 9.6 m | 14.0 m |
+| Layered canyons | 10.2 m | 10.0 m | |
+| Coastal cliffs | 6.8 m | 5.5 m | |
+| Badlands | 4.4 m | 5.6 m | |
+| Crest-train dunes | 4.2 m | 4.1 m | |
+
+Cone karst peaks are up threefold (1.5 per km² against 0.5). The hillshade shows
+bumpy cone karst in the south-east and less crumpled canyon country.
+
+Flats are still missing: canyons 0.02 against 0.12 real, badlands 0.04 against 0.32,
+dunes 0.04 against 0.25. The L1 surface stays sloped, so L2 cannot make flats from it.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:

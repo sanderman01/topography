@@ -74,19 +74,27 @@ def rotate(cond: np.ndarray, k: int, flip: int) -> np.ndarray:
 
 
 def table(sampler, windows: int = 6, seed: int = 0) -> dict[str, list[float]]:
-    """Median form channels per model class over the training windows (direction kept
-    only as its strength), for generation from a class map."""
+    """Median form channels per model class over land cells of training windows, taken
+    per cell class (a canyon region's plateau counts as plain, its sea as nothing);
+    direction kept only as its strength. Used for generation from a class map."""
+    from .cascade import class_start_of_cond
+
     rng = np.random.default_rng(seed)
     out: dict[int, list[np.ndarray]] = {}
-    for cls, regions in sampler._groups().items():
-        for ri, idxs in regions.items():
+    for regions in sampler._groups().values():
+        for idxs in regions.values():
             for i in rng.choice(idxs, size=min(windows, len(idxs)), replace=False):
                 h, c, cond = sampler.window(int(i))
                 f = cond[START : START + COUNT]
-                m = int(sampler.lut[cls])
-                v = [float(np.median(f[j])) for j in range(4)]
-                v.append(float(np.median(np.hypot(f[4], f[5]))))
-                out.setdefault(m, []).append(np.array(v))
+                cls = cond[class_start_of_cond(cond, sampler.n_classes):].argmax(0)
+                land = np.isfinite(h) & (h > 0)
+                for m in np.unique(cls[land]):
+                    cells = land & (cls == m)
+                    if cells.sum() < 0.05 * cells.size:
+                        continue
+                    v = [float(np.median(f[j][cells])) for j in range(4)]
+                    v.append(float(np.median(np.hypot(f[4], f[5])[cells])))
+                    out.setdefault(int(m), []).append(np.array(v))
     return {str(c): np.median(np.stack(v), 0).round(4).tolist() for c, v in sorted(out.items()) if c > 0}
 
 
@@ -114,3 +122,36 @@ def from_classes(classes: np.ndarray, tab: dict, wind_from_deg: float | None, si
             out[5] += w * v[4] * axis[1]
         weight += w
     return out / np.maximum(weight, 1e-6)
+
+
+def main(argv=None) -> int:
+    """Recompute and store the form table of a run (generation only; weights unchanged)."""
+    import argparse
+    import json
+    from pathlib import Path
+
+    from . import cascade, legend
+
+    p = argparse.ArgumentParser(description="recompute a run's per-class form table")
+    p.add_argument("--run-dir", type=Path, required=True)
+    args = p.parse_args(argv)
+    path = args.run_dir / "config.json"
+    config = json.loads(path.read_text())
+    level = cascade.LEVELS[config["level"]]
+    n, lut = legend.model_lut(config)
+    regions = cascade.load_regions(Path(config["release"]), lazy=True)
+    s = cascade.Sampler(regions, "train", level, config["crop"], lut=lut, n_classes=n,
+                        form_scale=config["residual_scale_m"])
+    old = config["forms"].pop("table")
+    config["forms"].setdefault("previous_tables", []).append(old)
+    config["forms"]["table"] = table(s)
+    config["forms"]["table_method"] = "land cells, per cell class"
+    path.write_text(json.dumps(config, indent=2))
+    print(json.dumps(config["forms"]["table"]))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

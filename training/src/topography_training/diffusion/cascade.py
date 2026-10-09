@@ -651,6 +651,10 @@ def _join(a, b, rng: np.random.Generator, n_classes: int = NUM_CLASSES):
     return h.astype(np.float32), c.astype(np.float32), cond.astype(np.float32)
 
 
+def class_start_of_cond(cond: np.ndarray, n_classes: int) -> int:
+    return cond.shape[0] - n_classes
+
+
 def _dihedral(a: np.ndarray, k: int, flip: int) -> np.ndarray:
     a = np.rot90(a, k, axes=(1, 2))
     return np.ascontiguousarray(a[:, :, ::-1] if flip else a)
