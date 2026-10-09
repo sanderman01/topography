@@ -334,6 +334,18 @@ legend v3 trains at L3. On legend v3 labels alone L3 does not order its classes'
 same labels with form channels raised L2's shown rank from 0.50 to 0.82, so the next L3
 run uses form channels (L3 run 4). The chain keeps L3 run 2 until then.
 
+### L3 run 4 with form channels (2026-10-09)
+
+`lidar-v3`, the L3 run 2 recipe with `--forms`, 6 h, 7,619 steps:
+
+- recognition 0.30 against real 0.20: pass;
+- roughness rank 0.93 [0.93, 0.94] with the coarse input hidden: pass (shown 0.93);
+- swap 0.99 between classes against 0.58 for another seed.
+
+That is the best L3 yet (L3 run 2: 0.69 for both roughness measures; L3 run 3: 0.26 and
+0.42). The Fujion chain now uses L1 run 6, L2 run 8 and L3 run 4. Next is L4 run 7 with
+form channels.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:
