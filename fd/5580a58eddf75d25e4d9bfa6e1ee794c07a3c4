@@ -1,0 +1,23 @@
+training/src/topography_training/diffusion/forms.py
+  s_b205be2fbe95a4::t_8a499b48c7bf73 77-81,84-85,89-97,125-157
+training/src/topography_training/diffusion/cascade.py
+  s_b205be2fbe95a4::t_8a499b48c7bf73 654-657
+docs/plans/biome-forms-v1.md
+  s_b205be2fbe95a4::t_540973d283ddb5 285-323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd5580a58eddf75d25e4d9bfa6e1ee794c07a3c4",
+  "prompts": {},
+  "sessions": {
+    "s_b205be2fbe95a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa259070-228b-4039-a53e-dab93c687e8f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
