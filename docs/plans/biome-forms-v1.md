@@ -346,6 +346,26 @@ That is the best L3 yet (L3 run 2: 0.69 for both roughness measures; L3 run 3: 0
 0.42). The Fujion chain now uses L1 run 6, L2 run 8 and L3 run 4. Next is L4 run 7 with
 form channels.
 
+### L4 run 7 with form channels (2026-10-09)
+
+`diffusion-v9`, the L4 run 6 recipe with `--forms`, 8 h, 8,678 steps, 9.0 GB VRAM:
+
+- recognition 0.34 against real 0.27: pass;
+- roughness rank 0.89 with the coarse input hidden: pass (shown 0.90; L4 run 6: 0.73 and 0.95).
+
+All four levels now run on legend v3 with form channels and pass their gates:
+
+| Level | Run | Roughness, coarse shown |
+| --- | --- | --- |
+| L1 | run 6 | 0.97 |
+| L2 | run 8 | 0.82 |
+| L3 | run 4 | 0.93 |
+| L4 | run 7 | 0.90 |
+
+A 1 m check of Fujion chain 13's central 4 km (`data/worlds/fujion-v3-chain-13-l4r7-4km`)
+took 14 min of bands, the same speed as before, so 32 km takes about 15 h. The full
+32 km world comes next (L3 about 70 min, then L4).
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:
