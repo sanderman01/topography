@@ -366,6 +366,16 @@ A 1 m check of Fujion chain 13's central 4 km (`data/worlds/fujion-v3-chain-13-l
 took 14 min of bands, the same speed as before, so 32 km takes about 15 h. The full
 32 km world comes next (L3 about 70 min, then L4).
 
+### Fujion at 32 km with the biome-forms models (2026-10-11)
+
+- **Models and layout:** L1 run 6, L2 run 8, L3 run 4 and L4 run 7 on `fujion-paint-v3c`.
+- **Generation:** L3 took 66 min over the whole map. The 1 m bands took 1,010 min (32
+  bands of about 31 min), with a pause after band 29.
+- **Outputs:** the world is `data/worlds/fujion-v3-chain-14-l4`. The export
+  (`data/exports/fujion-v3-chain-14-l4`, 1.1 GB without COG masters) holds the tiles
+  and the cover, land-cover and biome layers.
+- **Status:** waiting for the owner's review.
+
 ## Not in this plan
 
 The other review suggestions wait for the results of the retraining:
