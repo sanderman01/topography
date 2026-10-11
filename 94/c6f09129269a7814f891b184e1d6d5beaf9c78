@@ -1,0 +1,19 @@
+docs/plans/biome-forms-v1.md
+  s_b205be2fbe95a4::t_2d648677033eea 369-378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94c6f09129269a7814f891b184e1d6d5beaf9c78",
+  "prompts": {},
+  "sessions": {
+    "s_b205be2fbe95a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa259070-228b-4039-a53e-dab93c687e8f",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
