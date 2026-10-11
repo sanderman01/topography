@@ -7,6 +7,12 @@ generate and export 1 m heightmap worlds.
 The [master plan](docs/plans/terrain-design-master-plan.md) defines the project;
 [progress](docs/progress.md) lists what is done and what comes next.
 
+> **Agentic coding.** Most of the code, documentation and experiment reports in this
+> repository were written by AI coding agents (Claude Code and Codex) under human
+> direction. A person sets the goals, reviews the terrain and decides what is
+> accepted, but not every line has had a human review. Read and test the code before
+> you rely on it.
+
 ## What works
 
 - **Source library:** a Rust CLI discovers, downloads and imports public USGS and
