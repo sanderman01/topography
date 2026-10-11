@@ -1,0 +1,47 @@
+docs/progress.md
+  s_a433dc79c97580::t_1150f33411c151 13,39-40
+  s_a433dc79c97580::t_878b6c3d2def2c 74,76
+  s_a433dc79c97580::t_b4d6aec474498c 3,28,30,33,36-38,41-53,55-69,71,73,75,77-78
+docs/workflows/terrain-cascade.md
+  s_a433dc79c97580::t_10f56c62e0bbd4 9-10,12-14,16-19,23,25,34-50,53,55-57
+  s_a433dc79c97580::t_878b6c3d2def2c 54,205
+  s_a433dc79c97580::t_a4b0d0bd844298 69-74,95,97-100,103-106,109-110,112-122,157-170,174-194
+  s_a433dc79c97580::t_cabd1be0ea8e4b 156,171-173,199-200,203-204,206-217,222-223,235,237
+  s_a433dc79c97580::t_3326475936629e 31
+  s_a433dc79c97580::t_7acd43ffadf167 58
+docs/plans/terrain-design-master-plan.md
+  s_a433dc79c97580::t_3326475936629e 3
+README.md
+  s_a433dc79c97580::t_ff763d2411130f 20
+  s_a433dc79c97580::t_df2cecf0ac8db9 18-19,21-22,24,27-32,45
+  s_a433dc79c97580::t_143824638f4629 95
+  s_a433dc79c97580::t_dd360d6b3c8dbc 35
+  s_a433dc79c97580::t_5a062c102a0975 25-26,34,36
+AGENTS.md
+  s_a433dc79c97580::t_3326475936629e 13-15
+training/README.md
+  s_a433dc79c97580::t_3326475936629e 51-55
+docs/plans/terrain-cascade-v1.md
+  s_a433dc79c97580::t_3326475936629e 4-8
+docs/plans/biome-forms-v1.md
+  s_a433dc79c97580::t_3326475936629e 3,386
+  s_a433dc79c97580::t_ad534458dbd5ce 387
+docs/plans/world-layout-spec-v1.md
+  s_a433dc79c97580::t_3326475936629e 3-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2dbb036b59f217325d284c8f8bfc9115103ec67a",
+  "prompts": {},
+  "sessions": {
+    "s_a433dc79c97580": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f786fef2-6fe6-4d5d-bef7-4d1b2d88d625",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
