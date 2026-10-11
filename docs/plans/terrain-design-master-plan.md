@@ -1,6 +1,6 @@
 # Terrain collection and generation design concept
 
-Status (2026-10-03): source acquisition, gallery review, automatic preparation and game cover are implemented for a 167-tile accepted library. The [terrain cascade](terrain-cascade-v1.md) (128 m, 32 m, 4 m and 1 m diffusion models) passes blind review at every level, generates worlds with drainage and continuous seabed, and exports streamed 16-bit heightmap tiles. Authored layouts, regional reruns and editing remain open; see [progress](../progress.md). Sources checked 13 September 2026, with subsequent dataset checks in the linked reports. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
+Status (2026-10-11): source acquisition, gallery review, automatic preparation and game cover are implemented. The [terrain cascade](terrain-cascade-v1.md) (128 m, 32 m, 4 m and 1 m diffusion models) follows per-cell terrain classes ([class conditioning](class-conditioning-v1.md), [biome forms](biome-forms-v1.md)), generates worlds from painted layouts with drainage and continuous seabed, and exports streamed 16-bit heightmap tiles. A 32 km world at 1 m awaits owner review; regional reruns and editing remain open; see [progress](../progress.md). Sources checked 13 September 2026, with subsequent dataset checks in the linked reports. Builds on `docs/biomes.md`, `docs/locations.md`, and `docs/elevation-data-sources.md`.
 
 Project stance (2026-09-25): this is game terrain. Prefer plausible results,
 automation and judgment calls over scientific evidence gathering; where later

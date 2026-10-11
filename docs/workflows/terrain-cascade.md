@@ -6,35 +6,55 @@ above. `P` below is `data/models/diffusion-env-v1/.venv/bin/python` (set up as i
 [training/README.md](../../training/README.md#terrain-diffusion)). Training and
 generation are GPU workloads: warn before running them.
 
-Current models (2026-10-03):
+Run heavy jobs inside a memory-capped scope so an out-of-memory job cannot take the
+session down: `CAP=(systemd-run --user --scope -q -p MemoryMax=7G)`, then `"${CAP[@]}" $P ...`.
 
-| Level | Run | Training data | Blind review |
+Current models (2026-10-11), all on terrain legend v3 with form channels:
+
+| Level | Run | Training data | Class gates |
 | --- | --- | --- | --- |
-| L1 128 m | `cascade-l1-run-2` | `context-v2` (GLO-30 + GEBCO) | 7/7 Yes |
-| L2 32 m | `cascade-l2-run-2` | `context-v2` | 32/32 Yes |
-| L3 4 m | `cascade-l3-run-1` | `lidar-v1` (lidar averaged to 4 m) | 32/32 Yes |
-| L4 1 m | `cascade-l4-run-5` | `diffusion-v8` (1 m library tiles) | 32/32 Yes |
+| L1 128 m | `cascade-l1-run-6` | `context-v5` (GLO-30 + GEBCO) | pass |
+| L2 32 m | `cascade-l2-run-8` | `context-v5` | pass |
+| L3 4 m | `cascade-l3-run-4` | `lidar-v3` (lidar averaged to 4 m) | pass |
+| L4 1 m | `cascade-l4-run-7` | `diffusion-v9` (1 m library tiles) | pass |
 
 ## Training data
 
-- L1 and L2: [GLO-30 context regions](context-regions.md), release `context-v2`.
+- L1 and L2: [GLO-30 context regions](context-regions.md), release `context-v5`.
 - L3: lidar regions from `context build` with `source = "lidar"` plans
-  (`catalog/plans/lidar-regions-v1.toml`): USGS 3DEP and LINZ tiles averaged to
+  (`catalog/plans/lidar-regions-v*.toml`): USGS 3DEP and LINZ tiles averaged to
   4 m with a validity mask, voted and released like the GLO-30 regions.
 - L4: the 1 m library release from `topography dataset diffusion` (see the
   [diffusion workflow](terrain-diffusion.md#1-training-release)). Its tiles are
   split by geographic bands inside each tile.
 
-## Training and blind review
+## Training, gates and blind review
 
 ```sh
-$P -m topography_training.diffusion.train --release data/datasets/lidar-v1/release.json \
-    --run-dir data/models/cascade-l3-run-1 --level l3 --channels 64,96,128,192,256 --hours 3
-$P -m topography_training.diffusion.train --release data/datasets/diffusion-v8/manifest.json \
-    --run-dir data/models/cascade-l4-run-5 --level l4 --hours 8
-$P -m topography_training.diffusion.cascade_eval --run-dir data/models/cascade-l4-run-5 \
-    --out data/models/cascade-l4-run-5/eval-1
+COMMON=(--class-embedding --scale-shift --balanced --mix 0.25 --forms)
+$P -m topography_training.diffusion.train --release data/datasets/context-v5/release.json --level l1 \
+    --run-dir data/models/cascade-l1-run-6 --channels 64,96,128,192,256 "${COMMON[@]}" \
+    --crop 128 --coarse-dropout 0.5 --hours 4
+$P -m topography_training.diffusion.train --release data/datasets/context-v5/release.json --level l2 \
+    --run-dir data/models/cascade-l2-run-8 --channels 64,96,128,192,256 "${COMMON[@]}" \
+    --coarse-dropout 0.25 --coarse-blur 0.5 --hours 6
+$P -m topography_training.diffusion.train --release data/datasets/lidar-v3/release.json --level l3 \
+    --run-dir data/models/cascade-l3-run-4 --channels 64,96,128,192,256 "${COMMON[@]}" \
+    --coarse-dropout 0.25 --coarse-blur 0.5 --hours 6
+$P -m topography_training.diffusion.train --release data/datasets/diffusion-v9/manifest.json --level l4 \
+    --run-dir data/models/cascade-l4-run-7 --channels 64,128,256,384,512 "${COMMON[@]}" \
+    --coarse-dropout 0.25 --coarse-blur 0.5 --hours 8
+$P -m topography_training.diffusion.class_gates --run-dir data/models/cascade-l4-run-7 \
+    --out data/models/cascade-l4-run-7/gates-1
+$P -m topography_training.diffusion.cascade_eval --run-dir data/models/cascade-l4-run-7 \
+    --out data/models/cascade-l4-run-7/eval-1
 ```
+
+L4 run 7 peaks at about 9 GB of VRAM. `class_gates` checks that the class matters
+([gates](../plans/class-conditioning-v1.md#gates)). Generated residuals of validation
+regions must be recognised as their class, and their per-class roughness must follow
+the real ranking with the coarse input hidden. It writes `gates.json` and a class grid
+hillshade, and exits 1 when a gate fails.
 
 Refining levels (L2–L4) all use conditioning layout 3: the level above as a
 per-window unit-range shape channel, its east and north slopes, absolute height /
@@ -45,6 +65,12 @@ records water surfaces, not ground. Training drops the class (10%) and, for
 layout 3, the shape and slopes (10%) and snow/ice and vegetation (10%), so
 guidance can push against them at generation time. Rerunning `train` with the
 same run directory resumes.
+
+The class recipe: `--class-embedding` adds a learned class embedding to every block,
+`--scale-shift` lets it scale and shift every norm (AdaGN), `--balanced` draws windows
+class-balanced by region, `--mix` joins two classes in a share of windows, and
+`--coarse-blur` blurs the coarse input so the class, not only the level above, sets
+the detail.
 
 Runs started after 2026-10-07 use terrain legend v3 (`catalog/labels/terrain-v3.toml`,
 [biome forms](../plans/biome-forms-v1.md)): 19 class channels, sources relabelled to
@@ -66,40 +92,34 @@ nearest-training-window distance and a same-seed check: different windows
 generated with one seed should not correlate (run 4 of the old 1 m model: 0.99;
 L4 run 5: 0.29).
 
-## Generating a world
+## Authoring a layout
 
-`cascade_chain` builds L1 → L2 → L3 from a layout derived from a real region (a
-stand-in for an authored layout until the [layout spec](../plans/world-layout-spec-v1.md)
-renders L0 rasters):
+A world starts from a written layout ([layout spec](../plans/world-layout-spec-v1.md);
+Fujion is the example in `configs/layouts/fujion/`): `brief.md` from the owner,
+`layout.toml` and its `layout.md` summary from the agent. Render it to L0 (128 m class
+map, height envelope and feature lines) and check it:
 
 ```sh
-$P -m topography_training.diffusion.cascade_chain \
-    --l1-run data/models/cascade-l1-run-2 --l2-run data/models/cascade-l2-run-2 \
-    --l3-run data/models/cascade-l3-run-1 --release data/datasets/context-v2/release.json \
-    --region howe-sound --l3-km 32 --out data/worlds/cascade-world-1-howe-sound
+target/release/topography world layout configs/layouts/fujion/layout.toml data/worlds/fujion-l0-1
+$P -m topography_training.diffusion.layout overview data/worlds/fujion-l0-1
+$P -m topography_training.diffusion.layout reach data/worlds/fujion-l0-1
+$P -m topography_training.diffusion.layout refs data/worlds/fujion-l0-1 --release data/datasets/context-v5/release.json
 ```
 
-L1 and L2 cover the whole 48 km region; L3 covers a central square of `--l3-km`
-× 1,024 m. Without `--l3-km`, L3 covers the whole field: the default for authored
-layouts, which specify the world size. After L1 the land is made to drain (largest depressions kept as lakes,
-others carved; hollows of crater, karst and dune cells stay dry basins); after L2
-compact deep hollows become tarns and streams are traced. Streams flow through lakes
-and dry basins to the sea (only karst basins swallow them), follow smoothed paths, are
-continued to the water after L3 refines the coast, and their beds are carved to descend.
-Water amounts follow the region class (`hydrology.WATER`) unless overridden with
-`--lake-share`, `--tarn-share` and `--stream-km2`. The output is a 4 m world
-(`manifest.json`, layers, hillshades of each level and the real region) that
-exports directly. A 32 km L3 takes about an hour. `--guidance w` applies class
-guidance at every level (1: off).
+`overview` draws the annotated map, `reach` checks the altitude tiers and `refs` makes
+a sheet of the real reference regions at world scale.
 
-For authored layouts, L1 holds the painted shape above about 400 m (the `hold` layer
-and the map border), painted craters (class 4) at 128 m, and fills painted calderas,
-craters, cinder cones and drowned tower karst (classes 4, 17 and 15) with the 128 m relief of real exemplars
-from `catalog/exemplars/exemplars-v1.toml` (`--no-exemplars` turns this off). The
-catalog is rebuilt from a context release with
-`$P -m topography_training.diffusion.exemplar find --release data/datasets/context-v5/release.json`;
-check the picks by eye. Craters are made at least as deep as painted; painted crater
-hollows always stay dry basins through drainage.
+The owner then paints the layout. `paint export` writes one GIMP file, `layout.xcf`,
+with the layers height, roughness and classes (legend v3 palette `terrain-v3.gpl`)
+and an optional `hold` layer; `paint import` reads it back as an L0 that holds only
+ground height, terrain classes and roughness. Lakes, rivers and troughs are left to
+the models and drainage, and a 1.5 km band along the map border is always sea. GIMP's
+`gimp-console` must be installed.
+
+```sh
+$P -m topography_training.diffusion.paint export data/worlds/fujion-l0-1 data/worlds/fujion-paint
+$P -m topography_training.diffusion.paint import data/worlds/fujion-paint data/worlds/fujion-painted-l0-1
+```
 
 To move a painted layout to the legend v3 subclasses, copy it with renamed classes and
 import the copy:
@@ -133,29 +153,74 @@ $P -m topography_training.diffusion.paint roughen data/worlds/fujion-paint-v3b d
 Drowned tower karst (15) is painted in shallow sea: import sets its seabed to −40 to
 −10 m (fading out over about 1 km past the painted area) and keeps its relief offshore.
 Its Ha Long exemplar also reaches 2 km onto neighbouring karst and 800 m onto any other
-shore, so the coast breaks into towers, coves and islets, so L1 raises towers above the water.
+shore, so L1 raises towers above the water and the coast breaks into coves and islets.
+
+## Generating a world
+
+`cascade_chain` builds L1 → L2 → L3 from a painted L0 (`--layout`) or, as a stand-in,
+from a layout derived from a real context region (`--release` and `--region`):
+
+```sh
+$P -m topography_training.diffusion.cascade_chain --layout data/worlds/fujion-painted-l0-5 \
+    --l1-run data/models/cascade-l1-run-6 --l2-run data/models/cascade-l2-run-8 \
+    --l3-run data/models/cascade-l3-run-4 --out data/worlds/fujion-v3-chain-14
+```
+
+L3 covers the whole field by default, the size the layout specifies; `--l3-km N`
+limits it to a central N × 1,024 m square (a derived region is 48 km, so use it there).
+The chain writes the class per 4 m cell (`classes.u8`) for L4 and the cover.
+
+After L1 the land is made to drain (largest depressions kept as lakes,
+others carved; hollows of crater, karst and dune cells stay dry basins); after L2
+compact deep hollows become tarns and streams are traced. Streams flow through lakes
+and dry basins to the sea (only karst basins swallow them), follow smoothed paths, are
+continued to the water after L3 refines the coast, and their beds are carved to descend.
+Water amounts follow the region class (`hydrology.WATER`) unless overridden with
+`--lake-share`, `--tarn-share` and `--stream-km2`. The output is a 4 m world
+(`manifest.json`, layers, hillshades of each level) that
+exports directly. A 32 km L3 takes about an hour. `--guidance w` applies class
+guidance at every level (1: off). L1 runs trained on 128-cell crops are sampled in
+overlapping local windows, and generation takes the form channels from the run's
+per-class table (`python -m topography_training.diffusion.forms --run-dir <run>`
+recomputes it without retraining).
+
+For authored layouts, L1 holds the painted shape above about 400 m (the `hold` layer
+and the map border), painted craters (class 4) at 128 m, and fills painted calderas,
+craters, cinder cones and drowned tower karst (classes 4, 17 and 15) with the 128 m relief of real exemplars
+from `catalog/exemplars/exemplars-v1.toml` (`--no-exemplars` turns this off). The
+catalog is rebuilt from a context release with
+`$P -m topography_training.diffusion.exemplar find --release data/datasets/context-v5/release.json`;
+check the picks by eye. Craters are made at least as deep as painted; painted crater
+hollows always stay dry basins through drainage.
 
 `cascade_l4` refines that 4 m world to 1 m in bands of rows:
 
 ```sh
-$P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-5 \
-    --world data/worlds/cascade-world-1-howe-sound --out data/worlds/cascade-world-1-howe-sound-1m
+$P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-7 \
+    --world data/worlds/fujion-v3-chain-14 --out data/worlds/fujion-v3-chain-14-l4 --band-m 1024
 ```
 
-Bands are 2,048 m with a 256 m halo (`--band-m`, `--halo-m`); overlapping bands
-share their starting noise and are cross-faded. Output layers are memory-mapped,
-so host memory stays near 3 GB at any size. Rerunning the same command resumes
-after the last finished band. Water keeps the smooth 4 m surface. `--km N` limits
-the run to a central N × 1,024 m square for quick checks; older chain worlds need
-`--class-id`. Speed is about 30,000 cells/s at 12 steps and stride 192: roughly
-3 h for 16 km, 12 h for 32 km.
+Bands default to 2,048 m with a 256 m halo (`--band-m`, `--halo-m`); overlapping bands
+share their starting noise and are cross-faded. Output layers are memory-mapped, so
+host memory depends on the band, not the world. Across 32 km, 2,048 m bands exceed a
+7 GB cap, so use `--band-m 1024` there. Rerunning the same command resumes after the
+last finished band. Water keeps the smooth 4 m surface. `--km N` limits the run to a
+central N × 1,024 m square for quick checks; older chain worlds need `--class-id`. At
+12 steps and stride 192, 32 km takes about 17 h (32 bands of about 31 min); a central
+4 km about 14 min.
+
+Then redraw the cover at 1 m from the layout and add land cover:
+
+```sh
+$P -m topography_training.diffusion.cover --world data/worlds/fujion-v3-chain-14-l4 --layout data/worlds/fujion-painted-l0-5
+$P -m topography_training.diffusion.landcover --world data/worlds/fujion-v3-chain-14-l4
+```
 
 ## Export
 
 ```sh
-target/release/topography export heightmap data/worlds/cascade-world-1-howe-sound-1m \
-    data/exports/cascade-world-1-howe-sound-1m
-target/release/topography export view data/exports/cascade-world-1-howe-sound-1m
+target/release/topography export heightmap data/worlds/fujion-v3-chain-14-l4 data/exports/fujion-v3-chain-14-l4
+target/release/topography export view data/exports/fujion-v3-chain-14-l4
 ```
 
 Tiles are written as `{layer}/L{level}/{prefix}_L{level}_{tx}_{ty}.png`, for example
@@ -167,20 +232,9 @@ bilinearly, and its class map by nearest cell, at positions warped by about 150 
 cover has no 128 m grid steps. Snow and tree lines then follow the ground: snow lies
 lower on pole-facing slopes (set `hemisphere` in the paint settings) and in gullies and
 sheds from faces steeper than 40–55°; trees reach higher in gullies and on sun-facing
-slopes, thin out near their limit and on steep ground, and leave patchy edges. After
-L4, redraw the cover at 1 m from the layout:
+slopes, thin out near their limit and on steep ground, and leave patchy edges.
 
-```sh
-$PY -m topography_training.diffusion.cover --world data/worlds/<world>-l4 --layout data/worlds/<L0 dir>
-```
-
-Generated worlds get land cover before export:
-
-```sh
-$PY -m topography_training.diffusion.landcover --world data/worlds/<world> --treeline-m 1000
-```
-
-This adds `land-cover.u8` with ESA WorldCover codes derived by rule (a recorded
+`landcover` (run after L4, above; `--treeline-m` sets the tree line) adds `land-cover.u8` with ESA WorldCover codes derived by rule (a recorded
 judgment call, not observed cover):
 - water 80, snow/ice 70 and forest 10, taken from the world's own masks;
 - bare 60 above 35° or more than 400 m above the local tree line, grassland 30 just

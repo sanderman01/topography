@@ -48,9 +48,11 @@ Normal checks include tiny fitting checks when the optional environment exists.
 
 `topography_training.diffusion` trains pixel-space residual denoisers and generates
 terrain with them. The [cascade workflow](../docs/workflows/terrain-cascade.md)
-covers the current models (`train --level l1..l4`, `cascade_eval`,
-`cascade_chain`, `cascade_l4`); the [diffusion workflow](../docs/workflows/terrain-diffusion.md)
-covers the 1 m training release and the original pilot. It needs a GPU PyTorch in its
+covers the current models: training (`train --level l1..l4`), checks (`class_gates`,
+`cascade_eval`), layouts (`layout`, `paint`, `exemplar`), generation (`cascade_chain`,
+`cascade_l4`, with `forms` and `hydrology`) and cover (`cover`, `landcover`). The
+[diffusion workflow](../docs/workflows/terrain-diffusion.md) covers the 1 m training
+release and the original pilot. It needs a GPU PyTorch in its
 own environment. For AMD RDNA4 (RX 9060 XT, gfx1200) use the ROCm 7.2 wheels:
 
 ```sh

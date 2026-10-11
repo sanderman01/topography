@@ -1,9 +1,11 @@
 # Terrain cascade v1
 
 Status: planned 2026-09-29. Steps 2–7 done by 2026-10-03: L1–L4 pass blind
-review, the chain and banded 1 m generation work, and export streams. Step 8, the
-first cascade world, is in progress; step 1 (authored layouts) is open (see
-[Progress](#progress-2026-10-03) and the [workflow](../workflows/terrain-cascade.md)). It extends the
+review, the chain and banded 1 m generation work, and export streams. Since then
+authored, painted layouts drive the chain, and the [class conditioning](class-conditioning-v1.md)
+and [biome forms](biome-forms-v1.md) plans retrained every level; Fujion at 32 km and
+1 m awaits owner review (see [Progress](#progress-2026-10-03) and the
+[workflow](../workflows/terrain-cascade.md)). It extends the
 [terrain diffusion pilot](terrain-diffusion-v1.md) into a coarse-to-fine
 generator and replaces its "follow-on coarse structure model" section. The
 [master plan](terrain-design-master-plan.md) §§5, 8 and 11 point here. Curated

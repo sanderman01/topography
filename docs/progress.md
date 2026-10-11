@@ -1,6 +1,6 @@
 # Progress
 
-Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md).
+Updated 2026-10-11. Follow the [master plan](plans/terrain-design-master-plan.md).
 
 ## Done
 
@@ -10,7 +10,7 @@ Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md
   download and manual import of raw Float32 GeoTIFFs with checksums.
 - **Curation and review:** SQLite catalog and a persistent
   [review gallery](workflows/batch-source-review.md) with whole-tile Yes/No
-  votes. Gallery v21: 205 tiles, 167 Yes, 29 No, all accepted tiles Ready.
+  votes. Gallery v22 adds the expansion-5 tiles for thin classes.
 - **Preparation:** automatic after a Yes, through the gallery worker, including
   technical checks, artifact checks (facets, stripes, seams) and game cover.
 - **Game cover v7:** snow/ice, vegetation, water and WorldCover land cover per
@@ -25,44 +25,57 @@ Updated 2026-10-03. Follow the [master plan](plans/terrain-design-master-plan.md
 - **[Terrain cascade](plans/terrain-cascade-v1.md)** ([workflow](workflows/terrain-cascade.md)):
   - Context regions: 64 of 74 GLO-30 regions accepted, with a GEBCO seabed
     (release `context-v2`); 36 lidar regions averaged to 4 m accepted (`lidar-v1`).
-  - Models, all passing blind review: L1 128 m (run 2, 7/7), L2 32 m (run 2,
+  - First models, all passing blind review: L1 128 m (run 2, 7/7), L2 32 m (run 2,
     32/32), L3 4 m (run 1, 32/32), L4 1 m (run 5, 32/32; same-seed correlation
-    0.29).
+    0.29). They ignored the class (see below).
   - Terrain continues under water (direction change 2026-10-02): sea is ground
     below 0 m connected to open water.
-  - `cascade_chain`: L1 → L2 → L3 from a layout derived from a real region, with
+  - `cascade_chain`: L1 → L2 → L3 from an authored layout or a real region, with
     drainage, lakes, tarns and streams by terrain class.
   - `cascade_l4`: banded, resumable 1 m generation with memory-mapped output.
-- **Export and viewing:** 16-bit heightmap tiles (257² `shared_edge`), quadtree
-  LOD levels, mask tiles and COG masters, streamed row by row (32 km at 1 m in
-  13 min, under 200 MB), and a loopback 3D viewer.
-- **First cascade world (in progress):** Howe Sound layout, 32 km, L1–L3 at 4 m
-  in about an hour → `data/worlds/cascade-world-1-howe-sound`, 4 m export
-  `data/exports/cascade-world-1-howe-sound-4m`.
+- **[Class conditioning](plans/class-conditioning-v1.md)** (2026-10-03 to 10-05): all
+  four models had ignored the terrain class. Class gates (recognition and per-class
+  roughness with the coarse input hidden), class embedding, balanced and mixed-class
+  windows, coarse dropout and blur fixed that. Releases `context-v5` (all 127 GLO-30
+  regions voted), `lidar-v3` (79 accepted lidar regions) and `diffusion-v9` (160 1 m tiles).
+- **Authored layouts:** the Fujion [brief and spec](../configs/layouts/fujion/brief.md)
+  render to L0 with `topography world layout`, with an overview, reachability check
+  and reference sheet (`layout.py`). The layout is then painted in GIMP (`paint.py`:
+  `export`, `import`, `relabel`, `transplant`, `roughen`); the map border is sea.
+- **[Biome forms](plans/biome-forms-v1.md)** (2026-10-07 to 10-11), from the
+  [2026-10-07 expert review](reports/expert-review-2026-10-07.md):
+  - legend v3: 18 classes with subclasses (layered canyons, cone karst, drowned karst,
+    crest-train dunes, cinder cones, plain), per-cell glacier and plain labels;
+  - real exemplars held at L1 for craters, calderas, cinder cones and drowned karst;
+  - streams reach the sea, follow smoothed paths and have descending beds;
+  - snow and tree lines follow aspect, slope, gullies and noise;
+  - form channels (roughness, flats, peaks, hollows, direction) at every level and
+    local 128-cell L1 windows.
+
+  Current models, all on legend v3 with form channels and passing their gates:
+
+  | Level | Run | Data | Roughness rank, coarse shown |
+  | --- | --- | --- | --- |
+  | L1 128 m | `cascade-l1-run-6` | `context-v5` | 0.97 |
+  | L2 32 m | `cascade-l2-run-8` | `context-v5` | 0.82 |
+  | L3 4 m | `cascade-l3-run-4` | `lidar-v3` | 0.93 |
+  | L4 1 m | `cascade-l4-run-7` | `diffusion-v9` | 0.90 |
+- **Export and viewing:** 16-bit heightmap tiles (257² `shared_edge`) named
+  `{layer}_L{level}_{tx}_{ty}`, quadtree LOD levels, mask, land-cover and biome tiles,
+  `checksums.txt`, and COG masters with `--masters`. Export streams row by row (32 km
+  at 1 m in about 13 min, under 200 MB). The loopback 3D viewer shows biome colours.
+- **Fujion at 32 km and 1 m (2026-10-11):** `data/worlds/fujion-v3-chain-14-l4`, L3 in
+  66 min and 1 m bands in 1,010 min; export `data/exports/fujion-v3-chain-14-l4`
+  (1.1 GB without masters).
 
 ## Next
 
-0. **Class conditioning** comes first:
-   [class conditioning, step 4](plans/class-conditioning-v1.md#steps).
-   1. Done (2026-10-04): gates v2, the guidance experiment (not enough alone), the
-      fully voted `lidar-v3`, `--scale-shift` and `--coarse-blur`.
-   2. Done (2026-10-05): L3 run 2 and L2 run 6 with the new recipe. On the painted
-      Fujion layout, per-class roughness follows real terrain at L2 (rank 0.82) and
-      is within ±30% for 7 of 9 classes at L3. Current cascade: L1 run 4, L2 run 6,
-      L3 run 2 (`data/worlds/fujion-painted-chain-6`).
-   3. Done: owner review of chain 6 (better, but biomes still too similar; accepted
-      for now). `context-v5` and `diffusion-v9` released.
-   4. L4 run 6 (2026-10-05, 8 h), then 1 m on Fujion and an owner review.
-
-   Background: [expert review](reports/expert-review-2026-10-04.md).
-1. Owner review of the first world at 4 m; then L4 at 1 m (about 12 h of GPU, or
-   a 16 km square in about 3 h first) and export.
-2. [World layout spec](plans/world-layout-spec-v1.md): authored layouts rendered to
-   L0 rasters (class map, envelope, feature lines) instead of layouts derived from
-   real regions.
-3. Open cascade issues ([hydrology and data issues from the expert review](plans/terrain-cascade-v1.md#gates-and-fallbacks)): rivers entering from outside the world need a layout
-   input; generated mesas and dunes are softer than real at L1/L2; some generated
-   islands have rounded outlines.
+1. Owner review of Fujion chain 14 at 1 m.
+2. Generated canyons, badlands and dunes still have too few
+   flats (L1 surfaces stay sloped).
+3. Rivers entering from outside the world need a layout input.
+4. A 64 km world after the biomes are accepted; then regional reruns and editing
+   (master plan §9).
 
 Details: [source coverage](reports/pilot-source-coverage-v1.md),
 [automatic preparation](reports/automatic-preparation-rollout-v1.md),

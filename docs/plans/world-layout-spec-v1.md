@@ -1,6 +1,9 @@
 # World layout spec v1
 
-Status: planned 2026-09-29, not implemented. This is the process for agreeing on
+Status: planned 2026-09-29; steps 1–6 implemented 2026-10-03 for Fujion
+(`configs/layouts/fujion/`, `topography world layout`, `layout.py`), with the L0 then
+painted in GIMP (`paint.py`, see the [cascade workflow](../workflows/terrain-cascade.md#authoring-a-layout)).
+The spec is not yet validated by `topography validate`. This is the process for agreeing on
 a world before any generation. It feeds level L0 of the
 [terrain cascade](terrain-cascade-v1.md).
 

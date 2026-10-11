@@ -15,15 +15,25 @@ The [master plan](docs/plans/terrain-design-master-plan.md) defines the project;
   game cover (snow/ice, vegetation, water, land cover) automatically.
 - **Context regions:** 32 m Copernicus GLO-30 regions with a GEBCO seabed and
   4 m regions averaged from public lidar, each voted on, train the coarse levels.
+- **Authored layouts:** a written brief and `layout.toml` render to a 128 m layout
+  (`topography world layout`), which is then painted as layers of one GIMP file:
+  height, roughness and terrain class. Real exemplars fill painted craters,
+  calderas, cinder cones and drowned karst; a painted volcano can be replaced by a
+  real one.
 - **Terrain cascade:** four residual diffusion models (128 m, 32 m, 4 m, 1 m)
-  refine a layout level by level. Drainage, lakes, tarns and streams come from the
-  generated terrain; terrain continues under the sea. A 32 km world generates at
-  4 m in about an hour and at 1 m in bands overnight.
-- **Export:** 16-bit heightmap tiles (default 257² `shared_edge`), quadtree LOD
-  levels, mask tiles and Float32 COG masters, plus a local 3D viewer.
+  refine a layout level by level. They follow the per-cell terrain class (legend v3,
+  18 classes) and its form channels (roughness, flats, peaks, hollows, direction); the
+  current models pass their class gates. Drainage, lakes, tarns and streams come
+  from the generated terrain; terrain continues under the sea. Snow and tree lines
+  follow aspect, slope and gullies. A 32 km world generates at 4 m in about an hour
+  and at 1 m in about 17 hours of bands.
+- **Export:** 16-bit heightmap tiles (default 257² `shared_edge`) with quadtree LOD
+  levels, mask, land-cover and biome tiles, SHA-256 checksums and optional Float32
+  COG masters, plus a local 3D viewer.
 
-Processing success never approves terrain: source tiles, regions and models each
-pass an explicit human review.
+Processing success never approves terrain: source tiles, regions, models and worlds
+each pass an explicit human review. The latest 32 km world at 1 m (Fujion, from the
+current models) awaits the owner's review; regional reruns and editing are planned.
 
 ## Workflows
 
@@ -32,7 +42,7 @@ pass an explicit human review.
 | Add source tiles and vote on them | [Batch download and gallery](docs/workflows/batch-source-review.md) |
 | Acquire or import a single DEM | [DEM acquisition](docs/workflows/dem-acquisition.md) |
 | Build and vote on context regions | [Context regions](docs/workflows/context-regions.md) |
-| Train cascade levels, generate and export a world | [Terrain cascade](docs/workflows/terrain-cascade.md) |
+| Paint a layout, train cascade levels, generate and export a world | [Terrain cascade](docs/workflows/terrain-cascade.md) |
 | Build the 1 m training release | [Terrain diffusion](docs/workflows/terrain-diffusion.md) |
 | Draft cover masks for one crop | [Cover acquisition](docs/workflows/cover-acquisition.md) |
 
@@ -82,7 +92,7 @@ cargo run --locked --offline -p topography-cli -- --help
 cargo run --locked --offline -p topography-cli -- --version
 cargo run --locked --offline -p topography-cli -- validate world configs/worlds/pilot.toml
 cargo run --locked --offline -p topography-cli -- validate runtime configs/runtime.example.toml
-cargo run --locked --offline -p topography-cli -- validate legend catalog/labels/terrain-v1.toml
+cargo run --locked --offline -p topography-cli -- validate legend catalog/labels/terrain-v3.toml
 cargo run --locked --offline -p topography-cli -- validate source examples/manifests/source-v1.toml
 bash scripts/check.sh
 ```

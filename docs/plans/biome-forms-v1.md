@@ -1,6 +1,6 @@
 # Biome forms v1
 
-Status: in progress (2026-10-07). This plan carries out steps 1–3 of the
+Status: steps 1–4 done (2026-10-11); Fujion at 32 km and 1 m awaits owner review. This plan carries out steps 1–3 of the
 [expert review of 2026-10-07](../reports/expert-review-2026-10-07.md), which the owner
 chose after looking at Fujion at 1 m. It refines the
 [class conditioning plan](class-conditioning-v1.md); the
@@ -380,9 +380,9 @@ took 14 min of bands, the same speed as before, so 32 km takes about 15 h. The f
 
 The other review suggestions wait for the results of the retraining:
 
-- form channels;
-- local L1 windows;
 - per-subclass adapters;
 - new source regions.
+
+Form channels and local L1 windows became step 4.
 
 The 64 km world comes after the biomes are accepted.
