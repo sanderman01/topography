@@ -43,6 +43,18 @@ steps of up to several meters that follow the texel staircase. Cross-sections ar
 - Fix: carve with a smooth profile (for example a cosine cross-section) driven by distance to
   the river centerline, not by the binary mask.
 
+### Streams one texel wide, some ruler-straight across ridges
+
+Some streams are a single texel wide, and some of those run as a perfectly straight 45-degree
+line that ignores the terrain, crossing ground several meters higher than its surroundings
+instead of following a valley.
+
+- Seen: the stream through level 0 tile (15, 16), around (4030, 4305), on ground at 5 to 10 m.
+- Workaround: the game widens water thinner than about 6 m before shaping and draws narrow water
+  from a finer mask level; otherwise such streams rendered as a dark, near-transparent film.
+- Fix: give streams a minimum width (or a width from flow accumulation) and route them along
+  the terrain's drainage, never in straight lines.
+
 ### Lakes are flattened along the mask, and the two disagree
 
 Lakes are flattened to their surface, but only where the mask is set, and the mask also covers
