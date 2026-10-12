@@ -64,8 +64,10 @@ pokes out of the lake, and parts of the bed sit tens of meters lower.
 
 - Workaround: the game takes each wet vertex's level from the lowest wet ground around it,
   never the highest, and treats only narrow water as flowing.
-- Fix: flatten the whole lake area to one surface elevation, then derive the mask from the
-  flattened area so both always agree.
+- Fix: give each lake one water surface elevation over its whole area and derive the mask from
+  that area, so both always agree. Keep the lake bed below the surface: do not flatten the ground
+  itself (`hydrology.py::drain()` currently replaces it with `np.where(keep, filled, h)`). The game
+  needs the real depth for water color and to place boats.
 
 ### Some lakes have rectangular outlines
 
@@ -163,33 +165,84 @@ diagnosed. It may be a biome or land-cover tile with a different class.
 - Fix: check the class layers around level 0 tiles (66, 98) to (67, 99) for a whole-tile
   class change.
 
-## Goal: water drawn on the terrain
+## How the game will draw water
 
-Ideally the game draws water with the regular terrain geometry: the terrain's pixel shader branches
-per pixel between ground and water, with no separate water meshes, skirts or shaping of a second
-mesh to match the first. Most water rendering artifacts so far came from two meshes disagreeing:
-gaps and seams between water tiles, skirts showing through, water creeping up the terrain, and
-triangles showing in the surface.
+Decided in the game's water plan (`airshipgame/PLAN-water.md`):
 
-That needs, per texel and filterable:
+- Rivers, streams and lakes are drawn by the terrain's own pixel shader. For each terrain pixel
+  under water it intersects the view ray with the water surface, shades the water there and writes
+  that surface's depth, so boats and other objects below the waterline are hidden. There are no
+  separate inland water meshes, skirts or game-side shaping of the ground any more.
+- The sea is a flat surface at sea level from the shoreline to the horizon, shaded with the same
+  data.
+- All the workarounds listed above are deleted once an export provides the data below.
 
-- a signed distance to the shoreline, to decide water or ground per pixel and blend the two;
-- the water surface elevation, so the shader knows the depth for color, transparency and foam;
-- flow (or flow accumulation) and water type, for animated flow, rapids and surf.
+## Water data contract for the next export
 
-Terrain geometry follows the ground, so the water surface would be drawn on the bed rather than at
-its own height. That suits rivers and shallow water, seen from above; deep lakes and the sea seen
-at grazing angles may still need a flat surface (for example a separate sea plane), so this needs
-testing before committing to it.
+### Required layers
 
-## Wishlist for the next export
+Per level and tile, on the same grid as the heights:
 
-- Water as a signed distance field, not binary.
-- Smooth river cross-sections, carved by distance to the centerline.
-- Lakes flattened over their full area, with the mask derived from that area.
-- Connected river networks.
-- Water surface elevation, flow and type layers.
-- Filtered levels of detail: averaged heights and coverage, majority classes.
-- An overlap apron around each tile (about 48 texels of the neighbors' data). The game shapes
-  ground and water near rivers with neighborhood operations, and without an apron it has to read
-  up to eight neighbor files per tile so that adjacent tiles agree on their shared edge.
+| Layer | Meaning |
+| --- | --- |
+| Ground elevation | The bed under water, not flattened. Lakes keep their bathymetry. |
+| Water surface elevation | One value per lake; a continuous profile along rivers, also through junctions and into lakes; 0 for the sea. Extended a few texels past the shoreline (nearest water value) so it can be filtered across the waterline. |
+| Shoreline signed distance | Meters to the nearest shoreline, positive in water, negative on land, saturated at a documented distance (for example 64 m). |
+| Water coverage | Area fraction of each texel under water, filtered per level independently of the distance field, so streams narrower than a texel keep their contribution at coarse levels. |
+| Water type fractions | Fractions of sea, lake and river per texel that sum to the coverage. Never a majority-filtered class: minority types must survive filtering. |
+| Water body id | A stable id per connected lake or river system, sampled without filtering. Lets the game keep one surface per lake and never blend levels of two different lakes. |
+| Surface velocity | Map X and Z in m/s, with exact zero for still water. Document how it is estimated (routing, Manning n, assumed channel geometry). |
+
+Plus metadata in the manifest: encodings, units, datum, sample placement, apron size, a schema
+version, and what missing data means.
+
+### Optional layers (do not block the export on them)
+
+- Breaking potential for rapids (for example slope times discharge), 0 to 1.
+- Sea exposure: how open a coast is to swell, 0 to 1.
+- Optical subtype (clear, dark humic, turbid or glacial) and shore material (rock, sand, mud).
+- Vector data per map: river polylines (width, surface elevation, discharge per node), lake
+  polygons and levels, waterfall points. Useful for VFX, audio and labels.
+
+### Repairs before deriving the layers
+
+The distance field and the other layers only help if the geometry they come from is right:
+
+1. Separate bed and water surface (see "Lakes are flattened along the mask").
+2. Connected river networks: every river reaches a lake, the sea, a confluence or the map edge.
+3. Routing along the terrain's drainage; no straight streams across ridges.
+4. No rectangular lake outlines.
+5. Lake outlets and river levels consistent with the lake's surface.
+6. Sea defined by connection to open water, not by height alone.
+7. River beds carved with a smooth cross-section below a continuous surface, width and depth from
+   discharge. No universal minimum width; state the source resolution limit instead.
+8. Mouths with a plausible profile down into the sea, bars only where a flat river deposits
+   sediment.
+9. Shore profiles by shore type (rock, sand, mud), not one beach rule everywhere.
+
+### Filtering rules for coarser levels
+
+- Build each level from a global pyramid before cutting tiles, so neighbors agree on shared edges.
+- Area-average heights and coverage; never decimate.
+- Never average water surface elevations across different water bodies.
+- Do not let coarse terrain fill channels or lake margins that are still visible at that level;
+  export error bounds or another way for the game to detect it.
+- Keep each lake's surface elevation identical at every level.
+
+### Aprons
+
+The game no longer reshapes ground near water, so the large neighborhood apron (about 48 texels)
+is no longer needed. An apron only has to cover the game's filter kernel: start with 4 texels at
+every level (cubic B-spline sampling needs 2).
+
+### Validation the exporter should run
+
+- Water surface at or above the bed wherever coverage is set.
+- One surface elevation per lake id, at every level.
+- Distance field sign agrees with coverage at the finest level.
+- Velocity exactly zero in lakes.
+- Shared tile edges identical between neighbors at every level.
+
+### Not needed
+
+Horizon or sky-openness data: deferred.
