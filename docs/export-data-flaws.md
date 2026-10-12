@@ -127,3 +127,6 @@ diagnosed. It may be a biome or land-cover tile with a different class.
 - Connected river networks.
 - Water surface elevation, flow and type layers.
 - Filtered levels of detail: averaged heights and coverage, majority classes.
+- An overlap apron around each tile (about 48 texels of the neighbors' data). The game shapes
+  ground and water near rivers with neighborhood operations, and without an apron it has to read
+  up to eight neighbor files per tile so that adjacent tiles agree on their shared edge.
