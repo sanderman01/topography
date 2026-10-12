@@ -1,0 +1,19 @@
+docs/export-data-flaws.md
+  s_c614c157520730::t_69eb11398a3cb7 46-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1bdd8801f1a3a94c893e288b0866ee00f705d8eb",
+  "prompts": {},
+  "sessions": {
+    "s_c614c157520730": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "89d58b8c-4ed5-4d2f-a419-fe6b179f1671",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
