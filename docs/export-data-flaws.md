@@ -68,6 +68,17 @@ Streams end a few texels before the lake they run into, leaving a dry gap.
 - Fix: guarantee river connectivity in the export: each river reaches a lake, the sea, a
   confluence or the map edge.
 
+### Rivers reach the coast above sea level
+
+River beds stay 2 to 4 m above sea level until about 15 m from the coast, and the wet ground
+between them and the sea lies 0 to 2 m above it. A river therefore ends in a step above a strip of
+dry beach instead of running into the sea.
+
+- Seen: the river mouth at about (4225, 12270).
+- Workaround: near a river's end the game sinks that strip under the sea and eases the river's
+  surface and bed down to sea level over about ten vertices.
+- Fix: carve river beds down to sea level (or below) where they meet the sea.
+
 ### No water surface elevation, flow direction or water type
 
 The export has no layer for the water's surface elevation, flow direction or whether water is a
