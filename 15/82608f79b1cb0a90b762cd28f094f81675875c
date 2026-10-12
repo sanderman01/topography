@@ -1,0 +1,19 @@
+docs/game-vegetation-data-requests.md
+  s_f8fd7bc15ed5ad::t_9e0e41fed1c763 1-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1582608f79b1cb0a90b762cd28f094f81675875c",
+  "prompts": {},
+  "sessions": {
+    "s_f8fd7bc15ed5ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30b2e07c-e88d-4cc0-84c8-307cbd679c38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
