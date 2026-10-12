@@ -20,9 +20,17 @@ the coastline are staircases with 1 m steps, and diagonal streams are chains of 
   (8680, 15800).
 - Workaround: the game reconstructs a smooth outline from a B-spline of a blurred mip of the
   mask, and hides what is left under foam.
-- Fix: export water as coverage (8-bit fraction of each texel under water) or, better, as a
-  signed distance to the shoreline in meters. Either can be resampled and thresholded without
-  stairs.
+- Fix: replace the on/off mask with a signed distance field: meters to the nearest shoreline,
+  negative on land, positive in water. It resamples and thresholds without stairs at any level of
+  detail, and the game would use it for:
+  - blending terrain color into water and wet banks by distance, not by a blurred binary mask;
+  - flow and foam: shore foam by distance to the bank, river width from the distance at the
+    centerline, and flow fields that do not turn toward stair-stepped banks;
+  - flattening: smooth bank profiles and water surfaces shaped by distance from the shore, instead
+    of the game's own mask closing, blurring and sinking.
+
+  Coverage (fraction of each texel under water) would be a smaller step, but loses the distance
+  information the uses above need.
 
 ### Rivers are carved along the mask's texels
 
@@ -79,6 +87,19 @@ dry beach instead of running into the sea.
   surface and bed down to sea level over about ten vertices.
 - Fix: carve river beds down to sea level (or below) where they meet the sea.
 
+### River mouths are shallow
+
+Even once a river reaches sea level, its bed at the mouth lies just under the surface, much
+shallower than the sea beside it. Rendered, the mouth is a pale strip of sandy shallows and shore
+foam between the river and the sea, which looks wrong for a steep stream that should run straight
+into open water.
+
+- Seen: the river mouth at about (4225, 12270).
+- Workaround: the game deepens the bed toward the sea, ending 2.5 m deeper at the coast, and lets
+  the banks slope down into it.
+- Fix: carve mouths as deep as the sea next to them, with depth depending on the river: deep for
+  steep streams, shallow bars only where a flat river deposits sediment.
+
 ### No water surface elevation, flow direction or water type
 
 The export has no layer for the water's surface elevation, flow direction or whether water is a
@@ -130,9 +151,28 @@ diagnosed. It may be a biome or land-cover tile with a different class.
 - Fix: check the class layers around level 0 tiles (66, 98) to (67, 99) for a whole-tile
   class change.
 
+## Goal: water drawn on the terrain
+
+Ideally the game draws water with the regular terrain geometry: the terrain's pixel shader branches
+per pixel between ground and water, with no separate water meshes, skirts or shaping of a second
+mesh to match the first. Most water rendering artifacts so far came from two meshes disagreeing:
+gaps and seams between water tiles, skirts showing through, water creeping up the terrain, and
+triangles showing in the surface.
+
+That needs, per texel and filterable:
+
+- a signed distance to the shoreline, to decide water or ground per pixel and blend the two;
+- the water surface elevation, so the shader knows the depth for color, transparency and foam;
+- flow (or flow accumulation) and water type, for animated flow, rapids and surf.
+
+Terrain geometry follows the ground, so the water surface would be drawn on the bed rather than at
+its own height. That suits rivers and shallow water, seen from above; deep lakes and the sea seen
+at grazing angles may still need a flat surface (for example a separate sea plane), so this needs
+testing before committing to it.
+
 ## Wishlist for the next export
 
-- Water as coverage or signed distance, not binary.
+- Water as a signed distance field, not binary.
 - Smooth river cross-sections, carved by distance to the centerline.
 - Lakes flattened over their full area, with the mask derived from that area.
 - Connected river networks.
