@@ -184,12 +184,17 @@ decimated.
 | `water-coverage` | 8-bit area fraction | 1 m | Mean | Streams narrower than a texel keep their share |
 | `water-body` | 16-bit id | 1 m | None, sampled | Ids match `description.json`, which gives each body's type: sea, lake or river |
 | `biome` | 8-bit ids, dithered borders | 2 m | Mode | |
-| `land-cover` | ESA WorldCover codes | 2 m | Mode | |
+| `land-cover` | ESA WorldCover codes, dithered borders | 2 m | Mode | |
 | `vegetation-density` | 8-bit, 0 to 1 | 2 m | Mean | Procedural, from moisture, treeline and slope |
 | `snow-cover` | 8-bit, 0 to 1 | 2 m | Mean | Soft edges |
 | `talus-density` | 8-bit, 0 to 1 | 2 m | Mean | Procedural, scree fans below steep rock |
 | `moisture` | 8-bit, 0 to 1 | About 128 m | Mean | Coarse levels only |
 
+- Land cover is dithered like the biome layer. Each hard rule in `landcover.py` becomes a ramp:
+  forest from `vegetation-density`, snow from `snow-cover`, bare rock over a slope band around
+  35 degrees, grass to bare ground over a band above the tree line. A blue-noise value per
+  texel picks the class, so forest edges, snow lines and scree margins read as a fine mix
+  instead of a line. The blue noise is the collage's, moved to a shared helper.
 - Water files exist only for tiles that hold water. The manifest states that a missing water
   file means no water in that tile.
 - `manifest.json` gains `legends` in the shape the game asked for in
