@@ -1,0 +1,39 @@
+configs/layouts/fujix/layout.toml
+  s_8c1b40ea9c1e0d::t_5f6fde1af7cbc2 100,102
+  s_8c1b40ea9c1e0d::t_5855f58f52881d 126-128
+  s_8c1b40ea9c1e0d::t_56c1cdb7a1c10a 121-122,124-125
+  s_8c1b40ea9c1e0d::t_7e066b47b21cd9 400,405
+  s_8c1b40ea9c1e0d::t_fd11ba1f7333f1 434
+  s_8c1b40ea9c1e0d::t_ba2f057dd6d708 356-358
+  s_8c1b40ea9c1e0d::t_4e7c397b66acde 78
+  s_8c1b40ea9c1e0d::t_ab96db6b70bd39 99
+  s_8c1b40ea9c1e0d::t_24ba55d869a41f 74-75,80,82,87-90,92
+  s_8c1b40ea9c1e0d::t_df6995362307cb 444-446
+  s_8c1b40ea9c1e0d::t_95cb9e3f53c27e 137
+  s_8c1b40ea9c1e0d::t_2db540ba8605cf 427,430-433,435-437
+  s_8c1b40ea9c1e0d::t_6e89e896e10333 79
+  s_8c1b40ea9c1e0d::t_057299644dc793 101
+  s_8c1b40ea9c1e0d::t_e6e129bcc0a0fc 77
+  s_8c1b40ea9c1e0d::t_abd0e7cf4b69b0 30
+  s_8c1b40ea9c1e0d::t_9a72b94c53dd5e 448
+  s_8c1b40ea9c1e0d::t_0aef1652af4aea 76
+  s_8c1b40ea9c1e0d::t_91d574b266f7ed 91
+  s_8c1b40ea9c1e0d::t_10a89dcdc8a9cb 123
+  s_8c1b40ea9c1e0d::t_9e95a33b7c6362 86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab917eded9e0c7c1a3e20229d44e2d5435331718",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
