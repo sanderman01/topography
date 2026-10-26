@@ -25,7 +25,8 @@ The [master plan](docs/plans/terrain-design-master-plan.md) defines the project;
   (`topography world layout`), which is then painted as layers of one GIMP file:
   height, roughness and terrain class. Real exemplars fill painted craters,
   calderas, cinder cones and drowned karst; a painted volcano can be replaced by a
-  real one.
+  real one. Collage layouts (`configs/layouts/fujix/`) instead blend real GLO-30
+  pieces into a 32 m world with classes, regions and a world description.
 - **Terrain cascade:** four residual diffusion models (128 m, 32 m, 4 m, 1 m)
   refine a layout level by level. They follow the per-cell terrain class (legend v3,
   18 classes) and its form channels (roughness, flats, peaks, hollows, direction); the

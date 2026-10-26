@@ -11,8 +11,9 @@ prepares accepted tiles with game cover automatically; it also builds context
 regions, training releases and streamed 16-bit heightmap exports. The Python
 `training/` package trains and runs the four-level terrain cascade (128 m, 32 m,
 4 m, 1 m diffusion models conditioned on per-cell terrain class and form channels,
-all passing their class gates) and generates worlds from layouts painted in GIMP,
-with 1 m detail in resumable bands. Regional reruns and editing remain planned.
+all passing their class gates) and generates worlds from agent-authored layouts:
+collages of real GLO-30 pieces (Fujix) or, earlier, layouts painted in GIMP
+(Fujion), with 1 m detail in resumable bands. Regional reruns and editing remain planned.
 Preset values remain draft pilot choices; processing does not create human acceptance.
 
 Read [README.md](README.md) for setup and the
