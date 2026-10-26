@@ -70,7 +70,7 @@ remap = [400, 1500, 250, 1350]
 [[regions]]
 id = "canyon-plateau"
 name = "Grand Canyon plateau"
-class_id = 13
+class_id = 19  # Grand Canyon; L1 and L2 run it as 13
 terrain = "Plateau cut by a Grand Canyon section; the river runs north-east from the volcano to the sea"
 # A diagonal from the volcano's north-west flank to the north coast, where the canyon opens into the sea.
 outline = [[23400, 23600], [24200, 25600], [26600, 26700], [28000, 26600], [31500, 23500], [36500, 24840], [38500, 25500],

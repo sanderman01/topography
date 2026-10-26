@@ -63,7 +63,7 @@ the region with the largest blend weight, so the land areas add up to the island
 | --- | ---: | --- | ---: | --- | ---: |
 | Fujix volcano | 11 | Kilimanjaro (Kibo at the centre, Shira west, Mawenzi east) | 331 | 650 to 3,620 | 4,972 |
 | North-east rift | 17 | Etna (two crops of its flank cone fields) | 114 | 170 to 1,350 | 1,634 |
-| Grand Canyon plateau | 13 | Grand Canyon | 353 | 320 to 2,110 | 2,385 |
+| Grand Canyon plateau | 19 | Grand Canyon | 353 | 320 to 2,110 | 2,385 |
 | North coast mesas | 7 | Canyonlands (two crops), Bardenas Reales | 115 | 40 to 1,170 | 1,737 |
 | North-west knife ridges | 6 (12 cliffs) | High Tatras, Na Pali (west coast) | 220 | 140 to 1,580 | 1,854 |
 | North-west skerries | 5 | Broughton Archipelago | 6 | 0 to 90 | 125 |
