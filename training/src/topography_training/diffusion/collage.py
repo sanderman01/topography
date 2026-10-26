@@ -149,32 +149,32 @@ def fill_smooth(a: np.ndarray, known: np.ndarray) -> np.ndarray:
     while min(num[-1].shape) > 4:
         num.append(_down(num[-1]))
         den.append(_down(den[-1]))
-    est = num[-1] / np.maximum(den[-1], 1e-6)
+    from scipy import ndimage
+
+    est = num[-1] / np.maximum(den[-1], 1e-12)
     for nu, de in zip(reversed(num[:-1]), reversed(den[:-1])):
-        # Finer averages take over where enough known cells are near.
+        # Finer averages take over where enough known cells are near; the blur removes bilinear kinks.
         t = np.clip(2 * de, 0, 1)
-        est = t * nu / np.maximum(de, 1e-6) + (1 - t) * _up(est, nu.shape)
+        est = t * nu / np.maximum(de, 1e-12) + (1 - t) * ndimage.gaussian_filter(_up(est, nu.shape), 1.0)
     return np.where(known, a, est).astype(np.float32)
 
 
-def region_surface(r: Region, srcs: dict[str, Source], x: np.ndarray, y: np.ndarray):
-    """Heights (filled smoothly past the pieces), classes and covered cells."""
+def region_surface(r: Region, srcs: dict[str, Source], x: np.ndarray, y: np.ndarray, noise: np.ndarray):
+    """Heights (filled smoothly past the pieces), classes dithered by piece weight, and covered cells."""
     num = np.zeros(x.shape, np.float32)
     den = np.zeros(x.shape, np.float32)
-    best = np.zeros(x.shape, np.float32)
-    cls = np.full(x.shape, r.class_id, np.uint8)
+    # The region's own class wherever no piece reaches.
+    classes, weights = [np.full(x.shape, r.class_id, np.uint8)], [np.full(x.shape, 1e-4, np.float32)]
     for p in r.pieces:
         src = srcs[p.source]
         h, c, w = place(p, src, x, y)
         num += w * h
         den += w
         # The source's own class becomes the region's (or the piece's); glacier, alpine and plain cells stay.
-        c = np.where(c == src.class_id, p.class_id or r.class_id, c).astype(np.uint8)
-        better = w > best
-        cls[better] = c[better]
-        best = np.maximum(best, w)
+        classes.append(np.where(c == src.class_id, p.class_id or r.class_id, c).astype(np.uint8))
+        weights.append(w)
     covered = den > 1e-3
-    return fill_smooth(num / np.maximum(den, 1e-6), covered), cls, covered
+    return fill_smooth(num / np.maximum(den, 1e-6), covered), dither(classes, weights, noise), covered
 
 
 def weight(sd: np.ndarray, border_m: float) -> np.ndarray:
@@ -448,9 +448,10 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
     out.mkdir(parents=True)
     x, y = grid(n)
     sds, surfaces, classes, covered = [], [], [], []
+    piece_noise = blue_noise(n, seed=1)  # independent of the region dither below
     for r in regions:
         sds.append(description.polygon_sd(r.outline, n, CELL_M))
-        h, c, cov = region_surface(r, srcs, x, y)
+        h, c, cov = region_surface(r, srcs, x, y, piece_noise)
         surfaces.append(h)
         classes.append(c)
         covered.append(cov)
