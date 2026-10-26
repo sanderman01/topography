@@ -90,9 +90,12 @@ level; it is not overridden by a good blind review.
 5. **Grand Canyon and dithered borders** ([fujix](fujix-v1.md), L3 and L4 runs that
    train class 19). Class 19 against 13 and against plain: generated residuals of the
    two classes must lie further apart in the classifier's feature space than two seeds
-   of class 19, and at least 70% as far apart as the real classes' centroids. A dithered border against a hard one: the output near the border must
-   change more than far from it, and follow the dither (cells dithered to a class come
-   out closer to that class's output than under the hard line).
+   of class 19, and at least 70% as far apart as the real classes' centroids (plain:
+   real windows at least 80% plain; skipped where plain is untrained). A dithered border
+   must give a gradual transition without a seam: in the band the output lies between
+   the two classes' outputs, and its Grand Canyon side looks more like the Grand Canyon
+   than its far side. Details in the
+   [cascade workflow](../workflows/terrain-cascade.md#grand-canyon-and-dithered-borders-fujix).
 
 Baseline of the current runs (`class_gates`, 2026-10-03; recognition is the share of
 generated windows recognised as their requested class, against the classifier's

@@ -272,6 +272,8 @@ around it, about 5 km² in all, stay above every band.
   Coconino surface (about 35 km² of the 353 km² canyon region, mostly at x 28 to 34,
   y 8 to 14 km) keep their source's plain class (18), so the class map shows plain
   patches there.
+- In build 55, 98 cells of the 128 m class map (`class.u8`, about 1.6 km² of canyon edge)
+  became 16, 17 or 18 instead of the canyon class: majority ties go to the lowest id.
 - The far SW arm is lower and smoother than its pieces. The arm is narrow, so the
   blend's coarse levels mix in a lot of sea. Aoraki's Main Divide at the tip ends near
   700 m.

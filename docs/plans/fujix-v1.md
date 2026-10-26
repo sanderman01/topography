@@ -176,7 +176,8 @@ Implemented (2026-10-26; how to run it in [the cascade workflow](../workflows/te
 the single accepted Grand Canyon lidar region is trained as four reaches, three train and
 the south-west one held out, so class 19 has three L3 sources without a new vote. The five
 1 m Grand Canyon tiles keep their northing bands. Training dithers borders with
-`--dither-m 1500` (bands of 0 to 1.5 km, hard in a quarter of windows). `fujix-collage-55`
+`--dither-m 3000` (bands of 0 to 3 km, hard in a quarter of windows); the models learn a
+gradual transition across a dithered band, not cell-by-cell interleaving. `fujix-collage-55`
 is build 54 with the canyon plateau as class 19: identical heights and report.
 
 ## 4. Export

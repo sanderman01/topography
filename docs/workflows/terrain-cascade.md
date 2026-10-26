@@ -102,23 +102,38 @@ held out; the north-west one is only 23% surveyed and gives few windows. Reaches
 training releases only (`cascade.load_regions`); other readers see the whole region. At L4
 the five tiles are split by northing bands as usual.
 
-`--dither-m 1500` dithers the class borders of the per-cell labels and of mixed windows
+`--dither-m 3000` dithers the class borders of the per-cell labels and of mixed windows
 with blue noise (`borders.py`, shared with the collage), across a band drawn per window
-from 0 to 1.5 km, hard in a quarter of the windows. The dither works on the 32 m label
-grid, like the collage's `class32.u8`.
+from 0 to 3 km (fujix's `border_m` is 2 to 4.5 km), hard in a quarter of the windows. The
+dither works on the 32 m label grid, like the collage's `class32.u8`. The truth under a
+dithered band still follows the original border, so the models learn a gradual
+transition across the band, not cell-by-cell interleaving. With `--balanced` the reaches
+of one region count as one region, so each reach is drawn by its share of windows. Per-cell
+labels of a reach are worked out on the whole region (plain threshold included).
 
-`class_gates` adds, for runs that train class 19: Grand Canyon against 13 and against
-plain (residuals of the two classes further apart in the classifier's features than two
-seeds, and at least 70% as far apart as the real classes' centroids), and a dithered border against a hard one (the output near the border changes
-more than far from it, and each label cell comes out closer to its own class's output
-under the dither than under the hard line). They are under `grand_canyon` in `gates.json`
-and count towards the exit status.
+`class_gates` adds, for runs that train class 19 (`--gc-windows`, default 8 validation
+windows, class 19 first; under `grand_canyon` in `gates.json`, counted in the exit status):
+
+- Grand Canyon against 13 and against plain. Residuals of the two classes must be further
+  apart in the classifier's features than two seeds of class 19, and at least 70% as far
+  apart as the real classes' centroids. Plain's real centroid comes from real windows that
+  are at least 80% plain by per-cell label; without a real centroid the floor is 70% of the
+  real 19-to-13 distance. Where the level does not train plain (L4 maps it to 0, the
+  class-dropped input), vs_plain is skipped.
+- A dithered border: Grand Canyon west, the other class east (plain, else 16 if trained,
+  else 13), dithered across half the window. In the band the output must lie between the
+  two classes' uniform outputs (closer to each than they are to each other), and cells on
+  the Grand Canyon side of the band must come out closer to the Grand Canyon output more
+  often than cells on the far side.
+
+Gates rerun on runs from before the reaches hold out reach r2, which those runs trained
+on, so their results are slightly optimistic.
 
 Runs to launch (about 6 h and 8 h, GPU, 7 GB RAM cap):
 
 ```sh
 CAP=(systemd-run --user --scope -q -p MemoryMax=7G)
-COMMON=(--class-embedding --scale-shift --balanced --mix 0.25 --forms --dither-m 1500)
+COMMON=(--class-embedding --scale-shift --balanced --mix 0.25 --forms --dither-m 3000)
 "${CAP[@]}" $P -m topography_training.diffusion.train --release data/datasets/lidar-v3/release.json --level l3 \
     --run-dir data/models/cascade-l3-run-5 --channels 64,96,128,192,256 "${COMMON[@]}" \
     --coarse-dropout 0.25 --coarse-blur 0.5 --hours 6

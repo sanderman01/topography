@@ -11,7 +11,6 @@ from functools import lru_cache
 
 import numpy as np
 
-TRAIN_BAND_M = 1500.0  # training band widths are drawn from 0 to this
 TRAIN_HARD_SHARE = 0.25  # share of training windows that keep hard borders
 NOISE_TILE = 256  # training noise: one tileable blue-noise tile, read at random offsets
 

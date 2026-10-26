@@ -44,7 +44,7 @@ def _parse(argv):
                    help="cascade L2-L4: share of windows whose coarse surface is smoothed further")
     p.add_argument("--dither-m", type=float, default=0.0,
                    help="cascade L2-L4: dither class borders across random bands up to this wide, in metres "
-                        "(borders.py; fujix runs use 1500)")
+                        "(borders.py; fujix runs use 3000, its borders are 2 to 4.5 km)")
     p.add_argument("--forms", action="store_true",
                    help="cascade: form channels (roughness, flats, peaks, hollows, direction; forms.py)")
     p.add_argument("--form-dropout", type=float, default=0.25, help="cascade: share of windows without form channels")
