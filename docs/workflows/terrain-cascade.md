@@ -161,44 +161,84 @@ A layout v2 (`configs/layouts/fujix/layout.toml`, see [fujix v1](../plans/fujix-
 is written by the agent, not painted. It lists regions, each with an outline, a terrain
 class and one or more pieces: crops of real GLO-30 regions that are rotated, scaled
 (within 1/1.5 to 1.5), remapped in height and tilted. It also has `[flight]` bands
-(clearance and band tops), `[[passes]]` that each name the lowest band that reaches them,
-and `[[features]]` lines (rivers, canyons). Positions are metres from the north-west
-corner.
+(clearance and band tops), `[[passes]]` that each name the band that first reaches them,
+and `[[features]]` (the volcano and its caldera, rivers and canyons). Positions are metres
+from the north-west corner.
 
 `collage` builds the 32 m surface directly, and needs no GPU:
 
 ```sh
 $P -m topography_training.diffusion.collage configs/layouts/fujix/layout.toml \
-    --release data/datasets/context-v5/release.json --out data/worlds/fujix-collage-45
+    --release data/datasets/context-v5/release.json --out data/worlds/fujix-collage-49
 ```
 
 It bends every outline with one fixed-seed smooth warp. Pieces fade out inside their crop
 edge, ground past the pieces is filled smoothly, and region borders are blended with a
 Laplacian pyramid while classes are dithered across them. A smooth seabed starts at the
-coast, and ground past the island outline sinks to it. Outputs in the new directory:
+coast, and ground past the island outline sinks to it. Passes above their band get a
+broad dip, and each volcano with caldera fields gets a flat ice floor inside a rim at about
+its summit height. The build writes into `<out>.partial` and renames it when done; an
+error removes it, and a killed build leaves it for you to remove. Outputs:
 
 - `layout.json` and the L0 layers (`class.u8`, `mid.f32`, `relief.f32`, `coast.f32`,
   `snowline.f32`, `forest.u8`, `lake.u8`, `lake-level.f32`), readable by `layout.load`
-- `class32.u8`, the 32 m class map
+- `class32.u8`, the 32 m class map (terrain legend v3, glacier on caldera floors)
+- `region32.u8`, the 32 m region map: 1 to N in the layout's region order for the region
+  with the largest blend weight, 0 for sea outside every outline. Every land cell has a
+  region.
 - `arrays.npz` with `l1` and `l2`
-- `collage.json`, the layout and release hashes, sources and timing
-- `report.txt`: land fraction, distance of land from the map edge, coast cells pressed
-  against the edge clamp, and per region piece coverage and largest patch under 5° (WARN
-  when small)
+- `collage.json`: layout and release paths and hashes, sources, the `class32` and
+  `region32` files (size, cell, dtype, legend), provenance (warp seed and octaves,
+  blue-noise seeds, Git commit and whether tracked files were changed) and timing
+- `report.txt`, with WARN lines for failed checks:
+  - land fraction, distance of land from the map edge, and coast cells pressed against
+    the edge clamp
+  - per region: piece coverage of the outline, largest patch under 5° (caldera ice
+    excluded) and land area
+  - seams: steepest slopes along each border against those inside both regions (WARN
+    above 1.3 times)
+  - volcano margin: the summit against the highest land outside the volcano's region
+    (WARN under 400 m)
+  - caldera: floor within 150 m of its target and closed at least 150 m deep
+  - every pass reached by exactly its band, with any dip
+  - closed depressions on land of at least 1 km² and 50 m deep (info only; hydrology v2
+    breaches them)
 - `reach-l2.txt` and `reach-l2.png`, which bands reach which ground
 - `overview.png` and `pieces.png`, the annotated map and the piece footprints
-- `description.json` and `description.md`, measured region land area, heights, passes and
-  summit
+- `description.json` and `description.md`
+  ([world description v1](../../schemas/world-description-v1.md)): region land and heights
+  from `region32.u8`, passes, summit and caldera
 
 `layout reach` works on the result:
 
 ```sh
-$P -m topography_training.diffusion.layout reach data/worlds/fujix-collage-45 \
-    --arrays data/worlds/fujix-collage-45/arrays.npz
+$P -m topography_training.diffusion.layout reach data/worlds/fujix-collage-49 \
+    --arrays data/worlds/fujix-collage-49/arrays.npz
 ```
 
-Fujix skips the L1 and L2 models: `l2` is the collage itself, and `l1` is its 128 m
-version.
+The collage's `l2` is meant to replace the L1 and L2 models for fujix (`l1` is its 128 m
+mean), with L3 and L4 adding detail. That is planned for sub-project 5: no chain entry
+point reads the collage's `l2`, `class32.u8` or `region32.u8` yet.
+
+### Layout v2 fields
+
+Heights and distances are metres; positions are `[x, y]` from the north-west corner.
+
+| Key | Meaning |
+| --- | --- |
+| `schema_version`, `kind` | `2`, `"world_layout"` |
+| `name`, `extent_m` | World name; map side (a multiple of 32 m) |
+| `hemisphere` | `north` or `south`, for the cover's pole-facing slopes |
+| `wind_from_deg` | Prevailing wind (degrees, from), which sets the windward and lee sides |
+| `snowline_windward_m`, `snowline_lee_m`, `treeline_m` | Snowline on each side; treeline |
+| `coast_margin_m`, `seabed_edge_m` | Land stays this far inside the map edge; seabed depth at the edge |
+| `[flight]` | `clearance_m` and `bands`: `{ name, top_m }` with rising `top_m` (flight height), at most four |
+| `[[regions]]` | `id`, `name`, `class_id` (legend v3), `terrain`, `outline` (polygon), `border_m` (blend width, default 3,000), `forest` (0 to 1), optional `area_km2`, `floor_m`, `summit_m` targets |
+| `[[regions.pieces]]` | `source` (release region), `at` (crop centre in the world), `size_m` (crop width east and height south, source metres), `offset_m` (crop centre from the source centre), `rotate_deg` (clockwise), `scale` (1/1.5 to 1.5), `remap` (source lo, hi to world lo, hi, linear), `tilt_m_per_km` (east, south), `class_id` (instead of the region's) |
+| `[[passes]]` | `id`, `name`, `at`, `band` (a `[flight]` band name) |
+| `[[features]]` | `id`, `kind`, `name`, `note`. Volcano: `at`, `radius_m`, `summit_m`, optional `caldera_diameter_m` and `caldera_floor_m` (both or neither). Gorge: `path`, `depth_m`, `river` |
+
+## Generating a world
 
 `cascade_chain` builds L1 → L2 → L3 from a painted L0 (`--layout`) or, as a stand-in,
 from a layout derived from a real context region (`--release` and `--region`):
