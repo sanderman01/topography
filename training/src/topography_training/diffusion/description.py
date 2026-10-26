@@ -78,9 +78,10 @@ def _feature(f: dict, h: np.ndarray, cell_m: float) -> dict:
     return out
 
 
-def measure(spec: dict, h: np.ndarray, cell_m: float, level: str, masks: list[np.ndarray] | None = None) -> dict:
+def measure(spec: dict, h: np.ndarray, cell_m: float, level: str, region_map: np.ndarray | None = None) -> dict:
     """Targets from the layout and values measured on surface h (north-up, cell_m metres).
-    `masks` replaces the region outlines with the builder's own region cells (one per region)."""
+    `region_map` (the collage's `region32.u8`, resampled to h's grid: 1 to N in spec order,
+    0 none) replaces the authored outlines, so every land cell counts in one region."""
     from . import layout
 
     names, tops, clearance = layout.flight(spec)
@@ -88,7 +89,7 @@ def measure(spec: dict, h: np.ndarray, cell_m: float, level: str, masks: list[np
     n, land = h.shape[0], h >= 0
     regions = []
     for i, r in enumerate(spec["regions"]):
-        inside = masks[i] if masks is not None else polygon_sd(r["outline"], n, cell_m) > 0
+        inside = region_map == i + 1 if region_map is not None else polygon_sd(r["outline"], n, cell_m) > 0
         cells = inside & land
         hl = h[cells]
         regions.append({

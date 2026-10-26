@@ -4,9 +4,10 @@ python -m topography_training.diffusion.collage <layout.toml> --release <context
 
 Each region's ground comes from pieces of real regions, cut out, rotated, scaled and
 remapped in height, then blended across region borders with a Laplacian pyramid; classes
-are dithered across the same borders. Writes an L0 directory that `layout.load` reads, the
-32 m surface (arrays.npz: l1, l2) and pictures. Positions are metres from the north-west
-corner, x east, y south; rotations are clockwise on the map.
+are dithered across the same borders. Passes too high for their band get a broad dip and
+volcanoes with caldera fields get a caldera. Writes an L0 directory that `layout.load` reads,
+the 32 m surface (arrays.npz: l1, l2), class and region maps and pictures. Positions are
+metres from the north-west corner, x east, y south; rotations are clockwise on the map.
 """
 
 from __future__ import annotations
@@ -263,6 +264,8 @@ def _up(a: np.ndarray, shape) -> np.ndarray:
 # (wavelength, displacement std) in m. Kept gentle so the warp never folds: det(I + grad d) > 0.3.
 WARP_OCTAVES = ((18000.0, 620.0), (6000.0, 80.0))
 WARP_SEED = 7
+PIECE_NOISE_SEED = 1  # dithers piece classes within a region
+REGION_NOISE_SEED = 0  # dithers region classes across borders
 
 
 def warp_field(n: int, seed: int = WARP_SEED) -> tuple[np.ndarray, np.ndarray]:
@@ -387,24 +390,24 @@ DIP_MAX_M = 300.0
 DIP_STEP_M = 50.0
 
 
-def dip_passes(h: np.ndarray, spec: dict) -> tuple[np.ndarray, list[tuple[str, float, bool]]]:
-    """Lower each pass that sits above its band with a broad dip; returns (h, [(id, depth, ok)])."""
+def dip_passes(h: np.ndarray, spec: dict) -> tuple[np.ndarray, dict[str, float]]:
+    """Lower each pass that sits above its band with a broad dip; returns (h, {id: depth})."""
     names = layout.flight(spec)[0]
     n = h.shape[0]
     c = (np.arange(n, dtype=np.float32) + 0.5) * CELL_M
     h = h.copy()
-    dips = []
+    dips = {}
     for p in spec.get("passes", []):
         want = names.index(p["band"])
         bump = np.exp(-((c[None, :] - p["at"][0]) ** 2 + (c[:, None] - p["at"][1]) ** 2) / (2 * DIP_SIGMA_M**2))
         depth = 0.0
-        while True:
+        while depth < DIP_MAX_M:
             got = layout.band_at(layout.band_map(h, CELL_M, spec), CELL_M, p["at"], description.PASS_RADIUS_M)
-            if got <= want or depth >= DIP_MAX_M:
+            if got <= want:
                 break
             h -= (DIP_STEP_M * bump).astype(np.float32)
             depth += DIP_STEP_M
-        dips.append((p["id"], depth, got <= want))
+        dips[p["id"]] = depth
     return h, dips
 
 
@@ -474,10 +477,46 @@ SITE_KM2 = 0.5
 CLAMP_NEAR_M = 150.0
 CLAMP_CELLS = 20
 CALDERA_TOLERANCE_M = 150.0  # caldera floor within this of its target, and at least this far below the rim
+DEPRESSION_KM2 = 1.0  # closed hollows on land this large and deep are listed
+DEPRESSION_M = 50.0
 GLACIER_CLASS = 10  # terrain legend v3
 
 
-def report(spec, regions, h, sds, land_w, covered, ice, dips) -> tuple[str, int]:
+def region_map(h: np.ndarray, sds: list[np.ndarray], land_w: list[np.ndarray]) -> np.ndarray:
+    """Region per cell, 1 to N in spec order by the largest land weight; 0 for sea outside every
+    (warped) outline. Every land cell has a region."""
+    out = (np.argmax(land_w, axis=0) + 1).astype(np.uint8)
+    out[(h < 0) & (np.max(sds, axis=0) <= 0)] = 0
+    return out
+
+
+def closed_depressions(h: np.ndarray) -> list[tuple[float, float, float, float, float]]:
+    """Closed hollows on land of at least DEPRESSION_KM2 and DEPRESSION_M, largest first:
+    (km², depth m, x and y of the lowest point in m, spill height m)."""
+    from scipy import ndimage
+
+    from .hydrology import flood
+
+    sea = layout.open_sea(h)
+    rows, cols = np.flatnonzero((~sea).any(1)), np.flatnonzero((~sea).any(0))
+    if not rows.size:
+        return []
+    j0, i0 = max(0, rows[0] - 1), max(0, cols[0] - 1)
+    sub, outlet = h[j0 : rows[-1] + 2, i0 : cols[-1] + 2], sea[j0 : rows[-1] + 2, i0 : cols[-1] + 2]
+    filled, _, _ = flood(sub, outlet)
+    depth = filled - sub
+    labels, count = ndimage.label((depth > 0.05) & ~outlet)
+    ids = np.arange(1, count + 1)
+    km2 = ndimage.sum(np.ones(sub.shape, np.float32), labels, ids) * CELL_M**2 / 1e6
+    deep = ndimage.maximum(depth, labels, ids)
+    low = ndimage.minimum_position(sub, labels, ids)
+    spill = ndimage.minimum(filled, labels, ids)
+    out = [(float(km2[k]), float(deep[k]), (low[k][1] + i0 + 0.5) * CELL_M, (low[k][0] + j0 + 0.5) * CELL_M,
+            float(spill[k])) for k in np.flatnonzero((km2 >= DEPRESSION_KM2) & (deep >= DEPRESSION_M))]
+    return sorted(out, reverse=True)
+
+
+def report(spec, regions, h, sds, land_w, covered, region32, ice, dips) -> tuple[str, int]:
     lines, warnings = [], 0
 
     def check(ok: bool, text: str):
@@ -510,7 +549,7 @@ def report(spec, regions, h, sds, land_w, covered, ice, dips) -> tuple[str, int]
         site_km2 = float(np.bincount(labels.ravel())[1:].max()) * CELL_M**2 / 1e6 if count else 0.0
         check(site_km2 >= SITE_KM2, f"{r.id:<15} largest patch under {SITE_SLOPE_DEG:.0f}° is {site_km2:.2f} km²")
         want = spec["regions"][i].get("area_km2")
-        got = float((inside & land).sum()) * CELL_M**2 / 1e6
+        got = float(((region32 == i + 1) & land).sum()) * CELL_M**2 / 1e6
         if want:
             check(abs(got - want) <= AREA_TOLERANCE * want, f"{r.id:<15} land {got:.0f} km² (target {want:.0f})")
         else:
@@ -527,10 +566,16 @@ def report(spec, regions, h, sds, land_w, covered, ice, dips) -> tuple[str, int]
     for f in spec.get("features", []):
         if f["kind"] != "volcano":
             continue
-        d = np.hypot(*np.meshgrid((np.arange(h.shape[0]) + 0.5) * CELL_M - f["at"][0],
-                                  (np.arange(h.shape[0]) + 0.5) * CELL_M - f["at"][1]))
-        top, rest = float(h[d <= f["radius_m"]].max()), float(h[d > 1.5 * f["radius_m"]].max())
-        check(top - rest >= VOLCANO_MARGIN_M, f"volcano {f['id']} {top:.0f} m, next highest {rest:.0f} m")
+        x, y = grid(h.shape[0])
+        top = float(h[np.hypot(x - f["at"][0], y - f["at"][1]) <= f["radius_m"]].max())
+        # The volcano's region is the one whose (warped) outline the feature sits deepest inside.
+        j, i = int(f["at"][1] / CELL_M), int(f["at"][0] / CELL_M)
+        k = int(np.argmax([sd[j, i] for sd in sds]))
+        rest = np.where(land & (sds[k] <= 0), h, -np.inf)
+        rj, ri = np.unravel_index(int(np.argmax(rest)), h.shape)
+        check(top - rest[rj, ri] >= VOLCANO_MARGIN_M,
+              f"volcano {f['id']} {top:.0f} m; highest land outside {regions[k].id}: {rest[rj, ri]:.0f} m "
+              f"at ({(ri + 0.5) * CELL_M / 1000:.1f}, {(rj + 0.5) * CELL_M / 1000:.1f}) km")
         if "caldera_floor_m" in f:
             c = description.caldera(h, CELL_M, f)
             want = float(f["caldera_floor_m"])
@@ -541,8 +586,20 @@ def report(spec, regions, h, sds, land_w, covered, ice, dips) -> tuple[str, int]
             check(ok, f"caldera {f['id']}: floor {c['floor_m']:.0f} m (target {want:.0f}), lowest rim "
                       f"{c['rim_m']:.0f} m, closed {c['rim_m'] - c['floor_m']:.0f} m deep, "
                       f"{c['diameter_m'] / 1000:.1f} km across below the rim")
-    for pid, depth, ok in dips:
-        check(ok, f"pass {pid:<17} in its band" + (f" after a {depth:.0f} m dip" if depth else ""))
+    names = layout.flight(spec)[0]
+    bands = layout.band_map(h, CELL_M, spec)
+    for p in spec.get("passes", []):
+        got = names[layout.band_at(bands, CELL_M, p["at"], description.PASS_RADIUS_M)]
+        depth = dips.get(p["id"], 0.0)
+        check(got == p["band"], f"pass {p['id']:<17} reached by {got} (spec {p['band']})"
+              + (f" after a {depth:.0f} m dip" if depth else ""))
+    deps = closed_depressions(h)
+    lines.append(f"  info {len(deps)} closed depressions on land of at least {DEPRESSION_KM2:.0f} km² and "
+                 f"{DEPRESSION_M:.0f} m deep (hydrology v2 breaches them)")
+    for km2, deep, dx, dy, spill in deps:
+        tag = " (the ice-filled caldera)" if ice[int(dy / CELL_M), int(dx / CELL_M)] else ""
+        lines.append(f"  info   {km2:5.1f} km², {deep:4.0f} m deep, lowest at ({dx / 1000:.1f}, {dy / 1000:.1f}) km, "
+                     f"spills at {spill:.0f} m{tag}")
     lines.append(f"{warnings} warning(s)")
     return "\n".join(lines) + "\n", warnings
 
@@ -584,6 +641,20 @@ def sheet(out: Path, regions: list[Region], srcs: dict[str, Source], h32: np.nda
     return out / "pieces.png"
 
 
+def git_state() -> dict:
+    """The code's commit and whether tracked files differ from it (None outside a Git checkout)."""
+    import subprocess
+
+    here = str(Path(__file__).resolve().parent)
+    try:
+        head = subprocess.run(["git", "-C", here, "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+        status = subprocess.run(["git", "-C", here, "status", "--porcelain", "--untracked-files=no"],
+                                capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return {"git_commit": None, "git_dirty": None}
+    return {"git_commit": head.stdout.strip(), "git_dirty": bool(status.stdout.strip())}
+
+
 def partial_dir(out: Path) -> Path:
     return out.with_name(out.name + ".partial")
 
@@ -605,7 +676,16 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
         (work / "collage.json").write_text(json.dumps({
             "kind": "world_collage", "schema_version": 1, "layout": str(layout_path.resolve()),
             "layout_sha256": hashlib.sha256(text.encode()).hexdigest(), "release": str(release.resolve()),
-            "sources": sorted(srcs), "cell_m": CELL_M, "time_s": round(time.time() - t0, 1)}, indent=1))
+            "sources": sorted(srcs), "cell_m": CELL_M,
+            "class32": {"file": "class32.u8", "size": list(h32.shape), "cell_m": CELL_M, "dtype": "uint8",
+                        "legend": "topography terrain-v3"},
+            "region32": {"file": "region32.u8", "size": list(h32.shape), "cell_m": CELL_M, "dtype": "uint8",
+                         "legend": [r.id for r in regions],
+                         "values": "0 is sea outside every region outline; k is the k-th legend region"},
+            "provenance": {"warp_seed": WARP_SEED, "warp_octaves_m": [list(o) for o in WARP_OCTAVES],
+                           "blue_noise_seeds": {"pieces": PIECE_NOISE_SEED, "regions": REGION_NOISE_SEED},
+                           **git_state()},
+            "time_s": round(time.time() - t0, 1)}, indent=1))
         work.rename(out)
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
@@ -618,7 +698,7 @@ def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source]
     n = int(spec["extent_m"] / CELL_M)
     x, y = grid(n)
     sds, surfaces, classes, covered = [], [], [], []
-    piece_noise = blue_noise(n, seed=1)  # independent of the region dither below
+    piece_noise = blue_noise(n, seed=PIECE_NOISE_SEED)  # independent of the region dither below
     dx, dy = warp_field(n)  # one warp for every outline, so borders stay shared
     for r in regions:
         sds.append(warp(description.polygon_sd(r.outline, n, CELL_M), dx, dy))
@@ -636,20 +716,22 @@ def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source]
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
     forest32 = np.where(h32 >= 0, sum(w * r.forest for w, r in zip(land_w, regions)) / total, 0).astype(np.float32)
     forest32[ice] = 0
-    cls32 = dither(classes, land_w, blue_noise(n))
+    cls32 = dither(classes, land_w, blue_noise(n, seed=REGION_NOISE_SEED))
     cls32[ice] = GLACIER_CLASS
+    region32 = region_map(h32, sds, land_w)
     write_l0(out, text, spec, h32, cls32, forest32)
     cls32.tofile(out / "class32.u8")
+    region32.tofile(out / "region32.u8")
     np.savez_compressed(out / "arrays.npz", l1=cascade.block_mean(h32, int(L0_CELL_M / CELL_M)), l2=h32)
     l0 = layout.load(out)
     layout.overview(l0, out / "overview.png")
-    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, ice, dips)
+    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, region32, ice, dips)
     (out / "report.txt").write_text(text_r)
     print(text_r, end="")
     text_b, bands, _ = layout.reach(h32, CELL_M, spec)
     (out / "reach-l2.txt").write_text(text_b)
     layout.reach_png(h32, CELL_M, bands, spec, out / "reach-l2.png")
-    description.write(out, description.measure(spec, h32, CELL_M, "collage", [sd > 0 for sd in sds]))
+    description.write(out, description.measure(spec, h32, CELL_M, "collage", region32))
     sheet(out, regions, srcs, h32)
     return h32
 
