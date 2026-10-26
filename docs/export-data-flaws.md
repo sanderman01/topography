@@ -179,6 +179,11 @@ Decided in the game's water plan (`airshipgame/PLAN-water.md`):
 
 ## Water data contract for the next export
 
+Narrowed 2026-10-26 in [fujix v1](plans/fujix-v1.md#4-export): the export carries the water
+surface elevation, water coverage and water body id, plus a body table with each body's type
+in `description.json`. The game derives the shoreline distance, type fractions and velocity
+(`airshipgame/PLAN-water.md` §0 and §3.1). The table below is the game's original request.
+
 ### Required layers
 
 Per level and tile, on the same grid as the heights:
