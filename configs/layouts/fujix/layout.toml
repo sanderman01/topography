@@ -443,6 +443,7 @@ name = "Great Canyon"
 river = true
 # Along the canyon floor, from its head below the volcano's north-west flank to its mouth.
 path = [[26700, 25100], [26100, 23100], [27100, 21100], [28700, 19400], [30700, 18300], [32900, 17600], [34900, 16400],
-  [36000, 14700], [37600, 13200], [38300, 11000], [39800, 9400], [42100, 9600], [43900, 8600]]
+  [36000, 14700], [37600, 13200], [38300, 11000], [39800, 9400], [42100, 9600], [42900, 9300], [43250, 9170],
+  [43600, 8980], [43790, 8850], [43820, 8700], [43920, 8340], [44140, 8020], [44400, 7730]]  # the last 2 km: the drowned inlet
 depth_m = 1500
 note = "Grand Canyon section; the river runs north-east from the volcano's north-west flank to the north coast"
