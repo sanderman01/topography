@@ -146,7 +146,8 @@ def grand_canyon_gates(generate, pool, lut, n_classes, tab, form_sigma, clf, lev
     plain (18), and a dithered border against a hard one, on the same windows and seeds.
 
     A class pair passes when residuals of the two classes lie further apart in the
-    classifier's feature space than two seeds of the Grand Canyon. The border passes when
+    classifier's feature space than two seeds of the Grand Canyon, and at least 70% as far
+    apart as the real classes' centroids (where real windows show both). The border passes when
     the output near it differs from the hard border's more than far from it, and follows
     the dither: label cells dithered to a class come out closer to that class's output."""
     from . import borders, cascade
@@ -199,9 +200,13 @@ def grand_canyon_gates(generate, pool, lut, n_classes, tab, form_sigma, clf, lev
             result[name] = {"skipped": f"class {pairs[name]} is the Grand Canyon's model class", "pass": None}
             continue
         between, seeds = float(np.mean(o["between"])), float(np.mean(o["seeds"]))
+        known = list(clf.classes)
+        real = (float(np.linalg.norm(clf.c[known.index(gc)] - clf.c[known.index(pairs[name])]))
+                if pairs[name] in known and gc in known else None)
         result[name] = {"model_classes": o["model_classes"], "feature_distance_between_classes": between,
-                        "feature_distance_other_seed": seeds, "correlation": float(np.mean(o["corr"])),
-                        "windows": len(o["between"]), "pass": between > seeds}
+                        "feature_distance_other_seed": seeds, "feature_distance_real_centroids": real,
+                        "correlation": float(np.mean(o["corr"])), "windows": len(o["between"]),
+                        "pass": between > seeds and (real is None or between >= RECOGNITION_SHARE * real)}
     if border["follow_dither"]:
         f = {key: v if key in ("model_classes", "band_m") else float(np.mean(v)) for key, v in border.items()}
         f["windows"] = len(border["follow_dither"])
@@ -426,7 +431,8 @@ def main(argv=None) -> int:
                   f"difference near {g['band_diff']:.2f} m vs far {g['far_diff']:.2f} m -> {'PASS' if g['pass'] else 'FAIL'}")
         else:
             print(f"grand canyon {name}: feature distance between classes {g['feature_distance_between_classes']:.2f} "
-                  f"vs other seed {g['feature_distance_other_seed']:.2f} -> {'PASS' if g['pass'] else 'FAIL'}")
+                  f"vs other seed {g['feature_distance_other_seed']:.2f}, real centroids "
+                  f"{g['feature_distance_real_centroids'] or float('nan'):.2f} -> {'PASS' if g['pass'] else 'FAIL'}")
     return 0 if result["pass"] else 1
 
 

@@ -109,7 +109,7 @@ grid, like the collage's `class32.u8`.
 
 `class_gates` adds, for runs that train class 19: Grand Canyon against 13 and against
 plain (residuals of the two classes further apart in the classifier's features than two
-seeds), and a dithered border against a hard one (the output near the border changes
+seeds, and at least 70% as far apart as the real classes' centroids), and a dithered border against a hard one (the output near the border changes
 more than far from it, and each label cell comes out closer to its own class's output
 under the dither than under the hard line). They are under `grand_canyon` in `gates.json`
 and count towards the exit status.
