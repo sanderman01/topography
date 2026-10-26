@@ -380,6 +380,63 @@ $P -m topography_training.diffusion.cover --world data/worlds/fujion-v3-chain-14
 $P -m topography_training.diffusion.landcover --world data/worlds/fujion-v3-chain-14-l4
 ```
 
+## Hydrology v2
+
+Water as a surface height ([Fujix plan](../plans/fujix-v1.md) section 2). The Rust command
+works on a 32 m grid now; moisture, channel carving, finer levels and the cascade calling it
+come later, and the chain still uses `hydrology.py`.
+
+```sh
+training/.venv/bin/python -I scripts/hydrology_grid.py data/worlds/fujix-collage-55 scratch/hydro-v2/fujix55-grid
+target/release/topography world hydrology --grid scratch/hydro-v2/fujix55-grid --out scratch/hydro-v2/fujix55-out
+```
+
+`hydrology_grid.py` turns a collage (`arrays.npz` `l2` and `class32.u8`) into a grid
+directory: `grid.json` (`size` [w, h], `spacing_m`, `origin`, optional `classes_cell_m`),
+`elevation.f32` and optional `classes.u8` (little-endian, rows north to south). The output
+directory must not exist; it is staged and renamed into place. It holds `grid.json` (input
+plus `level` and provenance: input and output SHA-256s, water table, tool version),
+`elevation.f32` (ground after breaching), `water-surface.f32` (NaN where dry, sea 0),
+`water-body.u32` (0 dry, 1 sea, then lakes, then rivers), `discharge.f32` (drainage area in
+km²), `bodies.json` and `report.json`. Exit status 1 means a validation check failed; the
+outputs are still written so the report can be read. `--coarse` and `--wind-deg` are not
+implemented yet.
+
+Steps:
+
+- Sea is ground below 0 m connected 8-way to the grid edge (`cascade.open_sea` labels 4-way;
+  D8 flow needs 8). The sea and the grid edge are the outlets.
+- A priority flood (Barnes et al. 2014) gives the filled surface; each connected region
+  filled above the ground is a depression with one spill level and outlet.
+- Lakes: within each class's `lake_share` of its land (classes from
+  [configs/hydrology/water-v1.toml](../../configs/hydrology/water-v1.toml), a copy of
+  `hydrology.WATER`), the largest depressions by volume, at least 1 m deep and 4,096 m².
+  A depression belongs to its most common class.
+- Dry basins: within `dry_share`, the deepest compact depressions (at least 2 m deep,
+  bounding box side² / area at most 4) of dry classes with less than the river threshold
+  flowing in. Flow passes through them; one that a river reaches after breaching becomes a
+  lake.
+- Every other depression is breached: a second priority flood lowers the path from the pit
+  through the spill until the ground falls away, by one f32 step per cell (Soille 2004
+  carving), never filling. Lakes and dry basins are flat at their level in this flood.
+- Lakes grow over carved ground below their level that drains into them, so one level and
+  wet exactly where the level is above the ground still hold next to a cut.
+- Rivers are cells draining at least 10 km² (`--river-km2`). One body id per river system:
+  all river cells upstream of one mouth, which ends in the sea, a lake or the grid edge. Water
+  surface: ground plus 0.4 m · area^0.4 (a placeholder for discharge until moisture exists),
+  raised so it never rises downstream and never ends below the water it flows into.
+
+`report.json` checks (all must be 0): land cells not draining to an outlet, land draining
+uphill, lakes with several levels, wet cells whose surface is not above the ground, river
+cells rising downstream and rivers ending on dry land. Figures include lake and dry basin
+counts and areas, breached depressions, carve volume, deepest cut and cells cut more than
+50 m, and river counts and lengths.
+
+On fujix-collage-55 (2048², 32 m) it takes about 1.3 s and 85 MB: 167 lakes (18 km², 0.8% of
+the land), 71 dry basins, 3,746 depressions breached, 53 river systems (347 km), all checks
+0. On the 8192² 4 m chain world it takes 35 s and 1.2 GB; 16,384² at 4 m should need about
+5 GB.
+
 ## Export
 
 ```sh
