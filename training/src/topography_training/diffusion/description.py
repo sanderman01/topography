@@ -51,16 +51,18 @@ def _feature(f: dict, h: np.ndarray, cell_m: float) -> dict:
     return out
 
 
-def measure(spec: dict, h: np.ndarray, cell_m: float, level: str) -> dict:
-    """Targets from the layout and values measured on surface h (north-up, cell_m metres)."""
+def measure(spec: dict, h: np.ndarray, cell_m: float, level: str, masks: list[np.ndarray] | None = None) -> dict:
+    """Targets from the layout and values measured on surface h (north-up, cell_m metres).
+    `masks` replaces the region outlines with the builder's own region cells (one per region)."""
     from . import layout
 
     names, tops, clearance = layout.flight(spec)
     bands = layout.band_map(h, cell_m, spec)
     n, land = h.shape[0], h >= 0
     regions = []
-    for r in spec["regions"]:
-        cells = (polygon_sd(r["outline"], n, cell_m) > 0) & land
+    for i, r in enumerate(spec["regions"]):
+        inside = masks[i] if masks is not None else polygon_sd(r["outline"], n, cell_m) > 0
+        cells = inside & land
         hl = h[cells]
         regions.append({
             "id": r["id"], "name": r["name"], "class_id": r["class_id"], "terrain": r.get("terrain", ""),

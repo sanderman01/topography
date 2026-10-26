@@ -30,6 +30,7 @@ MAX_SCALE = 1.5  # the layout spec's scale budget
 FEATHER_M = 2000.0  # a piece fades out over this distance inside its crop edge
 PYRAMID_LEVELS = 6  # 32 m to 1 km
 OCEAN_BORDER_M = 3000.0
+OCEAN_SHELF_M = 2500.0  # the seabed falls most of the way to its edge depth over about this distance
 ISLAND_CLOSE_M = 4000.0  # gaps between region outlines narrower than this stay land
 SHELF_M = -20.0  # sea floor at the island's outline
 
@@ -194,7 +195,8 @@ def island_sd(sds: list[np.ndarray]) -> np.ndarray:
 def ocean(isd: np.ndarray, spec: dict) -> np.ndarray:
     edge = float(spec.get("seabed_edge_m", -200.0))
     out_m = np.maximum(-isd, 0)
-    return (SHELF_M + (edge - SHELF_M) * np.sqrt(out_m / max(float(out_m.max()), 1.0))).astype(np.float32)
+    # Zero slope at the outline, so land that runs past it meets no crease there.
+    return (SHELF_M + (edge - SHELF_M) * (1 - np.exp(-((out_m / OCEAN_SHELF_M) ** 2)))).astype(np.float32)
 
 
 def edge_limit(n: int, spec: dict) -> np.ndarray:
@@ -220,7 +222,8 @@ def _up(a: np.ndarray, shape) -> np.ndarray:
     return ndimage.gaussian_filter(ndimage.zoom(a, (shape[0] / a.shape[0], shape[1] / a.shape[1]), order=1), 1.0)
 
 
-WARP_OCTAVES = ((8000.0, 900.0), (3000.0, 400.0))  # (wavelength, displacement std) in m
+# (wavelength, displacement std) in m. Kept gentle so the warp never folds: det(I + grad d) > 0.3.
+WARP_OCTAVES = ((18000.0, 620.0), (6000.0, 80.0))
 WARP_SEED = 7
 
 
@@ -371,6 +374,8 @@ AREA_TOLERANCE = 0.25
 VOLCANO_MARGIN_M = 400.0
 SITE_SLOPE_DEG = 5.0  # each region keeps a patch this flat for a settlement
 SITE_KM2 = 0.5
+CLAMP_NEAR_M = 150.0
+CLAMP_CELLS = 20
 
 
 def report(spec, regions, h, sds, land_w, covered, dips) -> tuple[str, int]:
@@ -387,8 +392,13 @@ def report(spec, regions, h, sds, land_w, covered, dips) -> tuple[str, int]:
     lines.append(f"Collage at {CELL_M:.0f} m: land {land.mean():.1%} of the map")
     c = (np.arange(h.shape[0]) + 0.5) * CELL_M
     e = np.minimum(c, h.shape[0] * CELL_M - c)
-    edge_m = float(np.minimum(e[:, None], e[None, :])[land].min()) if land.any() else 0.0
-    check(edge_m >= float(spec.get("coast_margin_m", 4000.0)), f"land comes within {edge_m / 1000:.1f} km of the map edge")
+    to_edge = np.minimum(e[:, None], e[None, :])
+    margin = float(spec.get("coast_margin_m", 4000.0))
+    edge_m = float(to_edge[land].min()) if land.any() else 0.0
+    check(edge_m >= margin, f"land comes within {edge_m / 1000:.1f} km of the map edge")
+    # Land pressed against the edge clamp makes a straight coast.
+    clamped = int((land & ~ndimage.binary_erosion(land) & (to_edge < margin + CLAMP_NEAR_M)).sum())
+    check(clamped <= CLAMP_CELLS, f"{clamped} coast cells within {CLAMP_NEAR_M / 1000:.2f} km of the coast margin")
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
     gy, gx = np.gradient(h, CELL_M)
     slope = np.hypot(gx, gy)
@@ -503,7 +513,7 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
     text_b, bands, _ = layout.reach(h32, CELL_M, spec)
     (out / "reach-l2.txt").write_text(text_b)
     layout.reach_png(h32, CELL_M, bands, spec, out / "reach-l2.png")
-    description.write(out, description.measure(spec, h32, CELL_M, "collage"))
+    description.write(out, description.measure(spec, h32, CELL_M, "collage", [sd > 0 for sd in sds]))
     sheet(out, regions, srcs, h32)
     (out / "collage.json").write_text(json.dumps({
         "kind": "world_collage", "schema_version": 1, "layout": str(layout_path.resolve()),
