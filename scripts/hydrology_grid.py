@@ -21,12 +21,14 @@ def main() -> None:
     collage = json.loads((src / "collage.json").read_text())
     h = np.load(src / "arrays.npz")["l2"].astype("<f4")
     cell_m = float(collage["cell_m"])
-    stage = out.with_name(out.name + ".partial")
-    stage.mkdir(parents=True)
-    h.tofile(stage / "elevation.f32")
     classes = collage["class32"]
     if classes["size"] != [h.shape[1], h.shape[0]] or classes["cell_m"] != cell_m:
         sys.exit("class32 does not match the l2 grid")
+    stage = out.with_name(out.name + ".partial")
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir(parents=True)
+    h.tofile(stage / "elevation.f32")
     shutil.copyfile(src / classes["file"], stage / "classes.u8")
     grid = {
         "size": [h.shape[1], h.shape[0]],
