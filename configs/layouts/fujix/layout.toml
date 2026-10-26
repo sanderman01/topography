@@ -36,7 +36,7 @@ summit_m = 5000
 source = "kilimanjaro"
 at = [31500, 33500]
 size_m = [40000, 40000]  # wider than the outline, so no crop edge shows
-offset_m = [400, -600]  # Kibo's caldera; the Shira plateau stays west, a saddle to the fjords
+offset_m = [400, -600]  # Kibo's summit cone; the Shira plateau stays west, a saddle to the fjords
 scale = 0.667
 remap = [1800, 5895, 300, 5000]
 
@@ -414,9 +414,10 @@ band = "top"
 id = "fujix"
 kind = "volcano"
 name = "Fujix"
-at = [31500, 33500]
+at = [31500, 34400]  # Kibo's summit, where the piece puts it
 radius_m = 10000
 summit_m = 5000
+# The collage cuts this caldera into the summit (Kibo's own is too shallow at 32 m).
 caldera_diameter_m = 2500
 caldera_floor_m = 4600
 note = "ice-filled summit caldera, no cone inside"

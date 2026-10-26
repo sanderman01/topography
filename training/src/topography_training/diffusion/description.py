@@ -30,6 +30,33 @@ def _window(h: np.ndarray, cell_m: float, at, radius_m: float) -> np.ndarray:
     return h[max(0, j - r) : j + r + 1, max(0, i - r) : i + r + 1]
 
 
+def caldera(h: np.ndarray, cell_m: float, f: dict) -> dict:
+    """The largest closed hollow reaching within the caldera's radius of the volcano's `at`:
+    its floor, its rim where it would spill, its equivalent diameter and centre. Empty if none."""
+    from scipy import ndimage
+
+    from .hydrology import flood
+
+    d = float(f.get("caldera_diameter_m", 1000.0))
+    r = max(2, int(1.5 * d / cell_m))  # the window's edges are the outlets
+    i, j = int(f["at"][0] / cell_m), int(f["at"][1] / cell_m)
+    j0, i0 = max(0, j - r), max(0, i - r)
+    win = h[j0 : j + r + 1, i0 : i + r + 1].astype(np.float64)
+    filled, _, _ = flood(win, np.zeros(win.shape, bool))
+    labels, count = ndimage.label(filled - win > 0.05)
+    yy, xx = np.mgrid[0 : win.shape[0], 0 : win.shape[1]]
+    near = np.hypot((xx + i0 + 0.5) * cell_m - f["at"][0], (yy + j0 + 0.5) * cell_m - f["at"][1]) <= d / 2
+    ids = np.unique(labels[near & (labels > 0)])
+    if not ids.size:
+        return {}
+    k = ids[np.argmax(ndimage.sum(np.ones(win.shape), labels, ids))]
+    on = labels == k
+    area = float(on.sum()) * cell_m**2
+    return {"floor_m": float(win[on].min()), "rim_m": float(filled[on].min()),
+            "diameter_m": 2 * float(np.sqrt(area / np.pi)),
+            "at_m": [float((xx[on].mean() + i0 + 0.5) * cell_m), float((yy[on].mean() + j0 + 0.5) * cell_m)]}
+
+
 def _feature(f: dict, h: np.ndarray, cell_m: float) -> dict:
     target = {k: v for k, v in f.items() if k not in ("id", "kind", "name", "at", "path", "note")}
     out = {"id": f["id"], "kind": f["kind"], "name": f.get("name", f["id"]), "target": target}
@@ -38,12 +65,12 @@ def _feature(f: dict, h: np.ndarray, cell_m: float) -> dict:
     if "path" in f:
         out["path_m"] = f["path"]
     if f["kind"] == "volcano":
-        win = _window(h, cell_m, f["at"], f["radius_m"])
-        j, i = np.unravel_index(int(np.argmax(win)), win.shape)
-        r0 = max(1, int(f["radius_m"] / cell_m))
-        top = (max(0, int(f["at"][0] / cell_m) - r0) + i, max(0, int(f["at"][1] / cell_m) - r0) + j)
-        crater = _window(h, cell_m, (top[0] * cell_m, top[1] * cell_m), f.get("caldera_diameter_m", 1000) / 2)
-        out["measured"] = {"summit_m": round(float(win.max()), 1), "caldera_floor_m": round(float(crater.min()), 1)}
+        out["measured"] = {"summit_m": round(float(_window(h, cell_m, f["at"], f["radius_m"]).max()), 1)}
+        if "caldera_diameter_m" in f:
+            c = caldera(h, cell_m, f)
+            out["measured"] |= {"caldera_floor_m": round(c["floor_m"], 1), "caldera_rim_m": round(c["rim_m"], 1),
+                                "caldera_diameter_m": round(c["diameter_m"]),
+                                "caldera_at_m": [round(v) for v in c["at_m"]]} if c else {"caldera_floor_m": None}
     elif "path" in f:
         cells = [_window(h, cell_m, p, cell_m) for p in f["path"]]
         out["measured"] = {"min_m": round(float(min(c.min() for c in cells)), 1),

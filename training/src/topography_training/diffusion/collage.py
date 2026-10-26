@@ -408,6 +408,64 @@ def dip_passes(h: np.ndarray, spec: dict) -> tuple[np.ndarray, list[tuple[str, f
     return h, dips
 
 
+CALDERA_WALL_M = 450.0  # inner wall, from the floor's edge to the rim crest
+CALDERA_FLANK = 0.75  # outer slope (m per m) where the rim stands above the cone
+CALDERA_RIM_DROP_M = 120.0  # the rim crest runs from a third of this to this below the old summit
+CALDERA_CREST_M = 300.0  # width of the crest band where ground detail is damped
+CALDERA_SOFT_M = 80.0  # soft max height, so the raised rim meets the cone without a crease
+CALDERA_DETAIL_M = 400.0  # ground detail finer than this is kept on the rim and flanks
+CALDERA_FLOOR_RISE_M = 40.0  # the ice floor rises this much toward the walls
+PLATEAU_M = 150.0  # the summit plateau: ground this close to the top, joined to it
+
+
+def summit_plateau(h: np.ndarray, x: np.ndarray, y: np.ndarray, f: dict) -> tuple[float, float, float]:
+    """Centroid (x, y) and height of the summit plateau within the volcano's radius."""
+    from scipy import ndimage
+
+    disc = np.hypot(x - f["at"][0], y - f["at"][1]) <= f["radius_m"]
+    top = float(h[disc].max())
+    j, i = np.unravel_index(int(np.argmax(np.where(disc, h, -np.inf))), h.shape)
+    labels, _ = ndimage.label(disc & (h >= top - PLATEAU_M))
+    on = labels == labels[j, i]
+    return float(x[on].mean()), float(y[on].mean()), top
+
+
+def calderas(h: np.ndarray, spec: dict, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """A flat-floored caldera on each volcano with `caldera_diameter_m` and `caldera_floor_m`,
+    centred on its summit plateau: a rim at about the summit height, raised over the cone where
+    needed, and steep inner walls down to the floor. Returns (h, ice floor cells)."""
+    from scipy import ndimage
+
+    def smax(a, b):
+        return (a + b + np.sqrt((a - b) ** 2 + CALDERA_SOFT_M**2)) / 2
+
+    h, ice = h.copy(), np.zeros(h.shape, bool)
+    for f in spec.get("features", []):
+        if f["kind"] != "volcano" or "caldera_floor_m" not in f:
+            continue
+        cx, cy, top = summit_plateau(h, x, y, f)
+        r, t = np.hypot(x - cx, y - cy), np.arctan2(y - cy, x - cx)
+        near = r <= f["radius_m"]
+        r, t = r[near], t[near]
+        # An irregular oval rim, higher on one side, so it reads as no drawn ring.
+        rr = f["caldera_diameter_m"] / 2 * (1 + 0.08 * np.cos(2 * (t - 0.6)) + 0.04 * np.cos(3 * t + 2.2)
+                                            + 0.03 * np.cos(5 * t + 0.7))
+        g = 0.7 * (1 - np.cos(t - 2.0)) / 2 + 0.3 * (1 - np.cos(3 * t + 1.0)) / 2
+        rim = top - CALDERA_RIM_DROP_M * (1 + 2 * g) / 3
+        floor = float(f["caldera_floor_m"]) + CALDERA_FLOOR_RISE_M * np.minimum(r / rr, 1) ** 2
+        a = CALDERA_WALL_M / 3  # rounds the crest, so the outer flank starts level
+        outer = rim - CALDERA_FLANK * (np.hypot(np.maximum(r - rr, 0), a) - a)
+        smooth = ndimage.gaussian_filter(h, CALDERA_DETAIL_M / CELL_M)
+        # Half the detail on the crest, so gullies notch the rim without opening the hollow.
+        detail = (h - smooth)[near] * (1 - 0.5 * np.exp(-(((r - rr) / CALDERA_CREST_M) ** 2)))
+        # 0 on the floor, rising over the inner wall to 1 at the crest and beyond.
+        s = np.clip((r - rr + CALDERA_WALL_M) / CALDERA_WALL_M, 0, 1)
+        s = s * s * (3 - 2 * s)
+        h[near] = floor + (smax(smooth[near], outer) + detail - floor) * s
+        ice[near] |= r < rr - CALDERA_WALL_M / 2
+    return h, ice
+
+
 SEAM_RATIO = 1.3  # slopes along a border this much steeper than inside both regions show a seam
 AREA_TOLERANCE = 0.25
 VOLCANO_MARGIN_M = 400.0
@@ -415,9 +473,11 @@ SITE_SLOPE_DEG = 5.0  # each region keeps a patch this flat for a settlement
 SITE_KM2 = 0.5
 CLAMP_NEAR_M = 150.0
 CLAMP_CELLS = 20
+CALDERA_TOLERANCE_M = 150.0  # caldera floor within this of its target, and at least this far below the rim
+GLACIER_CLASS = 10  # terrain legend v3
 
 
-def report(spec, regions, h, sds, land_w, covered, dips) -> tuple[str, int]:
+def report(spec, regions, h, sds, land_w, covered, ice, dips) -> tuple[str, int]:
     lines, warnings = [], 0
 
     def check(ok: bool, text: str):
@@ -441,7 +501,7 @@ def report(spec, regions, h, sds, land_w, covered, dips) -> tuple[str, int]:
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
     gy, gx = np.gradient(h, CELL_M)
     slope = np.hypot(gx, gy)
-    flat = land & (slope < np.tan(np.radians(SITE_SLOPE_DEG)))
+    flat = land & ~ice & (slope < np.tan(np.radians(SITE_SLOPE_DEG)))  # no settlements on caldera ice
     for i, r in enumerate(regions):
         inside = sds[i] > 0
         bare = (inside & ~covered[i]).sum() / max(int(inside.sum()), 1)
@@ -471,6 +531,16 @@ def report(spec, regions, h, sds, land_w, covered, dips) -> tuple[str, int]:
                                   (np.arange(h.shape[0]) + 0.5) * CELL_M - f["at"][1]))
         top, rest = float(h[d <= f["radius_m"]].max()), float(h[d > 1.5 * f["radius_m"]].max())
         check(top - rest >= VOLCANO_MARGIN_M, f"volcano {f['id']} {top:.0f} m, next highest {rest:.0f} m")
+        if "caldera_floor_m" in f:
+            c = description.caldera(h, CELL_M, f)
+            want = float(f["caldera_floor_m"])
+            if not c:
+                check(False, f"caldera {f['id']}: no closed hollow within {f['caldera_diameter_m'] / 2000:.2f} km")
+                continue
+            ok = abs(c["floor_m"] - want) <= CALDERA_TOLERANCE_M and c["rim_m"] - c["floor_m"] >= CALDERA_TOLERANCE_M
+            check(ok, f"caldera {f['id']}: floor {c['floor_m']:.0f} m (target {want:.0f}), lowest rim "
+                      f"{c['rim_m']:.0f} m, closed {c['rim_m'] - c['floor_m']:.0f} m deep, "
+                      f"{c['diameter_m'] / 1000:.1f} km across below the rim")
     for pid, depth, ok in dips:
         check(ok, f"pass {pid:<17} in its band" + (f" after a {depth:.0f} m dip" if depth else ""))
     lines.append(f"{warnings} warning(s)")
@@ -562,15 +632,18 @@ def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source]
     h32 = sink_outside(blend(surfaces + [sea], land_w + [weight(-isd, OCEAN_BORDER_M)]), isd, sea)
     h32 = np.minimum(h32, edge_limit(n, spec))
     h32, dips = dip_passes(h32, spec)
+    h32, ice = calderas(h32, spec, x, y)
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
     forest32 = np.where(h32 >= 0, sum(w * r.forest for w, r in zip(land_w, regions)) / total, 0).astype(np.float32)
+    forest32[ice] = 0
     cls32 = dither(classes, land_w, blue_noise(n))
+    cls32[ice] = GLACIER_CLASS
     write_l0(out, text, spec, h32, cls32, forest32)
     cls32.tofile(out / "class32.u8")
     np.savez_compressed(out / "arrays.npz", l1=cascade.block_mean(h32, int(L0_CELL_M / CELL_M)), l2=h32)
     l0 = layout.load(out)
     layout.overview(l0, out / "overview.png")
-    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, dips)
+    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, ice, dips)
     (out / "report.txt").write_text(text_r)
     print(text_r, end="")
     text_b, bands, _ = layout.reach(h32, CELL_M, spec)
