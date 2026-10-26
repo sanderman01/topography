@@ -21,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .description import PASS_RADIUS_M
+
 # Terrain legend v3 display colours (catalog/labels/terrain-v3.toml), 0 = unknown.
 COLORS = {
     0: (128, 128, 128), 1: (128, 0, 128), 2: (255, 165, 0), 3: (0, 255, 255), 4: (139, 0, 0),
@@ -306,13 +308,14 @@ def reach(h: np.ndarray, cell_m: float, spec: dict) -> tuple[str, np.ndarray, in
         got = band_at(tiers, cell_m, s["at"])
         check(names[got] == want, f"site {s['region']:<24} first reached by {names[got]} (spec {want})")
     for p in spec.get("passes", []):
-        r = max(1, int(500 / cell_m))
+        r = max(1, int(PASS_RADIUS_M / cell_m))
         i, j = int(p["at"][0] / cell_m), int(p["at"][1] / cell_m)
         low = float(h[max(0, j - r) : j + r + 1, max(0, i - r) : i + r + 1].min())
-        got = band_at(tiers, cell_m, p["at"], 500)
+        got = band_at(tiers, cell_m, p["at"], PASS_RADIUS_M)
         want = p.get("band", p.get("tier"))
-        check(got <= names.index(want),
-              f"pass {p['id']:<18} lowest ground {low:5.0f} m within 500 m, first reached by {names[got]} (spec {want})")
+        # Exactly its band: a pass that a lower band reaches is no barrier for that band.
+        check(names[got] == want, f"pass {p['id']:<18} lowest ground {low:5.0f} m within {PASS_RADIUS_M:.0f} m, "
+              f"first reached by {names[got]} (spec {want})")
     lines.append(f"{warnings} warning(s)")
     return "\n".join(lines) + "\n", tiers, warnings
 
