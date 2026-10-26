@@ -1,0 +1,45 @@
+training/src/topography_training/diffusion/collage.py
+  s_8c1b40ea9c1e0d::t_5a0c61e60f1a40 563
+  s_8c1b40ea9c1e0d::t_dad5729e122d80 613
+  s_8c1b40ea9c1e0d::t_57de5a61c7c114 452-453
+  s_8c1b40ea9c1e0d::t_9ca8d359b71d36 529-530
+  s_8c1b40ea9c1e0d::t_adf1b567a2c378 502-503,509-511
+  s_8c1b40ea9c1e0d::t_df02410c77f1d1 543-544
+  s_8c1b40ea9c1e0d::t_69b50cbb0382d5 583-585,591
+  s_8c1b40ea9c1e0d::t_2d1a6576a6a824 435
+  s_8c1b40ea9c1e0d::t_e5c6cf090a5e51 442-443
+  s_8c1b40ea9c1e0d::t_a483e123a6829a 433-434,438
+  s_8c1b40ea9c1e0d::t_6930904510cf85 578-579
+  s_8c1b40ea9c1e0d::t_0a07156b0db6c3 646-648
+  s_8c1b40ea9c1e0d::t_f25fca5e7fc371 761-766,769-770,772-773,776-777
+  s_8c1b40ea9c1e0d::t_5be1921445d977 551-555
+  s_8c1b40ea9c1e0d::t_e4e48873c20d65 547-548,556
+  s_8c1b40ea9c1e0d::t_0fd16ca477c611 597-598,600-601
+  s_8c1b40ea9c1e0d::t_cc774c2837048d 8-11
+  s_8c1b40ea9c1e0d::t_e160d3c5c531f1 431
+  s_8c1b40ea9c1e0d::t_cf2b98c8ae1a66 436-437
+  s_8c1b40ea9c1e0d::t_82bd5d899665cb 102-103,105-106
+  s_8c1b40ea9c1e0d::t_4131ec51cb094e 532-534,537-538
+  s_8c1b40ea9c1e0d::t_e09cae5738e463 581-582,586-588
+  s_8c1b40ea9c1e0d::t_afde7b5de28b9d 589-590,592
+  s_8c1b40ea9c1e0d::t_aaa9a65781555b 440
+  s_8c1b40ea9c1e0d::t_ed628ea7c85c77 536,540-541,545-546,562
+  s_8c1b40ea9c1e0d::t_07ff7406c1a645 451
+  s_8c1b40ea9c1e0d::t_3461952a5efbfa 549-550
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c8c4e0f22bab07bfac52037c947b03a3c9ade5c9",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
