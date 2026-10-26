@@ -34,8 +34,8 @@ NAMES = {
     10: "Glaciers", 11: "Stratovolcano", 12: "Coastal cliffs", 13: "Layered canyons", 14: "Cone and tower karst",
     15: "Drowned tower karst", 16: "Crest-train dunes", 17: "Cinder cones and lava", 18: "Plain",
 }
-TIERS = ("starter", "mid", "specialist")
-TIER_RGB = {0: (120, 200, 110), 1: (240, 190, 60), 2: (220, 70, 60)}
+TIERS = ("starter", "mid", "specialist")  # layout v1 `[tiers]`
+BAND_RGB = [(120, 200, 110), (240, 190, 60), (235, 130, 50), (220, 70, 60), (150, 60, 160)]
 SITE_RADIUS_M = 250.0
 RIVER_WIDTH_M = 48.0  # authored rivers as water at L2: a channel one or two 32 m cells wide  # a site counts as reached if any cell this close is
 
@@ -203,9 +203,10 @@ def overview(l0: L0, out: Path, px: int = 2048) -> Path:
         _label(d, (x - 40, y - 8), f"{lk['id']} {lk['surface_m']:.0f} m", small, (190, 225, 255))
     for p in spec.get("passes", []):
         x, y = P(p["at"])
-        c = TIER_RGB[TIERS.index(p["tier"])]
+        band = p.get("band", p.get("tier"))
+        c = BAND_RGB[flight(spec)[0].index(band)]
         d.polygon([(x, y - 8), (x + 8, y), (x, y + 8), (x - 8, y)], fill=c, outline=(0, 0, 0))
-        _label(d, (x + 10, y - 2), f"{p['id']} {p['height_m']:.0f}", small, c)
+        _label(d, (x + 10, y - 2), f"{p['id']}" + (f" {p['height_m']:.0f}" if "height_m" in p else ""), small, c)
     for s in spec.get("sites", []):
         x, y = P(s["at"])
         d.rectangle([x - 5, y - 5, x + 5, y + 5], fill=(255, 255, 255), outline=(0, 0, 0))
@@ -220,9 +221,9 @@ def overview(l0: L0, out: Path, px: int = 2048) -> Path:
         d.rectangle([px - 300, y0, px - 278, y0 + 18], fill=COLORS[c], outline=(0, 0, 0))
         _label(d, (px - 270, y0 - 1), f"{c} {NAMES[c]}", small)
         y0 += 24
-    for i, t in enumerate(TIERS[:2]):
+    for i, t in enumerate(flight(spec)[0][:-1]):
         d.polygon([(px - 289, y0 + 9 - 8), (px - 281, y0 + 9), (px - 289, y0 + 17), (px - 297, y0 + 9)],
-                  fill=TIER_RGB[i], outline=(0, 0, 0))
+                  fill=BAND_RGB[i], outline=(0, 0, 0))
         _label(d, (px - 270, y0), f"{t} pass", small)
         y0 += 24
     bar = 5000 * k
@@ -246,33 +247,42 @@ def open_sea(h: np.ndarray) -> np.ndarray:
     return np.isin(labels, edge[edge > 0])
 
 
-def tier_map(h: np.ndarray, spec: dict) -> np.ndarray:
-    """Lowest tier (0 starter, 1 mid, 2 specialist) that reaches each cell from the open
-    sea, flying no lower than `clearance_m` above the ground and no higher than the tier's
-    ceiling."""
+def flight(spec: dict) -> tuple[list[str], list[float], float]:
+    """Band names, band tops (flight height, m) and clearance from `[flight]` (layout v2)
+    or `[tiers]` (v1). There is one more name than tops: the last is above every band."""
+    if "flight" in spec:
+        f = spec["flight"]
+        return ([b["name"] for b in f["bands"]] + ["above"], [float(b["top_m"]) for b in f["bands"]],
+                float(f["clearance_m"]))
+    t = spec["tiers"]
+    return list(TIERS), [float(t["starter_ceiling_m"]), float(t["mid_ceiling_m"])], float(t["clearance_m"])
+
+
+def band_map(h: np.ndarray, cell_m: float, spec: dict) -> np.ndarray:
+    """Lowest band that reaches each cell from the open sea, flying at least the clearance
+    above the ground and no higher than the band's top."""
     from scipy import ndimage
 
-    t = spec["tiers"]
+    _, tops, clearance = flight(spec)
     sea = open_sea(h)
-    out = np.full(h.shape, 2, np.int8)
-    for i, ceiling in reversed(list(enumerate((t["starter_ceiling_m"], t["mid_ceiling_m"])))):
-        flyable = sea | (h + t["clearance_m"] <= ceiling)
-        labels, _ = ndimage.label(flyable)
+    out = np.full(h.shape, len(tops), np.int8)
+    for i in reversed(range(len(tops))):
+        labels, _ = ndimage.label(sea | (h + clearance <= tops[i]))
         ids = np.unique(labels[sea])
         out[np.isin(labels, ids[ids > 0])] = i
     return out
 
 
-def _at(tiers: np.ndarray, cell_m: float, p, radius_m: float = SITE_RADIUS_M) -> int:
+def band_at(bands: np.ndarray, cell_m: float, p, radius_m: float = SITE_RADIUS_M) -> int:
     r = max(1, int(radius_m / cell_m))
     i, j = int(p[0] / cell_m), int(p[1] / cell_m)
-    win = tiers[max(0, j - r) : j + r + 1, max(0, i - r) : i + r + 1]
-    return int(win.min())
+    return int(bands[max(0, j - r) : j + r + 1, max(0, i - r) : i + r + 1].min())
 
 
 def reach(h: np.ndarray, cell_m: float, spec: dict) -> tuple[str, np.ndarray, int]:
     """Report of tier reachability against the spec; returns (text, tier map, warnings)."""
-    tiers = tier_map(h, spec)
+    names, tops, clearance = flight(spec)
+    tiers = band_map(h, cell_m, spec)
     land = h >= 0
     lines, warnings = [], 0
 
@@ -281,25 +291,28 @@ def reach(h: np.ndarray, cell_m: float, spec: dict) -> tuple[str, np.ndarray, in
         warnings += not ok
         lines.append(("  ok   " if ok else "  WARN ") + text)
 
-    lines.append(f"Tier reachability at {cell_m:.0f} m (ceilings {spec['tiers']['starter_ceiling_m']:.0f} / "
-                 f"{spec['tiers']['mid_ceiling_m']:.0f} m, clearance {spec['tiers']['clearance_m']:.0f} m)")
-    for i, t in enumerate(TIERS):
+    lines.append(f"Band reachability at {cell_m:.0f} m (tops {' / '.join(f'{t:.0f}' for t in tops)} m, "
+                 f"clearance {clearance:.0f} m)")
+    for i, t in enumerate(names[:-1]):
         lines.append(f"  info land reached by {t}: {(land & (tiers <= i)).sum() / max(land.sum(), 1):.1%}")
     gated = {tuple(d["at"]): d for d in spec.get("destinations", [])}
     for d in spec.get("destinations", []):
-        got = _at(tiers, cell_m, d["at"])
-        check(TIERS[got] == d["tier"], f"destination {d['id']:<18} first reached by {TIERS[got]} (spec {d['tier']})")
+        got = band_at(tiers, cell_m, d["at"])
+        want = d.get("band", d.get("tier"))
+        check(names[got] == want, f"destination {d['id']:<18} first reached by {names[got]} (spec {want})")
     for s in spec.get("sites", []):
-        want = gated.get(tuple(s["at"]), {"tier": "starter"})["tier"]
-        got = _at(tiers, cell_m, s["at"])
-        check(TIERS[got] == want, f"site {s['region']:<24} first reached by {TIERS[got]} (spec {want})")
+        g = gated.get(tuple(s["at"]))
+        want = g.get("band", g.get("tier")) if g else names[0]
+        got = band_at(tiers, cell_m, s["at"])
+        check(names[got] == want, f"site {s['region']:<24} first reached by {names[got]} (spec {want})")
     for p in spec.get("passes", []):
         r = max(1, int(500 / cell_m))
         i, j = int(p["at"][0] / cell_m), int(p["at"][1] / cell_m)
         low = float(h[max(0, j - r) : j + r + 1, max(0, i - r) : i + r + 1].min())
-        got = _at(tiers, cell_m, p["at"], 500)
-        check(got <= TIERS.index(p["tier"]),
-              f"pass {p['id']:<18} lowest ground {low:5.0f} m within 500 m, first reached by {TIERS[got]} (spec {p['tier']})")
+        got = band_at(tiers, cell_m, p["at"], 500)
+        want = p.get("band", p.get("tier"))
+        check(got <= names.index(want),
+              f"pass {p['id']:<18} lowest ground {low:5.0f} m within 500 m, first reached by {names[got]} (spec {want})")
     lines.append(f"{warnings} warning(s)")
     return "\n".join(lines) + "\n", tiers, warnings
 
@@ -307,7 +320,8 @@ def reach(h: np.ndarray, cell_m: float, spec: dict) -> tuple[str, np.ndarray, in
 def reach_png(h: np.ndarray, cell_m: float, tiers: np.ndarray, spec: dict, out: Path, px: int = 2048):
     from PIL import ImageDraw
 
-    colors = np.array([TIER_RGB[i] for i in range(3)], np.uint8)[tiers]
+    names, tops, _ = flight(spec)
+    colors = np.array(BAND_RGB[: len(tops) + 1], np.uint8)[tiers]
     img = _base(h, cell_m, colors, open_sea(h), px)
     d = ImageDraw.Draw(img)
     k, f = px / (h.shape[0] * cell_m), _font(17)
@@ -318,7 +332,8 @@ def reach_png(h: np.ndarray, cell_m: float, tiers: np.ndarray, spec: dict, out: 
     for s in spec.get("sites", []):
         x, y = s["at"][0] * k, s["at"][1] * k
         d.rectangle([x - 5, y - 5, x + 5, y + 5], fill=(255, 255, 255), outline=(0, 0, 0))
-    _label(d, (20, 12), "green: starter, amber: mid tier, red: specialist only", _font(26))
+    legend = ", ".join(f"{c}: {n}" for c, n in zip(("green", "amber", "orange", "red", "purple"), names))
+    _label(d, (20, 12), legend, _font(26))
     img.save(out)
 
 
