@@ -1,0 +1,260 @@
+# Fujix: a 64 km island collaged from real GLO-30 regions (docs/plans/fujix-v1.md).
+# Positions are metres from the north-west corner, x east, y south; rotations clockwise.
+schema_version = 2
+kind = "world_layout"
+name = "fujix"
+extent_m = 65536
+hemisphere = "north"
+wind_from_deg = 225
+snowline_windward_m = 1600
+snowline_lee_m = 2100
+treeline_m = 1000
+coast_margin_m = 4000
+seabed_edge_m = -200
+
+[flight]
+clearance_m = 200
+bands = [
+  { name = "low", top_m = 1500 },
+  { name = "middle", top_m = 2500 },
+  { name = "high", top_m = 3700 },
+  { name = "top", top_m = 4500 },
+]
+
+[[regions]]
+id = "volcano"
+name = "Fujix volcano"
+class_id = 11
+terrain = "Stratovolcano with an ice-filled summit caldera, glaciers and flank cones"
+outline = [[42000, 33500], [40593, 38750], [36750, 42593], [31500, 44000], [26250, 42593], [22407, 38750],
+  [21000, 33500], [22407, 28250], [26250, 24407], [31500, 23000], [36750, 24407], [40593, 28250]]
+border_m = 3000
+forest = 0.3
+floor_m = 300
+summit_m = 5000
+[[regions.pieces]]
+source = "kilimanjaro"
+at = [31500, 33500]
+size_m = [30000, 30000]
+scale = 0.75
+remap = [800, 5895, 300, 5000]
+
+[[regions]]
+id = "ne-rift"
+name = "North-east rift"
+class_id = 17
+terrain = "Cinder cones and lava fields running from the volcano into the desert"
+outline = [[38500, 25500], [44000, 21000], [52000, 14500], [55500, 17500], [48000, 25500], [42000, 30000]]
+border_m = 2000
+floor_m = 400
+summit_m = 1500
+[[regions.pieces]]
+source = "craters-of-the-moon"
+at = [47000, 21500]
+size_m = [20000, 12000]
+rotate_deg = -45
+remap = [1500, 2100, 400, 1000]
+tilt_m_per_km = [-30, 30]
+
+[[regions]]
+id = "canyon-plateau"
+name = "Grand Canyon plateau"
+class_id = 13
+terrain = "Plateau cut by a Grand Canyon section; the river runs west"
+outline = [[22000, 9500], [34000, 9000], [45000, 10500], [46000, 15500], [40500, 22000], [31500, 23000],
+  [24000, 21500], [21500, 15500]]
+border_m = 2000
+forest = 0.25
+floor_m = 600
+summit_m = 2400
+[[regions.pieces]]
+source = "grand-canyon"
+at = [33500, 15500]
+size_m = [30000, 16000]
+remap = [700, 2800, 600, 2400]
+
+[[regions]]
+id = "north-coast"
+name = "North coast mesas"
+class_id = 7
+terrain = "Badlands and mesas stepping down from the plateau to the sea"
+outline = [[14000, 5000], [30000, 4500], [47000, 5000], [47500, 10500], [45000, 10500], [34000, 9000],
+  [22000, 9500], [21500, 16000], [17000, 16500]]
+border_m = 2500
+forest = 0.05
+floor_m = 0
+summit_m = 800
+[[regions.pieces]]
+source = "monument-valley"
+at = [33000, 7000]
+size_m = [30000, 8000]
+remap = [1500, 2200, 50, 700]
+[[regions.pieces]]
+source = "bardenas-reales"
+at = [18000, 10500]
+size_m = [10000, 12000]
+remap = [250, 650, 50, 600]
+
+[[regions]]
+id = "nw-arm"
+name = "North-west knife ridges"
+class_id = 6
+terrain = "Knife ridges inland, sea cliffs on the coast"
+outline = [[4500, 13000], [10000, 9000], [14000, 8000], [17000, 16500], [21500, 16000], [24000, 21500],
+  [23500, 27000], [20000, 30500], [12000, 27500], [4500, 23000]]
+border_m = 3000
+forest = 0.5
+floor_m = 0
+summit_m = 2800
+[[regions.pieces]]
+source = "high-tatras"
+at = [17000, 22000]
+size_m = [18000, 14000]
+remap = [800, 2650, 600, 2800]
+[[regions.pieces]]
+source = "na-pali"
+at = [8000, 15500]
+size_m = [16000, 12000]
+rotate_deg = -45
+class_id = 12
+
+[[regions]]
+id = "nw-skerries"
+name = "North-west skerries"
+class_id = 5
+terrain = "Skerries and a small archipelago"
+outline = [[4200, 4500], [13000, 4300], [12000, 8500], [8000, 10500], [4200, 12000]]
+border_m = 2000
+forest = 0.2
+[[regions.pieces]]
+source = "senja"
+at = [8000, 7500]
+size_m = [12000, 10000]
+
+[[regions]]
+id = "w-fjords"
+name = "Western fjords"
+class_id = 3
+terrain = "Fjords between the arms, with steep walls"
+outline = [[4000, 30000], [12000, 27500], [20000, 30500], [22000, 37000], [18000, 39500], [9500, 44500],
+  [4000, 43000]]
+border_m = 2500
+forest = 0.6
+summit_m = 2500
+[[regions.pieces]]
+source = "milford-sound"
+at = [12000, 36500]
+size_m = [24000, 18000]
+rotate_deg = -45
+
+[[regions]]
+id = "sw-arm"
+name = "South-west alpine arm"
+class_id = 6
+terrain = "Alpine ridges, cirques, glaciers and horn peaks"
+outline = [[4500, 52000], [9500, 44500], [18000, 39500], [22500, 40000], [25000, 46000], [20000, 52500],
+  [13000, 58500], [6000, 60500]]
+border_m = 3000
+forest = 0.4
+floor_m = 800
+summit_m = 4400
+[[regions.pieces]]
+source = "zermatt"
+at = [17500, 46000]
+size_m = [22000, 18000]
+rotate_deg = -45
+remap = [1200, 4478, 800, 4400]
+[[regions.pieces]]
+source = "aoraki-mount-cook"
+at = [10000, 54500]
+size_m = [16000, 14000]
+rotate_deg = -45
+remap = [300, 3724, 0, 3400]
+
+[[regions]]
+id = "s-karst"
+name = "Southern drowned karst"
+class_id = 15
+terrain = "Drowned tower karst in a bay, cone karst inland"
+outline = [[25000, 47500], [33000, 45500], [39000, 48000], [40000, 55000], [37000, 61500], [26000, 61500],
+  [21000, 56500], [22500, 51000]]
+border_m = 2000
+forest = 0.7
+summit_m = 700
+[[regions.pieces]]
+source = "ha-long-bay"
+at = [31000, 57000]
+size_m = [18000, 10000]
+[[regions.pieces]]
+source = "wanfenglin"
+at = [31000, 50500]
+size_m = [16000, 8000]
+remap = [1100, 1700, 50, 700]
+class_id = 14
+
+[[regions]]
+id = "se-range"
+name = "South-east limestone range"
+class_id = 6
+terrain = "Limestone towers and walls"
+outline = [[40500, 39000], [48000, 35500], [56500, 37500], [59000, 45000], [53000, 49500], [42000, 47000]]
+border_m = 3000
+forest = 0.5
+floor_m = 600
+summit_m = 3000
+[[regions.pieces]]
+source = "dolomites"
+at = [49500, 42000]
+size_m = [22000, 16000]
+remap = [1000, 3343, 600, 3000]
+
+[[regions]]
+id = "se-lowland"
+name = "South-east river lowland"
+class_id = 9
+terrain = "Braided river from the volcano to a small delta, with rolling farmland"
+outline = [[39000, 48000], [53000, 49500], [59000, 45000], [61500, 52000], [57000, 60500], [44000, 61500],
+  [40000, 55000]]
+border_m = 3000
+forest = 0.4
+summit_m = 800
+[[regions.pieces]]
+source = "tagliamento"
+at = [50000, 54500]
+size_m = [22000, 14000]
+remap = [300, 2000, 0, 800]
+
+[[regions]]
+id = "e-desert"
+name = "Eastern desert basin"
+class_id = 8
+terrain = "Desert basin with dunes and pans, open to the coast"
+outline = [[46000, 25500], [52000, 27000], [58500, 28500], [61500, 31000], [61000, 38500], [56500, 37500],
+  [48000, 35500], [42000, 34500], [42000, 30000]]
+border_m = 3000
+summit_m = 1000
+[[regions.pieces]]
+source = "sossusvlei"
+at = [53000, 32000]
+size_m = [22000, 14000]
+
+[[regions]]
+id = "ne-dunes"
+name = "North-east dune field"
+class_id = 8
+terrain = "Star dunes banked against the rift's end, crest dunes toward the coast"
+outline = [[47500, 5000], [56500, 6000], [61000, 13500], [61500, 21000], [58500, 28500], [52000, 27000],
+  [48000, 25500], [55500, 17500], [52000, 14500], [46000, 15500], [45000, 10500], [47500, 10500]]
+border_m = 2500
+summit_m = 1600
+[[regions.pieces]]
+source = "great-sand-dunes"
+at = [55000, 21000]
+size_m = [14000, 12000]
+remap = [2300, 4000, 300, 1600]
+[[regions.pieces]]
+source = "taklamakan"
+at = [53000, 9500]
+size_m = [14000, 10000]
+remap = [1000, 1400, 0, 400]
+class_id = 16
