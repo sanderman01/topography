@@ -1,8 +1,9 @@
 # Fujix v1
 
 Status: design agreed with the owner 2026-10-26. Sub-project 1 (the collage layout) is
-implemented and built as `data/worlds/fujix-collage-54`, pending the owner's review; the
-later sub-projects are not started. Fujix is a new
+implemented and built as `data/worlds/fujix-collage-54` (55 with class 19), pending the
+owner's review. Sub-project 3 is implemented in code (class 19, reaches, dithered borders,
+gates); its training runs, L3 run 5 and L4 run 8, are pending. The others are not started. Fujix is a new
 64 km world that replaces Fujion (32 km) as the game's map. It follows the
 [layout spec process](world-layout-spec-v1.md), except that the agent authors the layout as
 a collage of real DEMs and the owner neither writes nor paints it.
@@ -170,6 +171,13 @@ across 64 km is 4.3 billion cells. `hydrology.py` is retired once v2 runs.
 - Gates, per [class conditioning](class-conditioning-v1.md): swap `grand_canyon` against 13 and
   against plain ground, and a dithered border against a hard one, at L3 and L4. Review on fujix
   as well as on held-out real tiles.
+
+Implemented (2026-10-26; how to run it in [the cascade workflow](../workflows/terrain-cascade.md#grand-canyon-and-dithered-borders-fujix)):
+the single accepted Grand Canyon lidar region is trained as four reaches, three train and
+the south-west one held out, so class 19 has three L3 sources without a new vote. The five
+1 m Grand Canyon tiles keep their northing bands. Training dithers borders with
+`--dither-m 1500` (bands of 0 to 1.5 km, hard in a quarter of windows). `fujix-collage-55`
+is build 54 with the canyon plateau as class 19: identical heights and report.
 
 ## 4. Export
 

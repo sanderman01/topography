@@ -73,8 +73,9 @@ class-balanced by region, `--mix` joins two classes in a share of windows, and
 the detail.
 
 Runs started after 2026-10-07 use terrain legend v3 (`catalog/labels/terrain-v3.toml`,
-[biome forms](../plans/biome-forms-v1.md)): 19 class channels, sources relabelled to
-subclasses by `catalog/labels/subclasses-v1.toml` (for example Grand Canyon, Zion and
+[biome forms](../plans/biome-forms-v1.md)): 19 class channels (20 from L3 run 5 and L4
+run 8, with class 19), sources relabelled to
+subclasses by `catalog/labels/subclasses-v1.toml` (for example Zion and
 Canyonlands as layered canyons), ice cells as glaciers and quiet ground as plain, per
 cell. A class trains at a level only with at least three sources there; the run's
 `class_map` sends every other class to its first trained fallback. Older runs keep 13
@@ -85,6 +86,53 @@ share and texture direction. Training takes them from the truth (dropped for
 `--form-dropout`, default 25%, of windows); generation takes them from the run's per-class
 table, with dune direction from the layout's wind. L1 can train on `--crop 128`, so
 the chain samples it in overlapping local windows.
+
+### Grand Canyon and dithered borders (fujix)
+
+Class 19, `grand_canyon` (parent 13, fallback 13), trains only on the Grand Canyon: GLO-30
+`grand-canyon`, lidar `grand-canyon` and the five `Grand Canyon` 1 m tiles. Class 13 keeps
+the other canyons. Runs from before class 19 send it where they send 13 (13-channel runs:
+to 2), so their configs and Fujion inputs still work. L1 and L2 are not retrained; fujix's
+32 m surface is real Grand Canyon.
+
+The lidar region is a single accepted 4096² region, so `subclasses-v1.toml` splits it into
+four 2048² reaches (`[[reaches]]`; ids `grand-canyon-r0` to `-r3`, row-major from the
+north-west), each its own source. The south-west reach (r2, canyon and rim plateau) is
+held out; the north-west one is only 23% surveyed and gives few windows. Reaches apply to
+training releases only (`cascade.load_regions`); other readers see the whole region. At L4
+the five tiles are split by northing bands as usual.
+
+`--dither-m 1500` dithers the class borders of the per-cell labels and of mixed windows
+with blue noise (`borders.py`, shared with the collage), across a band drawn per window
+from 0 to 1.5 km, hard in a quarter of the windows. The dither works on the 32 m label
+grid, like the collage's `class32.u8`.
+
+`class_gates` adds, for runs that train class 19: Grand Canyon against 13 and against
+plain (residuals of the two classes further apart in the classifier's features than two
+seeds), and a dithered border against a hard one (the output near the border changes
+more than far from it, and each label cell comes out closer to its own class's output
+under the dither than under the hard line). They are under `grand_canyon` in `gates.json`
+and count towards the exit status.
+
+Runs to launch (about 6 h and 8 h, GPU, 7 GB RAM cap):
+
+```sh
+CAP=(systemd-run --user --scope -q -p MemoryMax=7G)
+COMMON=(--class-embedding --scale-shift --balanced --mix 0.25 --forms --dither-m 1500)
+"${CAP[@]}" $P -m topography_training.diffusion.train --release data/datasets/lidar-v3/release.json --level l3 \
+    --run-dir data/models/cascade-l3-run-5 --channels 64,96,128,192,256 "${COMMON[@]}" \
+    --coarse-dropout 0.25 --coarse-blur 0.5 --hours 6
+"${CAP[@]}" $P -m topography_training.diffusion.train --release data/datasets/diffusion-v9/manifest.json --level l4 \
+    --run-dir data/models/cascade-l4-run-8 --channels 64,128,256,384,512 "${COMMON[@]}" \
+    --coarse-dropout 0.25 --coarse-blur 0.5 --hours 8
+"${CAP[@]}" $P -m topography_training.diffusion.class_gates --run-dir data/models/cascade-l3-run-5 \
+    --out data/models/cascade-l3-run-5/gates-1
+"${CAP[@]}" $P -m topography_training.diffusion.class_gates --run-dir data/models/cascade-l4-run-8 \
+    --out data/models/cascade-l4-run-8/gates-1
+```
+
+The first L3 run after the label change rebuilds the cached 4 m fields of every lidar
+region (`data/cache/cascade-fields/`).
 
 `cascade_eval` writes a blind review (`review.html`; keep `key.json` and
 `compare.html` closed until the votes are in), terrain statistics, a

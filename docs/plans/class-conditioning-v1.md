@@ -87,6 +87,12 @@ level; it is not overridden by a good blind review.
    on whether each looks like its type.
 4. **The other inputs.** The swap test is repeated for water, snow/ice, vegetation
    and landmark channels where the level has them.
+5. **Grand Canyon and dithered borders** ([fujix](fujix-v1.md), L3 and L4 runs that
+   train class 19). Class 19 against 13 and against plain: generated residuals of the
+   two classes must lie further apart in the classifier's feature space than two seeds
+   of class 19. A dithered border against a hard one: the output near the border must
+   change more than far from it, and follow the dither (cells dithered to a class come
+   out closer to that class's output than under the hard line).
 
 Baseline of the current runs (`class_gates`, 2026-10-03; recognition is the share of
 generated windows recognised as their requested class, against the classifier's

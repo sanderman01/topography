@@ -84,8 +84,10 @@ class and a height.
 | 16 | Crest-train dunes ("Algodones, Taklamakan") | 8 | 8 |
 | 17 | Cinder cones and lava fields ("Sunset Crater") | 11 | 11 |
 | 18 | Plain and rolling ground | 0 | none |
+| 19 | Grand Canyon (added for [fujix](fujix-v1.md), 2026-10-26) | 13 | 13 |
 
-The parents keep the remaining sources: 1 is doline and pinnacle karst, 2 gorges, 5
+Since class 19, the Grand Canyon's GLO-30 region, lidar region and 1 m tiles are class 19,
+not 13; the lists below predate it. The parents keep the remaining sources: 1 is doline and pinnacle karst, 2 gorges, 5
 rias and skerries, 8 star and mountain dunes, 11 stratovolcanoes.
 
 A model is trained on the classes that have data at its level. Every other class maps
