@@ -5,9 +5,10 @@ python -m topography_training.diffusion.collage <layout.toml> --release <context
 Each region's ground comes from pieces of real regions, cut out, rotated, scaled and
 remapped in height, then blended across region borders with a Laplacian pyramid; classes
 are dithered across the same borders. Passes too high for their band get a broad dip and
-volcanoes with caldera fields get a caldera cut into their summit, breached where asked. Writes an L0 directory that `layout.load` reads,
-the 32 m surface (arrays.npz: l1, l2), class and region maps and pictures. Positions are
-metres from the north-west corner, x east, y south; rotations are clockwise on the map.
+volcanoes with caldera fields get a caldera cut into their summit, breached where asked.
+Writes an L0 directory that `layout.load` reads, the 32 m surface (arrays.npz: l1, l2),
+class and region maps and pictures. Positions are metres from the north-west corner,
+x east, y south; rotations are clockwise on the map.
 """
 
 from __future__ import annotations
@@ -98,10 +99,11 @@ def validate(spec: dict) -> None:
         if "breach_m" in f:
             if "caldera_floor_m" not in f:
                 raise ValueError(f"{f.get('id')}: a breach needs a caldera (caldera_diameter_m, caldera_floor_m)")
-            lo, hi = float(f["caldera_floor_m"]), float(f["caldera_floor_m"]) + CALDERA_RIM_MIN_M
+            lo = float(f["caldera_floor_m"]) + BREACH_ABOVE_FLOOR_M  # the floor stays a closed hollow
+            hi = float(f["caldera_floor_m"]) + CALDERA_RIM_MIN_M
             if not lo <= float(f["breach_m"]) < hi:
-                raise ValueError(f"{f.get('id')}: breach_m {f['breach_m']} must be from the caldera floor {lo:.0f} "
-                                 f"up to below {hi:.0f} m")
+                raise ValueError(f"{f.get('id')}: breach_m {f['breach_m']} must be from {lo:.0f} (the caldera "
+                                 f"floor + {BREACH_ABOVE_FLOOR_M:.0f}) up to below {hi:.0f} m")
             if not 0 <= float(f["breach_azimuth_deg"]) < 360:
                 raise ValueError(f"{f.get('id')}: breach_azimuth_deg must be from 0 to below 360 (clockwise from north)")
             if not 0 < float(f.get("breach_width_m", 600.0)) <= float(f["caldera_diameter_m"]):
@@ -426,11 +428,19 @@ def dip_passes(h: np.ndarray, spec: dict) -> tuple[np.ndarray, dict[str, float]]
 
 PLATEAU_M = 200.0  # the summit plateau: ground this close to the top, joined to it
 CALDERA_REACH_M = 2500.0  # a caldera changes no ground farther than this from its centre
-CALDERA_WALL_M = 400.0  # inner wall, from the floor's edge to the rim crest
+CALDERA_WALL_M = 320.0  # inner wall, from the floor's edge to the rim crest
 CALDERA_CREST_DROP_M = 60.0  # the crest's outer edge: ground this close to the ray's highest
+CALDERA_CREST_MIN = 0.7  # a ray's highest ground this far out (share of the radius) is its crest
+CALDERA_CREST_SMOOTH_DEG = 3.0  # the rim radius is smoothed over this, keeping real scallops
+CALDERA_WALL_RELIEF = 1.5  # the mirrored flank relief is this much stronger mid-wall
+CALDERA_SOFTEN_CELLS = 1.0  # the cut surface is blurred by this, rounding the crest
+CALDERA_SOFTEN_SPREAD = 3.0  # cells past the cut over which the blur fades out
+CALDERA_FADE_M = 500.0  # all change fades out over this, inside CALDERA_REACH_M
 CALDERA_FLOOR_RISE_M = 25.0  # the ice floor rises this much toward the walls
+CALDERA_RISE_M = 300.0  # over this distance from the wall foot
 CALDERA_SHAPE_M = 250.0  # walls rise to the ground smoothed at this scale; finer relief is detail
-CALDERA_FLOOR_DETAIL = 0.15  # share of that detail kept on the floors, rising to all of it at the crest
+CALDERA_FLOOR_DETAIL = 0.4  # share of the finest relief kept on floors
+CALDERA_FLOOR_TEXTURE_M = 48.0  # relief finer than this textures floors
 CALDERA_RIM_MIN_M = 300.0  # rim notches lower than this above the floor are filled
 CALDERA_CREST_BAND_M = 300.0  # notches are filled this close to the crest
 CALDERA_FILL_TAPER_M = 800.0  # and the fill fades to nothing this far out past the crest
@@ -438,7 +448,9 @@ BREACH_FALL = 0.25  # the breach floor falls this much (m per m) outward from th
 BREACH_BLEND_M = 400.0  # the breach walls rise from its floor to the ground over this distance
 BREACH_SMOOTH_M = 100.0  # the notch follows the steepest descent of ground smoothed at this scale
 BREACH_CLEAR_M = 30.0  # and ends where the ground lies this far below its floor
-BREACH_DETAIL = 0.6  # share of ground detail on the breach floor down the gully
+BREACH_ABOVE_FLOOR_M = 10.0  # a breach's sill is at least this far above the floor
+BREACH_SILL_DETAIL = 0.1  # share of ground detail on the breach floor at the rim
+BREACH_DETAIL = 0.6  # and down the gully
 BREACH_ROUGH_M = 400.0  # reached this far past the rim
 RAYS = 360
 
@@ -487,13 +499,16 @@ def calderas(h: np.ndarray, spec: dict, x: np.ndarray, y: np.ndarray) -> tuple[n
         near = np.hypot(x - cx, y - cy) <= CALDERA_REACH_M
         r = np.hypot(x - cx, y - cy)[near]
         az = np.degrees(np.arctan2(x - cx, cy - y))[near] % 360  # clockwise from north
-        # The dome along each ray; the crest's outer edge is the rim.
+        # The dome along each ray. The rim is the ray's own crest where it has one out in the
+        # ring; where the dome just falls away, the outer edge of the ground near its highest.
         radii = np.arange(0.6 * r0, 1.25 * r0, CELL_M / 2)
         t = np.radians(np.arange(RAYS) * 360.0 / RAYS)
         px, py = cx + np.outer(np.sin(t), radii), cy - np.outer(np.cos(t), radii)
         prof = ndimage.map_coordinates(h0, [py / CELL_M - 0.5, px / CELL_M - 0.5], order=1)
         high = prof >= prof.max(1, keepdims=True) - CALDERA_CREST_DROP_M
-        crest_r = _smooth_ray(radii[len(radii) - 1 - np.argmax(high[:, ::-1], 1)], 6.0)
+        top_r = radii[np.argmax(prof, 1)]
+        edge_r = radii[len(radii) - 1 - np.argmax(high[:, ::-1], 1)]
+        crest_r = _smooth_ray(np.where(top_r >= CALDERA_CREST_MIN * r0, top_r, edge_r), CALDERA_CREST_SMOOTH_DEG)
         crest_h = prof.max(1)
         rim = _per_ray(crest_r, az)
         # Fill rim notches below the rim minimum, fading inward to the floor and outward past the crest.
@@ -511,22 +526,41 @@ def calderas(h: np.ndarray, spec: dict, x: np.ndarray, y: np.ndarray) -> tuple[n
         h1[near] += _per_ray(deficit, az) * taper * taper * (3 - 2 * taper)
         hs = ndimage.gaussian_filter(h1, CALDERA_SHAPE_M / CELL_M)
         shape, detail, g = hs[near], (h1 - hs)[near], h1[near]
+        # Only the finest relief textures floors, so no buried crater ring shows through.
+        fine = (h1 - ndimage.gaussian_filter(h1, CALDERA_FLOOR_TEXTURE_M / CELL_M))[near]
 
-        def wall(base, s, kept=CALDERA_FLOOR_DETAIL):
-            """From base (s = 0) up to the real ground (s = 1), its detail growing from `kept` on the way."""
+        def wall(base, s, kept=CALDERA_FLOOR_DETAIL, relief=None, texture=None):
+            """From base (s = 0) up to the real ground (s = 1): `kept` of `texture` (default the
+            ground's fine relief) on the floor, giving way to `relief` (default its own detail)."""
             k = s**1.5  # steepest near the crest, gentle at the foot like talus
-            return base + (shape - base) * k + detail * (kept + (1 - kept) * k)
+            relief = detail if relief is None else relief
+            texture = fine if texture is None else texture
+            return base + (shape - base) * k + texture * kept * (1 - k) + relief * k
 
-        # The bowl: a faintly textured floor, rising over the inner wall to the crest.
+        # The bowl: a faintly textured floor, rising over the inner wall to the crest. The wall
+        # carries the outer flank's gullies and spurs, mirrored in the crest along each ray.
         inner = rim - CALDERA_WALL_M
-        base = floor_m + CALDERA_FLOOR_RISE_M * np.clip(r / inner, 0, 1) ** 2
-        g = np.where(d < 0, np.minimum(wall(base, np.clip((r - inner) / CALDERA_WALL_M, 0, 1)), g), g)
+        # The floor rises only near the wall foot, so the rim's scallops draw no spokes on it.
+        base = floor_m + CALDERA_FLOOR_RISE_M * np.clip(1 - (inner - r) / CALDERA_RISE_M, 0, 1) ** 2
+        s = np.clip((r - inner) / CALDERA_WALL_M, 0, 1)
+        out_r, a = 2 * rim - r, np.radians(az)
+        out = [(cy - out_r * np.cos(a)) / CELL_M - 0.5, (cx + out_r * np.sin(a)) / CELL_M - 0.5]
+        flank = ndimage.map_coordinates(h1 - hs, out, order=1)
+        # On the upper wall, strongest just below the crest and exact at it; the foot is talus.
+        gullies = flank * s * (1 + CALDERA_WALL_RELIEF * np.sin(np.pi * s))
+        # The floor's texture is the flank's, taken from a fixed offset (a mirror would draw a
+        # star at the centre), so the summit's buried crater ring stays buried.
+        shift = [(y[near] + 1.5 * r0) / CELL_M - 0.5, (x[near] + 2.0 * r0) / CELL_M - 0.5]
+        grain = ndimage.map_coordinates(h1 - ndimage.gaussian_filter(h1, CALDERA_FLOOR_TEXTURE_M / CELL_M), shift,
+                                        order=1)
+        g = np.where(d < 0, np.minimum(wall(base, s, relief=gullies, texture=grain), g), g)
         b_info = {}
         if breach:
             # A notch from the floor through the rim and down the gully below it.
             b_rim = float(_per_ray(crest_r, np.array([b_az]))[0])
             path, arc, arc_rim = breach_path(ndimage.gaussian_filter(h1, BREACH_SMOOTH_M / CELL_M), cx, cy, b_az,
-                                             b_rim - CALDERA_WALL_M, b_rim, float(f["breach_m"]))
+                                             b_rim - CALDERA_WALL_M, b_rim, float(f["breach_m"]),
+                                             CALDERA_REACH_M - BREACH_BLEND_M - b_width / 8)
             pts = np.stack([x[near], y[near]], 1)
             dist = np.full(len(pts), np.inf)
             along = np.zeros(len(pts))
@@ -541,19 +575,30 @@ def calderas(h: np.ndarray, spec: dict, x: np.ndarray, y: np.ndarray) -> tuple[n
             sill = np.minimum(float(f["breach_m"]) - BREACH_FALL * past, shape)
             # A floor a quarter of the width between blended walls, so the notch is about breach_width_m
             # across a third of the way up; rougher down the gully, where the floor has room below the band.
-            kept = CALDERA_FLOOR_DETAIL + (BREACH_DETAIL - CALDERA_FLOOR_DETAIL) * np.clip(past / BREACH_ROUGH_M, 0, 1)
-            g = np.minimum(g, wall(sill, np.clip((dist - b_width / 8) / BREACH_BLEND_M, 0, 1), kept))
+            kept = BREACH_SILL_DETAIL + (BREACH_DETAIL - BREACH_SILL_DETAIL) * np.clip(past / BREACH_ROUGH_M, 0, 1)
+            g = np.minimum(g, wall(sill, np.clip((dist - b_width / 8) / BREACH_BLEND_M, 0, 1), kept, texture=detail))
             b_info = {"path": path, "rim_arc": arc_rim, "length_m": float(arc[-1] - arc_rim)}
-        h[near] = g
-        ice[near] |= (d < -CALDERA_WALL_M / 3) & (g <= floor_m + CALDERA_FLOOR_RISE_M + 60)
+        # Soften the cut surface by a cell along the edge of the cut, which rounds the crest (never
+        # above the ground), then fade all change out before the reach.
+        cut = h1.copy()
+        cut[near] = g
+        soft = np.minimum(h1, ndimage.gaussian_filter(cut, CALDERA_SOFTEN_CELLS))
+        inside = cut < h1 - 0.5
+        edge = ndimage.distance_transform_edt(~inside) + ndimage.distance_transform_edt(inside)
+        w = np.clip(1 - edge / CALDERA_SOFTEN_SPREAD, 0, 1)
+        rr = np.hypot(x - cx, y - cy)
+        fade = np.clip((CALDERA_REACH_M - rr) / CALDERA_FADE_M, 0, 1)
+        h += (cut + w * (soft - cut) - h0) * fade * fade * (3 - 2 * fade)
+        ice[near] |= (d < -CALDERA_WALL_M / 3) & (h[near] <= floor_m + CALDERA_FLOOR_RISE_M + 60)
         info[f["id"]] = {"at": (cx, cy), "crest_r": crest_r, "crest_h": crest_h, "breach": b_info}
     return h, ice, info
 
 
-def breach_path(hs: np.ndarray, cx: float, cy: float, az: float, r_in: float, r_rim: float, sill_m: float):
+def breach_path(hs: np.ndarray, cx: float, cy: float, az: float, r_in: float, r_rim: float, sill_m: float,
+                r_max: float):
     """A breach's centre line: straight out from r_in to the rim at azimuth az, then down the
-    steepest descent of the smoothed ground hs until it falls below the notch floor. Returns
-    (points (n, 2) in m, arc length of each, arc length at the rim)."""
+    steepest descent of the smoothed ground hs until it falls below the notch floor or reaches
+    r_max from the centre. Returns (points (n, 2) in m, arc length of each, arc length at the rim)."""
     from scipy import ndimage
 
     ux, uy = np.sin(np.radians(az)), -np.cos(np.radians(az))
@@ -565,7 +610,7 @@ def breach_path(hs: np.ndarray, cx: float, cy: float, az: float, r_in: float, r_
     dx, dy = ux, uy
     arc_rim = r_rim - r_in
     arc = arc_rim
-    while arc - arc_rim < CALDERA_REACH_M:
+    while np.hypot(px - cx, py - cy) < r_max:
         pts.append((px, py))
         at = [[py / CELL_M - 0.5], [px / CELL_M - 0.5]]
         ground = float(ndimage.map_coordinates(hs, at, order=1)[0])
@@ -598,6 +643,9 @@ CALDERA_CLOSED_M = 200.0  # the rim stands at least this far above the floor, ex
 BREACH_SECTOR_DEG = 30.0  # the breach is the lowest rim within this of its azimuth
 CALDERA_REACH_RADIUS_M = 200.0  # the floor counts as reached if a band reaches this close to its lowest point
 CALDERA_CHANGE_M = 50.0
+CALDERA_RING_M = 200.0  # change this close inside the reach must fade to almost nothing
+CALDERA_RING_STEP_M = 3.0
+BREACH_MARGIN_M = 50.0  # the breach stays this far under the reaching band's ground limit
 RIVER_HEAD_M = 300.0  # a river is traced from the lowest ground this close to its path's first point
 RIVER_CLIMB_M = 30.0  # its path may rise this much above ground it passed (GLO-30 river floors carry such pits)
 RIVER_MOUTH_M = 2000.0  # and must reach the sea this close to its path's last point
@@ -710,18 +758,23 @@ def report_caldera(f: dict, h: np.ndarray, pre: np.ndarray, cal: dict | None, ba
     names, tops, clearance = layout.flight(spec)
     expect = next((i for i, t in enumerate(tops) if want + clearance <= t), len(tops))
     got = layout.band_at(bands, CELL_M, c["low_at_m"], CALDERA_REACH_RADIUS_M)
-    check(got == expect,
-          f"caldera {f['id']}: floor reached by {names[got]} (a {want:.0f} m floor needs {names[expect]})")
+    # The lowest way out of the hollow is its breach: the margin under the band's highest ground.
+    margin = (tops[expect] - clearance - c["breach_m"]) if expect < len(tops) else 0.0
+    check(got == expect and ("breach_m" not in f or margin >= BREACH_MARGIN_M),
+          f"caldera {f['id']}: floor reached by {names[got]} (a {want:.0f} m floor needs {names[expect]})"
+          + (f"; the way out over the breach is {margin:.0f} m under the band's ground limit" if "breach_m" in f
+             else ""))
     x, y = grid(h.shape[0])
     r = np.hypot(x - cal["at"][0], y - cal["at"][1])
-    big = np.abs(h.astype(np.float64) - pre) > CALDERA_CHANGE_M
+    change = np.abs(h.astype(np.float64) - pre)
+    big = change > CALDERA_CHANGE_M
     far = float(r[big].max()) if big.any() else 0.0
-    moved = np.abs(h.astype(np.float64) - pre) > 0
-    check(not (moved & (r > CALDERA_REACH_M)).any(),
+    ring = float(change[(r > CALDERA_REACH_M - CALDERA_RING_M) & (r <= CALDERA_REACH_M)].max())
+    check(ring <= CALDERA_RING_STEP_M and not (change[r > CALDERA_REACH_M] > 0).any(),
           f"caldera {f['id']}: {big.sum() * CELL_M**2 / 1e6:.2f} km² changed by more than {CALDERA_CHANGE_M:.0f} m "
           f"(raised {(h - pre > CALDERA_CHANGE_M).sum() * CELL_M**2 / 1e6:.2f} km², up to "
-          f"{max(float((h - pre).max()), 0.0):.0f} m), out to {far / 1000:.2f} km from its centre; "
-          f"nothing changed beyond {CALDERA_REACH_M / 1000:.1f} km")
+          f"{max(float((h - pre).max()), 0.0):.0f} m), out to {far / 1000:.2f} km from its centre; at most "
+          f"{ring:.1f} m in the last {CALDERA_RING_M:.0f} m before {CALDERA_REACH_M / 1000:.1f} km, nothing beyond")
 
 
 def report(spec, regions, h, sds, land_w, covered, region32, ice, dips, pre, cal) -> tuple[str, int]:
