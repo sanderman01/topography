@@ -169,15 +169,19 @@ from the north-west corner.
 
 ```sh
 $P -m topography_training.diffusion.collage configs/layouts/fujix/layout.toml \
-    --release data/datasets/context-v5/release.json --out data/worlds/fujix-collage-49
+    --release data/datasets/context-v5/release.json --out data/worlds/fujix-collage-51
 ```
 
 It bends every outline with one fixed-seed smooth warp. Pieces fade out inside their crop
 edge, ground past the pieces is filled smoothly, and region borders are blended with a
 Laplacian pyramid while classes are dithered across them. A smooth seabed starts at the
 coast, and ground past the island outline sinks to it. Passes above their band get a
-broad dip, and each volcano with caldera fields gets a flat ice floor inside a rim at about
-its summit height. The build writes into `<out>.partial` and renames it when done; an
+broad dip. Each volcano with caldera fields gets a bowl cut into its summit dome, centred on
+the summit plateau: the rim follows the dome's own crest, the inner walls drop to an ice
+floor that keeps faint real texture, and ground is only lowered, except that rim notches
+lower than 300 m above the floor are filled. A breach is a notch from the floor through the
+rim and down the gully below it, ending where the ground falls below its floor. Nothing
+changes farther than 2.5 km from the caldera's centre. The build writes into `<out>.partial` and renames it when done; an
 error removes it, and a killed build leaves it for you to remove. Outputs:
 
 - `layout.json` and the L0 layers (`class.u8`, `mid.f32`, `relief.f32`, `coast.f32`,
@@ -199,8 +203,17 @@ error removes it, and a killed build leaves it for you to remove. Outputs:
     above 1.3 times)
   - volcano margin: the summit against the highest land outside the volcano's region
     (WARN under 400 m)
-  - caldera: floor within 150 m of its target and closed at least 150 m deep
+  - caldera: floor within 100 m of its target; the rim at least 200 m above the floor
+    except within 30° of the breach, whose sill is the lowest rim; the floor reached by
+    exactly the band its height needs; the area changed by more than 50 m and how far out,
+    and nothing changed beyond 2.5 km
   - every pass reached by exactly its band, with any dip
+  - each feature with `river = true`: its drainage path (priority flood) from the lowest
+    ground within 300 m of its path's first point to the sea, its length, where it meets
+    the sea (WARN past 2 km from the path's last point) and its largest rise above ground it
+    already passed (WARN above 30 m; GLO-30 river floors carry pits of 20 m or so)
+  - for a breached caldera, where water from the breach drains and where it joins a river
+    (info)
   - closed depressions on land of at least 1 km² and 50 m deep (info only; hydrology v2
     breaches them)
 - `reach-l2.txt` and `reach-l2.png`, which bands reach which ground
@@ -212,8 +225,8 @@ error removes it, and a killed build leaves it for you to remove. Outputs:
 `layout reach` works on the result:
 
 ```sh
-$P -m topography_training.diffusion.layout reach data/worlds/fujix-collage-49 \
-    --arrays data/worlds/fujix-collage-49/arrays.npz
+$P -m topography_training.diffusion.layout reach data/worlds/fujix-collage-51 \
+    --arrays data/worlds/fujix-collage-51/arrays.npz
 ```
 
 The collage's `l2` is meant to replace the L1 and L2 models for fujix (`l1` is its 128 m
@@ -236,7 +249,7 @@ Heights and distances are metres; positions are `[x, y]` from the north-west cor
 | `[[regions]]` | `id`, `name`, `class_id` (legend v3), `terrain`, `outline` (polygon), `border_m` (blend width, default 3,000), `forest` (0 to 1), optional `area_km2`, `floor_m`, `summit_m` targets |
 | `[[regions.pieces]]` | `source` (release region), `at` (crop centre in the world), `size_m` (crop width east and height south, source metres), `offset_m` (crop centre from the source centre), `rotate_deg` (clockwise), `scale` (1/1.5 to 1.5), `remap` (source lo, hi to world lo, hi, linear), `tilt_m_per_km` (east, south), `class_id` (instead of the region's) |
 | `[[passes]]` | `id`, `name`, `at`, `band` (a `[flight]` band name) |
-| `[[features]]` | `id`, `kind`, `name`, `note`. Volcano: `at`, `radius_m`, `summit_m`, optional `caldera_diameter_m` and `caldera_floor_m` (both or neither). Gorge: `path`, `depth_m`, `river` |
+| `[[features]]` | `id`, `kind`, `name`, `note`. Volcano: `at`, `radius_m`, `summit_m`, optional `caldera_diameter_m` and `caldera_floor_m` (both or neither; the diameter is roughly the rim crest's), optional `breach_azimuth_deg` (clockwise from north) and `breach_m` (its sill, from the floor up to below floor + 300 m; both or neither, and only with a caldera), optional `breach_width_m` (default 600: the notch's width about a third of the way up its walls, its floor a quarter of that). Gorge: `path` (head to mouth), `depth_m`, `river` (traced to the sea by the report) |
 
 ## Generating a world
 

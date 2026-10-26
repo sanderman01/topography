@@ -1,7 +1,7 @@
 # Fujix v1
 
 Status: design agreed with the owner 2026-10-26. Sub-project 1 (the collage layout) is
-implemented and built as `data/worlds/fujix-collage-49`, pending the owner's review; the
+implemented and built as `data/worlds/fujix-collage-51`, pending the owner's review; the
 later sub-projects are not started. Fujix is a new
 64 km world that replaces Fujion (32 km) as the game's map. It follows the
 [layout spec process](world-layout-spec-v1.md), except that the agent authors the layout as
@@ -59,14 +59,14 @@ treeline about 1,000 m, as in Fujion.
 
 | Area | Terrain | References (GLO-30) | Ground height |
 | --- | --- | --- | --- |
-| Centre | Volcano with a summit caldera about 2.5 km across, its floor ice-filled near 4,600 m; glaciers on the upper cone; flank cones | Kibo on Kilimanjaro, Shasta for the flanks | 0 to 5,000 m |
+| Centre | Volcano with a summit caldera about 2 km across, its floor ice-filled near 4,250 m and breached on the north-west toward the canyon head; glaciers on the upper cone; flank cones | Kibo on Kilimanjaro, Shasta for the flanks | 0 to 5,000 m |
 | Rift, SW to NE | Cinder cones and lava fields running into the NE desert | Craters of the Moon, Etna | 300 to 1,500 m |
 | SW arm | Alpine ridges, cirques, glaciers, horn peaks | Zermatt, Aoraki/Mount Cook, Aletsch | 800 to 4,400 m |
 | W coast | Fjords between the arms, one outlet glacier with an outwash fan | Milford Sound, Geirangerfjord | Walls to 2,500 m |
 | NW arm, belt | Knife ridges inland, sea cliffs on the coast, skerries and an archipelago offshore | High Tatras, Na Pali, Senja | 0 to 2,800 m |
 | S coast | Drowned tower karst in a bay, cone karst inland | Ha Long Bay, Wanfenglin | 0 to 700 m |
 | SE, belt | Limestone range, then wet lowland: a braided river from the volcano to a small delta, rolling farmland pockets | Dolomites, Rakaia, Tagliamento | 0 to 3,000 m |
-| N, lee | Grand Canyon plateau: about 25 km of canyon, rim 2,100 to 2,400 m, inner gorge near 600 m, a snowmelt river from the volcano through it to the north coast | Grand Canyon only | 0 to 2,400 m |
+| N, lee | Grand Canyon plateau: about 25 km of canyon running north-east from the volcano's north-west flank to the north coast, rims falling from about 2,400 to 1,500 m, the floor from about 900 m to the sea, a snowmelt river from the volcano through it | Grand Canyon only | 0 to 2,400 m |
 | NE, lee | Badlands and mesas; star dunes banked against the end of the rift, crest dunes toward the coast | Monument Valley, Bardenas Reales, Great Sand Dunes, Taklamakan | 0 to 1,600 m |
 | E, lee | Desert basin open to the coast, with oases | Sossusvlei, Erg Chebbi | 0 to 1,000 m |
 
