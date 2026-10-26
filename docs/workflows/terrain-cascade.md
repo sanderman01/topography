@@ -404,38 +404,63 @@ implemented yet.
 
 Steps:
 
-- Sea is ground below 0 m connected 8-way to the grid edge (`cascade.open_sea` labels 4-way;
-  D8 flow needs 8). The sea and the grid edge are the outlets.
+- Sea is input ground below 0 m connected 8-way to the grid edge (`cascade.open_sea` labels
+  4-way; D8 flow needs 8). It is not recomputed after carving, so cuts never become sea
+  inlets. The sea and the grid edge are the outlets.
 - A priority flood (Barnes et al. 2014) gives the filled surface; each connected region
   filled above the ground is a depression with one spill level and outlet.
 - Lakes: within each class's `lake_share` of its land (classes from
   [configs/hydrology/water-v1.toml](../../configs/hydrology/water-v1.toml), a copy of
   `hydrology.WATER`), the largest depressions by volume, at least 1 m deep and 4,096 m².
-  A depression belongs to its most common class.
+  A depression belongs to its most common class. Nested depressions count as one, at the
+  outer spill: when that is over budget, a smaller inner lake that would fit is not kept
+  (a known limitation, revisited with finer levels).
+- Glacier basins (most common class 10) stay dry ice basins at their own ground, never lakes
+  and never breached; flow passes through them. This keeps the fujix summit caldera intact.
 - Dry basins: within `dry_share`, the deepest compact depressions (at least 2 m deep,
   bounding box side² / area at most 4) of dry classes with less than the river threshold
   flowing in. Flow passes through them; one that a river reaches after breaching becomes a
   lake.
-- Every other depression is breached: a second priority flood lowers the path from the pit
-  through the spill until the ground falls away, by one f32 step per cell (Soille 2004
-  carving), never filling. Lakes and dry basins are flat at their level in this flood.
+- Every other depression is breached by a second priority flood: when the flood first
+  reaches it, the path it came along is lowered once to the depression's lowest ground, and
+  cells inside that are lower than their path lower it again (Soille 2004 carving), never
+  filling. Equal heights are crossed as a flat without carving, so ground descends or stays
+  level along every receiver. Kept basins are flat at their level in this flood, and the path
+  into one is lowered to its level.
+- Breaching cuts at most `BREACH_MAX_M` = 30 m (judgment constant, the same at every level for
+  now). A depression deeper than that below its spill, or with ground below 0 m, is kept
+  beyond the budget: in glacier and arid classes (`lake_share` ≤ 0.002: canyons, badlands,
+  dunes) as a dry sink where flow ends (endorheic), elsewhere as lakes at the spill lowered by
+  30 m (not below 0 m), one per piece of ground below that level, with the outlet cut down to
+  it.
 - Lakes grow over carved ground below their level that drains into them, so one level and
   wet exactly where the level is above the ground still hold next to a cut.
 - Rivers are cells draining at least 10 km² (`--river-km2`). One body id per river system:
-  all river cells upstream of one mouth, which ends in the sea, a lake or the grid edge. Water
-  surface: ground plus 0.4 m · area^0.4 (a placeholder for discharge until moisture exists),
-  raised so it never rises downstream and never ends below the water it flows into.
+  all river cells upstream of one mouth, which ends in the sea, a lake, a sink or the grid
+  edge. Water surface: ground plus 0.4 m · area^0.4 (a placeholder for discharge until
+  moisture exists), but at most the lowest dry neighbour, the level of a lake draining in and
+  every river surface upstream. The bed is cut to the surface minus that depth, so a river
+  never stands above its banks and a lake's outflow starts at or below the lake level.
 
-`report.json` checks (all must be 0): land cells not draining to an outlet, land draining
-uphill, lakes with several levels, wet cells whose surface is not above the ground, river
-cells rising downstream and rivers ending on dry land. Figures include lake and dry basin
-counts and areas, breached depressions, carve volume, deepest cut and cells cut more than
-50 m, and river counts and lengths.
+`bodies.json` lists the sea (id 1), lakes (`exit_cell`: the first cell the lake's routed flow
+enters outside it, `parent`: the body that flow reaches), rivers (`area_km2`, `drainage_km2`,
+`length_km`, `parent`) and dry basins (`kind` `dry`, `endorheic`, `ice`; their ids are not in
+`water-body.u32`, which is 0 on dry ground).
 
-On fujix-collage-55 (2048², 32 m) it takes about 1.3 s and 85 MB: 167 lakes (18 km², 0.8% of
-the land), 71 dry basins, 3,746 depressions breached, 53 river systems (347 km), all checks
-0. On the 8192² 4 m chain world it takes 35 s and 1.2 GB; 16,384² at 4 m should need about
-5 GB.
+`report.json` checks (all must be 0): lakes in more than one piece or with ground at or above
+their level, lake exits above the level, wet cells whose surface is not above the ground,
+river cells rising downstream (including into a lake or the sea), rivers ending on dry land,
+land draining uphill, and dry cells more than 1 cm below an adjacent lake, sea or river
+surface. Two `guard_` checks (land not draining to an outlet, lakes with several levels) hold
+by construction and only catch bugs. Figures include lakes and dry basins (over budget,
+sinks, ice), carved cells, cells cut more than 10 m, the deepest cut, river bed cuts, and river
+counts and lengths. Timings go to stderr only, so identical inputs give identical outputs.
+
+On fujix-collage-55 (2048², 32 m) it takes about 1.7 s and 85 MB: 270 lakes (36 km², 1.6% of
+the land; 121 over budget), 172 dry basins (72 sinks, 29 ice), 93 river systems (242 km),
+breaching cut at most 30 m, river beds at most 60 m on steep reaches, all checks 0. On the
+8192² 4 m chain world it takes 37 s and 1.2 GB; 16,384² at 4 m should need about 5 GB. A
+1024² exact flat takes under 0.1 s to breach.
 
 ## Export
 
