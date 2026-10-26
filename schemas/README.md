@@ -19,6 +19,7 @@ checks, instead of a second schema engine. Their first consumer is
 - [Prepared native region v3](prepared-region-v3.md): adds the `land-cover` layer.
 - [Numeric evaluation v1](numeric-evaluation-v1.md): scoped releases, geographic separation and the Rust/Python scalar job boundary.
 - [Numeric evaluation v2](numeric-evaluation-v2.md): surface-cover propagation and ground-only metrics, with explicit legacy compatibility.
+- [World description v1](world-description-v1.md): a generated world's regions, passes and features with layout targets and measured values.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.
