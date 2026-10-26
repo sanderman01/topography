@@ -29,12 +29,14 @@ COLORS = {
     5: (0, 128, 128), 6: (255, 0, 0), 7: (165, 42, 42), 8: (255, 255, 0), 9: (0, 0, 255),
     10: (200, 230, 255), 11: (255, 90, 40), 12: (120, 90, 200), 13: (190, 110, 40), 14: (200, 80, 200),
     15: (90, 200, 170), 16: (240, 220, 140), 17: (70, 40, 40), 18: (150, 190, 110),
+    19: (215, 75, 35),
 }
 NAMES = {
     1: "Doline karst", 2: "Gorges", 3: "Fjords", 4: "Calderas and craters", 5: "Archipelago",
     6: "Alpine ridges", 7: "Badlands and mesas", 8: "Star dunes", 9: "Braided rivers",
     10: "Glaciers", 11: "Stratovolcano", 12: "Coastal cliffs", 13: "Layered canyons", 14: "Cone and tower karst",
     15: "Drowned tower karst", 16: "Crest-train dunes", 17: "Cinder cones and lava", 18: "Plain",
+    19: "Grand Canyon",
 }
 TIERS = ("starter", "mid", "specialist")  # layout v1 `[tiers]`
 BAND_RGB = [(120, 200, 110), (240, 190, 60), (235, 130, 50), (220, 70, 60), (150, 60, 160)]

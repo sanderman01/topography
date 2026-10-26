@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 
 LABELS = Path(__file__).resolve().parents[4] / "catalog" / "labels"
-NUM_CLASSES = 19  # legend v3: 0 unknown, 1..18
+NUM_CLASSES = 20  # legend v3: 0 unknown, 1..19
 LEGACY_CLASSES = 13  # legend v2 runs
-GLACIER, ALPINE, BRAIDED, PLAIN = 10, 6, 9, 18
+GLACIER, ALPINE, BRAIDED, PLAIN, GRAND_CANYON = 10, 6, 9, 18, 19
 ICE_SHARE = 0.5
 ICE_SMOOTH_M = 100.0
 LABEL_CELL_M = 32.0  # per-cell labels are worked out on a grid of about this size
@@ -67,6 +67,14 @@ def source_class(kind: str, name: str, class_id: int) -> int:
     return int(class_id)
 
 
+def reaches(kind: str, name: str) -> tuple[int, set[int]] | None:
+    """(grid, validation reach indices) of a region split into reaches, else None."""
+    for e in _spec().get("reaches", []):
+        if e.get(kind) == name:
+            return int(e["grid"]), {int(i) for i in e["validation"]}
+    return None
+
+
 def source_kind(spacing_m: int) -> str:
     return {32: "context", 4: "lidar", 1: "tiles"}[int(spacing_m)]
 
@@ -95,13 +103,23 @@ def trained_classes(counts: dict[int, int]) -> set[int]:
     return {c for c, n in counts.items() if c > 0 and n >= int(_spec()["min_sources"])}
 
 
+def _ancestor(c: int, par: np.ndarray, known: int) -> int:
+    """The first of c, its parent, its parent's parent... below `known`."""
+    while c >= known:
+        c = int(par[c])
+    return c
+
+
 def model_lut(config: dict) -> tuple[int, np.ndarray]:
     """(class channels, lookup from legend v3 id to model class) of a run config.
-    Pre-v3 runs have 13 channels and see each subclass as its parent."""
+    Pre-v3 runs have 13 channels and see each subclass as its (legend v2) ancestor; classes
+    added after a run (such as 19) map as their parent does in its class map."""
     n = int(config.get("arch", {}).get("num_classes", LEGACY_CLASSES))
+    par = parents()
     if n == LEGACY_CLASSES:
-        return n, parents().astype(np.uint8)
-    return n, np.array(config["class_map"], np.uint8)
+        return n, np.array([_ancestor(c, par, LEGACY_CLASSES) for c in range(NUM_CLASSES)], np.uint8)
+    lut = list(config["class_map"])
+    return n, np.array([lut[_ancestor(c, par, len(lut))] for c in range(NUM_CLASSES)], np.uint8)
 
 
 def _blocks(a: np.ndarray, k: int) -> np.ndarray:

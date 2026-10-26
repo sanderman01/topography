@@ -52,7 +52,7 @@ WATER = {
     12: Water(0.008, 0.001, 4.0),  # coastal cliffs
 }
 # Legend v3 subclasses take their parent's water (plain the default).
-WATER |= {13: WATER[2], 14: WATER[1], 15: WATER[5], 16: WATER[8], 17: WATER[11], 18: WATER[0]}
+WATER |= {13: WATER[2], 14: WATER[1], 15: WATER[5], 16: WATER[8], 17: WATER[11], 18: WATER[0], 19: WATER[2]}
 
 # Tarns, in cells of the surface drained (32 m at L2: about 0.4 to 26 ha), at least 2 m
 # deep and compact (bounding-box side squared over area).

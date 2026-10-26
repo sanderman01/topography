@@ -37,9 +37,9 @@ CELL_M = 128.0
 # Judgment defaults by legend v3 class (from the Fujion regions): local relief (m) and forest share.
 # Dunes: the real 128 m dune residual is about 40 m.
 RELIEF = {0: 300, 1: 300, 2: 400, 3: 1000, 4: 300, 5: 300, 6: 1200, 7: 300, 8: 100, 9: 200, 10: 300, 11: 250,
-          12: 800, 13: 500, 14: 300, 15: 250, 16: 60, 17: 150, 18: 80}
+          12: 800, 13: 500, 14: 300, 15: 250, 16: 60, 17: 150, 18: 80, 19: 500}
 FOREST = {0: 0.3, 1: 0.9, 2: 0.1, 3: 0.9, 4: 0.3, 5: 0.9, 6: 0.7, 7: 0.1, 8: 0.0, 9: 0.5, 10: 0.0, 11: 0.4,
-          12: 0.8, 13: 0.1, 14: 0.9, 15: 0.9, 16: 0.0, 17: 0.2, 18: 0.4}
+          12: 0.8, 13: 0.1, 14: 0.9, 15: 0.9, 16: 0.0, 17: 0.2, 18: 0.4, 19: 0.1}
 ISLAND_CLASSES = (5, 15)  # keep their relief offshore, so islands rise from the sea
 DROWNED_KARST = 15
 DROWNED_SEABED_M = (-40.0, -10.0)  # drowned karst sits on a shallow seabed, so towers break the surface
@@ -223,7 +223,8 @@ classes     terrain class per pixel in the colours of {PALETTE}, shown at 60% op
             antialiasing; mixed colours snap to the nearest class. Subclasses name a look:
             13 layered canyons (Grand Canyon), 14 cone and tower karst, 15 drowned tower
             karst (paint it in shallow sea; its seabed is set to {DROWNED_SEABED_M[0]:.0f} to
-            {DROWNED_SEABED_M[1]:.0f} m), 16 crest-train dunes, 17 cinder cones and lava, 18 plain.
+            {DROWNED_SEABED_M[1]:.0f} m), 16 crest-train dunes, 17 cinder cones and lava, 18 plain,
+            19 the Grand Canyon itself.
             Calderas (4) and cinder cones (17) are filled with real examples
             (catalog/exemplars).
 roughness   hidden; local relief, white = {RELIEF_MAX_M:.0f} m. Delete the layer to use each

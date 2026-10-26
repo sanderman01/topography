@@ -115,3 +115,10 @@ id = 18
 name = "Plain and rolling ground"
 color_rgb = [150, 190, 110]
 flight_experience = "Quiet open ground between landforms, for recovery and orientation"
+
+[[classes]]
+id = 19
+key = "grand_canyon"
+name = "Grand Canyon"
+color_rgb = [215, 75, 35]
+flight_experience = "The Grand Canyon itself: rim-to-river cliff bands, buttes and temples, side canyons off one river"
