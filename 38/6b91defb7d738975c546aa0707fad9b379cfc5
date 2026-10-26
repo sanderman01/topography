@@ -1,0 +1,33 @@
+docs/plans/fujix-v1.md
+  s_8c1b40ea9c1e0d::t_1cd8ad37058844 4
+configs/layouts/fujix/layout.md
+  s_8c1b40ea9c1e0d::t_a2b129ed16cd15 153,159
+  s_8c1b40ea9c1e0d::t_8989c183689590 4
+  s_8c1b40ea9c1e0d::t_bf9b439e816989 175-177
+  s_8c1b40ea9c1e0d::t_03a30dd2838a5d 129,133-134
+  s_8c1b40ea9c1e0d::t_d6e27457116b1c 138-143
+  s_8c1b40ea9c1e0d::t_a6655a0fc2308b 286-288
+  s_8c1b40ea9c1e0d::t_6beaa1aece6c42 120,122
+  s_8c1b40ea9c1e0d::t_75d1a8ae392a5f 197-198
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_afbda66acb88dd 180-183
+  s_8c1b40ea9c1e0d::t_956b0656fa0a64 233-234
+  s_8c1b40ea9c1e0d::t_67e608fbcb1f1c 172
+  s_8c1b40ea9c1e0d::t_95c9a8baaa9e19 217-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "386b91defb7d738975c546aa0707fad9b379cfc5",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
