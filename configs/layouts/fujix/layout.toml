@@ -74,8 +74,8 @@ class_id = 13
 terrain = "Plateau cut by a Grand Canyon section; the river runs north-east from the volcano to the sea"
 # A diagonal from the volcano's north-west flank to the north coast, where the canyon opens into the sea.
 outline = [[23400, 23600], [24200, 25600], [26600, 26700], [28000, 26600], [31500, 23500], [36500, 24840], [38500, 25500],
-  [44000, 21000], [47500, 18200], [48500, 14500], [47500, 11500], [47000, 8500], [46300, 8000], [45000, 9000],
-  [44200, 8600], [43400, 8900], [42200, 7600], [40000, 7600], [38600, 6600], [35500, 6400], [33500, 9000],
+  [44000, 21000], [47500, 18200], [48500, 14500], [47500, 11500], [47000, 8500], [46300, 8300], [45500, 8000],
+  [44300, 7200], [43200, 6900], [41800, 7100], [40000, 6800], [38600, 6600], [35500, 6400], [33500, 9000],
   [30200, 10400], [27600, 12900], [25600, 16200], [23300, 21500]]
 border_m = 2500
 forest = 0.25
@@ -397,7 +397,7 @@ band = "middle"
 [[passes]]
 id = "nw-saddle"
 name = "North-west saddle"
-at = [25000, 27300]  # the col between the volcano, the knife ridges and the canyon head
+at = [25070, 26160]  # the col between the volcano, the knife ridges and the canyon head
 band = "middle"
 [[passes]]
 id = "plateau-crossing"
@@ -430,9 +430,9 @@ summit_m = 5000
 # The collage cuts this caldera into the summit dome (Kibo's own is too shallow at 32 m),
 # breached toward the canyon head so the top band reaches its floor.
 caldera_diameter_m = 2000
-caldera_floor_m = 4250
+caldera_floor_m = 4220
 breach_azimuth_deg = 325
-breach_m = 4280
+breach_m = 4230  # at least 50 m under the top band's 4,300 m ground limit
 breach_width_m = 600
 note = "ice-filled summit caldera, no cone inside, breached on the north-west"
 
