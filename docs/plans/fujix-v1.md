@@ -1,6 +1,8 @@
 # Fujix v1
 
-Status: design agreed with the owner 2026-10-26; nothing implemented yet. Fujix is a new
+Status: design agreed with the owner 2026-10-26. Sub-project 1 (the collage layout) is
+implemented and built as `data/worlds/fujix-collage-45`, pending the owner's review; the
+later sub-projects are not started. Fujix is a new
 64 km world that replaces Fujion (32 km) as the game's map. It follows the
 [layout spec process](world-layout-spec-v1.md), except that the agent authors the layout as
 a collage of real DEMs and the owner neither writes nor paints it.

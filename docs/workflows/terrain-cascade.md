@@ -155,7 +155,50 @@ Drowned tower karst (15) is painted in shallow sea: import sets its seabed to �
 Its Ha Long exemplar also reaches 2 km onto neighbouring karst and 800 m onto any other
 shore, so L1 raises towers above the water and the coast breaks into coves and islets.
 
-## Generating a world
+## Collage layouts
+
+A layout v2 (`configs/layouts/fujix/layout.toml`, see [fujix v1](../plans/fujix-v1.md))
+is written by the agent, not painted. It lists regions, each with an outline, a terrain
+class and one or more pieces: crops of real GLO-30 regions that are rotated, scaled
+(within 1/1.5 to 1.5), remapped in height and tilted. It also has `[flight]` bands
+(clearance and band tops), `[[passes]]` that each name the lowest band that reaches them,
+and `[[features]]` lines (rivers, canyons). Positions are metres from the north-west
+corner.
+
+`collage` builds the 32 m surface directly, and needs no GPU:
+
+```sh
+$P -m topography_training.diffusion.collage configs/layouts/fujix/layout.toml \
+    --release data/datasets/context-v5/release.json --out data/worlds/fujix-collage-45
+```
+
+It bends every outline with one fixed-seed smooth warp. Pieces fade out inside their crop
+edge, ground past the pieces is filled smoothly, and region borders are blended with a
+Laplacian pyramid while classes are dithered across them. A smooth seabed starts at the
+coast, and ground past the island outline sinks to it. Outputs in the new directory:
+
+- `layout.json` and the L0 layers (`class.u8`, `mid.f32`, `relief.f32`, `coast.f32`,
+  `snowline.f32`, `forest.u8`, `lake.u8`, `lake-level.f32`), readable by `layout.load`
+- `class32.u8`, the 32 m class map
+- `arrays.npz` with `l1` and `l2`
+- `collage.json`, the layout and release hashes, sources and timing
+- `report.txt`: land fraction, distance of land from the map edge, coast cells pressed
+  against the edge clamp, and per region piece coverage and largest patch under 5° (WARN
+  when small)
+- `reach-l2.txt` and `reach-l2.png`, which bands reach which ground
+- `overview.png` and `pieces.png`, the annotated map and the piece footprints
+- `description.json` and `description.md`, measured region land area, heights, passes and
+  summit
+
+`layout reach` works on the result:
+
+```sh
+$P -m topography_training.diffusion.layout reach data/worlds/fujix-collage-45 \
+    --arrays data/worlds/fujix-collage-45/arrays.npz
+```
+
+Fujix skips the L1 and L2 models: `l2` is the collage itself, and `l1` is its 128 m
+version.
 
 `cascade_chain` builds L1 → L2 → L3 from a painted L0 (`--layout`) or, as a stand-in,
 from a layout derived from a real context region (`--release` and `--region`):
