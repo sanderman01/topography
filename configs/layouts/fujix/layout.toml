@@ -258,3 +258,70 @@ at = [53000, 9500]
 size_m = [14000, 10000]
 remap = [1000, 1400, 0, 400]
 class_id = 16
+
+# Passes: the lowest flight band (ground + clearance) that reaches each one from the sea.
+[[passes]]
+id = "sw-low"
+name = "Tip pass"
+at = [8500, 56500]
+band = "low"
+[[passes]]
+id = "nw-low"
+name = "Skerry gap"
+at = [9000, 17500]
+band = "low"
+[[passes]]
+id = "se-low"
+name = "Limestone gap"
+at = [57500, 44500]
+band = "low"
+[[passes]]
+id = "fjord-saddle"
+name = "Fjord saddle"
+at = [21000, 40000]
+band = "middle"
+[[passes]]
+id = "nw-saddle"
+name = "North-west saddle"
+at = [22500, 27500]
+band = "middle"
+[[passes]]
+id = "plateau-crossing"
+name = "Plateau crossing"
+at = [36000, 12000]
+band = "middle"
+[[passes]]
+id = "alpine-col"
+name = "Alpine col"
+at = [15000, 48000]
+band = "high"
+[[passes]]
+id = "volcano-shoulder"
+name = "Volcano shoulder"
+at = [37000, 28500]
+band = "high"
+[[passes]]
+id = "horn-col"
+name = "Horn col"
+at = [13000, 51000]
+band = "top"
+
+[[features]]
+id = "fujix"
+kind = "volcano"
+name = "Fujix"
+at = [31500, 33500]
+radius_m = 10500
+summit_m = 5000
+caldera_diameter_m = 2500
+caldera_floor_m = 4600
+note = "ice-filled summit caldera, no cone inside"
+
+[[features]]
+id = "great-canyon"
+kind = "gorge"
+name = "Great Canyon"
+river = true
+path = [[44500, 15000], [33500, 15500], [22000, 15000]]
+depth_m = 1500
+note = "Grand Canyon section; the river runs west, then north to the coast"

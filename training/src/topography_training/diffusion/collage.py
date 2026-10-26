@@ -280,6 +280,119 @@ def write_l0(out: Path, text: str, spec: dict, h32: np.ndarray, cls32: np.ndarra
         "layers": list(layers), "config_text": text}, indent=1))
 
 
+def blue_noise(n: int, seed: int = 0) -> np.ndarray:
+    """Uniform 0-1 values with little low-frequency content, so a dithered border reads as a fine mix."""
+    from scipy import ndimage
+
+    w = np.random.default_rng(seed).random((n, n), dtype=np.float32)
+    hp = w - ndimage.gaussian_filter(w, 1.5, mode="wrap")
+    r = np.empty(n * n, np.float32)
+    r[np.argsort(hp, axis=None)] = (np.arange(n * n, dtype=np.float32) + 0.5) / (n * n)
+    return r.reshape(n, n)
+
+
+def dither(classes: list[np.ndarray], weights: list[np.ndarray], noise: np.ndarray) -> np.ndarray:
+    """Each cell takes one region's class, with probability equal to that region's share."""
+    total = np.maximum(np.sum(weights, axis=0), 1e-6)
+    acc = np.zeros(noise.shape, np.float32)
+    out = classes[-1].copy()
+    chosen = np.zeros(noise.shape, bool)
+    for c, w in zip(classes, weights):
+        acc += w / total
+        pick = ~chosen & (noise < acc)
+        out[pick] = c[pick]
+        chosen |= pick
+    return out
+
+
+DIP_SIGMA_M = 1000.0  # a dip about 4 km across reads as a broad saddle
+DIP_MAX_M = 300.0
+DIP_STEP_M = 50.0
+
+
+def dip_passes(h: np.ndarray, spec: dict) -> tuple[np.ndarray, list[tuple[str, float, bool]]]:
+    """Lower each pass that sits above its band with a broad dip; returns (h, [(id, depth, ok)])."""
+    names = layout.flight(spec)[0]
+    n = h.shape[0]
+    c = (np.arange(n, dtype=np.float32) + 0.5) * CELL_M
+    h = h.copy()
+    dips = []
+    for p in spec.get("passes", []):
+        want = names.index(p["band"])
+        bump = np.exp(-((c[None, :] - p["at"][0]) ** 2 + (c[:, None] - p["at"][1]) ** 2) / (2 * DIP_SIGMA_M**2))
+        depth = 0.0
+        while True:
+            got = layout.band_at(layout.band_map(h, CELL_M, spec), CELL_M, p["at"], description.PASS_RADIUS_M)
+            if got <= want or depth >= DIP_MAX_M:
+                break
+            h -= (DIP_STEP_M * bump).astype(np.float32)
+            depth += DIP_STEP_M
+        dips.append((p["id"], depth, got <= want))
+    return h, dips
+
+
+SEAM_RATIO = 1.3  # slopes along a border this much steeper than inside both regions show a seam
+AREA_TOLERANCE = 0.25
+VOLCANO_MARGIN_M = 400.0
+SITE_SLOPE_DEG = 5.0  # each region keeps a patch this flat for a settlement
+SITE_KM2 = 0.5
+
+
+def report(spec, regions, h, sds, land_w, covered, dips) -> tuple[str, int]:
+    lines, warnings = [], 0
+
+    def check(ok: bool, text: str):
+        nonlocal warnings
+        warnings += not ok
+        lines.append(("  ok   " if ok else "  WARN ") + text)
+
+    from scipy import ndimage
+
+    land = h >= 0
+    lines.append(f"Collage at {CELL_M:.0f} m: land {land.mean():.1%} of the map")
+    c = (np.arange(h.shape[0]) + 0.5) * CELL_M
+    e = np.minimum(c, h.shape[0] * CELL_M - c)
+    edge_m = float(np.minimum(e[:, None], e[None, :])[land].min()) if land.any() else 0.0
+    check(edge_m >= float(spec.get("coast_margin_m", 4000.0)), f"land comes within {edge_m / 1000:.1f} km of the map edge")
+    total = np.maximum(np.sum(land_w, axis=0), 1e-6)
+    gy, gx = np.gradient(h, CELL_M)
+    slope = np.hypot(gx, gy)
+    flat = land & (slope < np.tan(np.radians(SITE_SLOPE_DEG)))
+    for i, r in enumerate(regions):
+        inside = sds[i] > 0
+        bare = (inside & ~covered[i]).sum() / max(int(inside.sum()), 1)
+        check(bare <= 0.01, f"{r.id:<15} pieces cover {1 - bare:.1%} of the outline")
+        labels, count = ndimage.label(flat & inside)
+        site_km2 = float(np.bincount(labels.ravel())[1:].max()) * CELL_M**2 / 1e6 if count else 0.0
+        check(site_km2 >= SITE_KM2, f"{r.id:<15} largest patch under {SITE_SLOPE_DEG:.0f}° is {site_km2:.2f} km²")
+        want = spec["regions"][i].get("area_km2")
+        got = float((inside & land).sum()) * CELL_M**2 / 1e6
+        if want:
+            check(abs(got - want) <= AREA_TOLERANCE * want, f"{r.id:<15} land {got:.0f} km² (target {want:.0f})")
+        else:
+            lines.append(f"  info {r.id:<15} land {got:.0f} km²")
+    for i in range(len(regions)):
+        for j in range(i + 1, len(regions)):
+            a, b = land_w[i] / total, land_w[j] / total
+            seam = (a > 0.25) & (b > 0.25) & land
+            if seam.sum() < 50:
+                continue
+            core = ((a > 0.9) | (b > 0.9)) & land
+            ratio = float(np.percentile(slope[seam], 99) / max(np.percentile(slope[core], 99), 1e-3))
+            check(ratio <= SEAM_RATIO, f"seam {regions[i].id} / {regions[j].id}: steepest slopes {ratio:.2f}x the regions'")
+    for f in spec.get("features", []):
+        if f["kind"] != "volcano":
+            continue
+        d = np.hypot(*np.meshgrid((np.arange(h.shape[0]) + 0.5) * CELL_M - f["at"][0],
+                                  (np.arange(h.shape[0]) + 0.5) * CELL_M - f["at"][1]))
+        top, rest = float(h[d <= f["radius_m"]].max()), float(h[d > 1.5 * f["radius_m"]].max())
+        check(top - rest >= VOLCANO_MARGIN_M, f"volcano {f['id']} {top:.0f} m, next highest {rest:.0f} m")
+    for pid, depth, ok in dips:
+        check(ok, f"pass {pid:<17} in its band" + (f" after a {depth:.0f} m dip" if depth else ""))
+    lines.append(f"{warnings} warning(s)")
+    return "\n".join(lines) + "\n", warnings
+
+
 def build(layout_path: Path, release: Path, out: Path) -> int:
     t0 = time.time()
     text = layout_path.read_text()
@@ -301,14 +414,22 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
     land_w = [weight(sd, r.border_m) for sd, r in zip(sds, regions)]
     h32 = blend(surfaces + [ocean(isd, spec)], land_w + [weight(-isd, OCEAN_BORDER_M)])
     h32 = np.minimum(h32, edge_limit(n, spec))
+    h32, dips = dip_passes(h32, spec)
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
     forest32 = (sum(w * r.forest for w, r in zip(land_w, regions)) / total).astype(np.float32)
-    cls32 = classes[0]  # replaced by the dither in Task 4
+    cls32 = dither(classes, land_w, blue_noise(n))
     write_l0(out, text, spec, h32, cls32, forest32)
     cls32.tofile(out / "class32.u8")
     np.savez_compressed(out / "arrays.npz", l1=cascade.block_mean(h32, int(L0_CELL_M / CELL_M)), l2=h32)
     l0 = layout.load(out)
     layout.overview(l0, out / "overview.png")
+    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, dips)
+    (out / "report.txt").write_text(text_r)
+    print(text_r, end="")
+    text_b, bands, _ = layout.reach(h32, CELL_M, spec)
+    (out / "reach-l2.txt").write_text(text_b)
+    layout.reach_png(h32, CELL_M, bands, spec, out / "reach-l2.png")
+    description.write(out, description.measure(spec, h32, CELL_M, "collage"))
     (out / "collage.json").write_text(json.dumps({
         "kind": "world_collage", "schema_version": 1, "layout": str(layout_path.resolve()),
         "layout_sha256": hashlib.sha256(text.encode()).hexdigest(), "release": str(release.resolve()),
