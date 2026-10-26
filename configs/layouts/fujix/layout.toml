@@ -82,7 +82,7 @@ summit_m = 2400
 [[regions.pieces]]
 source = "grand-canyon"
 at = [34000, 16000]
-size_m = [38000, 22000]  # reaches past the outline at both ends
+size_m = [38000, 30000]  # reaches past the outline on every side
 offset_m = [-1000, -500]
 rotate_deg = -15  # the river runs east to west
 scale = 0.72
@@ -94,8 +94,8 @@ id = "north-coast"
 name = "North coast mesas"
 class_id = 7
 terrain = "Badlands and mesas stepping down from the plateau to the sea"
-outline = [[15500, 6000], [19000, 5300], [23000, 6500], [27000, 5300], [31500, 6300], [36000, 5200],
-  [41000, 6000], [45000, 5800], [43000, 10500], [40000, 9500], [34000, 10200], [28000, 9800],
+outline = [[15500, 6500], [19000, 6000], [23000, 7000], [27000, 6000], [31500, 6800], [36000, 6000],
+  [41000, 6500], [45000, 6300], [43000, 10500], [40000, 9500], [34000, 10200], [28000, 9800],
   [22000, 10500], [21500, 16000], [19500, 18000], [16500, 17000], [15000, 9500]]
 border_m = 2500
 forest = 0.05
@@ -145,7 +145,7 @@ id = "nw-skerries"
 name = "North-west skerries"
 class_id = 5
 terrain = "Skerries and a small archipelago"
-outline = [[5500, 5500], [14500, 5500], [15000, 9500], [11000, 11500], [6000, 12500]]
+outline = [[6000, 6000], [14500, 6000], [15000, 9500], [11000, 11500], [6500, 12500]]
 border_m = 2000
 forest = 0.2
 [[regions.pieces]]
@@ -178,8 +178,8 @@ id = "sw-arm"
 name = "South-west alpine arm"
 class_id = 6
 terrain = "Alpine ridges, cirques, glaciers and horn peaks"
-outline = [[8000, 52000], [12500, 46000], [18000, 41000], [22500, 40500], [26000, 46500], [22000, 52500],
-  [16000, 57000], [10000, 59000], [7000, 57500]]
+outline = [[10500, 48500], [13000, 45000], [18000, 41000], [22500, 40500], [26000, 46500], [22000, 52500],
+  [16000, 57000], [12000, 58500], [10000, 54500]]
 border_m = 3000
 forest = 0.4
 floor_m = 800
@@ -199,13 +199,33 @@ offset_m = [0, 2000]  # Aoraki and the flat Tasman valley floor
 rotate_deg = -45
 remap = [300, 3655, 0, 3300]
 
+# Its own region, so the sounds keep their sea instead of averaging with the arm's peaks.
+[[regions]]
+id = "sw-sounds"
+name = "South-west sounds"
+class_id = 3
+terrain = "Sounds and headlands on the alpine arm's outer coast"
+outline = [[5000, 51000], [8500, 46000], [13000, 45000], [10500, 48500], [10000, 54500], [12000, 58500],
+  [8000, 59000], [5000, 56000]]
+border_m = 2500
+forest = 0.6
+summit_m = 2400
+[[regions.pieces]]
+source = "doubtful-sound"
+at = [7000, 52500]
+size_m = [16000, 24000]  # past the region on every side
+offset_m = [-14000, 4000]  # Fiordland's outer coast: sounds and headlands
+rotate_deg = 45  # the coast faces north-west
+remap = [0, 1850, 0, 2400]
+
 [[regions]]
 id = "s-karst"
 name = "Southern drowned karst"
 class_id = 15
 terrain = "Drowned tower karst in a bay, cone karst inland"
+# The south edge lies past the towers, so they fade into open sea.
 outline = [[25000, 47000], [29000, 44500], [34000, 43500], [38500, 44500], [40500, 48000], [40000, 54000],
-  [37500, 57500], [26000, 57500], [21000, 54500], [22500, 51000]]
+  [39000, 59500], [33000, 60000], [27500, 59800], [23000, 58500], [21000, 54500], [22500, 51000]]
 border_m = 2000
 forest = 0.7
 summit_m = 700
@@ -215,10 +235,11 @@ at = [31000, 55000]
 size_m = [28000, 20000]
 offset_m = [-4000, 3000]  # the tower cluster, open sea to the south
 scale = 0.75  # more towers inside the bay
+remap = [-20, 900, -90, 900]  # a deeper bay, so blends with the shore stay sea
 [[regions.pieces]]
 source = "wanfenglin"
 at = [33000, 45000]
-size_m = [24000, 10000]  # past the outline to the east, overlapping Ha Long's sea to the south
+size_m = [24000, 14000]  # past the outline to the east; the south edge lies under the bay
 offset_m = [10000, 0]  # the cone karst field
 remap = [900, 1700, 0, 700]
 tilt_m_per_km = [0, -80]  # drowns southward, so the bay's north shore follows the cones
@@ -229,15 +250,15 @@ id = "se-range"
 name = "South-east limestone range"
 class_id = 6
 terrain = "Limestone towers and walls"
-outline = [[40500, 39000], [48000, 35500], [57000, 38000], [57500, 45000], [53000, 49500], [42000, 47000],
+outline = [[40500, 39000], [48000, 35500], [57000, 38000], [59000, 41500], [57500, 45000], [53000, 49500], [42000, 47000],
   [38500, 44000], [38500, 41500]]
-border_m = 3000
+border_m = 4000
 forest = 0.5
 floor_m = 600
 summit_m = 3000
 [[regions.pieces]]
 source = "dolomites"
-at = [49500, 42000]
+at = [49500, 41000]
 size_m = [26000, 18000]
 offset_m = [-2000, 0]
 remap = [1000, 3305, 600, 3000]
@@ -247,32 +268,32 @@ id = "se-lowland"
 name = "South-east river lowland"
 class_id = 9
 terrain = "Braided river from the volcano to a small delta, between rough hills"
-outline = [[39000, 48000], [53000, 49500], [57500, 45000], [58500, 51000], [57000, 57500], [51000, 59500],
-  [44500, 59000], [40000, 55000]]
+outline = [[39000, 48000], [53000, 49500], [57500, 45000], [58000, 49000], [56500, 52500], [58000, 56000],
+  [55000, 58000], [52500, 56500], [49500, 59000], [45500, 58000], [42000, 59000], [40000, 55000]]
 border_m = 4500  # a softer foot to the limestone range
 forest = 0.4
 summit_m = 900
 [[regions.pieces]]
 source = "rakaia-upper"
 at = [48000, 54000]
-size_m = [28000, 16000]  # reaches the karst bay's east shore
+size_m = [30000, 18000]  # reaches the karst bay's east shore
 offset_m = [6000, 6000]  # rough hills, the braided valley bending south to the coast
 remap = [350, 2000, 0, 900]
-tilt_m_per_km = [-10, -10]
+tilt_m_per_km = [12, -25]  # low toward the karst bay and the south coast
 
 [[regions]]
 id = "e-desert"
 name = "Eastern desert basin"
 class_id = 8
 terrain = "Desert basin with dunes and pans, open to the coast"
-outline = [[46000, 25500], [52000, 27000], [57000, 28000], [58500, 30500], [56000, 33000], [58500, 36000],
+outline = [[46000, 25500], [52000, 27000], [58500, 28500], [60000, 31500], [54500, 33500], [59500, 37000],
   [57000, 38000], [48000, 35500], [42000, 34500], [42000, 30000]]
 border_m = 3000
 summit_m = 1000
 [[regions.pieces]]
 source = "sossusvlei"
 at = [52000, 31500]
-size_m = [22000, 14000]
+size_m = [26000, 16000]
 offset_m = [10000, -6000]  # the pan between two dune belts
 remap = [450, 1000, 0, 700]
 tilt_m_per_km = [-25, 0]
@@ -282,8 +303,9 @@ id = "ne-dunes"
 name = "North-east dune field"
 class_id = 8
 terrain = "Star dunes banked against the rift's end, crest dunes toward the coast"
-outline = [[45000, 5800], [52000, 5700], [56500, 6000], [59000, 9500], [58000, 14500], [59000, 19000],
-  [57500, 23500], [57000, 28000], [52000, 27000], [48000, 25500], [55500, 17500], [52000, 14500], [46000, 17000],
+# Headlands and bays wider than the 4 km gap closing, so the east coast is not one line.
+outline = [[45000, 6300], [52000, 6200], [56500, 6500], [59500, 9000], [55000, 12500], [59500, 16500],
+  [60000, 21000], [54000, 24500], [58500, 28500], [52000, 27000], [48000, 25500], [55500, 17500], [52000, 14500], [46000, 17000],
   [46500, 15500], [43500, 13500], [46000, 11500], [43000, 10500]]
 border_m = 2500
 summit_m = 1600
@@ -296,7 +318,7 @@ tilt_m_per_km = [-40, 0]  # interdune hollows flood along the coast
 [[regions.pieces]]
 source = "liwa"
 at = [52000, 10500]
-size_m = [20000, 12000]
+size_m = [22000, 14000]
 offset_m = [0, 6000]  # crest dunes over sabkha flats
 remap = [90, 250, 0, 240]
 tilt_m_per_km = [0, 15]  # the sabkhas flood only toward the coast
