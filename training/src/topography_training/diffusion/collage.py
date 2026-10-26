@@ -34,6 +34,7 @@ OCEAN_SHELF_M = 1200.0  # the seabed falls most of the way to its edge depth ove
 SINK_M = 1000.0  # ground past the island outline sinks to the seabed over this distance
 ISLAND_CLOSE_M = 4000.0  # gaps between region outlines narrower than this stay land
 SHELF_M = -20.0  # sea floor at the island's outline
+EDGE_LIMIT_SLOPE = 2.0  # m per m past the coast margin, so the edge limit seldom clamps land there
 
 
 @dataclass
@@ -68,9 +69,33 @@ class Source:
     spacing_m: float
 
 
-def parse(spec: dict) -> list[Region]:
+def validate(spec: dict) -> None:
+    """Clear errors for layout mistakes that would otherwise fail deep inside the build."""
     if spec.get("schema_version") != 2 or spec.get("kind") != "world_layout":
         raise ValueError('not a layout v2 (schema_version = 2, kind = "world_layout")')
+    if "flight" not in spec:
+        raise ValueError("a layout v2 needs [flight] with clearance_m and bands")
+    try:
+        names, tops, _ = layout.flight(spec)
+    except (KeyError, TypeError) as e:
+        raise ValueError(f"[flight] needs clearance_m and bands of {{ name, top_m }} ({e})") from None
+    if any(b <= a for a, b in zip(tops, tops[1:])):
+        raise ValueError(f"[flight] band tops must rise from band to band: {tops}")
+    if len(names) > len(layout.BAND_RGB):
+        raise ValueError(f"[flight] has {len(tops)} bands; at most {len(layout.BAND_RGB) - 1} have colours")
+    for p in spec.get("passes", []):
+        if p.get("band") not in names[:-1]:
+            raise ValueError(f"pass {p.get('id')}: band {p.get('band')!r} is not a [flight] band "
+                             f"({', '.join(names[:-1])})")
+    for f in spec.get("features", []):
+        if f.get("kind") == "volcano" and "radius_m" not in f:
+            raise ValueError(f"volcano {f.get('id')}: needs radius_m")
+        if ("caldera_diameter_m" in f) != ("caldera_floor_m" in f):
+            raise ValueError(f"{f.get('id')}: give both caldera_diameter_m and caldera_floor_m, or neither")
+
+
+def parse(spec: dict) -> list[Region]:
+    validate(spec)
     out = []
     for r in spec["regions"]:
         pieces = []
@@ -81,6 +106,9 @@ def parse(spec: dict) -> list[Region]:
                           p.get("class_id"))
             if not 1 / MAX_SCALE <= piece.scale <= MAX_SCALE:
                 raise ValueError(f"{r['id']}: {p['source']} scale {piece.scale} is outside 1/{MAX_SCALE} to {MAX_SCALE}")
+            if piece.remap is not None and (len(piece.remap) != 4 or piece.remap[0] == piece.remap[1]):
+                raise ValueError(f"{r['id']}: {p['source']} remap needs [source lo, source hi, world lo, world hi] "
+                                 f"with lo != hi, got {list(piece.remap)}")
             pieces.append(piece)
         out.append(Region(r["id"], r["name"], int(r["class_id"]), r["outline"], float(r.get("border_m", 3000.0)),
                           float(r.get("forest", 0.0)), pieces))
@@ -215,7 +243,8 @@ def edge_limit(n: int, spec: dict) -> np.ndarray:
     c = (np.arange(n) + 0.5) * CELL_M
     e = np.minimum(c, n * CELL_M - c)
     d = np.minimum(e[:, None], e[None, :])
-    return np.where(d < margin, edge + (SHELF_M - edge) * d / margin, SHELF_M + (d - margin) * 2.0).astype(np.float32)
+    rise = edge + (SHELF_M - edge) * d / margin
+    return np.where(d < margin, rise, SHELF_M + (d - margin) * EDGE_LIMIT_SLOPE).astype(np.float32)
 
 
 def _down(a: np.ndarray) -> np.ndarray:
@@ -342,7 +371,8 @@ def dither(classes: list[np.ndarray], weights: list[np.ndarray], noise: np.ndarr
     """Each cell takes one region's class, with probability equal to that region's share."""
     total = np.maximum(np.sum(weights, axis=0), 1e-6)
     acc = np.zeros(noise.shape, np.float32)
-    out = classes[-1].copy()
+    # Where every weight has vanished (far sea), the largest one's class.
+    out = np.take_along_axis(np.stack(classes), np.argmax(weights, axis=0)[None], 0)[0]
     chosen = np.zeros(noise.shape, bool)
     for c, w in zip(classes, weights):
         acc += w / total
@@ -484,15 +514,38 @@ def sheet(out: Path, regions: list[Region], srcs: dict[str, Source], h32: np.nda
     return out / "pieces.png"
 
 
+def partial_dir(out: Path) -> Path:
+    return out.with_name(out.name + ".partial")
+
+
 def build(layout_path: Path, release: Path, out: Path) -> int:
+    """Builds into `<out>.partial`, renamed to `out` when complete and removed on an error."""
+    import shutil
+
     t0 = time.time()
     text = layout_path.read_text()
     spec = tomllib.loads(text)
     regions = parse(spec)
-    n = int(spec["extent_m"] / CELL_M)
     srcs = sources(release, {p.source for r in regions for p in r.pieces})
     check_crops(regions, srcs)
-    out.mkdir(parents=True)
+    work = partial_dir(out)
+    work.mkdir(parents=True)
+    try:
+        h32 = _build(spec, text, regions, srcs, work)
+        (work / "collage.json").write_text(json.dumps({
+            "kind": "world_collage", "schema_version": 1, "layout": str(layout_path.resolve()),
+            "layout_sha256": hashlib.sha256(text.encode()).hexdigest(), "release": str(release.resolve()),
+            "sources": sorted(srcs), "cell_m": CELL_M, "time_s": round(time.time() - t0, 1)}, indent=1))
+        work.rename(out)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    print(f"wrote {out} in {time.time() - t0:.0f} s; land {(h32 >= 0).mean():.1%}", flush=True)
+    return 0
+
+
+def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source], out: Path) -> np.ndarray:
+    n = int(spec["extent_m"] / CELL_M)
     x, y = grid(n)
     sds, surfaces, classes, covered = [], [], [], []
     piece_noise = blue_noise(n, seed=1)  # independent of the region dither below
@@ -525,12 +578,7 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
     layout.reach_png(h32, CELL_M, bands, spec, out / "reach-l2.png")
     description.write(out, description.measure(spec, h32, CELL_M, "collage", [sd > 0 for sd in sds]))
     sheet(out, regions, srcs, h32)
-    (out / "collage.json").write_text(json.dumps({
-        "kind": "world_collage", "schema_version": 1, "layout": str(layout_path.resolve()),
-        "layout_sha256": hashlib.sha256(text.encode()).hexdigest(), "release": str(release.resolve()),
-        "sources": sorted(srcs), "cell_m": CELL_M, "time_s": round(time.time() - t0, 1)}, indent=1))
-    print(f"wrote {out} in {time.time() - t0:.0f} s; land {(h32 >= 0).mean():.1%}", flush=True)
-    return 0
+    return h32
 
 
 def main(argv=None) -> int:
@@ -539,9 +587,11 @@ def main(argv=None) -> int:
     p.add_argument("--release", type=Path, required=True, help="context release.json")
     p.add_argument("--out", type=Path, required=True, help="new output directory")
     args = p.parse_args(argv)
-    if args.out.exists():
-        print("error: output directory exists", file=sys.stderr)
-        return 2
+    for d in (args.out, partial_dir(args.out)):
+        if d.exists():
+            print(f"error: {d} exists" + (" (left by a killed build; remove it)" if d != args.out else ""),
+                  file=sys.stderr)
+            return 2
     return build(args.layout, args.release, args.out)
 
 
