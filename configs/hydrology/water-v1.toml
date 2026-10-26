@@ -1,0 +1,176 @@
+# Water amounts per terrain class (legend topography terrain-v3), read by
+# `topography world hydrology`. Copied from `WATER` in
+# training/src/topography_training/diffusion/hydrology.py (judgment values from the inland water
+# share of the real context regions, 2026-10-03); Python moves to this file later.
+#
+# lake_share:   share of the class's land kept as lakes (largest depressions by volume)
+# tarn_share:   share kept as small compact lakes on finer levels (not used at 32 m yet)
+# stream_km2:   drainage area where streams begin (the cascade's per-class value)
+# stream_width: stream width in m per sqrt(km2) of drainage area
+# dry_share:    share kept as closed dry basins (dolines, craters, interdune hollows)
+# sinks:        streams end in the class's dry basins (karst)
+# Classes missing here take class 0.
+schema_version = 1
+kind = "water_table"
+legend = "topography terrain-v3"
+
+[classes.0]  # unlabelled
+lake_share = 0.010
+tarn_share = 0.002
+stream_km2 = 8.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.1]  # doline, pinnacle and plateau karst
+lake_share = 0.003
+tarn_share = 0.0
+stream_km2 = 20.0
+stream_width = 1.5
+dry_share = 0.010
+sinks = true
+
+[classes.2]  # gorges and canyons
+lake_share = 0.002
+tarn_share = 0.0
+stream_km2 = 50.0
+stream_width = 1.0
+dry_share = 0.0
+sinks = false
+
+[classes.3]  # fjords and glacial troughs
+lake_share = 0.020
+tarn_share = 0.005
+stream_km2 = 4.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.4]  # calderas and craters
+lake_share = 0.010
+tarn_share = 0.002
+stream_km2 = 10.0
+stream_width = 2.5
+dry_share = 0.005
+sinks = false
+
+[classes.5]  # archipelagos
+lake_share = 0.020
+tarn_share = 0.003
+stream_km2 = 4.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.6]  # alpine ridges and cirques
+lake_share = 0.006
+tarn_share = 0.005
+stream_km2 = 4.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.7]  # badlands and mesas
+lake_share = 0.002
+tarn_share = 0.0
+stream_km2 = 50.0
+stream_width = 1.0
+dry_share = 0.0
+sinks = false
+
+[classes.8]  # dunes
+lake_share = 0.001
+tarn_share = 0.0
+stream_km2 = 200.0
+stream_width = 0.5
+dry_share = 0.005
+sinks = false
+
+[classes.9]  # braided rivers
+lake_share = 0.010
+tarn_share = 0.001
+stream_km2 = 4.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.10]  # glaciers and ice fields
+lake_share = 0.015
+tarn_share = 0.005
+stream_km2 = 4.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.11]  # volcanic cones and lava fields
+lake_share = 0.005
+tarn_share = 0.002
+stream_km2 = 10.0
+stream_width = 2.5
+dry_share = 0.003
+sinks = false
+
+[classes.12]  # coastal cliffs
+lake_share = 0.008
+tarn_share = 0.001
+stream_km2 = 4.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+# Legend v3 subclasses take their parent's values.
+[classes.13]  # layered plateau canyons (2)
+lake_share = 0.002
+tarn_share = 0.0
+stream_km2 = 50.0
+stream_width = 1.0
+dry_share = 0.0
+sinks = false
+
+[classes.14]  # cone and tower karst (1)
+lake_share = 0.003
+tarn_share = 0.0
+stream_km2 = 20.0
+stream_width = 1.5
+dry_share = 0.010
+sinks = true
+
+[classes.15]  # drowned tower karst (5)
+lake_share = 0.020
+tarn_share = 0.003
+stream_km2 = 4.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.16]  # crest-train dunes (8)
+lake_share = 0.001
+tarn_share = 0.0
+stream_km2 = 200.0
+stream_width = 0.5
+dry_share = 0.005
+sinks = false
+
+[classes.17]  # cinder cones and lava fields (11)
+lake_share = 0.005
+tarn_share = 0.002
+stream_km2 = 10.0
+stream_width = 2.5
+dry_share = 0.003
+sinks = false
+
+[classes.18]  # plain and rolling ground (0)
+lake_share = 0.010
+tarn_share = 0.002
+stream_km2 = 8.0
+stream_width = 2.5
+dry_share = 0.0
+sinks = false
+
+[classes.19]  # Grand Canyon (2)
+lake_share = 0.002
+tarn_share = 0.0
+stream_km2 = 50.0
+stream_width = 1.0
+dry_share = 0.0
+sinks = false

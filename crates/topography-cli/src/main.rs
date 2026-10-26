@@ -43,6 +43,7 @@ Usage: topography [--help | --version]
        topography world sketch <sketch.toml> <new-output-dir>
        topography world layout <layout.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
+       topography world hydrology --grid <grid-dir> --out <new-output-dir> [--water water.toml] [--river-km2 10]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
@@ -366,6 +367,9 @@ fn main() -> ExitCode {
                 Err(error) => workflow_result(Err(error)),
             };
         }
+        [command, action, rest @ ..] if command == "world" && action == "hydrology" => {
+            return hydrology(rest);
+        }
         [command, action, config, output] if command == "world" && action == "layout" => {
             return workflow_result(
                 topography_core::world::build_layout(Path::new(config), Path::new(output))
@@ -492,6 +496,57 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// `world hydrology --grid DIR --out DIR [--coarse DIR] [--wind-deg D] [--water FILE] [--river-km2 A]`
+fn hydrology(args: &[std::ffi::OsString]) -> ExitCode {
+    use topography_core::world::hydrology;
+    let mut options = hydrology::Options {
+        grid: Default::default(),
+        out: Default::default(),
+        coarse: None,
+        wind_deg: None,
+        water: None,
+        river_km2: hydrology::DEFAULT_RIVER_KM2,
+    };
+    for pair in args.chunks(2) {
+        let [flag, value] = pair else {
+            return usage_error();
+        };
+        match flag.to_str() {
+            Some("--grid") => options.grid = value.into(),
+            Some("--out") => options.out = value.into(),
+            Some("--coarse") => options.coarse = Some(value.into()),
+            Some("--water") => options.water = Some(value.into()),
+            Some("--wind-deg") => match number(value) {
+                Some(v) => options.wind_deg = Some(v),
+                None => return usage_error(),
+            },
+            Some("--river-km2") => match number(value) {
+                Some(v) => options.river_km2 = v,
+                None => return usage_error(),
+            },
+            _ => return usage_error(),
+        }
+    }
+    if options.grid.as_os_str().is_empty() || options.out.as_os_str().is_empty() {
+        return usage_error();
+    }
+    match hydrology::run(&options) {
+        Ok(outcome) => {
+            println!("{}", outcome.summary);
+            if outcome.passed {
+                ExitCode::SUCCESS
+            } else {
+                eprintln!(
+                    "Hydrology validation failed; see {}",
+                    outcome.out.join("report.json").display()
+                );
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => workflow_result(Err(error)),
+    }
 }
 
 fn usage_error() -> ExitCode {

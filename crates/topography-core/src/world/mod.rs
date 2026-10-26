@@ -1,5 +1,6 @@
 //! Base terrain, real-patch composition, ownership, reversible edits, and regional rebuilds.
 
+pub mod hydrology;
 mod input;
 mod layout;
 mod preview;
