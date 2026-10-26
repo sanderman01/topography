@@ -18,6 +18,8 @@ the classifier and give the real per-class roughness.
    per-class roughness. Gated with the coarse input hidden (rank correlation >= 0.7);
    shown is reported. A bootstrap over windows gives a 90% interval.
 4. A class grid: one window generated in every class, as a hillshade sheet.
+5. Fujix (runs that train class 19, Grand Canyon): swaps against 13 and plain, and a
+   dithered border against a hard one, on validation windows (`grand_canyon_gates`).
 
 --direction w samples with the class direction learned with the coarse input hidden
 added while it is shown (model.denoise_field).
@@ -37,6 +39,7 @@ import numpy as np
 CLASSES = list(range(1, 13))
 RECOGNITION_SHARE = 0.7
 ROUGHNESS_RANK = 0.7
+BORDER_BAND = 0.5  # dithered-border gate: band width as a share of the window
 
 
 def features(r: np.ndarray, cell_m: float) -> np.ndarray:
@@ -117,6 +120,98 @@ def _with_class(cond: np.ndarray, class_id: int, n_classes: int, form_table: dic
     c[k:] = 0
     c[k + class_id] = 1
     return c
+
+
+def _with_classes(cond: np.ndarray, cells: np.ndarray, n_classes: int, form_table: dict | None,
+                  form_sigma: float) -> np.ndarray:
+    """A window's conditioning with a model class per cell; form channels from the table,
+    smoothed as generation smooths them."""
+    from . import cascade
+    from .data import class_start
+
+    c = cond.copy()
+    if form_table is not None:
+        from . import forms
+
+        c[forms.START : forms.START + forms.COUNT] = forms.from_classes(cells.astype(np.uint8), form_table, None,
+                                                                        form_sigma)
+    k = class_start(c, n_classes)
+    c[k:] = 0
+    cascade.one_hot(c[k:], cells)
+    return c
+
+
+def grand_canyon_gates(generate, pool, lut, n_classes, tab, form_sigma, clf, level, size, seed) -> dict:
+    """Fujix gates (fujix-v1.md): Grand Canyon (19) against layered canyons (13) and against
+    plain (18), and a dithered border against a hard one, on the same windows and seeds.
+
+    A class pair passes when residuals of the two classes lie further apart in the
+    classifier's feature space than two seeds of the Grand Canyon. The border passes when
+    the output near it differs from the hard border's more than far from it, and follows
+    the dither: label cells dithered to a class come out closer to that class's output."""
+    from . import borders, cascade
+    from .legend import GRAND_CANYON, PLAIN
+
+    gc = int(lut[GRAND_CANYON])
+    if gc != GRAND_CANYON:
+        return {"skipped": "the run does not train class 19", "pass": None}
+    z = lambda r: (features(r, float(level.cell_m)) - clf.mu) / clf.sd  # noqa: E731
+    pairs = {name: int(lut[c]) for name, c in (("vs_13", 13), ("vs_plain", PLAIN))}
+    out = {name: {"model_classes": [gc, b], "between": [], "seeds": [], "corr": []} for name, b in pairs.items()}
+    k = cascade.label_block(level)
+    n = size // k  # crops are whole label cells
+    band_m = BORDER_BAND * size * level.cell_m
+    border = {"model_classes": [gc, pairs["vs_plain"]], "band_m": band_m, "follow_dither": [], "follow_hard": [],
+              "band_diff": [], "far_diff": []}
+    nrng = np.random.default_rng(seed)
+    for coarse, cond in pool:
+        uniform = lambda c: _with_classes(cond, np.full(cond.shape[1:], c), n_classes, tab, form_sigma)  # noqa: E731
+        ra, ra2 = generate(coarse, uniform(gc), seed), generate(coarse, uniform(gc), seed + 1)
+        res = {b: generate(coarse, uniform(b), seed) for b in set(pairs.values()) if b != gc}
+        for name, b in pairs.items():
+            if b == gc:
+                continue
+            o = out[name]
+            o["between"].append(float(np.linalg.norm(z(ra) - z(res[b]))))
+            o["seeds"].append(float(np.linalg.norm(z(ra) - z(ra2))))
+            o["corr"].append(float(np.corrcoef(ra.ravel(), res[b].ravel())[0, 1]))
+        # West of the middle the Grand Canyon, east the other class; dithered across band_m.
+        b = pairs["vs_plain"]
+        if b == gc:
+            continue
+        hard = np.where(np.arange(n)[None, :] < n // 2, gc, b).repeat(n, 0).astype(np.uint8)
+        dith = borders.dither_labels(hard, k * level.cell_m, band_m, borders.noise_at(nrng, hard.shape))
+        cells = lambda g: np.repeat(np.repeat(g, k, 0), k, 1)  # noqa: E731
+        rh = generate(coarse, _with_classes(cond, cells(hard), n_classes, tab, form_sigma), seed)
+        rd = generate(coarse, _with_classes(cond, cells(dith), n_classes, tab, form_sigma), seed)
+        blk = lambda a: np.abs(a).reshape(n, k, n, k).mean((1, 3))  # noqa: E731
+        closer_a = blk(rd - ra) < blk(rd - res[b])
+        dist = np.abs((np.arange(n) + 0.5) * k - size / 2) * level.cell_m
+        near = np.broadcast_to(dist[None, :] <= band_m / 2, hard.shape)
+        border["follow_dither"].append(float(((dith == gc) == closer_a)[near].mean()))
+        border["follow_hard"].append(float(((hard == gc) == closer_a)[near].mean()))
+        diff = cells(near)
+        border["band_diff"].append(float(np.sqrt(np.mean((rd - rh)[diff] ** 2))))
+        border["far_diff"].append(float(np.sqrt(np.mean((rd - rh)[~diff] ** 2))))
+    result = {}
+    for name, o in out.items():
+        if not o["between"]:
+            result[name] = {"skipped": f"class {pairs[name]} is the Grand Canyon's model class", "pass": None}
+            continue
+        between, seeds = float(np.mean(o["between"])), float(np.mean(o["seeds"]))
+        result[name] = {"model_classes": o["model_classes"], "feature_distance_between_classes": between,
+                        "feature_distance_other_seed": seeds, "correlation": float(np.mean(o["corr"])),
+                        "windows": len(o["between"]), "pass": between > seeds}
+    if border["follow_dither"]:
+        f = {key: v if key in ("model_classes", "band_m") else float(np.mean(v)) for key, v in border.items()}
+        f["windows"] = len(border["follow_dither"])
+        f["pass"] = f["follow_dither"] > f["follow_hard"] and f["band_diff"] > f["far_diff"]
+        result["dithered_border"] = f
+    else:
+        result["dithered_border"] = {"skipped": "plain is the Grand Canyon's model class", "pass": None}
+    gated = [v["pass"] for v in result.values() if v["pass"] is not None]
+    result["pass"] = bool(all(gated)) if gated else None
+    return result
 
 
 def main(argv=None) -> int:
@@ -285,11 +380,19 @@ def main(argv=None) -> int:
                    "classes": sorted(int(c) for c in set(y)), "confusion_own": confusion.tolist()}
     recognition["pass"] = recognition["generated_own"] >= RECOGNITION_SHARE * real_acc
 
-    # 3. Class grid.
+    # 5. Grand Canyon swaps and the dithered border, on validation windows of class 19 first.
+    order = sorted(held, key=lambda w: w[1] != lut[legend.GRAND_CANYON])  # stable: class 19 windows first
+    gc_pool = [w[3]() for w in order[: args.swap_windows]]
+    form_sigma = config["forms"]["sigma"] * config["crop"] if tab is not None else 1.0
+    fujix = grand_canyon_gates(generate, gc_pool, lut, n_classes, tab, form_sigma, clf, level, size, args.seed)
+    print(f"grand canyon gates: {json.dumps(fujix)}", flush=True)
+
+    # 4. Class grid.
     args.out.mkdir(parents=True)
     coarse, res = grid
     tile = 256
-    sheet = Image.new("RGB", (4 * (tile + 8) + 8, 3 * (tile + 30) + 40), (30, 30, 30))
+    rows = -(-len(classes) // 4)
+    sheet = Image.new("RGB", (4 * (tile + 8) + 8, rows * (tile + 30) + 40), (30, 30, 30))
     from PIL import ImageDraw
 
     d = ImageDraw.Draw(sheet)
@@ -304,7 +407,8 @@ def main(argv=None) -> int:
 
     result = {"run": str(args.run_dir.resolve()), "level": level.name, "steps": args.steps, "guidance": args.guidance,
               "class_swap": swap, "class_recognition": recognition, "class_roughness": rough,
-              "direction": args.direction, "pass": bool(recognition["pass"] and rough["pass"])}
+              "grand_canyon": fujix, "direction": args.direction,
+              "pass": bool(recognition["pass"] and rough["pass"] and fujix["pass"] is not False)}
     (args.out / "gates.json").write_text(json.dumps(result, indent=1))
     print(f"class swap (reported): between classes {swap['mean_correlation_between_classes']:.2f} vs other seed "
           f"{swap['mean_correlation_other_seed']:.2f}")
@@ -313,6 +417,16 @@ def main(argv=None) -> int:
     lo, hi = rough["rank_correlation_coarse_hidden_90"]
     print(f"roughness: rank correlation hidden {rough['rank_correlation_coarse_hidden']:.2f} [{lo:.2f}, {hi:.2f}] -> "
           f"{'PASS' if rough['pass'] else 'FAIL'} (shown {rough['rank_correlation_coarse_shown']:.2f})")
+    for name in ("vs_13", "vs_plain", "dithered_border"):
+        g = fujix.get(name)
+        if g is None or g["pass"] is None:
+            print(f"grand canyon {name}: skipped ({(g or fujix).get('skipped')})")
+        elif name == "dithered_border":
+            print(f"grand canyon dithered border: follows dither {g['follow_dither']:.2f} vs hard {g['follow_hard']:.2f}, "
+                  f"difference near {g['band_diff']:.2f} m vs far {g['far_diff']:.2f} m -> {'PASS' if g['pass'] else 'FAIL'}")
+        else:
+            print(f"grand canyon {name}: feature distance between classes {g['feature_distance_between_classes']:.2f} "
+                  f"vs other seed {g['feature_distance_other_seed']:.2f} -> {'PASS' if g['pass'] else 'FAIL'}")
     return 0 if result["pass"] else 1
 
 
