@@ -1,11 +1,12 @@
 //! Rivers: cells draining at least a threshold area, one body per river system (all river
-//! cells upstream of one mouth), with a water surface that never rises downstream.
+//! cells upstream of one mouth). The water surface never rises downstream and never stands
+//! above a dry bank; the bed is cut below it instead.
 
 use super::flood::{Dims, RIVER, SEA, receiver};
 use super::lakes::{Basin, Kind};
 
 /// Judgment constant: depth D = RIVER_DEPTH_M · A^0.4 with A the drainage area in km² standing
-/// in for discharge (1 m at 10 km², 6 m at 1000 km²). Channels are carved in a later task.
+/// in for discharge (1 m at 10 km², 6 m at 1000 km²). Channel shape is a later task.
 const RIVER_DEPTH_M: f32 = 0.4;
 
 pub(super) fn depth_m(area_km2: f32) -> f32 {
@@ -17,6 +18,8 @@ pub(super) fn depth_m(area_km2: f32) -> f32 {
 pub(super) enum End {
     Sea,
     Lake(u32),
+    /// A closed dry basin (sink): an endorheic river.
+    Sink(u32),
     Edge,
     /// Dry land: never expected (rivers grow downstream), reported as a failure.
     Land,
@@ -30,13 +33,19 @@ pub(super) struct River {
     pub drainage_km2: f32,
 }
 
-/// Mark river cells (flag `RIVER`), store river ids (index + 1) in `body` and set their water
-/// surface: ground plus depth, raised where needed so it never rises downstream, and at least
-/// the level of the water the river ends in.
+/// Bed cut below the ground to keep river surfaces under their banks.
+#[derive(Default)]
+pub(super) struct BedCut {
+    pub cells: u64,
+    pub max_m: f32,
+}
+
+/// Mark river cells (flag `RIVER`), store river ids (index + 1) in `body`, set their water
+/// surface and lower their bed (`ground`) to the surface minus the depth where needed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn extract(
     dims: Dims,
-    ground: &[f32],
+    ground: &mut [f32],
     dir: &[u8],
     acc: &[f32],
     flags: &mut [u8],
@@ -45,44 +54,47 @@ pub(super) fn extract(
     river_km2: f32,
     spacing_m: f64,
     surface: &mut [f32],
-) -> Vec<River> {
-    for i in 0..ground.len() {
+) -> (Vec<River>, BedCut) {
+    let n = ground.len();
+    for i in 0..n {
         if flags[i] & SEA == 0 && body[i] == 0 && acc[i] >= river_km2 {
             flags[i] |= RIVER;
         }
     }
     let river = |flags: &[u8], i: usize| flags[i] & RIVER != 0;
+    let lake = |flags: &[u8], body: &[u32], i: usize| {
+        flags[i] & (SEA | RIVER) == 0
+            && body[i] != 0
+            && basins[body[i] as usize - 1].kind == Kind::Lake
+    };
+
+    // Ids: walk down to a river cell with an id or the river's end, then fill in from below.
     let mut rivers: Vec<River> = Vec::new();
     let mut chain: Vec<u32> = Vec::new();
-    for i in 0..ground.len() {
-        if !river(flags, i) || !surface[i].is_nan() {
+    for i in 0..n {
+        if !river(flags, i) || body[i] != 0 {
             continue;
         }
-        // Walk down to a known river cell or the river's end, then fill in from below.
         chain.clear();
         let mut c = i;
         loop {
             chain.push(c as u32);
             match receiver(dims, dir, c) {
-                Some(r) if river(flags, r) && surface[r].is_nan() => c = r,
+                Some(r) if river(flags, r) && body[r] == 0 => c = r,
                 _ => break,
             }
         }
         for &x in chain.iter().rev() {
             let x = x as usize;
-            let r = receiver(dims, dir, x);
-            let (below, id) = match r {
-                Some(r) if river(flags, r) => (surface[r], body[r]),
-                _ => {
-                    let (end, below) = match r {
-                        None => (End::Edge, f32::NEG_INFINITY),
-                        Some(r) if flags[r] & SEA != 0 => (End::Sea, 0.0),
-                        Some(r)
-                            if body[r] != 0 && basins[body[r] as usize - 1].kind == Kind::Lake =>
-                        {
-                            (End::Lake(body[r]), basins[body[r] as usize - 1].level)
-                        }
-                        Some(_) => (End::Land, f32::NEG_INFINITY),
+            let id = match receiver(dims, dir, x) {
+                Some(r) if river(flags, r) => body[r],
+                r => {
+                    let end = match r {
+                        None => End::Edge,
+                        Some(r) if flags[r] & SEA != 0 => End::Sea,
+                        Some(r) if lake(flags, body, r) => End::Lake(body[r]),
+                        Some(r) if body[r] != 0 => End::Sink(body[r]),
+                        Some(_) => End::Land,
                     };
                     rivers.push(River {
                         mouth: x as u32,
@@ -91,15 +103,62 @@ pub(super) fn extract(
                         length_m: 0.0,
                         drainage_km2: acc[x],
                     });
-                    (below, rivers.len() as u32)
+                    rivers.len() as u32
                 }
             };
-            surface[x] = (ground[x] + depth_m(acc[x])).max(below);
             body[x] = id;
             let river = &mut rivers[id as usize - 1];
             river.cells += 1;
             river.length_m += Dims::step(dir[x]) * spacing_m;
         }
     }
-    rivers
+
+    // Surfaces: ground plus depth, at most the lowest dry bank and the level of any lake
+    // draining in, and at most every river cell upstream (upstream first, by donor count).
+    let mut donors = vec![0u8; n];
+    for i in 0..n {
+        if !river(flags, i) {
+            continue;
+        }
+        let mut s = ground[i] + depth_m(acc[i]);
+        for (_, j) in dims.neighbours(i) {
+            if lake(flags, body, j) {
+                if receiver(dims, dir, j) == Some(i) {
+                    s = s.min(basins[body[j] as usize - 1].level);
+                }
+            } else if flags[j] & (SEA | RIVER) == 0 {
+                s = s.min(ground[j]);
+            }
+        }
+        surface[i] = s;
+        if let Some(r) = receiver(dims, dir, i).filter(|&r| river(flags, r)) {
+            donors[r] += 1;
+        }
+    }
+    for i in 0..n {
+        let mut c = i;
+        while river(flags, c) && donors[c] == 0 {
+            donors[c] = u8::MAX;
+            match receiver(dims, dir, c).filter(|&r| river(flags, r)) {
+                Some(r) => {
+                    surface[r] = surface[r].min(surface[c]);
+                    donors[r] -= 1;
+                    c = r;
+                }
+                None => break,
+            }
+        }
+    }
+    let mut cut = BedCut::default();
+    for i in 0..n {
+        if river(flags, i) {
+            let bed = surface[i] - depth_m(acc[i]);
+            if bed < ground[i] {
+                cut.cells += 1;
+                cut.max_m = cut.max_m.max(ground[i] - bed);
+                ground[i] = bed;
+            }
+        }
+    }
+    (rivers, cut)
 }

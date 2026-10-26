@@ -17,6 +17,9 @@ use std::{fs, path::PathBuf, time::Instant};
 
 /// Rivers start at this drainage area by default (32 m trunk network).
 pub const DEFAULT_RIVER_KM2: f64 = 10.0;
+/// Judgment constant: the deepest cut breaching may make below a depression's spill. Deeper
+/// depressions are kept (lakes at the spill lowered by this much, or dry sinks).
+pub const BREACH_MAX_M: f32 = 30.0;
 
 pub struct Options {
     pub grid: PathBuf,
@@ -35,7 +38,7 @@ pub struct Outcome {
 }
 
 /// Run hydrology on `--grid` into a new `--out` directory. Outputs are published even when a
-/// validation check fails (`passed` false), so the report can be read.
+/// validation check fails (`passed` false), so the report can be read. Timings go to stderr.
 pub fn run(options: &Options) -> Result<Outcome> {
     ensure(
         options.coarse.is_none(),
@@ -54,11 +57,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
         format!("{} already exists", options.out.display()),
     )?;
     let started = Instant::now();
-    let mut times = serde_json::Map::new();
-    let mut lap = |name: &str, t: &mut Instant| {
-        let s = t.elapsed().as_secs_f64();
-        eprintln!("hydrology: {name} {s:.1} s");
-        times.insert(name.into(), json!((s * 100.0).round() / 100.0));
+    let lap = |name: &str, t: &mut Instant| {
+        eprintln!("hydrology: {name} {:.1} s", t.elapsed().as_secs_f64());
         *t = Instant::now();
     };
     let mut t = Instant::now();
@@ -90,7 +90,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     );
     lap("read", &mut t);
 
-    // Sea and the plain filled surface give the depressions.
+    // Sea (from the input ground only) and the plain filled surface give the depressions.
     let mut flags = vec![0u8; n];
     let mut dir = vec![0u8; n];
     flood::open_sea(dims, &ground, |_| false, &mut flags);
@@ -107,44 +107,62 @@ pub fn run(options: &Options) -> Result<Outcome> {
             d.inflow_km2 = d.inflow_km2.max(acc[i]);
         }
     }
+    drop(acc);
+    let class_at = |i: usize| classes.as_ref().map_or(0, |c| c[i]);
     let mut land_by_class = [0u64; 256];
     for i in 0..n {
         if flags[i] & SEA == 0 {
-            land_by_class[classes.as_ref().map_or(0, |c| c[i]) as usize] += 1;
+            land_by_class[class_at(i) as usize] += 1;
         }
     }
-    drop(classes);
-    let mut basins = lakes::select(
+    let (mut basins, map) = lakes::select(
         &deps,
         &land_by_class,
         &table,
         grid.spacing_m * grid.spacing_m,
         options.river_km2,
     );
-    lakes::relabel(&mut body, deps.len(), &basins);
+    lakes::relabel(&mut body, &map);
+    let kept_by_budget = basins.len();
     lap("depressions", &mut t);
 
-    // Breach every other depression, then route over the result.
-    let mut levels = vec![0f32];
-    levels.extend(basins.iter().map(|b| b.level));
-    flood::breach(dims, &mut ground, &body, &levels, &mut flags, &mut dir);
-    flood::open_sea(dims, &ground, |i| body[i] != 0, &mut flags);
+    // Breach every other depression up to the cap, then route over the result.
+    let carved = flood::breach(
+        dims,
+        &mut ground,
+        &mut body,
+        &mut basins,
+        &mut flags,
+        &mut dir,
+        BREACH_MAX_M,
+        |pit| {
+            let class = class_at(pit);
+            if class == lakes::GLACIER || table.get(class).lake_share <= lakes::ARID_LAKE_SHARE {
+                Kind::Sink
+            } else {
+                Kind::Lake
+            }
+        },
+    );
+    drop(classes);
     for i in 0..n {
         if flags[i] & SEA != 0 {
             dir[i] = 0;
         }
     }
+    eprintln!("hydrology: breach lowered {carved} cells");
     lap("breach", &mut t);
+    let mut acc = vec![0f32; n];
     let cycles = flood::accumulate(dims, &dir, cell_km2, &mut acc);
     lap("accumulate", &mut t);
 
-    // A dry basin that a river flows into fills as a lake.
+    // A dry pass-through basin that a river flows into fills as a lake (not glacier basins).
     let mut inflow = vec![0f32; basins.len() + 1];
     for i in 0..n {
         inflow[body[i] as usize] = inflow[body[i] as usize].max(acc[i]);
     }
     for (b, basin) in basins.iter_mut().enumerate() {
-        if basin.kind == Kind::Dry && inflow[b + 1] >= river_km2 {
+        if basin.kind == Kind::Dry && !basin.ice && inflow[b + 1] >= river_km2 {
             basin.kind = Kind::Lake;
             basin.filled_by_river = true;
         }
@@ -166,9 +184,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
 
     let mut surface = vec![f32::NAN; n];
-    let rivers = rivers::extract(
+    let (rivers, bed_cut) = rivers::extract(
         dims,
-        &ground,
+        &mut ground,
         &dir,
         &acc,
         &mut flags,
@@ -190,23 +208,32 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     lap("rivers", &mut t);
 
-    // Body ids: sea 1, lakes in basin order, then rivers.
-    let mut lake_id = vec![0u32; basins.len() + 1];
+    // Body ids: sea 1, lakes in basin order, rivers, then dry basins (not in the raster).
+    let mut basin_id = vec![0u32; basins.len() + 1];
     let mut next = 2;
     for (b, basin) in basins.iter().enumerate() {
         if basin.kind == Kind::Lake {
-            lake_id[b + 1] = next;
+            basin_id[b + 1] = next;
             next += 1;
         }
     }
     let river_base = next - 1;
+    next += rivers.len() as u32;
+    for (b, basin) in basins.iter().enumerate() {
+        if basin.kind != Kind::Lake {
+            basin_id[b + 1] = next;
+            next += 1;
+        }
+    }
     let body_id = |i: usize| -> u32 {
         if flags[i] & SEA != 0 {
             1
         } else if flags[i] & RIVER != 0 {
             river_base + body[i]
+        } else if body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake {
+            basin_id[body[i] as usize]
         } else {
-            lake_id[body[i] as usize]
+            0
         }
     };
 
@@ -223,14 +250,17 @@ pub fn run(options: &Options) -> Result<Outcome> {
         body: &body,
         surface: &surface,
         basins: &basins,
-        deps: &deps,
         rivers: &rivers,
         cell_km2: cell_km2 as f64,
         spacing_m: grid.spacing_m,
     };
     let checks = report::checks(&ctx, cycles);
-    let bodies = report::bodies(&ctx, &body_id, &lake_id, river_base);
-    let figures = report::figures(&ctx, &carve, extended);
+    let bodies = report::bodies(&ctx, &body_id, &basin_id, river_base);
+    let mut figures = report::figures(&ctx, &carve, extended);
+    figures.insert("depressions".into(), json!(deps.len()));
+    figures.insert("kept_by_budget".into(), json!(kept_by_budget));
+    figures.insert("river_bed_cut_cells".into(), json!(bed_cut.cells));
+    figures.insert("river_bed_max_cut_m".into(), json!(bed_cut.max_m));
     lap("report", &mut t);
 
     let mut stage = grid::Stage::new(&options.out)?;
@@ -245,11 +275,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
         .map(|(k, _)| k.as_str())
         .collect();
     let passed = failures.is_empty();
-    lap("write", &mut t);
-    times.insert(
-        "total".into(),
-        json!((started.elapsed().as_secs_f64() * 100.0).round() / 100.0),
-    );
     let report = json!({
         "schema_version": 1,
         "kind": "hydrology_report",
@@ -257,8 +282,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         "failures": failures,
         "checks": checks,
         "figures": figures,
-        "constants": report::constants(options.river_km2),
-        "times_s": times,
+        "constants": report::constants(options.river_km2, BREACH_MAX_M),
     });
     stage.json("report.json", &report)?;
     let mut manifest = grid.manifest.clone();
@@ -281,17 +305,20 @@ pub fn run(options: &Options) -> Result<Outcome> {
     );
     stage.json("grid.json", &Value::Object(manifest))?;
     let out = stage.publish()?;
+    lap("write", &mut t);
+    eprintln!("hydrology: total {:.1} s", started.elapsed().as_secs_f64());
 
     let f = &figures;
     let summary = format!(
-        "{}\nhydrology {}: sea {:.1}%, {} lakes {:.1} km², {} dry basins, {} breached, {} rivers {:.0} km{}",
+        "{}\nhydrology {}: sea {:.1}%, {} lakes {:.1} km² ({} over budget), {} dry basins ({} sinks), {} rivers {:.0} km{}",
         out.display(),
         if passed { "passed" } else { "FAILED" },
         f["sea_share"].as_f64().unwrap_or(0.0) * 100.0,
         f["lakes"],
         f["lake_km2"].as_f64().unwrap_or(0.0),
+        f["over_budget_lakes"],
         f["dry_basins"],
-        f["breached"],
+        f["over_budget_sinks"],
         f["river_systems"],
         f["river_length_km"].as_f64().unwrap_or(0.0),
         if passed {

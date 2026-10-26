@@ -97,41 +97,70 @@ pub(super) fn find(
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Kind {
     Lake,
+    /// Closed and dry; flow passes through at its level.
     Dry,
+    /// Closed and dry; flow ends in it (endorheic).
+    Sink,
 }
 
 /// A depression kept as a lake or a dry basin.
 pub(super) struct Basin {
-    pub dep: usize,
     pub kind: Kind,
     pub level: f32,
     /// Cell where the routed flow leaves the basin (set after breaching).
     pub exit: u32,
     /// Became a lake because a river flows into it.
     pub filled_by_river: bool,
+    /// Kept beyond the class budget because breaching it would cut too deep.
+    pub over_budget: bool,
+    /// A glacier basin: never a lake, never breached.
+    pub ice: bool,
 }
+
+impl Basin {
+    /// A basin kept beyond the budget because breaching it would cut too deep.
+    pub fn kept(kind: Kind, level: f32, exit: u32) -> Self {
+        Self {
+            kind,
+            level,
+            exit,
+            filled_by_river: false,
+            over_budget: true,
+            ice: false,
+        }
+    }
+}
+
+/// Glacier class (legend v3): its basins hold ice, not lakes.
+pub(super) const GLACIER: u8 = 10;
+/// Classes with at most this lake share are arid: deep basins there stay dry.
+pub(super) const ARID_LAKE_SHARE: f64 = 0.002;
 
 /// Keep the largest depressions (by volume) as lakes within each class's `lake_share` of its
 /// land, then the deepest compact ones of dry classes as dry basins within `dry_share`, if no
-/// river flows in. Depressions belong to their most common class.
+/// river flows in. Depressions belong to their most common class; glacier depressions all stay
+/// as dry ice basins. Returns the basins and, per depression, its basin index or none.
 pub(super) fn select(
     deps: &[Depression],
     land_by_class: &[u64; 256],
     table: &Table,
     cell_m2: f64,
     river_km2: f64,
-) -> Vec<Basin> {
+) -> (Vec<Basin>, Vec<u32>) {
     let budget = |share: fn(&super::water::Water) -> f64| -> Vec<f64> {
         (0..256)
             .map(|c| share(table.get(c as u8)) * land_by_class[c] as f64)
             .collect()
     };
-    let mut kind: Vec<Option<Kind>> = vec![None; deps.len()];
+    let mut kind: Vec<Option<Kind>> = (0..deps.len())
+        .map(|k| (deps[k].class == GLACIER).then_some(Kind::Dry))
+        .collect();
 
     let mut lake_budget = budget(|w| w.lake_share);
     let mut order: Vec<usize> = (0..deps.len())
         .filter(|&k| {
-            deps[k].max_depth >= LAKE_MIN_DEPTH_M
+            kind[k].is_none()
+                && deps[k].max_depth >= LAKE_MIN_DEPTH_M
                 && deps[k].cells as f64 * cell_m2 >= LAKE_MIN_AREA_M2
         })
         .collect();
@@ -166,26 +195,27 @@ pub(super) fn select(
 
     // Lakes first, so body ids follow lake size.
     let mut basins: Vec<Basin> = Vec::new();
+    let mut map = vec![0u32; deps.len() + 1];
     for want in [Kind::Lake, Kind::Dry] {
         let mut ks: Vec<usize> = (0..deps.len()).filter(|&k| kind[k] == Some(want)).collect();
         ks.sort_by(|&a, &b| deps[b].volume.total_cmp(&deps[a].volume));
-        basins.extend(ks.into_iter().map(|dep| Basin {
-            dep,
-            kind: want,
-            level: deps[dep].level,
-            exit: deps[dep].outlet,
-            filled_by_river: false,
-        }));
+        for dep in ks {
+            map[dep + 1] = basins.len() as u32 + 1;
+            basins.push(Basin {
+                kind: want,
+                level: deps[dep].level,
+                exit: deps[dep].outlet,
+                filled_by_river: false,
+                over_budget: false,
+                ice: deps[dep].class == GLACIER,
+            });
+        }
     }
-    basins
+    (basins, map)
 }
 
-/// Rewrite depression labels as basin ids (index + 1), 0 for breached depressions.
-pub(super) fn relabel(label: &mut [u32], deps_len: usize, basins: &[Basin]) {
-    let mut map = vec![0u32; deps_len + 1];
-    for (b, basin) in basins.iter().enumerate() {
-        map[basin.dep + 1] = b as u32 + 1;
-    }
+/// Rewrite depression labels as basin ids (`map` from `select`), 0 for breached ones.
+pub(super) fn relabel(label: &mut [u32], map: &[u32]) {
     for l in label.iter_mut() {
         *l = map[*l as usize];
     }
