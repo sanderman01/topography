@@ -130,13 +130,13 @@ summit_m = 2800
 [[regions.pieces]]
 source = "high-tatras"
 at = [17000, 22000]
-size_m = [18000, 16000]
+size_m = [22000, 18000]
 offset_m = [0, 3000]  # the peaks and the Podhale basin below them
 remap = [550, 2600, 400, 2800]
 [[regions.pieces]]
 source = "na-pali"
 at = [9500, 17500]
-size_m = [16000, 18000]
+size_m = [18000, 20000]
 offset_m = [-9000, -2000]  # the north-west cliffs, still facing north-west
 class_id = 12
 
@@ -151,7 +151,7 @@ forest = 0.2
 [[regions.pieces]]
 source = "senja"
 at = [9500, 9000]
-size_m = [14000, 12000]
+size_m = [14000, 14000]
 offset_m = [-12000, -11000]  # the outer skerries, sea to the north and west
 
 [[regions]]
@@ -205,18 +205,20 @@ id = "sw-sounds"
 name = "South-west sounds"
 class_id = 3
 terrain = "Sounds and headlands on the alpine arm's outer coast"
-outline = [[5000, 51000], [8500, 46000], [13000, 45000], [10500, 48500], [10000, 54500], [12000, 58500],
-  [8000, 59000], [5000, 56000]]
+# Vertices stay 7.5 km from the map edge; the piece's own sea makes the coast inside them.
+outline = [[7500, 50500], [9000, 46000], [13000, 45000], [10500, 48500], [10000, 54500], [12000, 58000],
+  [9000, 58500], [7500, 56000]]
 border_m = 2500
 forest = 0.6
 summit_m = 2400
 [[regions.pieces]]
 source = "doubtful-sound"
-at = [7000, 52500]
-size_m = [16000, 24000]  # past the region on every side
-offset_m = [-14000, 4000]  # Fiordland's outer coast: sounds and headlands
-rotate_deg = 45  # the coast faces north-west
+at = [12000, 52500]
+size_m = [14000, 24000]  # past the region on every side
+offset_m = [-17000, 4000]  # Fiordland's outer coast, 4 km west of the crop centre
+rotate_deg = 10  # the coast runs NNE along the arm, facing west
 remap = [0, 1850, 0, 2400]
+tilt_m_per_km = [80, 0]  # deepens the sea off the sounds, so the coast is the piece's own
 
 [[regions]]
 id = "s-karst"
@@ -250,9 +252,9 @@ id = "se-range"
 name = "South-east limestone range"
 class_id = 6
 terrain = "Limestone towers and walls"
-outline = [[40500, 39000], [48000, 35500], [57000, 38000], [59000, 41500], [57500, 45000], [53000, 49500], [42000, 47000],
+outline = [[40500, 39000], [48000, 35500], [57000, 38000], [59000, 41500], [57500, 45000], [53000, 50500], [42000, 48000],
   [38500, 44000], [38500, 41500]]
-border_m = 4000
+border_m = 4500
 forest = 0.5
 floor_m = 600
 summit_m = 3000
@@ -268,8 +270,10 @@ id = "se-lowland"
 name = "South-east river lowland"
 class_id = 9
 terrain = "Braided river from the volcano to a small delta, between rough hills"
-outline = [[39000, 48000], [53000, 49500], [57500, 45000], [58000, 49000], [56500, 52500], [58000, 56000],
-  [55000, 58000], [52500, 56500], [49500, 59000], [45500, 58000], [42000, 59000], [40000, 55000]]
+# The shared border lies south of the Dolomites' last cliff, so the cliff stays in the range.
+outline = [[39000, 49000], [53000, 50500], [57500, 45000], [58000, 49000], [56500, 52500], [58000, 56000],
+  [55000, 59000], [52500, 57000], [49500, 60000], [45500, 59000], [43500, 56500], [41500, 58500],
+  [40000, 55000]]
 border_m = 4500  # a softer foot to the limestone range
 forest = 0.4
 summit_m = 900
@@ -279,7 +283,7 @@ at = [48000, 54000]
 size_m = [30000, 18000]  # reaches the karst bay's east shore
 offset_m = [6000, 6000]  # rough hills, the braided valley bending south to the coast
 remap = [350, 2000, 0, 900]
-tilt_m_per_km = [12, -25]  # low toward the karst bay and the south coast
+tilt_m_per_km = [12, -12]  # low toward the karst bay and the south coast
 
 [[regions]]
 id = "e-desert"
@@ -328,7 +332,7 @@ class_id = 16
 [[passes]]
 id = "sw-low"
 name = "Tip pass"
-at = [8000, 59000]
+at = [10500, 56500]  # the isthmus behind the arm's tip
 band = "low"
 [[passes]]
 id = "nw-low"
