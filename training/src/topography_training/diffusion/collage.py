@@ -149,13 +149,11 @@ def fill_smooth(a: np.ndarray, known: np.ndarray) -> np.ndarray:
     while min(num[-1].shape) > 4:
         num.append(_down(num[-1]))
         den.append(_down(den[-1]))
-    from scipy import ndimage
-
     est = num[-1] / np.maximum(den[-1], 1e-12)
     for nu, de in zip(reversed(num[:-1]), reversed(den[:-1])):
-        # Finer averages take over where enough known cells are near; the blur removes bilinear kinks.
+        # Finer averages take over where enough known cells are near.
         t = np.clip(2 * de, 0, 1)
-        est = t * nu / np.maximum(de, 1e-12) + (1 - t) * ndimage.gaussian_filter(_up(est, nu.shape), 1.0)
+        est = t * nu / np.maximum(de, 1e-12) + (1 - t) * _up(est, nu.shape)
     return np.where(known, a, est).astype(np.float32)
 
 
@@ -216,9 +214,39 @@ def _down(a: np.ndarray) -> np.ndarray:
 
 
 def _up(a: np.ndarray, shape) -> np.ndarray:
+    """Bilinear upsampling, blurred so repeated use leaves no kinks on the coarse grid."""
     from scipy import ndimage
 
-    return ndimage.zoom(a, (shape[0] / a.shape[0], shape[1] / a.shape[1]), order=1)
+    return ndimage.gaussian_filter(ndimage.zoom(a, (shape[0] / a.shape[0], shape[1] / a.shape[1]), order=1), 1.0)
+
+
+WARP_OCTAVES = ((8000.0, 900.0), (3000.0, 400.0))  # (wavelength, displacement std) in m
+WARP_SEED = 7
+
+
+def warp_field(n: int, seed: int = WARP_SEED) -> tuple[np.ndarray, np.ndarray]:
+    """Smooth fixed-seed displacements (east, south, m) that bend straight outlines."""
+    from scipy import ndimage
+
+    rng = np.random.default_rng(seed)
+    coarse = 512.0  # noise is made at this spacing, then interpolated
+    m = int(n * CELL_M / coarse)
+    out = []
+    for _ in range(2):
+        d = np.zeros((n, n), np.float32)
+        for wave, std in WARP_OCTAVES:
+            w = ndimage.gaussian_filter(rng.standard_normal((m, m)), wave / (2 * np.pi * coarse), mode="wrap")
+            d += ndimage.zoom((std * w / w.std()).astype(np.float32), n / m, order=3)
+        out.append(d)
+    return out[0], out[1]
+
+
+def warp(a: np.ndarray, dx: np.ndarray, dy: np.ndarray) -> np.ndarray:
+    """`a` sampled at each cell's displaced position."""
+    from scipy import ndimage
+
+    i, j = np.mgrid[0 : a.shape[0], 0 : a.shape[1]].astype(np.float32)
+    return ndimage.map_coordinates(a, [i + dy / CELL_M, j + dx / CELL_M], order=1, mode="nearest").astype(np.float32)
 
 
 def blend(surfaces: list[np.ndarray], weights: list[np.ndarray], levels: int = PYRAMID_LEVELS) -> np.ndarray:
@@ -449,8 +477,9 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
     x, y = grid(n)
     sds, surfaces, classes, covered = [], [], [], []
     piece_noise = blue_noise(n, seed=1)  # independent of the region dither below
+    dx, dy = warp_field(n)  # one warp for every outline, so borders stay shared
     for r in regions:
-        sds.append(description.polygon_sd(r.outline, n, CELL_M))
+        sds.append(warp(description.polygon_sd(r.outline, n, CELL_M), dx, dy))
         h, c, cov = region_surface(r, srcs, x, y, piece_noise)
         surfaces.append(h)
         classes.append(c)
