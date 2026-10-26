@@ -25,8 +25,8 @@ The windward west and south:
 
 The lee side is plateau and desert. The east coast has bays at y 12 and y 24 in the dune
 field and a bay below the limestone range (y 47 to 56). Between them, the desert basin
-meets the sea through Badain Jaran megadunes whose hollows flood, as lagoons and dune
-islands (y 28 to 38). The north coast has a small bay at x 43 to 47, and the Canyonlands
+meets the sea through Badain Jaran megadunes (y 28 to 38). Their hollows near the coast
+are dry pans below sea level (see Known issues). The north coast has a small bay at x 43 to 47, and the Canyonlands
 inlets and Liwa channels indent the rest of it.
 
 The collage bends every outline with one smooth fixed noise warp. Its displacement std is
@@ -45,7 +45,7 @@ pieces' own sea and low ground shape the coast:
 - Broughton Archipelago's islands in the north-west.
 - Milford's fjords in the west.
 - Doubtful Sound's main sound south of the fjords, and its outer sounds on the SW arm.
-- Badain Jaran's flooded dune hollows on the desert coast.
+- Badain Jaran's dune hollows on the desert coast (dry pans below sea level).
 - The Dolomites' valleys, which reach the east cape. The range is tilted down to the east
   by 50 m/km.
 - Ha Long towers in the southern bay, under a drowned Wanfenglin cone-karst shore.
@@ -171,14 +171,21 @@ narrow far arm. Low ships reach 67% of the land, middle 90%, high 98% and top 99
   north side (facing the skerry sound), the SW arm's south-east side, the dune-field bays
   at y 12 and y 24, and the lowland bay and south coast. About 75 km² of land lies outside
   the outline, all of it within 0.8 km (182 km², reaching 2.2 km out, before the sink).
-- The south-east range's coast from the east cape to the lowland bay (x 58 to 51 km,
-  y 42 to 52) is still one long diagonal. Two attempts failed and were reverted:
+- The south-east range's diagonal coast (x 58 to 51 km, y 44 to 51 km) is a smooth
+  straight bevel about 12 km long. Two attempts failed and were reverted:
   - A cape halfway along pushed the range/lowland seam to 1.31.
   - A south tilt, or a Kenai fjord-coast region, pushed it to 1.39 and 1.46, and
     Kenai's water did not reach the coast.
-- The west coast from y 14 to 50 km is piece-made (Na Pali, Milford, Doubtful), but at
-  map scale it runs fairly straight north to south at x 6.5 to 8 km. The two bays that
-  cut into it before were outline-made and were filled back in.
+- The west coast is only partly piece-made: Na Pali (y 16 to 27), Milford's fjord mouth
+  (y 31 to 33) and Doubtful's sound (y 42 to 46). For y 28 to 31, 34 to 41 and 45 to 51 the
+  coast is the blend apron, 0.4 to 0.7 km outside the warped outline. Together this is a
+  roughly 24 km near-straight north to south coast at x 6.3 to 7.7 km, with a smooth
+  straight band at x 7.0 to 7.1 km, y 34 to 39.5 km. A smooth headland sits at x 7 to
+  10.7 km, y 27 to 28.3 km.
+- The NW arm's north shore (x 7 to 16 km, y 11 to 15 km) is a smooth outline bevel.
+- The dune-field bays, the karst bay's east shore and the lowland bay are outline-made
+  bevels.
+- Skerries and lava flats carry plain class 18.
 - The far SW arm is lower and smoother than its pieces. The arm is narrow, so the
   blend's coarse levels mix in a lot of sea. Aoraki's Main Divide at the tip ends near
   700 m.
@@ -188,3 +195,7 @@ narrow far arm. Low ships reach 67% of the land, middle 90%, high 98% and top 99
   connection to the sea. They are salt pans for now.
 - Lava flats, some volcano flanks and the skerry islands keep their source's plain class
   (18), so the class map shows plain patches there.
+- Dry basins below sea level on the desert coast, not connected to the sea: 0.83 km² at
+  x 55.2 to 56.3 km, y 30.3 to 31.3 km (-35 m), 0.41 km² at x 57.9 to 58.6 km, y 37.0 to
+  37.6 km (-60 m), and 0.13 km² near y 33 km (-35 m). They are dry pans, not lagoons.
+  Hydrology v2 will decide them.
