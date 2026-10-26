@@ -1,0 +1,25 @@
+training/src/topography_training/diffusion/class_gates.py
+  s_8c1b40ea9c1e0d::t_cf32e9a2480d40 434-435
+  s_8c1b40ea9c1e0d::t_a2439ca0036239 203-205,207-209
+  s_8c1b40ea9c1e0d::t_03010ad7908bfa 149-150
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_4a7b7b633c71c9 112
+docs/plans/class-conditioning-v1.md
+  s_8c1b40ea9c1e0d::t_9f123932d20279 93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a15f7eff33d516165662fc5af61fa8e85a709e9d",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
