@@ -84,6 +84,12 @@ class Region:
     cells: np.ndarray | None = None  # per-cell split of library tiles (data.TRAIN, data.VALIDATION)
     fields: Fields | None = None  # built once, shared by the train and validation samplers
     source: tuple | None = None  # lazy regions: (release manifest path, region entry); arrays load on demand
+    labels: np.ndarray | None = None  # reaches: per-cell classes worked out on the whole region
+
+    @property
+    def source_name(self) -> str:
+        """The release region a reach comes from (else the region itself)."""
+        return self.source[1].get("source_id", self.name) if self.source else self.name
 
 
 def _read(release: Path, layer: dict, shape) -> np.ndarray:
@@ -159,10 +165,13 @@ def _load_region(manifest_path: Path, r: dict) -> Region:
         height, sea = join_seabed(height, water, layers["seabed"], float(r["spacing_m"]))
         water &= ~sea
     snow, veg = layers["snow-ice"] == 2, layers["vegetation"] == 2
-    if "crop" in r:  # one reach of the region (see `_reaches`)
+    labels = None
+    if "crop" in r:  # one reach of the region (see `_reaches`); labels as for the whole region
         y0, y1, x0, x1 = r["crop"]
+        spacing = float(r["spacing_m"])
+        labels = legend.cell_classes(_class(r), height, snow, water, spacing, plain=spacing > 1)[y0:y1, x0:x1].copy()
         height, water, snow, veg = (a[y0:y1, x0:x1].copy() for a in (height, water, snow, veg))
-    return Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), height, water, snow, veg)
+    return Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), height, water, snow, veg, labels=labels)
 
 
 # Bump when field construction changes, so cached fields are rebuilt.
@@ -185,7 +194,7 @@ def region_fields(r: Region, level: "Level", make) -> Fields:
     labels = hashlib.sha256((legend.LABELS / "subclasses-v1.toml").read_bytes()).hexdigest()
     key = hashlib.sha256(json.dumps([FIELDS_VERSION, level.name, level.block, level.smooth_cells, labels,
                                      sorted((k, v["sha256"]) for k, v in entry["layers"].items())]
-                                    + ([entry["crop"]] if "crop" in entry else [])).encode()).hexdigest()
+                                    + ([entry["crop"], "region labels"] if "crop" in entry else [])).encode()).hexdigest()
     cache = release.parents[1] / "cache" / "cascade-fields" / release.name / f"{entry['id']}-{level.name}"
     meta = cache / "fields.json"
     if not (meta.exists() and json.loads(meta.read_text()).get("key") == key):
@@ -422,7 +431,8 @@ def refine_fields(r: Region) -> Fields:
 
     extra = [np.where(r.water, 255, 0).astype(np.uint8), cover(r.snow), cover(r.vegetation)]
     # 1 m tiles are cut around their landform; only ice is labelled per cell there.
-    classes = legend.cell_classes(r.class_id, r.height, r.snow, r.water, r.spacing_m, plain=r.spacing_m > 1)
+    classes = r.labels if r.labels is not None else legend.cell_classes(
+        r.class_id, r.height, r.snow, r.water, r.spacing_m, plain=r.spacing_m > 1)
     return Fields(r.height, None, extra, r.class_id, classes=classes)
 
 
@@ -643,9 +653,11 @@ class Sampler:
 
     def _groups(self):
         if not hasattr(self, "_by_class"):
-            self._by_class: dict[int, dict[int, list[int]]] = {}
+            # Keyed by source region, so the reaches of one region count as one region.
+            self._by_class: dict[int, dict[str, list[int]]] = {}
             for idx, (ri, _, _) in enumerate(self.positions):
-                self._by_class.setdefault(self.fields[ri].class_id, {}).setdefault(ri, []).append(idx)
+                self._by_class.setdefault(self.fields[ri].class_id, {}).setdefault(
+                    self.regions[ri].source_name, []).append(idx)
         return self._by_class
 
     def pick(self, rng: np.random.Generator, exclude_class: int | None = None) -> int:
@@ -700,14 +712,14 @@ def _join(a, b, rng: np.random.Generator, n_classes: int = NUM_CLASSES, level: L
     cond = m * k1 + (1 - m) * k2
     hard = d > 0
     first = k1.shape[0] - n_classes
-    band = borders.train_band(rng, dither_m) if level is not None else 0.0
+    band_m = borders.train_band(rng, dither_m) if level is not None else 0.0
     own = hard
-    if band > 0:  # the first window's share on the label grid, dithered like a layout border
+    if band_m > 0:  # the first window's share on the label grid, dithered like a layout border
         k = label_block(level)
         n = -(-s // k)
         cy = np.arange(n) * k + (k - 1) / 2 - (s - 1) / 2
         db = (cy[None, :] * np.cos(angle) + cy[:, None] * np.sin(angle) - offset) * level.cell_m
-        w = borders.weight(db, band)
+        w = borders.weight(db, band_m)
         one = np.ones(w.shape, np.uint8)
         pick = borders.dither([one, 0 * one], [w, 1 - w], borders.noise_at(rng, w.shape)).astype(bool)
         own = np.repeat(np.repeat(pick, k, 0), k, 1)[:s, :s]
