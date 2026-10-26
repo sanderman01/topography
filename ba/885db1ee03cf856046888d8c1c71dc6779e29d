@@ -1,0 +1,56 @@
+configs/layouts/fujix/layout.md
+  s_8c1b40ea9c1e0d::t_be0925c73642ef 42
+  s_8c1b40ea9c1e0d::t_15f74fd9383d2c 41
+  s_8c1b40ea9c1e0d::t_c83b8679ae3f39 1-40,43-93
+configs/layouts/fujix/layout.toml
+  s_8c1b40ea9c1e0d::t_3f3fbfe6b79f7c 238
+  s_8c1b40ea9c1e0d::t_d79a9a34082324 55-56,58-59
+  s_8c1b40ea9c1e0d::t_fe796ada4cb267 354
+  s_8c1b40ea9c1e0d::t_efea2e8f0ff153 88
+  s_8c1b40ea9c1e0d::t_fde53655d4fb04 177
+  s_8c1b40ea9c1e0d::t_561b993793159c 272-273
+  s_8c1b40ea9c1e0d::t_7a7c4ef56518f9 254
+  s_8c1b40ea9c1e0d::t_3526008df7657c 29-30,57,77,104-105,107,115,125,144,152-153,161-162,169-170,188,196,204,229,235-236,240,242-244,246-247,260,262-264,285,343
+  s_8c1b40ea9c1e0d::t_8762ecb89a6d90 335
+  s_8c1b40ea9c1e0d::t_edfbf48fa9b788 66-68,74-76
+  s_8c1b40ea9c1e0d::t_16a26454ecee9c 178-180,184-186
+  s_8c1b40ea9c1e0d::t_6a366d0bcd87ef 124
+  s_8c1b40ea9c1e0d::t_2f4d4156c07670 295,320,325
+  s_8c1b40ea9c1e0d::t_51933bdc26ba22 79-80
+  s_8c1b40ea9c1e0d::t_774e46d81d3975 128-130
+  s_8c1b40ea9c1e0d::t_a3c1d160008945 245
+  s_8c1b40ea9c1e0d::t_45b2999322abb1 78
+  s_8c1b40ea9c1e0d::t_b746ab2f08c393 87,89,95-100,103,106
+  s_8c1b40ea9c1e0d::t_bac21f209dfb16 287-288
+  s_8c1b40ea9c1e0d::t_7246fb24c69c32 114
+  s_8c1b40ea9c1e0d::t_758a343ee9d040 123
+  s_8c1b40ea9c1e0d::t_8d6db6039bbe72 181
+  s_8c1b40ea9c1e0d::t_ae826b5347565c 271,277,279-281,283-284,286
+  s_8c1b40ea9c1e0d::t_a16ae4f253ea01 38-39
+  s_8c1b40ea9c1e0d::t_b115bdb6fcd22f 202-203,207-208
+  s_8c1b40ea9c1e0d::t_475ac686844120 138,143,145
+  s_8c1b40ea9c1e0d::t_2049b9d4f1526f 227-228
+  s_8c1b40ea9c1e0d::t_62164fb175d124 315
+  s_8c1b40ea9c1e0d::t_17523c9da8e1a9 40-41
+  s_8c1b40ea9c1e0d::t_b38414d823af19 218-219
+  s_8c1b40ea9c1e0d::t_2bcb843012f954 310
+  s_8c1b40ea9c1e0d::t_85cbcb33cf24e6 209-210
+  s_8c1b40ea9c1e0d::t_62101db097cf3d 195
+  s_8c1b40ea9c1e0d::t_d40e08fd1229e6 330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba885db1ee03cf856046888d8c1c71dc6779e29d",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
