@@ -432,7 +432,9 @@ CALDERA_WALL_M = 320.0  # inner wall, from the floor's edge to the rim crest
 CALDERA_CREST_DROP_M = 60.0  # the crest's outer edge: ground this close to the ray's highest
 CALDERA_CREST_MIN = 0.7  # a ray's highest ground this far out (share of the radius) is its crest
 CALDERA_CREST_SMOOTH_DEG = 3.0  # the rim radius is smoothed over this, keeping real scallops
+CALDERA_FOOT_SMOOTH_DEG = 20.0  # the wall foot's radius over this
 CALDERA_WALL_RELIEF = 1.5  # the mirrored flank relief is this much stronger mid-wall
+CALDERA_GULLY_FROM, CALDERA_GULLY_FULL = 0.35, 0.75  # it fades in over this part of the wall (0 foot, 1 crest)
 CALDERA_SOFTEN_CELLS = 1.0  # the cut surface is blurred by this, rounding the crest
 CALDERA_SOFTEN_SPREAD = 3.0  # cells past the cut over which the blur fades out
 CALDERA_FADE_M = 500.0  # all change fades out over this, inside CALDERA_REACH_M
@@ -539,15 +541,18 @@ def calderas(h: np.ndarray, spec: dict, x: np.ndarray, y: np.ndarray) -> tuple[n
 
         # The bowl: a faintly textured floor, rising over the inner wall to the crest. The wall
         # carries the outer flank's gullies and spurs, mirrored in the crest along each ray.
-        inner = rim - CALDERA_WALL_M
-        # The floor rises only near the wall foot, so the rim's scallops draw no spokes on it.
+        # The wall foot follows a broadly smoothed rim, so the crest's scallops fade down the wall
+        # instead of drawing radial spokes to the floor.
+        inner = _per_ray(_smooth_ray(crest_r, CALDERA_FOOT_SMOOTH_DEG), az) - CALDERA_WALL_M
         base = floor_m + CALDERA_FLOOR_RISE_M * np.clip(1 - (inner - r) / CALDERA_RISE_M, 0, 1) ** 2
-        s = np.clip((r - inner) / CALDERA_WALL_M, 0, 1)
+        s = np.clip((r - inner) / np.maximum(rim - inner, CELL_M), 0, 1)
         out_r, a = 2 * rim - r, np.radians(az)
         out = [(cy - out_r * np.cos(a)) / CELL_M - 0.5, (cx + out_r * np.sin(a)) / CELL_M - 0.5]
         flank = ndimage.map_coordinates(h1 - hs, out, order=1)
-        # On the upper wall, strongest just below the crest and exact at it; the foot is talus.
-        gullies = flank * s * (1 + CALDERA_WALL_RELIEF * np.sin(np.pi * s))
+        # Only on the upper wall, strongest just below the crest and exact at it. Lower down the
+        # mirrored gullies would converge into spokes, so the lower wall is smooth talus.
+        up = np.clip((s - CALDERA_GULLY_FROM) / (CALDERA_GULLY_FULL - CALDERA_GULLY_FROM), 0, 1)
+        gullies = flank * up * up * (3 - 2 * up) * (1 + CALDERA_WALL_RELIEF * np.sin(np.pi * s))
         # The floor's texture is the flank's, taken from a fixed offset (a mirror would draw a
         # star at the centre), so the summit's buried crater ring stays buried.
         shift = [(y[near] + 1.5 * r0) / CELL_M - 0.5, (x[near] + 2.0 * r0) / CELL_M - 0.5]
@@ -648,7 +653,8 @@ CALDERA_RING_STEP_M = 3.0
 BREACH_MARGIN_M = 50.0  # the breach stays this far under the reaching band's ground limit
 RIVER_HEAD_M = 300.0  # a river is traced from the lowest ground this close to its path's first point
 RIVER_CLIMB_M = 30.0  # its path may rise this much above ground it passed (GLO-30 river floors carry such pits)
-RIVER_MOUTH_M = 2000.0  # and must reach the sea this close to its path's last point
+RIVER_OFF_PATH_M = 500.0  # it must meet the sea this close to its path
+RIVER_WATER_M = 30.0  # and the path past that point runs over ground at most this high (the drowned mouth)
 DEPRESSION_KM2 = 1.0  # closed hollows on land this large and deep are listed
 DEPRESSION_M = 50.0
 GLACIER_CLASS = 10  # terrain legend v3
@@ -700,6 +706,16 @@ def flow_path(dr: Drainage, at, radius_m: float = 0.0) -> tuple[np.ndarray, np.n
         path.append(int(dr.parent[path[-1]]))
     jj, ii = np.divmod(np.array(path), n)
     return (ii + dr.i0 + 0.5) * CELL_M, (jj + dr.j0 + 0.5) * CELL_M, dr.sub[jj, ii]
+
+
+def _densify(path) -> tuple[np.ndarray, np.ndarray]:
+    """Points every quarter cell along a polyline of [x, y] pairs."""
+    xs, ys = [], []
+    for (a, b), (c, d) in zip(path, path[1:]):
+        t = np.arange(0, 1, CELL_M / 4 / max(np.hypot(c - a, d - b), 1e-6))
+        xs.append(a + (c - a) * t)
+        ys.append(b + (d - b) * t)
+    return np.concatenate(xs + [[path[-1][0]]]), np.concatenate(ys + [[path[-1][1]]])
 
 
 def _length(x: np.ndarray, y: np.ndarray) -> float:
@@ -852,10 +868,15 @@ def report(spec, regions, h, sds, land_w, covered, region32, ice, dips, pre, cal
     for f in rivers:
         fx, fy, fh = traced[f["id"]] = flow_path(dr, f["path"][0], RIVER_HEAD_M)
         climb = float(np.max(fh - np.minimum.accumulate(fh)))
-        mouth = float(np.hypot(fx[-1] - f["path"][-1][0], fy[-1] - f["path"][-1][1]))
-        check(climb <= RIVER_CLIMB_M and mouth <= RIVER_MOUTH_M,
+        # Where the drainage meets the sea must lie on the path; the path past it runs over water.
+        px, py = _densify(f["path"])
+        k = int(np.argmin(np.hypot(px - fx[-1], py - fy[-1])))
+        off = float(np.hypot(px[k] - fx[-1], py[k] - fy[-1]))
+        under = ndimage.map_coordinates(h.astype(np.float64), [py[k:] / CELL_M - 0.5, px[k:] / CELL_M - 0.5], order=1)
+        check(climb <= RIVER_CLIMB_M and off <= RIVER_OFF_PATH_M and under.max() <= RIVER_WATER_M,
               f"river {f['id']}: drains {_length(fx, fy) / 1000:.1f} km from its head {_km(fx[0], fy[0])}, "
-              f"{fh[0]:.0f} m, to the sea at {_km(fx[-1], fy[-1])}, {mouth / 1000:.1f} km from its mouth; largest "
+              f"{fh[0]:.0f} m, to the sea at {_km(fx[-1], fy[-1])}, {off:.0f} m from its path, whose last "
+              f"{_length(px[k:], py[k:]) / 1000:.1f} km run over ground at most {under.max():.0f} m; largest "
               f"rise on the way {climb:.0f} m, largest uphill step {np.max(np.diff(fh), initial=0):.0f} m")
     for f in spec.get("features", []):
         b = cal.get(f["id"], {}).get("breach")
