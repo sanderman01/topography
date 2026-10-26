@@ -393,6 +393,43 @@ def report(spec, regions, h, sds, land_w, covered, dips) -> tuple[str, int]:
     return "\n".join(lines) + "\n", warnings
 
 
+def sheet(out: Path, regions: list[Region], srcs: dict[str, Source], h32: np.ndarray, m_per_px: float = 64.0) -> Path:
+    """Each piece's source crop beside the world around where it was placed, at one scale."""
+    from PIL import Image, ImageDraw
+
+    from .cascade_eval import shade
+
+    rows = []
+    for r in regions:
+        for p in r.pieces:
+            src = srcs[p.source]
+            n_src, s = src.height.shape[0], src.spacing_m
+            cx, cy = n_src / 2 + p.offset_m[0] / s, n_src / 2 + p.offset_m[1] / s
+            hw, hh = int(p.size_m[0] / s / 2), int(p.size_m[1] / s / 2)
+            step = max(1, round(m_per_px / s))
+            sub = src.height[int(cy) - hh : int(cy) + hh : step, int(cx) - hw : int(cx) + hw : step]
+            left = Image.fromarray(shade(sub, s * step, sub < 0))
+            half = int(np.hypot(*p.size_m) * p.scale / 2 / CELL_M)
+            i, j = int(p.at[0] / CELL_M), int(p.at[1] / CELL_M)
+            k = max(1, round(m_per_px / CELL_M))
+            win = h32[max(0, j - half) : j + half : k, max(0, i - half) : i + half : k]
+            right = Image.fromarray(shade(win, CELL_M * k, win < 0))
+            rows.append((f"{r.name}: {p.source}, {p.rotate_deg:.0f}° x{p.scale:g}", left, right))
+    pad, font = 12, layout._font(18)
+    width = max(l.width + rt.width for _, l, rt in rows) + 3 * pad
+    height = sum(max(l.height, rt.height) + 36 for _, l, rt in rows) + pad
+    img = Image.new("RGB", (width, height), (30, 30, 30))
+    d = ImageDraw.Draw(img)
+    y = pad
+    for label, left, right in rows:
+        layout._label(d, (pad, y), label, font)
+        img.paste(left, (pad, y + 26))
+        img.paste(right, (2 * pad + left.width, y + 26))
+        y += max(left.height, right.height) + 36
+    img.save(out / "pieces.png")
+    return out / "pieces.png"
+
+
 def build(layout_path: Path, release: Path, out: Path) -> int:
     t0 = time.time()
     text = layout_path.read_text()
@@ -430,6 +467,7 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
     (out / "reach-l2.txt").write_text(text_b)
     layout.reach_png(h32, CELL_M, bands, spec, out / "reach-l2.png")
     description.write(out, description.measure(spec, h32, CELL_M, "collage"))
+    sheet(out, regions, srcs, h32)
     (out / "collage.json").write_text(json.dumps({
         "kind": "world_collage", "schema_version": 1, "layout": str(layout_path.resolve()),
         "layout_sha256": hashlib.sha256(text.encode()).hexdigest(), "release": str(release.resolve()),
