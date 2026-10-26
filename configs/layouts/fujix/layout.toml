@@ -26,8 +26,8 @@ id = "volcano"
 name = "Fujix volcano"
 class_id = 11
 terrain = "Stratovolcano with an ice-filled summit caldera, glaciers and flank cones"
-outline = [[42000, 33500], [40593, 38750], [36750, 42593], [31500, 44000], [26250, 42593], [22407, 38750],
-  [21000, 33500], [22407, 28250], [26250, 24407], [31500, 23000], [36750, 24407], [40593, 28250]]
+outline = [[41500, 33500], [40160, 38500], [36500, 42160], [31500, 43500], [26500, 42160], [22840, 38500],
+  [21500, 33500], [22840, 28500], [26500, 24840], [31500, 23500], [36500, 24840], [40160, 28500]]
 border_m = 3000
 forest = 0.3
 floor_m = 300
@@ -35,9 +35,10 @@ summit_m = 5000
 [[regions.pieces]]
 source = "kilimanjaro"
 at = [31500, 33500]
-size_m = [30000, 30000]
-scale = 0.75
-remap = [800, 5895, 300, 5000]
+size_m = [40000, 40000]  # wider than the outline, so no crop edge shows
+offset_m = [400, -600]  # Kibo's caldera; the Shira plateau stays west, a saddle to the fjords
+scale = 0.667
+remap = [1800, 5895, 300, 5000]
 
 [[regions]]
 id = "ne-rift"
@@ -51,57 +52,67 @@ summit_m = 1500
 [[regions.pieces]]
 source = "craters-of-the-moon"
 at = [47000, 21500]
-size_m = [20000, 12000]
-rotate_deg = -45
-remap = [1500, 2100, 400, 1000]
-tilt_m_per_km = [-30, 30]
+size_m = [14000, 16000]
+offset_m = [3000, 1000]  # the Great Rift's cone row, turned to run SW to NE
+rotate_deg = -94
+scale = 1.15
+remap = [1500, 1800, 400, 1000]
 
 [[regions]]
 id = "canyon-plateau"
 name = "Grand Canyon plateau"
 class_id = 13
 terrain = "Plateau cut by a Grand Canyon section; the river runs west"
-outline = [[22000, 9500], [34000, 9000], [45000, 10500], [46000, 15500], [40500, 22000], [31500, 23000],
-  [24000, 21500], [21500, 15500]]
-border_m = 2000
+outline = [[22000, 10500], [28000, 9800], [34000, 10200], [40000, 9500], [44000, 10500], [45500, 13000],
+  [44500, 15500], [45500, 17500], [40500, 22000], [31500, 23000], [24000, 21500], [21500, 16000]]
+border_m = 2500
 forest = 0.25
 floor_m = 600
 summit_m = 2400
 [[regions.pieces]]
 source = "grand-canyon"
-at = [33500, 15500]
-size_m = [30000, 16000]
-remap = [700, 2800, 600, 2400]
+at = [34000, 16000]
+size_m = [34000, 22000]
+offset_m = [-1000, -500]
+rotate_deg = -15  # the river runs east to west
+scale = 0.72
+remap = [700, 2300, 600, 2400]
+tilt_m_per_km = [12, 0]  # the river falls west
 
 [[regions]]
 id = "north-coast"
 name = "North coast mesas"
 class_id = 7
 terrain = "Badlands and mesas stepping down from the plateau to the sea"
-outline = [[14000, 5000], [30000, 4500], [47000, 5000], [47500, 10500], [45000, 10500], [34000, 9000],
-  [22000, 9500], [21500, 16000], [17000, 16500]]
+outline = [[15000, 6200], [18000, 5600], [22500, 6400], [27000, 5500], [31500, 6300], [36000, 5400],
+  [41000, 6200], [46500, 5700], [44500, 10500], [40000, 9500], [34000, 10200], [28000, 9800],
+  [22000, 10500], [21500, 16000], [19500, 18000], [16500, 17000], [15000, 9000]]
 border_m = 2500
 forest = 0.05
 floor_m = 0
 summit_m = 800
 [[regions.pieces]]
-source = "monument-valley"
-at = [33000, 7000]
-size_m = [30000, 8000]
-remap = [1500, 2200, 50, 700]
+source = "canyonlands"
+at = [32000, 7600]
+size_m = [9000, 28000]
+offset_m = [-6000, -8000]  # mesas stepping down to the Green River canyons
+rotate_deg = 90  # the canyons face the sea as drowned inlets
+remap = [1250, 1900, -60, 800]
 [[regions.pieces]]
 source = "bardenas-reales"
-at = [18000, 10500]
-size_m = [10000, 12000]
-remap = [250, 650, 50, 600]
+at = [18000, 12000]
+size_m = [12000, 14000]
+offset_m = [6000, 12000]  # the mesas
+remap = [250, 700, -40, 700]
+tilt_m_per_km = [0, 20]
 
 [[regions]]
 id = "nw-arm"
 name = "North-west knife ridges"
 class_id = 6
 terrain = "Knife ridges inland, sea cliffs on the coast"
-outline = [[4500, 13000], [10000, 9000], [14000, 8000], [17000, 16500], [21500, 16000], [24000, 21500],
-  [23500, 27000], [20000, 30500], [12000, 27500], [4500, 23000]]
+outline = [[5500, 13000], [11000, 11500], [15000, 9000], [16500, 17000], [19500, 18000], [21500, 15500],
+  [24000, 21500], [23500, 27000], [20000, 30500], [12000, 27500], [6000, 24000], [5000, 18500]]
 border_m = 3000
 forest = 0.5
 floor_m = 0
@@ -109,13 +120,14 @@ summit_m = 2800
 [[regions.pieces]]
 source = "high-tatras"
 at = [17000, 22000]
-size_m = [18000, 14000]
-remap = [800, 2650, 600, 2800]
+size_m = [18000, 16000]
+offset_m = [0, 3000]  # the peaks and the Podhale basin below them
+remap = [550, 2600, 400, 2800]
 [[regions.pieces]]
 source = "na-pali"
-at = [8000, 15500]
-size_m = [16000, 12000]
-rotate_deg = -45
+at = [9500, 17500]
+size_m = [16000, 18000]
+offset_m = [-9000, -2000]  # the north-west cliffs, still facing north-west
 class_id = 12
 
 [[regions]]
@@ -123,21 +135,22 @@ id = "nw-skerries"
 name = "North-west skerries"
 class_id = 5
 terrain = "Skerries and a small archipelago"
-outline = [[4200, 4500], [13000, 4300], [12000, 8500], [8000, 10500], [4200, 12000]]
+outline = [[4800, 5000], [14500, 5000], [15000, 9000], [11000, 11500], [5000, 12500]]
 border_m = 2000
 forest = 0.2
 [[regions.pieces]]
 source = "senja"
-at = [8000, 7500]
-size_m = [12000, 10000]
+at = [9500, 9000]
+size_m = [14000, 12000]
+offset_m = [-12000, -11000]  # the outer skerries, sea to the north and west
 
 [[regions]]
 id = "w-fjords"
 name = "Western fjords"
 class_id = 3
 terrain = "Fjords between the arms, with steep walls"
-outline = [[4000, 30000], [12000, 27500], [20000, 30500], [22000, 37000], [18000, 39500], [9500, 44500],
-  [4000, 43000]]
+outline = [[6000, 29500], [12000, 27500], [20000, 30500], [22000, 37000], [18000, 39500], [9500, 44500],
+  [5500, 43500], [5000, 37000]]
 border_m = 2500
 forest = 0.6
 summit_m = 2500
@@ -145,51 +158,56 @@ summit_m = 2500
 source = "milford-sound"
 at = [12000, 36500]
 size_m = [24000, 18000]
-rotate_deg = -45
+offset_m = [-4000, 0]
+rotate_deg = -45  # the fjord mouth opens west
 
 [[regions]]
 id = "sw-arm"
 name = "South-west alpine arm"
 class_id = 6
 terrain = "Alpine ridges, cirques, glaciers and horn peaks"
-outline = [[4500, 52000], [9500, 44500], [18000, 39500], [22500, 40000], [25000, 46000], [20000, 52500],
-  [13000, 58500], [6000, 60500]]
+outline = [[5500, 52000], [9500, 44500], [18000, 39500], [22500, 40000], [25000, 46000], [20000, 52500],
+  [13000, 58000], [7000, 59500]]
 border_m = 3000
 forest = 0.4
 floor_m = 800
 summit_m = 4400
 [[regions.pieces]]
 source = "zermatt"
-at = [17500, 46000]
-size_m = [22000, 18000]
-rotate_deg = -45
-remap = [1200, 4478, 800, 4400]
+at = [14500, 46500]
+size_m = [26000, 18000]
+offset_m = [3000, 4500]  # the Matterhorn to Monte Rosa crest
+rotate_deg = -59  # the crest runs along the arm, Monte Rosa at the volcano end
+remap = [1300, 4540, 1000, 4450]  # the cols beside the peaks reach the top band
 [[regions.pieces]]
 source = "aoraki-mount-cook"
-at = [10000, 54500]
-size_m = [16000, 14000]
+at = [8500, 56000]
+size_m = [14000, 12000]
+offset_m = [-4000, 1000]
 rotate_deg = -45
-remap = [300, 3724, 0, 3400]
+remap = [300, 3655, 0, 3300]
 
 [[regions]]
 id = "s-karst"
 name = "Southern drowned karst"
 class_id = 15
 terrain = "Drowned tower karst in a bay, cone karst inland"
-outline = [[25000, 47500], [33000, 45500], [39000, 48000], [40000, 55000], [37000, 61500], [26000, 61500],
-  [21000, 56500], [22500, 51000]]
+outline = [[25000, 47000], [29000, 44500], [34000, 43500], [38500, 44500], [40500, 48000], [40000, 55000], [37500, 60000], [26000, 60000],
+  [21500, 56000], [22500, 51000]]
 border_m = 2000
 forest = 0.7
 summit_m = 700
 [[regions.pieces]]
 source = "ha-long-bay"
-at = [31000, 57000]
-size_m = [18000, 10000]
+at = [31000, 55500]
+size_m = [20000, 12000]
+offset_m = [-4000, 8000]  # the tower cluster, open sea to the south
 [[regions.pieces]]
 source = "wanfenglin"
-at = [31000, 50500]
-size_m = [16000, 8000]
-remap = [1100, 1700, 50, 700]
+at = [31500, 48500]
+size_m = [18000, 10000]
+offset_m = [11000, 0]  # the cone karst field
+remap = [900, 1700, 20, 700]
 class_id = 14
 
 [[regions]]
@@ -197,7 +215,8 @@ id = "se-range"
 name = "South-east limestone range"
 class_id = 6
 terrain = "Limestone towers and walls"
-outline = [[40500, 39000], [48000, 35500], [56500, 37500], [59000, 45000], [53000, 49500], [42000, 47000]]
+outline = [[40500, 39000], [48000, 35500], [56500, 37500], [58500, 44500], [53000, 49500], [42000, 47000],
+  [38500, 44000], [38500, 41500]]
 border_m = 3000
 forest = 0.5
 floor_m = 600
@@ -205,65 +224,75 @@ summit_m = 3000
 [[regions.pieces]]
 source = "dolomites"
 at = [49500, 42000]
-size_m = [22000, 16000]
-remap = [1000, 3343, 600, 3000]
+size_m = [26000, 18000]
+offset_m = [-2000, 0]
+remap = [1000, 3305, 600, 3000]
 
 [[regions]]
 id = "se-lowland"
 name = "South-east river lowland"
 class_id = 9
-terrain = "Braided river from the volcano to a small delta, with rolling farmland"
-outline = [[39000, 48000], [53000, 49500], [59000, 45000], [61500, 52000], [57000, 60500], [44000, 61500],
+terrain = "Braided river from the volcano to a small delta, between rough hills"
+outline = [[39000, 48000], [53000, 49500], [58500, 44500], [60000, 51500], [56500, 59000], [44000, 60000],
   [40000, 55000]]
-border_m = 3000
+border_m = 4000  # a softer foot to the limestone range
 forest = 0.4
-summit_m = 800
+summit_m = 900
 [[regions.pieces]]
-source = "tagliamento"
-at = [50000, 54500]
-size_m = [22000, 14000]
-remap = [300, 2000, 0, 800]
+source = "rakaia-upper"
+at = [50000, 54000]
+size_m = [24000, 16000]
+offset_m = [6000, 6000]  # rough hills, the braided valley bending south to the coast
+remap = [350, 2000, 0, 900]
+tilt_m_per_km = [-10, -10]
 
 [[regions]]
 id = "e-desert"
 name = "Eastern desert basin"
 class_id = 8
 terrain = "Desert basin with dunes and pans, open to the coast"
-outline = [[46000, 25500], [52000, 27000], [58500, 28500], [61500, 31000], [61000, 38500], [56500, 37500],
+outline = [[46000, 25500], [52000, 27000], [58500, 28500], [60500, 31000], [59000, 34500], [60000, 37500], [56500, 37500],
   [48000, 35500], [42000, 34500], [42000, 30000]]
 border_m = 3000
 summit_m = 1000
 [[regions.pieces]]
 source = "sossusvlei"
-at = [53000, 32000]
+at = [52000, 31500]
 size_m = [22000, 14000]
+offset_m = [10000, -6000]  # the pan between two dune belts
+remap = [450, 1000, 0, 700]
+tilt_m_per_km = [-25, 0]
 
 [[regions]]
 id = "ne-dunes"
 name = "North-east dune field"
 class_id = 8
 terrain = "Star dunes banked against the rift's end, crest dunes toward the coast"
-outline = [[47500, 5000], [56500, 6000], [61000, 13500], [61500, 21000], [58500, 28500], [52000, 27000],
-  [48000, 25500], [55500, 17500], [52000, 14500], [46000, 15500], [45000, 10500], [47500, 10500]]
+outline = [[46500, 5700], [52000, 6400], [56000, 6000], [59000, 9500], [59500, 14000], [60500, 19000],
+  [59000, 24000], [58500, 28500], [52000, 27000], [48000, 25500], [55500, 17500], [52000, 14500], [46000, 17000],
+  [45000, 15500], [45500, 13000], [44500, 10500]]
 border_m = 2500
 summit_m = 1600
 [[regions.pieces]]
-source = "great-sand-dunes"
+source = "badain-jaran"
 at = [55000, 21000]
-size_m = [14000, 12000]
-remap = [2300, 4000, 300, 1600]
+size_m = [16000, 16000]
+remap = [1160, 1670, 300, 810]
+tilt_m_per_km = [-15, 0]
 [[regions.pieces]]
-source = "taklamakan"
-at = [53000, 9500]
-size_m = [14000, 10000]
-remap = [1000, 1400, 0, 400]
+source = "liwa"
+at = [53000, 10500]
+size_m = [16000, 12000]
+offset_m = [0, 6000]  # crest dunes over sabkha flats
+remap = [90, 250, 0, 240]
+tilt_m_per_km = [0, 15]  # the sabkhas flood only toward the coast
 class_id = 16
 
 # Passes: the lowest flight band (ground + clearance) that reaches each one from the sea.
 [[passes]]
 id = "sw-low"
 name = "Tip pass"
-at = [8500, 56500]
+at = [8000, 59000]
 band = "low"
 [[passes]]
 id = "nw-low"
@@ -278,32 +307,32 @@ band = "low"
 [[passes]]
 id = "fjord-saddle"
 name = "Fjord saddle"
-at = [21000, 40000]
+at = [22000, 32000]
 band = "middle"
 [[passes]]
 id = "nw-saddle"
 name = "North-west saddle"
-at = [22500, 27500]
+at = [24500, 27500]
 band = "middle"
 [[passes]]
 id = "plateau-crossing"
 name = "Plateau crossing"
-at = [36000, 12000]
+at = [34000, 20000]
 band = "middle"
 [[passes]]
 id = "alpine-col"
 name = "Alpine col"
-at = [15000, 48000]
+at = [13000, 50500]
 band = "high"
 [[passes]]
 id = "volcano-shoulder"
 name = "Volcano shoulder"
-at = [37000, 28500]
+at = [35000, 31500]
 band = "high"
 [[passes]]
 id = "horn-col"
 name = "Horn col"
-at = [13000, 51000]
+at = [16250, 49000]
 band = "top"
 
 [[features]]
@@ -311,7 +340,7 @@ id = "fujix"
 kind = "volcano"
 name = "Fujix"
 at = [31500, 33500]
-radius_m = 10500
+radius_m = 10000
 summit_m = 5000
 caldera_diameter_m = 2500
 caldera_floor_m = 4600
@@ -322,6 +351,6 @@ id = "great-canyon"
 kind = "gorge"
 name = "Great Canyon"
 river = true
-path = [[44500, 15000], [33500, 15500], [22000, 15000]]
+path = [[44000, 17900], [38000, 16400], [34000, 16400], [30000, 17600], [26000, 16500], [22000, 15600]]
 depth_m = 1500
 note = "Grand Canyon section; the river runs west, then north to the coast"
