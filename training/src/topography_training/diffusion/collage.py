@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from . import cascade, description, layout, legend
+from .borders import blue_noise, dither, weight
 
 CELL_M = 32.0  # GLO-30's resolution, and the L2 level
 L0_CELL_M = 128.0
@@ -221,11 +222,6 @@ def region_surface(r: Region, srcs: dict[str, Source], x: np.ndarray, y: np.ndar
     return fill_smooth(num / np.maximum(den, 1e-6), covered), dither(classes, weights, noise), covered
 
 
-def weight(sd: np.ndarray, border_m: float) -> np.ndarray:
-    """Soft membership: 0.5 on the outline, about 0.98 half a border inside."""
-    return (1 / (1 + np.exp(-np.clip(8 * sd / border_m, -60, 60)))).astype(np.float32)
-
-
 def island_sd(sds: list[np.ndarray]) -> np.ndarray:
     """Signed distance to the union of region outlines, with narrow gaps between them closed."""
     from scipy import ndimage
@@ -372,32 +368,6 @@ def write_l0(out: Path, text: str, spec: dict, h32: np.ndarray, cls32: np.ndarra
     (out / "layout.json").write_text(json.dumps({
         "kind": "world_layout_l0", "schema_version": 1, "size": [n, n], "cell_m": L0_CELL_M,
         "layers": list(layers), "config_text": text}, indent=1))
-
-
-def blue_noise(n: int, seed: int = 0) -> np.ndarray:
-    """Uniform 0-1 values with little low-frequency content, so a dithered border reads as a fine mix."""
-    from scipy import ndimage
-
-    w = np.random.default_rng(seed).random((n, n), dtype=np.float32)
-    hp = w - ndimage.gaussian_filter(w, 1.5, mode="wrap")
-    r = np.empty(n * n, np.float32)
-    r[np.argsort(hp, axis=None)] = (np.arange(n * n, dtype=np.float32) + 0.5) / (n * n)
-    return r.reshape(n, n)
-
-
-def dither(classes: list[np.ndarray], weights: list[np.ndarray], noise: np.ndarray) -> np.ndarray:
-    """Each cell takes one region's class, with probability equal to that region's share."""
-    total = np.maximum(np.sum(weights, axis=0), 1e-6)
-    acc = np.zeros(noise.shape, np.float32)
-    # Where every weight has vanished (far sea), the largest one's class.
-    out = np.take_along_axis(np.stack(classes), np.argmax(weights, axis=0)[None], 0)[0]
-    chosen = np.zeros(noise.shape, bool)
-    for c, w in zip(classes, weights):
-        acc += w / total
-        pick = ~chosen & (noise < acc)
-        out[pick] = c[pick]
-        chosen |= pick
-    return out
 
 
 DIP_SIGMA_M = 1000.0  # a dip about 4 km across reads as a broad saddle
