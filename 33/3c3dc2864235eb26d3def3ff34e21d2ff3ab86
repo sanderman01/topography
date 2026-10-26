@@ -1,0 +1,54 @@
+configs/layouts/fujix/layout.md
+  s_8c1b40ea9c1e0d::t_ee1f01338f34fd 95-96
+  s_8c1b40ea9c1e0d::t_5e86ccce3f4f0f 139-149,153-167
+  s_8c1b40ea9c1e0d::t_9ead18e57bf82a 85-86,88,90-91
+  s_8c1b40ea9c1e0d::t_5f3266f8521ad6 109
+  s_8c1b40ea9c1e0d::t_93d3a03198477c 115-118,121-123,125-128
+  s_8c1b40ea9c1e0d::t_76cef0bc5a6db7 4-25,31,33-35,38-39
+  s_8c1b40ea9c1e0d::t_972496381d55e5 52-64
+configs/layouts/fujix/layout.toml
+  s_8c1b40ea9c1e0d::t_09a8645d49314e 141,143-144
+  s_8c1b40ea9c1e0d::t_e7523845f83eac 281
+  s_8c1b40ea9c1e0d::t_90c622c89ce840 344
+  s_8c1b40ea9c1e0d::t_5ee5e5bc867128 272-273
+  s_8c1b40ea9c1e0d::t_2b4522b3d2bc6d 283
+  s_8c1b40ea9c1e0d::t_e5fb28d1672455 201,205
+  s_8c1b40ea9c1e0d::t_018b7c51a85133 214
+  s_8c1b40ea9c1e0d::t_0da53d1517c0d2 128
+  s_8c1b40ea9c1e0d::t_8bb61d1630890c 260,262
+  s_8c1b40ea9c1e0d::t_9f7f5d1c528b59 135-137
+  s_8c1b40ea9c1e0d::t_5a32aee16f2da3 152
+  s_8c1b40ea9c1e0d::t_65352aa0693d90 261
+  s_8c1b40ea9c1e0d::t_c3a6f298268ae4 158
+  s_8c1b40ea9c1e0d::t_4c1219bdedc838 308
+  s_8c1b40ea9c1e0d::t_8431a6c3f9d7e9 125-126
+  s_8c1b40ea9c1e0d::t_db00bd51547204 167-168
+  s_8c1b40ea9c1e0d::t_0929ad402ebf27 282
+  s_8c1b40ea9c1e0d::t_7bf9fa5bae2d14 127,169
+  s_8c1b40ea9c1e0d::t_73a3fd181e48d7 186-187
+  s_8c1b40ea9c1e0d::t_f20577565fb0ed 301
+  s_8c1b40ea9c1e0d::t_1494d81ce33b1f 153
+  s_8c1b40ea9c1e0d::t_13b4915a864f7b 203
+  s_8c1b40ea9c1e0d::t_c787cfc23311f2 310
+  s_8c1b40ea9c1e0d::t_bba6a422e0387a 194-196
+  s_8c1b40ea9c1e0d::t_fee83f67c35bfe 320-321
+  s_8c1b40ea9c1e0d::t_82372781a5159c 99
+  s_8c1b40ea9c1e0d::t_61ea48eaaac1dd 97-98,100
+  s_8c1b40ea9c1e0d::t_f935877ed22fc0 302-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "333c3dc2864235eb26d3def3ff34e21d2ff3ab86",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
