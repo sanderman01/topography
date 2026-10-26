@@ -1,0 +1,23 @@
+training/src/topography_training/diffusion/description.py
+  s_8c1b40ea9c1e0d::t_f5d6d3299c0a55 1-111
+schemas/README.md
+  s_8c1b40ea9c1e0d::t_57a4f4858ac384 22
+schemas/world-description-v1.md
+  s_8c1b40ea9c1e0d::t_f0d72935be7c58 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "637f7266e0839462d9af03aa46f46358d60cfb39",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
