@@ -1,7 +1,7 @@
 # Fujix: layout summary
 
 The [layout.toml](layout.toml) collage for [fujix v1](../../../docs/plans/fujix-v1.md),
-built as `data/worlds/fujix-collage-53`. The map is 65.5 km square with north up. Land
+built as `data/worlds/fujix-collage-54`. The map is 65.5 km square with north up. Land
 covers 53.3% of it, about 2,290 km². The main island spans 54.4 km east to west (x 6.3
 to 60.7 km) and 55.4 km north to south (y 5.1 to 60.5 km), and land stays at least
 4.8 km from the map edge.
@@ -117,28 +117,30 @@ straight line. The caldera's ice floor is flat but is not counted as a settlemen
 
 ## Volcano
 
-The highest point is 4,972 m, Kibo's own crest (Uhuru) on the caldera's south rim
+The highest point is 4,973 m, Kibo's own crest (Uhuru) on the caldera's south rim
 (x 31.5, y 34.4 km). The highest land outside the volcano region is 4,301 m, the SW arm's
-top at x 21.0, y 43.7 km, so the volcano stands 671 m above it. Above about 1,300 m the
+top at x 21.0, y 43.7 km, so the volcano stands 672 m above it. Above about 1,300 m the
 cone is roughly 9 km in radius, and the Shira plateau forms a broad western shoulder.
 
 Kilimanjaro's own caldera is too shallow to show at 32 m, so the collage cuts a bowl into
 Kibo's summit dome from the feature's caldera and breach fields. The feature's `at` is the
 summit plateau (x 31.5, y 33.5 km); the bowl is centred on the plateau's centroid (ground
 within 200 m of the top), x 31.64, y 33.68 km. The hollow the description measures is
-centred at x 31.69, y 33.68 km.
+centred at x 31.68, y 33.66 km.
 
 - The rim is each ray's own crest where the dome has one (the south rim with Uhuru), and
   elsewhere the outer edge of the ground near the ray's highest, smoothed over only 3° so
-  it keeps scallops. It lies 0.69 to 1.25 km from the centre (1.7 km across for a circle
-  of the same area). Outside the breach the crest is 4,623 to 4,969 m, 4,764 m in the
+  it keeps scallops. It lies 0.69 to 1.22 km from the centre (1.7 km across for a circle
+  of the same area). Outside the breach the crest is 4,622 to 4,972 m, 4,775 m in the
   median. That is real ground, but the dome's summit plateau inside the crest, up to
   about 4,920 m, is cut away, so most of the rim stands below the design's 4,800 to
   5,000 m. No rim notch needed filling: no ground was raised.
-- The inner walls drop about 380 to 750 m over about 320 m, steepest near the crest. The
-  outer flank's gullies and spurs, mirrored in the crest along each ray, score the upper
-  walls, deepened mid-wall; the lower walls are smooth like talus. The cut is
-  softened by a one-cell blur along its edge, so the crest is rounded.
+- The inner walls drop about 410 to 760 m over 320 m or more, steepest near the crest.
+  The outer flank's gullies and spurs, mirrored in the crest along each ray, score the
+  upper walls only: they fade in from 35% to 75% of the way up, so the lower walls are
+  smooth talus with no spokes. The wall foot follows the rim smoothed over 20°, so the
+  crest's scallops fade out down the wall. The cut is softened by a one-cell blur along
+  its edge, so the crest is rounded.
 - The floor is ice (glacier class, about 1 km²) near 4,220 m, rising 25 m over the last
   300 m to the walls. Its faint texture is fine flank relief from elsewhere on the cone,
   so Kibo's buried inner crater does not show. No cone sits inside.
@@ -148,13 +150,13 @@ centred at x 31.69, y 33.68 km.
   1.33 km past the rim. The ground outside falls below 4,300 m about 0.9 km past the rim;
   the rest is a shallow cut that keeps the floor falling. At the rim the notch is about
   600 m deep.
-- Apart from the breach, the hollow is closed at least 409 m above the floor.
+- Apart from the breach, the hollow is closed at least 408 m above the floor.
 - 3.0 km² changed by more than 50 m, all of it within 2.0 km of the centre (bowl, rim and
   notch). All change fades out between 2.0 and 2.5 km: at most 1.9 m in the last 200 m,
   none beyond.
 
 The description measures `caldera_floor_m` 4,214, `caldera_breach_m` 4,235,
-`caldera_rim_m` 4,765 and `caldera_diameter_m` 1,724.
+`caldera_rim_m` 4,775 and `caldera_diameter_m` 1,717.
 
 Meltwater from the breach runs down the volcano's north-west flank and joins the canyon
 river 0.2 km below its head, at x 26.8, y 24.7 km, 881 m. The report traces this path.
@@ -170,7 +172,9 @@ Near the coast the real river bends, so its last reach runs east, close to the c
 coast there lies about 2 km north of it (y 6.7 to 7.2 km), so the canyon's own north-west
 wall, cut by side canyons, stands between the river and the sea. The river reaches sea
 level at x 42.9, y 9.3 km; its last 2 km are a drowned inlet that turns north-east and
-meets the sea at about x 44.5, y 7.6 km between the canyon's walls.
+meets the sea at about x 44.5, y 7.6 km between the canyon's walls. The feature path
+follows the floor to x 42.9, y 9.3 km and then the inlet's water to x 44.4, y 7.7 km; the
+report checks that the ground under that last 2.3 km is at most 2 m.
 
 The river drains 28.0 km from its head (x 26.8, y 24.8 km, 902 m) to that sea level. Floor
 and rims (highest ground within 4 km on each side) along it:
@@ -190,8 +194,8 @@ The rims near the coast stay well under the design's 1,500 m: the coast's blend 
 river's own bend leave 600 to 900 m on the last 3 km. GLO-30's river floor carries pits up
 to 22 m deep along the way (the largest uphill step is 21 m), which hydrology v2 breaches;
 no closed depression of 1 km² lies on the canyon. The North Rim side canyons face the
-volcano and the South Rim side faces the north coast mesas. Both rims and the side canyons lie inside the outline, and the crop reaches
-past it on every side.
+volcano and the South Rim side faces the north coast mesas. Both rims and the side
+canyons lie inside the outline, and the crop reaches past it on every side.
 
 ## Passes
 
@@ -279,10 +283,9 @@ around it, about 5 km² in all, stay above every band.
   and spurs.
 - The canyon's dissected ground fades into the volcano's smooth north-west flank over
   about 2 km at the head, rather than ending at a cliffed amphitheatre.
-- The caldera's upper walls carry the outer flank's gullies mirrored inward, so on the
-  lower walls they converge slightly toward the centre, like spokes. Its rim stands below
-  the summit plateau it replaces (see Volcano). L3 and L4 will add detail to the walls and
-  ice.
+- The caldera's gullies are the outer flank's, mirrored inward on the upper walls; the
+  lower walls are smooth talus at 32 m. Its rim stands below the summit plateau it
+  replaces (see Volcano). L3 and L4 will add detail to the walls and ice.
 - The Needles crop leaves a closed hollow of 2.0 km², 94 m deep, at x 23.7, y 11.7 km,
   beside its river, which itself runs north to the sea at x 21.4, y 8.9 km.
 - Inland basins below sea level, not connected to the sea: 85 of them, 4.3 km² in all,
