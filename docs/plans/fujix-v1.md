@@ -127,7 +127,8 @@ The descriptive part of `layout.toml` runs through to the export:
 - **Export.** `description.json`, with its schema in `schemas/` and a link from
   `manifest.json`, plus a readable `description.md`. Geometry is in map metres: region
   polygons, pass points, feature points and lines, river polylines with width and surface
-  height per node, lake polygons with their levels. This also covers the optional vector data
+  height per node, lake polygons with their levels, and a table of water bodies giving each
+  `water-body` id its type. This also covers the optional vector data
   in the game's water contract.
 
 ## 2. Hydrology v2
@@ -143,7 +144,7 @@ climb a bank.
 | Tributaries | 4 m, then 1 m | Each level routes flow on its own surface with the coarser network held fixed, and adds streams from about 0.5 km² at 4 m and 0.05 km² at 1 m. Every stream ends at a confluence, a lake or the sea |
 | Channels | Each level | Width and depth from discharge, roughly W ∝ Q^0.5 and D ∝ Q^0.4, so rivers grow downstream. A smooth cross-section is carved below a surface that never rises downstream. Mouths slope down into the sea |
 | Lakes | Each level | One level per lake id at every level. After each level, the bed inside stays below that level, the shore outside stays above it, and the outlet is carved to it |
-| Water layers | Each level | Surface height and body id are stored. Distance, coverage, type fractions and velocity (Manning) are derived at export |
+| Water layers | Each level | Surface height and body id are stored. Coverage is derived at export |
 | Validation | Each level | Surface at or above the bed where wet, one level per lake, a connected network with no orphan streams |
 
 The models do not change: water stays out of the loss. Hydrology runs between levels and
@@ -180,11 +181,8 @@ decimated.
 | --- | --- | --- | --- | --- |
 | `height` | 16-bit, as now | 1 m | Mean | |
 | `water-surface` | 16-bit, the height encoding | 1 m | Mean within one body | Sea at 0, extended 4 texels past the shore |
-| `water-distance` | 8-bit signed, saturated at 64 m | 1 m | Recomputed per level | Positive in water |
 | `water-coverage` | 8-bit area fraction | 1 m | Mean | Streams narrower than a texel keep their share |
-| `water-type` | RGB 8-bit: sea, lake, river fractions | 1 m | Mean | Sums to coverage |
-| `water-body` | 16-bit id | 1 m | None, sampled | Ids match `description.json` |
-| `water-velocity` | RG 8-bit signed, 0.05 m/s per code | 1 m | Mean | Exactly 0 in lakes and sea |
+| `water-body` | 16-bit id | 1 m | None, sampled | Ids match `description.json`, which gives each body's type: sea, lake or river |
 | `biome` | 8-bit ids, dithered borders | 2 m | Mode | |
 | `land-cover` | ESA WorldCover codes | 2 m | Mode | |
 | `vegetation-density` | 8-bit, 0 to 1 | 2 m | Mean | Procedural, from moisture, treeline and slope |
@@ -201,9 +199,14 @@ decimated.
 - The binary `water`, `snow-ice` and `vegetation` masks are dropped. The game keeps its
   fallbacks for v1 exports.
 - The exporter checks: surface at or above the bed where wet, one level per lake at every
-  level, distance sign against coverage, velocity zero in lakes, identical shared edges.
+  level, coverage at the finest level matching surface above ground, identical shared edges.
 
-From the game's request list, `hollow`, `treeline-margin` and `needleleaf` are not exported.
+The game's water contract also asks for shoreline distance, type fractions and velocity. They
+are left out because the game can derive them: the shore is where surface minus ground crosses
+zero, type comes from the body id, and velocity follows the surface slope and depth (Manning)
+and is zero in lakes. The world keeps surface, body id and ground, so adding them later needs
+only a re-export. From the game's vegetation requests, `hollow`, `treeline-margin` and
+`needleleaf` are not exported.
 
 ## 5. Generation and cost
 
