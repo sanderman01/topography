@@ -88,7 +88,7 @@ size_m = [49000, 35000]  # reaches past the outline on every side
 offset_m = [0, -3500]  # the river from its east end to the bend north; the North Rim side canyons face the volcano
 rotate_deg = 121.75  # the river runs north-east: its head (the real east end) at the volcano, its mouth at the coast
 scale = 0.669
-remap = [789, 2450, 396, 2124]  # the river near 900 m at the head; rims 2,400 m there
+remap = [789, 2450, 396, 2306]  # the river near 900 m at the head; rims 2,400 m there
 tilt_m_per_km = [-22.8, 22.8]  # 32 m/km down the canyon, so the river reaches the sea at the mouth
 
 [[regions]]
