@@ -1,0 +1,48 @@
+schemas/world-description-v1.md
+  s_8c1b40ea9c1e0d::t_923e77d29c9228 18
+  s_8c1b40ea9c1e0d::t_7b6ad6831aa3b6 31-38
+configs/layouts/fujix/layout.md
+  s_8c1b40ea9c1e0d::t_8ddc7b3992c4a7 77
+  s_8c1b40ea9c1e0d::t_e224ed7cdab39a 119-128,135-150,154,157-179
+  s_8c1b40ea9c1e0d::t_bde0556dfcacfa 198-200,202-205
+  s_8c1b40ea9c1e0d::t_a0635b35936802 44
+  s_8c1b40ea9c1e0d::t_57fa0e4c2808c1 155-156
+  s_8c1b40ea9c1e0d::t_8493c142fc878a 4-5
+  s_8c1b40ea9c1e0d::t_f192f144f67a80 189-190
+  s_8c1b40ea9c1e0d::t_9d4580c506519b 15
+  s_8c1b40ea9c1e0d::t_2d3b57792dddf4 253-254,256-263,265-271
+  s_8c1b40ea9c1e0d::t_d39ec441437b35 255
+  s_8c1b40ea9c1e0d::t_c54746fed0a411 109-111
+  s_8c1b40ea9c1e0d::t_7f9083e57677f8 129-134
+  s_8c1b40ea9c1e0d::t_7d242d44e870dc 29-31
+  s_8c1b40ea9c1e0d::t_7ffe55e0c9facc 83-85
+  s_8c1b40ea9c1e0d::t_4d7f4d356cdf9e 209
+  s_8c1b40ea9c1e0d::t_e2585c198b9827 63-67
+  s_8c1b40ea9c1e0d::t_42128985e13952 38
+docs/plans/fujix-v1.md
+  s_8c1b40ea9c1e0d::t_69197dd26e15d6 62
+  s_8c1b40ea9c1e0d::t_066e164a8e6db5 4
+  s_8c1b40ea9c1e0d::t_139869c4cf0f9a 69
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_82423c6abe9a3d 172
+  s_8c1b40ea9c1e0d::t_05d325239fb315 206-209,211-216
+  s_8c1b40ea9c1e0d::t_14b0e4e37cabc3 179-184
+  s_8c1b40ea9c1e0d::t_cb89bd1661fb56 252
+  s_8c1b40ea9c1e0d::t_4aae485bc99055 228-229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7bdac34e23da514fc85f4b2a02d840af0a17c0ed",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
