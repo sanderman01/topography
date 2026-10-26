@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import legend
+from . import borders, legend
 from .data import _window_sum, smooth
 
 NUM_CLASSES = legend.NUM_CLASSES  # legend v3 runs; older runs have 13 (see legend.model_lut)
@@ -98,35 +98,54 @@ def load_regions(manifest_path: Path, lazy: bool = False) -> list[Region]:
     """Regions of a context release, or the tiles of a 1 m library release (L4); `lazy`
     applies to context releases (see `load_release`)."""
     if json.loads(manifest_path.read_text()).get("kind") != "diffusion_training_release":
-        return load_release(manifest_path, lazy=lazy)
+        return load_release(manifest_path, lazy=lazy, reaches=True)
     from .data import load_release as load_tiles
 
     return [Region(t.name, legend.source_class("tiles", t.name, t.class_id), "tile", 1, t.height, t.water, t.snow,
                    t.vegetation, t.split) for t in load_tiles(manifest_path)]
 
 
-def load_release(manifest_path: Path, ids: set[str] | None = None, lazy: bool = False) -> list[Region]:
+def load_release(manifest_path: Path, ids: set[str] | None = None, lazy: bool = False,
+                 reaches: bool = False) -> list[Region]:
     """Regions of a context release; `ids` reads only those. `lazy` returns regions without
     arrays: samplers build their fields from disk one region at a time and keep them
-    memory-mapped (see `region_fields`), so a large release need not fit in RAM."""
+    memory-mapped (see `region_fields`), so a large release need not fit in RAM. `reaches`
+    splits the regions listed in subclasses-v1.toml into their reaches (training)."""
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("kind") != "context_training_release" or manifest.get("schema_version") != 1:
         raise ValueError("unsupported context release")
     out = []
-    for r in manifest["regions"]:
-        if ids is not None and r["id"] not in ids:
+    for whole in manifest["regions"]:
+        if ids is not None and whole["id"] not in ids:
             continue
-        if lazy:
-            out.append(Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), None, None, None,
-                              None, source=(manifest_path, r)))
-        else:
-            out.append(_load_region(manifest_path, r))
+        for r in _reaches(whole) if reaches else [whole]:
+            if lazy:
+                out.append(Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), None, None, None,
+                                  None, source=(manifest_path, r)))
+            else:
+                out.append(_load_region(manifest_path, r))
+    return out
+
+
+def _reaches(r: dict) -> list[dict]:
+    """A region entry, or one entry per reach (`crop`: rows and columns of the region)."""
+    split = legend.reaches(legend.source_kind(r["spacing_m"]), r["id"])
+    if split is None:
+        return [r]
+    n, held = split
+    rows, cols = r["size"][1], r["size"][0]
+    out = []
+    for i in range(n * n):
+        y, x = divmod(i, n)
+        crop = [y * rows // n, (y + 1) * rows // n, x * cols // n, (x + 1) * cols // n]
+        out.append(r | {"id": f"{r['id']}-r{i}", "source_id": r["id"], "crop": crop,
+                        "split": "validation" if i in held else "train"})
     return out
 
 
 def _class(r: dict) -> int:
     """A release region's legend v3 class (its subclass if listed)."""
-    return legend.source_class(legend.source_kind(r["spacing_m"]), r["id"], int(r["class_id"]))
+    return legend.source_class(legend.source_kind(r["spacing_m"]), r.get("source_id", r["id"]), int(r["class_id"]))
 
 
 def _load_region(manifest_path: Path, r: dict) -> Region:
@@ -139,8 +158,11 @@ def _load_region(manifest_path: Path, r: dict) -> Region:
     if "seabed" in layers:
         height, sea = join_seabed(height, water, layers["seabed"], float(r["spacing_m"]))
         water &= ~sea
-    return Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), height,
-                  water, layers["snow-ice"] == 2, layers["vegetation"] == 2)
+    snow, veg = layers["snow-ice"] == 2, layers["vegetation"] == 2
+    if "crop" in r:  # one reach of the region (see `_reaches`)
+        y0, y1, x0, x1 = r["crop"]
+        height, water, snow, veg = (a[y0:y1, x0:x1].copy() for a in (height, water, snow, veg))
+    return Region(r["id"], _class(r), r["split"], int(r["spacing_m"]), height, water, snow, veg)
 
 
 # Bump when field construction changes, so cached fields are rebuilt.
@@ -162,7 +184,8 @@ def region_fields(r: Region, level: "Level", make) -> Fields:
     release = Path(manifest_path).resolve().parent
     labels = hashlib.sha256((legend.LABELS / "subclasses-v1.toml").read_bytes()).hexdigest()
     key = hashlib.sha256(json.dumps([FIELDS_VERSION, level.name, level.block, level.smooth_cells, labels,
-                                     sorted((k, v["sha256"]) for k, v in entry["layers"].items())]).encode()).hexdigest()
+                                     sorted((k, v["sha256"]) for k, v in entry["layers"].items())]
+                                    + ([entry["crop"]] if "crop" in entry else [])).encode()).hexdigest()
     cache = release.parents[1] / "cache" / "cascade-fields" / release.name / f"{entry['id']}-{level.name}"
     meta = cache / "fields.json"
     if not (meta.exists() and json.loads(meta.read_text()).get("key") == key):
@@ -502,13 +525,15 @@ class Sampler:
 
     def __init__(self, regions: list[Region], split: str, level: Level, size: int, stride: int | None = None,
                  balanced: bool = False, mix: float = 0.0, blur: float = 0.0, lut: np.ndarray | None = None,
-                 n_classes: int = NUM_CLASSES, form_scale: float | None = None):
+                 n_classes: int = NUM_CLASSES, form_scale: float | None = None, dither_m: float = 0.0):
         """`balanced` draws a class, then a region of it, then a window (not by area);
         `mix` is the share of windows joined with a window of another class along a
         soft border, so the model sees class borders; `blur` is the share of refining
         windows whose coarse surface is smoothed further (conditioning augmentation), so
-        a smooth coarse input does not imply smooth terrain."""
-        self.balanced, self.mix, self.blur = balanced, mix, blur
+        a smooth coarse input does not imply smooth terrain. `dither_m` > 0 dithers the
+        class borders of random windows (with an rng) across bands up to that wide, as
+        collage layouts do (borders.py)."""
+        self.balanced, self.mix, self.blur, self.dither_m = balanced, mix, blur, dither_m
         # Legend v3 class -> model class (see legend.class_map); identity until set.
         self.lut = np.arange(NUM_CLASSES, dtype=np.uint8) if lut is None else np.asarray(lut, np.uint8)
         self.n_classes = n_classes
@@ -553,7 +578,12 @@ class Sampler:
                 c = smooth(c, float(rng.uniform(0.5, 2.0)) * k)
         else:
             c = f.coarse[sl]
-        cells = f.classes[sl] if f.classes is not None else np.full((s, s), f.class_id, np.uint8)
+        if f.classes is None:
+            cells = np.full((s, s), f.class_id, np.uint8)
+        elif rng is not None and self.dither_m > 0:
+            cells = self._dithered(f.classes, y, x, borders.train_band(rng, self.dither_m), rng)
+        else:
+            cells = f.classes[sl]
         classes = self.lut[cells].astype(np.int64)
         extra = [decode(e[sl]) for e in f.extra] + (mark_channels(f.marks, sl, rng) if f.marks else [])
         if self.form_scale is not None:
@@ -562,10 +592,28 @@ class Sampler:
             extra += list(forms.descriptors(f.target[sl], c, self.level.cell_m, self.form_scale, s))
         return f.target[sl], c, condition(self.level, c, extra, classes, self.n_classes)
 
+    def _dithered(self, classes: np.ndarray, y: int, x: int, band_m: float, rng: np.random.Generator) -> np.ndarray:
+        """A window's per-cell labels with their borders dithered across `band_m`, worked out
+        on the label grid (legend.cell_classes blocks) with context beyond the window."""
+        s = self.size
+        if band_m <= 0:
+            return np.asarray(classes[y : y + s, x : x + s])
+        k = label_block(self.level)
+        m = int(np.ceil(band_m / 2 / (k * self.level.cell_m))) + 1
+        by, bx = y // k - m, x // k - m
+        n = -(-(s + k) // k) + 2 * m
+        rows = np.clip((by + np.arange(n)) * k, 0, classes.shape[0] - 1)
+        cols = np.clip((bx + np.arange(n)) * k, 0, classes.shape[1] - 1)
+        lab = np.asarray(classes[np.ix_(rows, cols)])
+        lab = borders.dither_labels(lab, k * self.level.cell_m, band_m, borders.noise_at(rng, lab.shape))
+        big = np.repeat(np.repeat(lab, k, 0), k, 1)
+        oy, ox = y - by * k, x - bx * k
+        return big[oy : oy + s, ox : ox + s]
+
     def crop(self, index: int, scale: float, rng: np.random.Generator, augment: bool, partner: int | None = None):
         h, c, cond = self.window(index, rng)
         if partner is not None:
-            h, c, cond = _join((h, c, cond), self.window(partner, rng), rng, self.n_classes)
+            h, c, cond = _join((h, c, cond), self.window(partner, rng), rng, self.n_classes, self.level, self.dither_m)
         valid = ~np.isnan(h)
         if not self.level.water_in_loss:
             valid &= cond[4] < 0  # water channel: 1 water, -1 dry
@@ -622,10 +670,16 @@ class Sampler:
         return tuple(np.stack(a) for a in zip(*parts))
 
 
-def _join(a, b, rng: np.random.Generator, n_classes: int = NUM_CLASSES):
+def label_block(level: Level) -> int:
+    """Cells per label cell (legend.cell_classes) at a level."""
+    return max(1, int(round(legend.LABEL_CELL_M / level.cell_m)))
+
+
+def _join(a, b, rng: np.random.Generator, n_classes: int = NUM_CLASSES, level: Level | None = None,
+          dither_m: float = 0.0):
     """Two windows joined along a random soft line: heights, coarse surfaces and
-    continuous channels blend over about an eighth of the window; classes and water
-    switch at the line."""
+    continuous channels blend over about an eighth of the window; water switches at the
+    line, and classes too, or with `dither_m` dithered across a random band (borders.py)."""
     (h1, c1, k1), (h2, c2, k2) = a, b
     s = h1.shape[0]
     angle, offset = rng.uniform(0, np.pi), rng.uniform(-0.25, 0.25) * s
@@ -646,7 +700,18 @@ def _join(a, b, rng: np.random.Generator, n_classes: int = NUM_CLASSES):
     cond = m * k1 + (1 - m) * k2
     hard = d > 0
     first = k1.shape[0] - n_classes
-    cond[first:] = np.where(hard, k1[first:], k2[first:])
+    band = borders.train_band(rng, dither_m) if level is not None else 0.0
+    own = hard
+    if band > 0:  # the first window's share on the label grid, dithered like a layout border
+        k = label_block(level)
+        n = -(-s // k)
+        cy = np.arange(n) * k + (k - 1) / 2 - (s - 1) / 2
+        db = (cy[None, :] * np.cos(angle) + cy[:, None] * np.sin(angle) - offset) * level.cell_m
+        w = borders.weight(db, band)
+        one = np.ones(w.shape, np.uint8)
+        pick = borders.dither([one, 0 * one], [w, 1 - w], borders.noise_at(rng, w.shape)).astype(bool)
+        own = np.repeat(np.repeat(pick, k, 0), k, 1)[:s, :s]
+    cond[first:] = np.where(own, k1[first:], k2[first:])
     cond[4] = np.where(hard, k1[4], k2[4])  # water (L2-L4) or relief (L1): switch, not blend
     return h.astype(np.float32), c.astype(np.float32), cond.astype(np.float32)
 

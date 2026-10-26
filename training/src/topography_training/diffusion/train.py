@@ -42,6 +42,9 @@ def _parse(argv):
     p.add_argument("--mix", type=float, default=0.0, help="cascade: share of windows joining two classes")
     p.add_argument("--coarse-blur", type=float, default=0.0,
                    help="cascade L2-L4: share of windows whose coarse surface is smoothed further")
+    p.add_argument("--dither-m", type=float, default=0.0,
+                   help="cascade L2-L4: dither class borders across random bands up to this wide, in metres "
+                        "(borders.py; fujix runs use 1500)")
     p.add_argument("--forms", action="store_true",
                    help="cascade: form channels (roughness, flats, peaks, hollows, direction; forms.py)")
     p.add_argument("--form-dropout", type=float, default=0.25, help="cascade: share of windows without form channels")
@@ -102,10 +105,11 @@ def main(argv=None) -> int:
         balanced = saved.get("balanced", False) if saved else args.balanced
         mix = saved.get("mix", 0.0) if saved else args.mix
         blur = saved.get("coarse_blur", 0.0) if saved else args.coarse_blur
+        dither_m = saved.get("dither_m", 0.0) if saved else args.dither_m
         from . import legend
 
         train = cascade.Sampler(regions, "train", level, args.crop if not saved else saved["crop"],
-                                balanced=balanced, mix=mix, blur=blur)
+                                balanced=balanced, mix=mix, blur=blur, dither_m=dither_m)
         # Legend v3: classes with enough training sources here; the rest use their fallbacks.
         n_classes, lut = legend.model_lut(saved) if saved else (
             legend.NUM_CLASSES, np.array(legend.class_map(legend.trained_classes(train.class_counts())), np.uint8))
@@ -114,7 +118,7 @@ def main(argv=None) -> int:
         if use_forms:
             train.form_scale = scale
         val = cascade.Sampler(regions, "validation", level, train.size, lut=lut, n_classes=n_classes,
-                              form_scale=scale if use_forms else None)
+                              form_scale=scale if use_forms else None, dither_m=dither_m)
         level_config = {"legend": "terrain-v3", "class_map": lut.tolist(),
                         "class_sources": {str(k): v for k, v in sorted(train.class_counts().items())},"kind": "terrain_cascade_run", "level": name, "cell_m": level.cell_m,
                         "conditioning": conditioning, "envelope_m": cascade.ENVELOPE_M,
@@ -123,7 +127,8 @@ def main(argv=None) -> int:
                         "coarse_dropout": args.coarse_dropout if level.conditioning in (3, 6) else 0.0,
                         "cover_dropout": args.cover_dropout if level.conditioning == 3 else 0.0,
                         "form_dropout": args.form_dropout if use_forms else 0.0,
-                        "balanced": balanced, "mix": mix, "coarse_blur": blur, "only_class": only,
+                        "balanced": balanced, "mix": mix, "coarse_blur": blur, "dither_m": dither_m,
+                        "only_class": only,
                         "residual_scale_m": scale}
         if use_forms:
             level_config["forms"] = (saved or {}).get("forms") or {
@@ -255,7 +260,7 @@ def main(argv=None) -> int:
         k = data.class_start(vc, model.num_classes)
         # Four distinct trained classes (legend v2 runs: canyons, alpine, dunes, cones).
         pick = (2, 6, 8, 11) if model.num_classes == data.NUM_CLASSES else tuple(
-            dict.fromkeys(int(c) for c in train.lut[[13, 6, 16, 17, 2, 8, 11, 1]] if c > 0))[:4]
+            dict.fromkeys(int(c) for c in train.lut[[19, 13, 6, 16, 17, 2, 8, 11, 1]] if c > 0))[:4]
         for i in range(2):
             res = []
             for cls in pick:

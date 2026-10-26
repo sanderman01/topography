@@ -37,9 +37,9 @@ fallback = [17]
 id = 13
 parent = 2
 fallback = [2]
-context = ["grand-canyon", "fish-river-canyon", "blyde-river", "canyonlands", "zion"]
-lidar = ["grand-canyon", "canyon-de-chelly", "escalante", "zion", "canyonlands"]
-tiles = ["Grand Canyon", "Zion", "Canyonlands"]
+context = ["fish-river-canyon", "blyde-river", "canyonlands", "zion"]
+lidar = ["canyon-de-chelly", "escalante", "zion", "canyonlands"]
+tiles = ["Zion", "Canyonlands"]
 
 [[classes]]
 id = 14
@@ -75,3 +75,20 @@ tiles = ["Lava Beds", "Mono Craters", "SP Crater", "Craters of the Moon", "Sunse
 [[classes]]
 id = 18
 fallback = []
+
+[[classes]]
+id = 19
+parent = 13
+fallback = [13]
+context = ["grand-canyon"]
+lidar = ["grand-canyon"]
+tiles = ["Grand Canyon"]
+
+# Reaches: an accepted region trained as grid x grid separate sources (row-major from the
+# north-west, ids <region>-r<i>), with the listed reaches held out for validation. This
+# gives a class with one region enough sources and a geographic hold-out. Training
+# releases only (cascade.load_regions); other readers see the whole region.
+[[reaches]]
+lidar = "grand-canyon"
+grid = 2
+validation = [2]  # south-west: canyon and rim plateau; the north-west reach is 23% surveyed
