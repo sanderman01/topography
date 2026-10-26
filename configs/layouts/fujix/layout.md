@@ -1,8 +1,8 @@
 # Fujix: layout summary
 
 The [layout.toml](layout.toml) collage for [fujix v1](../../../docs/plans/fujix-v1.md),
-built as `data/worlds/fujix-collage-51`. The map is 65.5 km square with north up. Land
-covers 53.2% of it, about 2,280 km². The main island spans 54.4 km east to west (x 6.3
+built as `data/worlds/fujix-collage-53`. The map is 65.5 km square with north up. Land
+covers 53.3% of it, about 2,290 km². The main island spans 54.4 km east to west (x 6.3
 to 60.7 km) and 55.4 km north to south (y 5.1 to 60.5 km), and land stays at least
 4.8 km from the map edge.
 
@@ -26,9 +26,10 @@ The windward west and south:
 The lee side is plateau and desert. The east coast has bays at y 12 and y 24 in the dune
 field and a bay below the limestone range (y 47 to 56). Between them, the desert basin
 meets the sea through Badain Jaran megadunes (y 28 to 38). Their hollows near the coast
-are dry pans below sea level (see Known issues). On the north coast the Grand Canyon opens
-into the sea at x 43.9, y 8.6 km, between coastal cliffs, and the Canyonlands inlets and
-Liwa channels indent the rest of it.
+are dry pans below sea level (see Known issues). On the north coast the Grand Canyon's
+last 2 km are a drowned inlet that reaches the sea at about x 44.5, y 7.6 km, with the
+canyon's own walls and side canyons on both sides. The Canyonlands inlets and Liwa channels
+indent the rest of the coast.
 
 The collage bends every outline with one smooth fixed noise warp. Its displacement std is
 about 620 m and its maximum 2.38 km, with wavelengths of 6 to 18 km. It is kept gentle
@@ -60,9 +61,9 @@ the region with the largest blend weight, so the land areas add up to the island
 
 | Region | Class | References | Land km² | Ground m | Highest m |
 | --- | ---: | --- | ---: | --- | ---: |
-| Fujix volcano | 11 | Kilimanjaro (Kibo at the centre, Shira west, Mawenzi east) | 331 | 650 to 3,620 | 4,931 |
+| Fujix volcano | 11 | Kilimanjaro (Kibo at the centre, Shira west, Mawenzi east) | 331 | 650 to 3,620 | 4,972 |
 | North-east rift | 17 | Etna (two crops of its flank cone fields) | 114 | 170 to 1,350 | 1,634 |
-| Grand Canyon plateau | 13 | Grand Canyon | 348 | 330 to 2,110 | 2,385 |
+| Grand Canyon plateau | 13 | Grand Canyon | 353 | 320 to 2,110 | 2,385 |
 | North coast mesas | 7 | Canyonlands (two crops), Bardenas Reales | 115 | 40 to 1,170 | 1,737 |
 | North-west knife ridges | 6 (12 cliffs) | High Tatras, Na Pali (west coast) | 220 | 140 to 1,580 | 1,854 |
 | North-west skerries | 5 | Broughton Archipelago | 6 | 0 to 90 | 125 |
@@ -116,35 +117,44 @@ straight line. The caldera's ice floor is flat but is not counted as a settlemen
 
 ## Volcano
 
-The highest point is 4,931 m, Kibo's own crest on the caldera's south rim (x 31.5,
-y 34.5 km). The highest land outside the volcano region is 4,301 m, the SW arm's top at
-x 21.0, y 43.7 km, so the volcano stands 630 m above it. Above about 1,300 m the cone is
-roughly 9 km in radius, and the Shira plateau forms a broad western shoulder.
+The highest point is 4,972 m, Kibo's own crest (Uhuru) on the caldera's south rim
+(x 31.5, y 34.4 km). The highest land outside the volcano region is 4,301 m, the SW arm's
+top at x 21.0, y 43.7 km, so the volcano stands 671 m above it. Above about 1,300 m the
+cone is roughly 9 km in radius, and the Shira plateau forms a broad western shoulder.
 
 Kilimanjaro's own caldera is too shallow to show at 32 m, so the collage cuts a bowl into
 Kibo's summit dome from the feature's caldera and breach fields. The feature's `at` is the
 summit plateau (x 31.5, y 33.5 km); the bowl is centred on the plateau's centroid (ground
-within 200 m of the top), x 31.67, y 33.72 km.
+within 200 m of the top), x 31.64, y 33.68 km. The hollow the description measures is
+centred at x 31.69, y 33.68 km.
 
-- The rim follows the dome's own crest, 0.64 to 1.22 km from the centre (1.8 km across for
-  a circle of the same area). Its crest is 4,634 to 4,917 m outside the breach, 4,770 m in
-  the median, so it is Kibo's real ground. No rim notch needed filling: no ground was
-  raised.
-- The inner walls drop about 360 to 660 m over about 400 m, steepest near the crest, with
-  the dome's own gullies and spurs on them.
-- The floor is ice (glacier class, about 1 km²) at 4,250 m, rising 25 m toward the walls
-  and keeping 15% of the dome's fine relief, so it is not a flat plate. No cone sits inside.
-- The breach is a notch through the north-west rim at 330° (layout 325°), its sill
-  4,289 m. Past the rim it follows the steepest descent of the gully below, its floor
-  falling 1 in 4, and ends 1.37 km past the rim where the ground drops below it. The
-  ground outside falls below 4,300 m about 0.9 km past the rim; the last 0.45 km is a
-  shallow cut that keeps the floor falling. At the rim the notch is about 580 m deep.
-- Apart from the breach, the hollow is closed at least 385 m above the floor.
-- 3.1 km² changed by more than 50 m, all of it within 2.1 km of the centre (bowl, rim and
-  notch). Nothing changed farther than 2.5 km.
+- The rim is each ray's own crest where the dome has one (the south rim with Uhuru), and
+  elsewhere the outer edge of the ground near the ray's highest, smoothed over only 3° so
+  it keeps scallops. It lies 0.69 to 1.25 km from the centre (1.7 km across for a circle
+  of the same area). Outside the breach the crest is 4,623 to 4,969 m, 4,764 m in the
+  median. That is real ground, but the dome's summit plateau inside the crest, up to
+  about 4,920 m, is cut away, so most of the rim stands below the design's 4,800 to
+  5,000 m. No rim notch needed filling: no ground was raised.
+- The inner walls drop about 380 to 750 m over about 320 m, steepest near the crest. The
+  outer flank's gullies and spurs, mirrored in the crest along each ray, score the upper
+  walls, deepened mid-wall; the lower walls are smooth like talus. The cut is
+  softened by a one-cell blur along its edge, so the crest is rounded.
+- The floor is ice (glacier class, about 1 km²) near 4,220 m, rising 25 m over the last
+  300 m to the walls. Its faint texture is fine flank relief from elsewhere on the cone,
+  so Kibo's buried inner crater does not show. No cone sits inside.
+- The breach is a notch through the north-west rim at 325°, its sill 4,235 m (layout
+  4,230 m), so the way out is 65 m under the top band's 4,300 m ground limit. Past the rim
+  it follows the steepest descent of the gully below, its floor falling 1 in 4, and ends
+  1.33 km past the rim. The ground outside falls below 4,300 m about 0.9 km past the rim;
+  the rest is a shallow cut that keeps the floor falling. At the rim the notch is about
+  600 m deep.
+- Apart from the breach, the hollow is closed at least 409 m above the floor.
+- 3.0 km² changed by more than 50 m, all of it within 2.0 km of the centre (bowl, rim and
+  notch). All change fades out between 2.0 and 2.5 km: at most 1.9 m in the last 200 m,
+  none beyond.
 
-The description measures `caldera_floor_m` 4,250, `caldera_breach_m` 4,289,
-`caldera_rim_m` 4,770 and `caldera_diameter_m` 1,787.
+The description measures `caldera_floor_m` 4,214, `caldera_breach_m` 4,235,
+`caldera_rim_m` 4,765 and `caldera_diameter_m` 1,724.
 
 Meltwater from the breach runs down the volcano's north-west flank and joins the canyon
 river 0.2 km below its head, at x 26.8, y 24.7 km, 881 m. The report traces this path.
@@ -153,12 +163,17 @@ river 0.2 km below its head, at x 26.8, y 24.7 km, 881 m. The report traces this
 
 The Grand Canyon piece is turned 121.75° clockwise at 0.669 of its width, so the Colorado
 runs north-east: its real east end is the canyon head on the volcano's north-west flank.
-The piece is tilted down 32 m/km along
-the canyon and stretched 1.15 times in height. The plateau region is a diagonal band from
-the volcano to the north coast; the canyon opens into the sea between coastal cliffs.
+The piece is tilted down 32 m/km along the canyon and stretched 1.15 times in height. The
+plateau region is a diagonal band from the volcano to the north coast.
 
-The river drains 29.4 km from its head (x 26.8, y 24.8 km, 902 m) to the sea at x 43.9,
-y 8.6 km. Floor and rims (highest ground within 4 km on each side) along it:
+Near the coast the real river bends, so its last reach runs east, close to the coast. The
+coast there lies about 2 km north of it (y 6.7 to 7.2 km), so the canyon's own north-west
+wall, cut by side canyons, stands between the river and the sea. The river reaches sea
+level at x 42.9, y 9.3 km; its last 2 km are a drowned inlet that turns north-east and
+meets the sea at about x 44.5, y 7.6 km between the canyon's walls.
+
+The river drains 28.0 km from its head (x 26.8, y 24.8 km, 902 m) to that sea level. Floor
+and rims (highest ground within 4 km on each side) along it:
 
 | Along km | Floor m | North-west rim m | South-east rim m |
 | ---: | ---: | ---: | ---: |
@@ -167,18 +182,21 @@ y 8.6 km. Floor and rims (highest ground within 4 km on each side) along it:
 | 10 | 552 | 2,126 | 1,953 |
 | 15 | 389 | 2,039 | 1,473 |
 | 20 | 241 | 1,889 | 1,876 |
-| 22.5 | 162 | 1,717 | 1,499 |
-| 25 | 54 | 749 | 1,350 |
-| 29 | 15 | 44 | 938 |
+| 22.5 | 163 | 1,717 | 1,500 |
+| 25 | 75 | 914 | 1,350 |
+| 27.5 | 20 | 681 | 638 |
 
-The floor falls steadily to sea level about 2 km before the coast; its last stretch is a
-drowned reach. GLO-30's river floor carries pits up to 23 m deep along the way (the largest
-uphill step is 21 m), which hydrology v2 breaches; no closed depression of 1 km² lies on the
-canyon. The North Rim side canyons face the volcano and the South Rim side faces the north
+The rims near the coast stay well under the design's 1,500 m: the coast's blend and the
+river's own bend leave 600 to 900 m on the last 3 km. GLO-30's river floor carries pits up
+to 22 m deep along the way (the largest uphill step is 21 m), which hydrology v2 breaches;
+no closed depression of 1 km² lies on the canyon. The North Rim side canyons face the volcano and the South Rim side faces the north
 coast mesas. Both rims and the side canyons lie inside the outline, and the crop reaches
 past it on every side.
 
 ## Passes
+
+"Lowest ground" is the lowest ground within 500 m of the pass point, which the band check
+uses; it can lie in a gully beside the col.
 
 | Pass | Band | At (x, y m) | Lowest ground m | Where |
 | --- | --- | --- | ---: | --- |
@@ -186,8 +204,8 @@ past it on every side.
 | Skerry gap | low | 9,000, 17,500 | 137 | Behind the Na Pali cliffs |
 | Limestone gap | low | 57,500, 44,500 | 6 | Drowned-valley heads at the range's east end |
 | Fjord saddle | middle | 22,000, 32,000 | 1,881 | Edge of the Shira shoulder above the fjords |
-| North-west saddle | middle | 25,000, 27,300 | 1,665 | Col between the volcano, the knife ridges and the canyon head |
-| Plateau crossing | middle | 37,200, 22,800 | 1,759 | Col on the plateau between the volcano's north foot and the side canyons |
+| North-west saddle | middle | 25,070, 26,160 | 1,330 | Col at about 1,500 m between the volcano's flank and the canyon head |
+| Plateau crossing | middle | 37,200, 22,800 | 1,759 | Ridge col at about 2,230 m on the plateau between the volcano's north foot and the side canyons; the 1,759 m is a gully 480 m north |
 | Alpine col | high | 14,750, 49,500 | 2,554 | Col below the Zermatt crest |
 | Volcano shoulder | high | 35,000, 31,500 | 2,575 | Between Kibo and Mawenzi |
 | Horn col | top | 16,250, 49,000 | 3,520 | Col on the Monte Rosa crest |
@@ -195,14 +213,15 @@ past it on every side.
 Every pass is first reached by exactly its band, without dips. The tip pass is a real col
 on land: its valley floor is 20 to 150 m, between a 650 m knob at the tip and the arm,
 which rises past 750 m. No sea lies within 500 m of it. It is a low col because the blend
-lowers the narrow far arm. The two middle passes moved to real cols when the canyon
-turned. Low ships reach 66% of the land, middle 90%, high 98% and top 99.8%. Low ships
-also reach the whole canyon floor from its mouth.
+lowers the narrow far arm. The two middle passes moved to real cols (each with ground
+falling away on four sides) when the canyon turned. Low ships reach 66% of the land,
+middle 90%, high 98% and top 99.8%. Low ships also reach the whole canyon floor from its
+mouth.
 
 The top band reaches the caldera floor, and no lower band does: a top-band ship (flight
 height at most 4,500 m, ground at most 4,300 m) flies up the north-west flank and the
-breach, whose sill is 4,289 m, onto the 4,250 m ice. Only the rim and the summit dome
-around it, 5 km² in all, stay above every band.
+breach, whose sill is 4,235 m, onto the ice near 4,220 m. Only the rim and the summit dome
+around it, about 5 km² in all, stay above every band.
 
 ## Remaining warnings
 
@@ -245,29 +264,35 @@ around it, 5 km² in all, stay above every band.
 - The NW arm's north shore (x 7 to 16 km, y 11 to 15 km) is a smooth outline bevel.
 - The dune-field bays, the karst bay's east shore and the lowland bay are outline-made
   bevels.
-- Lava flats, some volcano flanks and the skerry islands keep their source's plain class
-  (18), so the class map shows plain patches there.
+- Lava flats, some volcano flanks, the skerry islands and the Grand Canyon plateau's smooth
+  Coconino surface (about 35 km² of the 353 km² canyon region, mostly at x 28 to 34,
+  y 8 to 14 km) keep their source's plain class (18), so the class map shows plain
+  patches there.
 - The far SW arm is lower and smoother than its pieces. The arm is narrow, so the
   blend's coarse levels mix in a lot of sea. Aoraki's Main Divide at the tip ends near
   700 m.
 - The north coast from x 21 to 36 km still runs nearly straight at y 6 to 7 km. Only the
   Canyonlands inlets break it.
-- The rims are low near the mouth: within 4 km of the coast they are 300 to 750 m on
-  the north-west side, where the plateau meets the north coast mesas, and 700 to 1,350 m
-  on the south-east side, short of the design's 1,500 m at the coast.
+- The rims are low near the mouth: on the last 3 km of the river they are 600 to 900 m,
+  short of the design's 1,500 m at the coast. The river's real bend runs its last reach
+  east, close to the coast, so the north-west wall there is a 2 km strip of side canyons
+  and spurs.
 - The canyon's dissected ground fades into the volcano's smooth north-west flank over
   about 2 km at the head, rather than ending at a cliffed amphitheatre.
-- The caldera reads as a bowl with a rounded outline and a crisp crest; at 32 m the crest
-  shows as a dotted line in hillshade. The floor keeps faint lumps of Kibo's inner (Reusch)
-  crater at 15% of their height. L3 and L4 will add detail to the walls and ice.
-- Inland basins below sea level, not connected to the sea: 85 of them, 4.4 km² in all,
+- The caldera's upper walls carry the outer flank's gullies mirrored inward, so on the
+  lower walls they converge slightly toward the centre, like spokes. Its rim stands below
+  the summit plateau it replaces (see Volcano). L3 and L4 will add detail to the walls and
+  ice.
+- The Needles crop leaves a closed hollow of 2.0 km², 94 m deep, at x 23.7, y 11.7 km,
+  beside its river, which itself runs north to the sea at x 21.4, y 8.9 km.
+- Inland basins below sea level, not connected to the sea: 85 of them, 4.3 km² in all,
   mostly sabkha flats behind the north-east coast and dune hollows on the desert coast.
   The largest are 1.09 km² at x 58.9, y 18.5 km (down to -82 m), 0.83 km² at x 55.7,
   y 30.8 km (-35 m), 0.41 km² at x 58.3, y 37.2 km (-60 m) and 0.31 km² at x 56.9,
   y 19.6 km (-6 m). They are dry salt pans for now; hydrology v2 will decide them.
 - Closed depressions: `report.txt` lists 18 on land of at least 1 km² and 50 m deep. The
   canyon is not among them, and the breached caldera is too shallow to count (its sill is
-  39 m above the floor). Hydrology v2 must breach these. The largest:
+  21 m above the floor). Hydrology v2 must breach these. The largest:
   - 5.6 km², 155 m deep at x 47.6, y 46.0 km (limestone range), spilling at 1,061 m.
   - 5.4 km², 306 m deep at x 19.6, y 37.5 km (western fjords), spilling at 341 m.
   - 4.9 km², 210 m deep at x 19.0, y 31.2 km (western fjords, west of the fjord saddle),
