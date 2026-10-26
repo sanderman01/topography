@@ -57,15 +57,15 @@ treeline about 1,000 m, as in Fujion.
 
 | Area | Terrain | References (GLO-30) | Ground height |
 | --- | --- | --- | --- |
-| Centre | Volcano with a summit caldera about 2.5 km across, its floor ice-filled near 4,600 m; glaciers on the upper cone; flank cones | Kibo on Kilimanjaro (new context region), Shasta for the flanks | 0 to 5,000 m |
-| Rift, SW to NE | Cinder cones and lava fields running into the NE desert | Craters of the Moon, Timanfaya | 300 to 1,500 m |
+| Centre | Volcano with a summit caldera about 2.5 km across, its floor ice-filled near 4,600 m; glaciers on the upper cone; flank cones | Kibo on Kilimanjaro, Shasta for the flanks | 0 to 5,000 m |
+| Rift, SW to NE | Cinder cones and lava fields running into the NE desert | Craters of the Moon, Etna | 300 to 1,500 m |
 | SW arm | Alpine ridges, cirques, glaciers, horn peaks | Zermatt, Aoraki/Mount Cook, Aletsch | 800 to 4,400 m |
 | W coast | Fjords between the arms, one outlet glacier with an outwash fan | Milford Sound, Geirangerfjord | Walls to 2,500 m |
-| NW arm, belt | Knife ridges inland, sea cliffs on the coast, skerries and an archipelago offshore | High Tatras, Na Pali, Lofoten | 0 to 2,800 m |
+| NW arm, belt | Knife ridges inland, sea cliffs on the coast, skerries and an archipelago offshore | High Tatras, Na Pali, Senja | 0 to 2,800 m |
 | S coast | Drowned tower karst in a bay, cone karst inland | Ha Long Bay, Wanfenglin | 0 to 700 m |
 | SE, belt | Limestone range, then wet lowland: a braided river from the volcano to a small delta, rolling farmland pockets | Dolomites, Rakaia, Tagliamento | 0 to 3,000 m |
 | N, lee | Grand Canyon plateau: about 25 km of canyon, rim 2,100 to 2,400 m, inner gorge near 600 m, a snowmelt river from the volcano through it to the north coast | Grand Canyon only | 0 to 2,400 m |
-| NE, lee | Badlands and mesas; star dunes banked against the end of the rift, crest dunes toward the coast | Monument Valley, Bardenas Reales, Great Sand Dunes, Algodones | 0 to 1,600 m |
+| NE, lee | Badlands and mesas; star dunes banked against the end of the rift, crest dunes toward the coast | Monument Valley, Bardenas Reales, Great Sand Dunes, Taklamakan | 0 to 1,600 m |
 | E, lee | Desert basin open to the coast, with oases | Sossusvlei, Erg Chebbi | 0 to 1,000 m |
 
 The volcano stays the highest point by at least 400 m. Its base radius is about 10 km, about
@@ -94,8 +94,8 @@ A new module, `topography_training.diffusion.collage`, builds the world from `la
 
 1. Each region lists its references with a crop centre, a rotation, a horizontal scale of at
    most 1.5 times and a height remap from the reference's floor and summit to the region's
-   envelope. Heights come from the context release, or from a new GLO-30 download for
-   Kilimanjaro.
+   envelope. Heights come from accepted regions of the context release (`context-v5`, which
+   has Kilimanjaro); regions the owner rejected (Timanfaya, Lofoten, Algodones) are not used.
 2. Each region gets a weight from its signed distance to its border and that border's width:
    about 300 m at canyon rims and range fronts, 2 to 4 km elsewhere. A Laplacian pyramid blends
    heights, with wide bands for large-scale shape and narrow bands for detail, so ridges do not
