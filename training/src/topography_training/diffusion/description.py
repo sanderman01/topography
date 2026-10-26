@@ -30,9 +30,28 @@ def _window(h: np.ndarray, cell_m: float, at, radius_m: float) -> np.ndarray:
     return h[max(0, j - r) : j + r + 1, max(0, i - r) : i + r + 1]
 
 
+RIM_RAYS = 72
+
+
+def rim_crests(h: np.ndarray, cell_m: float, at, diameter_m: float):
+    """The highest ground on rays from `at` out to 0.8 of diameter_m: azimuths (degrees
+    clockwise from north), crest heights and crest distances (m)."""
+    from scipy import ndimage
+
+    az = np.arange(RIM_RAYS) * 360.0 / RIM_RAYS
+    radii = np.arange(0.0, 0.8 * diameter_m, cell_m / 2)
+    t = np.radians(az)
+    px, py = at[0] + np.outer(np.sin(t), radii), at[1] - np.outer(np.cos(t), radii)
+    prof = ndimage.map_coordinates(h.astype(np.float64), [py / cell_m - 0.5, px / cell_m - 0.5], order=1)
+    k = np.argmax(prof, 1)
+    return az, prof[np.arange(RIM_RAYS), k], radii[k]
+
+
 def caldera(h: np.ndarray, cell_m: float, f: dict) -> dict:
     """The largest closed hollow reaching within the caldera's radius of the volcano's `at`:
-    its floor, its rim where it would spill, its equivalent diameter and centre. Empty if none."""
+    its floor and lowest point, its breach (the lowest rim, where it would spill) and centre;
+    and on rays from that centre, the median rim crest and the crest's equivalent diameter.
+    Empty if there is no hollow."""
     from scipy import ndimage
 
     from .hydrology import flood
@@ -51,10 +70,15 @@ def caldera(h: np.ndarray, cell_m: float, f: dict) -> dict:
         return {}
     k = ids[np.argmax(ndimage.sum(np.ones(win.shape), labels, ids))]
     on = labels == k
-    area = float(on.sum()) * cell_m**2
-    return {"floor_m": float(win[on].min()), "rim_m": float(filled[on].min()),
-            "diameter_m": 2 * float(np.sqrt(area / np.pi)),
-            "at_m": [float((xx[on].mean() + i0 + 0.5) * cell_m), float((yy[on].mean() + j0 + 0.5) * cell_m)]}
+    at = [float((xx[on].mean() + i0 + 0.5) * cell_m), float((yy[on].mean() + j0 + 0.5) * cell_m)]
+    low = np.argmin(np.where(on, win, np.inf))
+    lj, li = np.unravel_index(int(low), win.shape)
+    _, crest, dist = rim_crests(h, cell_m, at, d)
+    # The crest ring's area, from its distance on each ray.
+    area = float(np.mean(dist**2)) * np.pi
+    return {"floor_m": float(win[on].min()), "breach_m": float(filled[on].min()), "rim_m": float(np.median(crest)),
+            "diameter_m": 2 * float(np.sqrt(area / np.pi)), "at_m": at,
+            "low_at_m": [float((li + i0 + 0.5) * cell_m), float((lj + j0 + 0.5) * cell_m)]}
 
 
 def _feature(f: dict, h: np.ndarray, cell_m: float) -> dict:
@@ -69,6 +93,7 @@ def _feature(f: dict, h: np.ndarray, cell_m: float) -> dict:
         if "caldera_diameter_m" in f:
             c = caldera(h, cell_m, f)
             out["measured"] |= {"caldera_floor_m": round(c["floor_m"], 1), "caldera_rim_m": round(c["rim_m"], 1),
+                                "caldera_breach_m": round(c["breach_m"], 1),
                                 "caldera_diameter_m": round(c["diameter_m"]),
                                 "caldera_at_m": [round(v) for v in c["at_m"]]} if c else {"caldera_floor_m": None}
     elif "path" in f:

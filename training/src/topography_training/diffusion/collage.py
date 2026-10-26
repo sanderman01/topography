@@ -5,7 +5,7 @@ python -m topography_training.diffusion.collage <layout.toml> --release <context
 Each region's ground comes from pieces of real regions, cut out, rotated, scaled and
 remapped in height, then blended across region borders with a Laplacian pyramid; classes
 are dithered across the same borders. Passes too high for their band get a broad dip and
-volcanoes with caldera fields get a caldera. Writes an L0 directory that `layout.load` reads,
+volcanoes with caldera fields get a caldera cut into their summit, breached where asked. Writes an L0 directory that `layout.load` reads,
 the 32 m surface (arrays.npz: l1, l2), class and region maps and pictures. Positions are
 metres from the north-west corner, x east, y south; rotations are clockwise on the map.
 """
@@ -93,6 +93,19 @@ def validate(spec: dict) -> None:
             raise ValueError(f"volcano {f.get('id')}: needs radius_m")
         if ("caldera_diameter_m" in f) != ("caldera_floor_m" in f):
             raise ValueError(f"{f.get('id')}: give both caldera_diameter_m and caldera_floor_m, or neither")
+        if ("breach_azimuth_deg" in f) != ("breach_m" in f):
+            raise ValueError(f"{f.get('id')}: give both breach_azimuth_deg and breach_m, or neither")
+        if "breach_m" in f:
+            if "caldera_floor_m" not in f:
+                raise ValueError(f"{f.get('id')}: a breach needs a caldera (caldera_diameter_m, caldera_floor_m)")
+            lo, hi = float(f["caldera_floor_m"]), float(f["caldera_floor_m"]) + CALDERA_RIM_MIN_M
+            if not lo <= float(f["breach_m"]) < hi:
+                raise ValueError(f"{f.get('id')}: breach_m {f['breach_m']} must be from the caldera floor {lo:.0f} "
+                                 f"up to below {hi:.0f} m")
+            if not 0 <= float(f["breach_azimuth_deg"]) < 360:
+                raise ValueError(f"{f.get('id')}: breach_azimuth_deg must be from 0 to below 360 (clockwise from north)")
+            if not 0 < float(f.get("breach_width_m", 600.0)) <= float(f["caldera_diameter_m"]):
+                raise ValueError(f"{f.get('id')}: breach_width_m must be positive and at most caldera_diameter_m")
 
 
 def parse(spec: dict) -> list[Region]:
@@ -411,14 +424,23 @@ def dip_passes(h: np.ndarray, spec: dict) -> tuple[np.ndarray, dict[str, float]]
     return h, dips
 
 
-CALDERA_WALL_M = 450.0  # inner wall, from the floor's edge to the rim crest
-CALDERA_FLANK = 0.75  # outer slope (m per m) where the rim stands above the cone
-CALDERA_RIM_DROP_M = 120.0  # the rim crest runs from a third of this to this below the old summit
-CALDERA_CREST_M = 300.0  # width of the crest band where ground detail is damped
-CALDERA_SOFT_M = 80.0  # soft max height, so the raised rim meets the cone without a crease
-CALDERA_DETAIL_M = 400.0  # ground detail finer than this is kept on the rim and flanks
-CALDERA_FLOOR_RISE_M = 40.0  # the ice floor rises this much toward the walls
-PLATEAU_M = 150.0  # the summit plateau: ground this close to the top, joined to it
+PLATEAU_M = 200.0  # the summit plateau: ground this close to the top, joined to it
+CALDERA_REACH_M = 2500.0  # a caldera changes no ground farther than this from its centre
+CALDERA_WALL_M = 400.0  # inner wall, from the floor's edge to the rim crest
+CALDERA_CREST_DROP_M = 60.0  # the crest's outer edge: ground this close to the ray's highest
+CALDERA_FLOOR_RISE_M = 25.0  # the ice floor rises this much toward the walls
+CALDERA_SHAPE_M = 250.0  # walls rise to the ground smoothed at this scale; finer relief is detail
+CALDERA_FLOOR_DETAIL = 0.15  # share of that detail kept on the floors, rising to all of it at the crest
+CALDERA_RIM_MIN_M = 300.0  # rim notches lower than this above the floor are filled
+CALDERA_CREST_BAND_M = 300.0  # notches are filled this close to the crest
+CALDERA_FILL_TAPER_M = 800.0  # and the fill fades to nothing this far out past the crest
+BREACH_FALL = 0.25  # the breach floor falls this much (m per m) outward from the crest, like a gully
+BREACH_BLEND_M = 400.0  # the breach walls rise from its floor to the ground over this distance
+BREACH_SMOOTH_M = 100.0  # the notch follows the steepest descent of ground smoothed at this scale
+BREACH_CLEAR_M = 30.0  # and ends where the ground lies this far below its floor
+BREACH_DETAIL = 0.6  # share of ground detail on the breach floor down the gully
+BREACH_ROUGH_M = 400.0  # reached this far past the rim
+RAYS = 360
 
 
 def summit_plateau(h: np.ndarray, x: np.ndarray, y: np.ndarray, f: dict) -> tuple[float, float, float]:
@@ -433,40 +455,135 @@ def summit_plateau(h: np.ndarray, x: np.ndarray, y: np.ndarray, f: dict) -> tupl
     return float(x[on].mean()), float(y[on].mean()), top
 
 
-def calderas(h: np.ndarray, spec: dict, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """A flat-floored caldera on each volcano with `caldera_diameter_m` and `caldera_floor_m`,
-    centred on its summit plateau: a rim at about the summit height, raised over the cone where
-    needed, and steep inner walls down to the floor. Returns (h, ice floor cells)."""
+def _per_ray(v: np.ndarray, az: np.ndarray) -> np.ndarray:
+    """Per-ray values (RAYS, clockwise from north) at azimuths az (degrees), interpolated."""
+    k = az / (360.0 / RAYS)
+    k0 = np.floor(k).astype(int) % RAYS
+    w = k - np.floor(k)
+    return v[k0] * (1 - w) + v[(k0 + 1) % RAYS] * w
+
+
+def _smooth_ray(v: np.ndarray, sigma_deg: float) -> np.ndarray:
     from scipy import ndimage
 
-    def smax(a, b):
-        return (a + b + np.sqrt((a - b) ** 2 + CALDERA_SOFT_M**2)) / 2
+    return ndimage.gaussian_filter1d(v, sigma_deg * RAYS / 360.0, mode="wrap")
 
-    h, ice = h.copy(), np.zeros(h.shape, bool)
+
+def calderas(h: np.ndarray, spec: dict, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
+    """A bowl cut into the summit dome of each volcano with `caldera_diameter_m` and
+    `caldera_floor_m`, centred on its summit plateau. The rim follows the dome's own crest;
+    ground is only lowered, except for notches in the rim filled up to CALDERA_RIM_MIN_M above
+    the floor. A volcano with `breach_azimuth_deg` gets a notch down to `breach_m` there.
+    Returns (h, ice floor cells, {id: centre, crest radii and heights})."""
+    from scipy import ndimage
+
+    h0, ice, info = h, np.zeros(h.shape, bool), {}
+    h = h.copy()
     for f in spec.get("features", []):
         if f["kind"] != "volcano" or "caldera_floor_m" not in f:
             continue
-        cx, cy, top = summit_plateau(h, x, y, f)
-        r, t = np.hypot(x - cx, y - cy), np.arctan2(y - cy, x - cx)
-        near = r <= f["radius_m"]
-        r, t = r[near], t[near]
-        # An irregular oval rim, higher on one side, so it reads as no drawn ring.
-        rr = f["caldera_diameter_m"] / 2 * (1 + 0.08 * np.cos(2 * (t - 0.6)) + 0.04 * np.cos(3 * t + 2.2)
-                                            + 0.03 * np.cos(5 * t + 0.7))
-        g = 0.7 * (1 - np.cos(t - 2.0)) / 2 + 0.3 * (1 - np.cos(3 * t + 1.0)) / 2
-        rim = top - CALDERA_RIM_DROP_M * (1 + 2 * g) / 3
-        floor = float(f["caldera_floor_m"]) + CALDERA_FLOOR_RISE_M * np.minimum(r / rr, 1) ** 2
-        a = CALDERA_WALL_M / 3  # rounds the crest, so the outer flank starts level
-        outer = rim - CALDERA_FLANK * (np.hypot(np.maximum(r - rr, 0), a) - a)
-        smooth = ndimage.gaussian_filter(h, CALDERA_DETAIL_M / CELL_M)
-        # Half the detail on the crest, so gullies notch the rim without opening the hollow.
-        detail = (h - smooth)[near] * (1 - 0.5 * np.exp(-(((r - rr) / CALDERA_CREST_M) ** 2)))
-        # 0 on the floor, rising over the inner wall to 1 at the crest and beyond.
-        s = np.clip((r - rr + CALDERA_WALL_M) / CALDERA_WALL_M, 0, 1)
-        s = s * s * (3 - 2 * s)
-        h[near] = floor + (smax(smooth[near], outer) + detail - floor) * s
-        ice[near] |= r < rr - CALDERA_WALL_M / 2
-    return h, ice
+        cx, cy, _ = summit_plateau(h0, x, y, f)
+        floor_m, r0 = float(f["caldera_floor_m"]), f["caldera_diameter_m"] / 2
+        near = np.hypot(x - cx, y - cy) <= CALDERA_REACH_M
+        r = np.hypot(x - cx, y - cy)[near]
+        az = np.degrees(np.arctan2(x - cx, cy - y))[near] % 360  # clockwise from north
+        # The dome along each ray; the crest's outer edge is the rim.
+        radii = np.arange(0.6 * r0, 1.25 * r0, CELL_M / 2)
+        t = np.radians(np.arange(RAYS) * 360.0 / RAYS)
+        px, py = cx + np.outer(np.sin(t), radii), cy - np.outer(np.cos(t), radii)
+        prof = ndimage.map_coordinates(h0, [py / CELL_M - 0.5, px / CELL_M - 0.5], order=1)
+        high = prof >= prof.max(1, keepdims=True) - CALDERA_CREST_DROP_M
+        crest_r = _smooth_ray(radii[len(radii) - 1 - np.argmax(high[:, ::-1], 1)], 6.0)
+        crest_h = prof.max(1)
+        rim = _per_ray(crest_r, az)
+        # Fill rim notches below the rim minimum, fading inward to the floor and outward past the crest.
+        deficit = np.maximum(floor_m + CALDERA_RIM_MIN_M - crest_h, 0)
+        breach = "breach_azimuth_deg" in f
+        if breach:
+            b_az, b_width = float(f["breach_azimuth_deg"]), float(f.get("breach_width_m", 600.0))
+            off = (np.arange(RAYS) * 360.0 / RAYS - b_az + 180) % 360 - 180
+            deficit[np.abs(off) < np.degrees(b_width / r0) + 10] = 0  # the breach stays open
+        deficit = _smooth_ray(ndimage.maximum_filter1d(deficit, 9, mode="wrap"), 4.0)
+        d = r - rim
+        taper = np.clip(np.minimum((d + CALDERA_WALL_M) / (CALDERA_WALL_M - CALDERA_CREST_BAND_M),
+                                   (CALDERA_FILL_TAPER_M - d) / (CALDERA_FILL_TAPER_M - CALDERA_CREST_BAND_M)), 0, 1)
+        h1 = h0.copy()
+        h1[near] += _per_ray(deficit, az) * taper * taper * (3 - 2 * taper)
+        hs = ndimage.gaussian_filter(h1, CALDERA_SHAPE_M / CELL_M)
+        shape, detail, g = hs[near], (h1 - hs)[near], h1[near]
+
+        def wall(base, s, kept=CALDERA_FLOOR_DETAIL):
+            """From base (s = 0) up to the real ground (s = 1), its detail growing from `kept` on the way."""
+            k = s**1.5  # steepest near the crest, gentle at the foot like talus
+            return base + (shape - base) * k + detail * (kept + (1 - kept) * k)
+
+        # The bowl: a faintly textured floor, rising over the inner wall to the crest.
+        inner = rim - CALDERA_WALL_M
+        base = floor_m + CALDERA_FLOOR_RISE_M * np.clip(r / inner, 0, 1) ** 2
+        g = np.where(d < 0, np.minimum(wall(base, np.clip((r - inner) / CALDERA_WALL_M, 0, 1)), g), g)
+        b_info = {}
+        if breach:
+            # A notch from the floor through the rim and down the gully below it.
+            b_rim = float(_per_ray(crest_r, np.array([b_az]))[0])
+            path, arc, arc_rim = breach_path(ndimage.gaussian_filter(h1, BREACH_SMOOTH_M / CELL_M), cx, cy, b_az,
+                                             b_rim - CALDERA_WALL_M, b_rim, float(f["breach_m"]))
+            pts = np.stack([x[near], y[near]], 1)
+            dist = np.full(len(pts), np.inf)
+            along = np.zeros(len(pts))
+            for k in range(0, len(path), 256):  # bounded memory
+                seg = path[None, k : k + 256]
+                dd = np.hypot(pts[:, None, 0] - seg[..., 0], pts[:, None, 1] - seg[..., 1])
+                kk = np.argmin(dd, 1)
+                closer = dd[np.arange(len(pts)), kk] < dist
+                dist[closer] = dd[np.arange(len(pts)), kk][closer]
+                along[closer] = arc[k + kk[closer]]
+            past = np.maximum(along - arc_rim, 0)
+            sill = np.minimum(float(f["breach_m"]) - BREACH_FALL * past, shape)
+            # A floor a quarter of the width between blended walls, so the notch is about breach_width_m
+            # across a third of the way up; rougher down the gully, where the floor has room below the band.
+            kept = CALDERA_FLOOR_DETAIL + (BREACH_DETAIL - CALDERA_FLOOR_DETAIL) * np.clip(past / BREACH_ROUGH_M, 0, 1)
+            g = np.minimum(g, wall(sill, np.clip((dist - b_width / 8) / BREACH_BLEND_M, 0, 1), kept))
+            b_info = {"path": path, "rim_arc": arc_rim, "length_m": float(arc[-1] - arc_rim)}
+        h[near] = g
+        ice[near] |= (d < -CALDERA_WALL_M / 3) & (g <= floor_m + CALDERA_FLOOR_RISE_M + 60)
+        info[f["id"]] = {"at": (cx, cy), "crest_r": crest_r, "crest_h": crest_h, "breach": b_info}
+    return h, ice, info
+
+
+def breach_path(hs: np.ndarray, cx: float, cy: float, az: float, r_in: float, r_rim: float, sill_m: float):
+    """A breach's centre line: straight out from r_in to the rim at azimuth az, then down the
+    steepest descent of the smoothed ground hs until it falls below the notch floor. Returns
+    (points (n, 2) in m, arc length of each, arc length at the rim)."""
+    from scipy import ndimage
+
+    ux, uy = np.sin(np.radians(az)), -np.cos(np.radians(az))
+    step = CELL_M / 4
+    rs = np.arange(r_in, r_rim, step)
+    pts = [(cx + q * ux, cy + q * uy) for q in rs]
+    gy, gx = np.gradient(hs, CELL_M)
+    px, py = cx + r_rim * ux, cy + r_rim * uy
+    dx, dy = ux, uy
+    arc_rim = r_rim - r_in
+    arc = arc_rim
+    while arc - arc_rim < CALDERA_REACH_M:
+        pts.append((px, py))
+        at = [[py / CELL_M - 0.5], [px / CELL_M - 0.5]]
+        ground = float(ndimage.map_coordinates(hs, at, order=1)[0])
+        if ground < sill_m - BREACH_FALL * (arc - arc_rim) - BREACH_CLEAR_M:
+            break
+        ex = -float(ndimage.map_coordinates(gx, at, order=1)[0])
+        ey = -float(ndimage.map_coordinates(gy, at, order=1)[0])
+        e = np.hypot(ex, ey)
+        # Downhill, turning gradually, and never back toward the caldera.
+        nx, ny = (0.6 * dx + 0.4 * ex / e, 0.6 * dy + 0.4 * ey / e) if e > 1e-6 else (dx, dy)
+        if nx * ux + ny * uy < 0.3:
+            nx, ny = dx, dy
+        n = np.hypot(nx, ny)
+        dx, dy = nx / n, ny / n
+        px, py = px + step * dx, py + step * dy
+        arc += step
+    pts = np.array(pts)
+    return pts, np.concatenate([rs - r_in, arc_rim + step * np.arange(len(pts) - len(rs))]), arc_rim
 
 
 SEAM_RATIO = 1.3  # slopes along a border this much steeper than inside both regions show a seam
@@ -476,7 +593,14 @@ SITE_SLOPE_DEG = 5.0  # each region keeps a patch this flat for a settlement
 SITE_KM2 = 0.5
 CLAMP_NEAR_M = 150.0
 CLAMP_CELLS = 20
-CALDERA_TOLERANCE_M = 150.0  # caldera floor within this of its target, and at least this far below the rim
+CALDERA_TOLERANCE_M = 100.0  # caldera floor within this of its target
+CALDERA_CLOSED_M = 200.0  # the rim stands at least this far above the floor, except at a breach
+BREACH_SECTOR_DEG = 30.0  # the breach is the lowest rim within this of its azimuth
+CALDERA_REACH_RADIUS_M = 200.0  # the floor counts as reached if a band reaches this close to its lowest point
+CALDERA_CHANGE_M = 50.0
+RIVER_HEAD_M = 300.0  # a river is traced from the lowest ground this close to its path's first point
+RIVER_CLIMB_M = 30.0  # its path may rise this much above ground it passed (GLO-30 river floors carry such pits)
+RIVER_MOUTH_M = 2000.0  # and must reach the sea this close to its path's last point
 DEPRESSION_KM2 = 1.0  # closed hollows on land this large and deep are listed
 DEPRESSION_M = 50.0
 GLACIER_CLASS = 10  # terrain legend v3
@@ -490,20 +614,62 @@ def region_map(h: np.ndarray, sds: list[np.ndarray], land_w: list[np.ndarray]) -
     return out
 
 
-def closed_depressions(h: np.ndarray) -> list[tuple[float, float, float, float, float]]:
-    """Closed hollows on land of at least DEPRESSION_KM2 and DEPRESSION_M, largest first:
-    (km², depth m, x and y of the lowest point in m, spill height m)."""
-    from scipy import ndimage
+@dataclass
+class Drainage:
+    """Priority-flood drainage of the land's bounding box: every cell drains to the open sea."""
 
+    j0: int
+    i0: int
+    sub: np.ndarray
+    outlet: np.ndarray
+    filled: np.ndarray
+    parent: np.ndarray  # downstream neighbour per flat sub cell, -1 at outlets
+
+
+def drainage(h: np.ndarray) -> Drainage | None:
     from .hydrology import flood
 
     sea = layout.open_sea(h)
     rows, cols = np.flatnonzero((~sea).any(1)), np.flatnonzero((~sea).any(0))
     if not rows.size:
-        return []
+        return None
     j0, i0 = max(0, rows[0] - 1), max(0, cols[0] - 1)
     sub, outlet = h[j0 : rows[-1] + 2, i0 : cols[-1] + 2], sea[j0 : rows[-1] + 2, i0 : cols[-1] + 2]
-    filled, _, _ = flood(sub, outlet)
+    filled, parent, _ = flood(sub, outlet)
+    return Drainage(int(j0), int(i0), sub, outlet, filled, parent)
+
+
+def flow_path(dr: Drainage, at, radius_m: float = 0.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The drainage path to the sea from the lowest ground within radius_m of `at`:
+    x and y (m) and ground height of each cell."""
+    n = dr.sub.shape[1]
+    r = int(radius_m / CELL_M)
+    j, i = int(at[1] / CELL_M) - dr.j0, int(at[0] / CELL_M) - dr.i0
+    win = dr.sub[max(0, j - r) : j + r + 1, max(0, i - r) : i + r + 1]
+    dj, di = np.unravel_index(int(np.argmin(win)), win.shape)
+    path = [(max(0, j - r) + dj) * n + max(0, i - r) + di]
+    while dr.parent[path[-1]] >= 0:
+        path.append(int(dr.parent[path[-1]]))
+    jj, ii = np.divmod(np.array(path), n)
+    return (ii + dr.i0 + 0.5) * CELL_M, (jj + dr.j0 + 0.5) * CELL_M, dr.sub[jj, ii]
+
+
+def _length(x: np.ndarray, y: np.ndarray) -> float:
+    return float(np.hypot(np.diff(x), np.diff(y)).sum())
+
+
+def _km(x: float, y: float) -> str:
+    return f"({x / 1000:.1f}, {y / 1000:.1f}) km"
+
+
+def closed_depressions(dr: Drainage | None) -> list[tuple[float, float, float, float, float]]:
+    """Closed hollows on land of at least DEPRESSION_KM2 and DEPRESSION_M, largest first:
+    (km², depth m, x and y of the lowest point in m, spill height m)."""
+    from scipy import ndimage
+
+    if dr is None:
+        return []
+    sub, outlet, filled, j0, i0 = dr.sub, dr.outlet, dr.filled, dr.j0, dr.i0
     depth = filled - sub
     labels, count = ndimage.label((depth > 0.05) & ~outlet)
     ids = np.arange(1, count + 1)
@@ -516,7 +682,49 @@ def closed_depressions(h: np.ndarray) -> list[tuple[float, float, float, float, 
     return sorted(out, reverse=True)
 
 
-def report(spec, regions, h, sds, land_w, covered, region32, ice, dips) -> tuple[str, int]:
+def report_caldera(f: dict, h: np.ndarray, pre: np.ndarray, cal: dict | None, bands: np.ndarray, spec: dict,
+                   check, lines: list) -> None:
+    """Floor, rim, breach, reach and how much ground the caldera changed (pre: before it)."""
+    c = description.caldera(h, CELL_M, f)
+    want = float(f["caldera_floor_m"])
+    if not c or cal is None:
+        check(False, f"caldera {f['id']}: no closed hollow within {f['caldera_diameter_m'] / 2000:.2f} km")
+        return
+    check(abs(c["floor_m"] - want) <= CALDERA_TOLERANCE_M,
+          f"caldera {f['id']}: floor {c['floor_m']:.0f} m (target {want:.0f}), rim {c['rim_m']:.0f} m median, "
+          f"{c['diameter_m'] / 1000:.1f} km across at the crest, centre ({c['at_m'][0] / 1000:.2f}, "
+          f"{c['at_m'][1] / 1000:.2f}) km")
+    az, crest, _ = description.rim_crests(h, CELL_M, c["at_m"], f["caldera_diameter_m"])
+    if "breach_azimuth_deg" in f:
+        off = np.abs((az - float(f["breach_azimuth_deg"]) + 180) % 360 - 180)
+        shut = off > BREACH_SECTOR_DEG
+        k = int(np.argmin(crest))
+        check(bool(off[k] <= BREACH_SECTOR_DEG) and crest[shut].min() - c["floor_m"] >= CALDERA_CLOSED_M,
+              f"caldera {f['id']}: enclosed {crest[shut].min() - c['floor_m']:.0f} m above the floor except at the "
+              f"breach (lowest rim {crest[shut].min():.0f} m beyond {BREACH_SECTOR_DEG:.0f}° of it); breach "
+              f"{c['breach_m']:.0f} m at {az[k]:.0f}° (target {float(f['breach_m']):.0f} m at "
+              f"{float(f['breach_azimuth_deg']):.0f}°), notch {cal['breach']['length_m'] / 1000:.2f} km past the rim")
+    else:
+        check(c["breach_m"] - c["floor_m"] >= CALDERA_CLOSED_M,
+              f"caldera {f['id']}: closed {c['breach_m'] - c['floor_m']:.0f} m deep (lowest rim {c['breach_m']:.0f} m)")
+    names, tops, clearance = layout.flight(spec)
+    expect = next((i for i, t in enumerate(tops) if want + clearance <= t), len(tops))
+    got = layout.band_at(bands, CELL_M, c["low_at_m"], CALDERA_REACH_RADIUS_M)
+    check(got == expect,
+          f"caldera {f['id']}: floor reached by {names[got]} (a {want:.0f} m floor needs {names[expect]})")
+    x, y = grid(h.shape[0])
+    r = np.hypot(x - cal["at"][0], y - cal["at"][1])
+    big = np.abs(h.astype(np.float64) - pre) > CALDERA_CHANGE_M
+    far = float(r[big].max()) if big.any() else 0.0
+    moved = np.abs(h.astype(np.float64) - pre) > 0
+    check(not (moved & (r > CALDERA_REACH_M)).any(),
+          f"caldera {f['id']}: {big.sum() * CELL_M**2 / 1e6:.2f} km² changed by more than {CALDERA_CHANGE_M:.0f} m "
+          f"(raised {(h - pre > CALDERA_CHANGE_M).sum() * CELL_M**2 / 1e6:.2f} km², up to "
+          f"{max(float((h - pre).max()), 0.0):.0f} m), out to {far / 1000:.2f} km from its centre; "
+          f"nothing changed beyond {CALDERA_REACH_M / 1000:.1f} km")
+
+
+def report(spec, regions, h, sds, land_w, covered, region32, ice, dips, pre, cal) -> tuple[str, int]:
     lines, warnings = [], 0
 
     def check(ok: bool, text: str):
@@ -563,6 +771,8 @@ def report(spec, regions, h, sds, land_w, covered, region32, ice, dips) -> tuple
             core = ((a > 0.9) | (b > 0.9)) & land
             ratio = float(np.percentile(slope[seam], 99) / max(np.percentile(slope[core], 99), 1e-3))
             check(ratio <= SEAM_RATIO, f"seam {regions[i].id} / {regions[j].id}: steepest slopes {ratio:.2f}x the regions'")
+    names = layout.flight(spec)[0]
+    bands = layout.band_map(h, CELL_M, spec)
     for f in spec.get("features", []):
         if f["kind"] != "volcano":
             continue
@@ -577,23 +787,40 @@ def report(spec, regions, h, sds, land_w, covered, region32, ice, dips) -> tuple
               f"volcano {f['id']} {top:.0f} m; highest land outside {regions[k].id}: {rest[rj, ri]:.0f} m "
               f"at ({(ri + 0.5) * CELL_M / 1000:.1f}, {(rj + 0.5) * CELL_M / 1000:.1f}) km")
         if "caldera_floor_m" in f:
-            c = description.caldera(h, CELL_M, f)
-            want = float(f["caldera_floor_m"])
-            if not c:
-                check(False, f"caldera {f['id']}: no closed hollow within {f['caldera_diameter_m'] / 2000:.2f} km")
-                continue
-            ok = abs(c["floor_m"] - want) <= CALDERA_TOLERANCE_M and c["rim_m"] - c["floor_m"] >= CALDERA_TOLERANCE_M
-            check(ok, f"caldera {f['id']}: floor {c['floor_m']:.0f} m (target {want:.0f}), lowest rim "
-                      f"{c['rim_m']:.0f} m, closed {c['rim_m'] - c['floor_m']:.0f} m deep, "
-                      f"{c['diameter_m'] / 1000:.1f} km across below the rim")
-    names = layout.flight(spec)[0]
-    bands = layout.band_map(h, CELL_M, spec)
+            report_caldera(f, h, pre, cal.get(f["id"]), bands, spec, check, lines)
     for p in spec.get("passes", []):
         got = names[layout.band_at(bands, CELL_M, p["at"], description.PASS_RADIUS_M)]
         depth = dips.get(p["id"], 0.0)
         check(got == p["band"], f"pass {p['id']:<17} reached by {got} (spec {p['band']})"
               + (f" after a {depth:.0f} m dip" if depth else ""))
-    deps = closed_depressions(h)
+    dr = drainage(h)
+    rivers = [f for f in spec.get("features", []) if f.get("river") and "path" in f] if dr else []
+    traced = {}
+    for f in rivers:
+        fx, fy, fh = traced[f["id"]] = flow_path(dr, f["path"][0], RIVER_HEAD_M)
+        climb = float(np.max(fh - np.minimum.accumulate(fh)))
+        mouth = float(np.hypot(fx[-1] - f["path"][-1][0], fy[-1] - f["path"][-1][1]))
+        check(climb <= RIVER_CLIMB_M and mouth <= RIVER_MOUTH_M,
+              f"river {f['id']}: drains {_length(fx, fy) / 1000:.1f} km from its head {_km(fx[0], fy[0])}, "
+              f"{fh[0]:.0f} m, to the sea at {_km(fx[-1], fy[-1])}, {mouth / 1000:.1f} km from its mouth; largest "
+              f"rise on the way {climb:.0f} m, largest uphill step {np.max(np.diff(fh), initial=0):.0f} m")
+    for f in spec.get("features", []):
+        b = cal.get(f["id"], {}).get("breach")
+        if b and dr:
+            # Where meltwater from the breach goes: the drainage path from the notch's outer end.
+            fx, fy, fh = flow_path(dr, b["path"][-1])
+            to = ""
+            for rid, (rx, ry, _) in traced.items():
+                river = set(zip(rx.tolist(), ry.tolist()))
+                on = [k for k, p in enumerate(zip(fx.tolist(), fy.tolist())) if p in river]
+                if on:  # drainage paths join and never part
+                    k = on[0]
+                    below = _length(rx, ry) - _length(fx[k:], fy[k:])
+                    to = f"; joins {rid} at {_km(fx[k], fy[k])}, {fh[k]:.0f} m, {below / 1000:.1f} km below its head"
+                    break
+            lines.append(f"  info breach of {f['id']} drains from {_km(fx[0], fy[0])}, {fh[0]:.0f} m, "
+                         f"to the sea at {_km(fx[-1], fy[-1])}{to}")
+    deps = closed_depressions(dr)
     lines.append(f"  info {len(deps)} closed depressions on land of at least {DEPRESSION_KM2:.0f} km² and "
                  f"{DEPRESSION_M:.0f} m deep (hydrology v2 breaches them)")
     for km2, deep, dx, dy, spill in deps:
@@ -712,7 +939,8 @@ def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source]
     h32 = sink_outside(blend(surfaces + [sea], land_w + [weight(-isd, OCEAN_BORDER_M)]), isd, sea)
     h32 = np.minimum(h32, edge_limit(n, spec))
     h32, dips = dip_passes(h32, spec)
-    h32, ice = calderas(h32, spec, x, y)
+    pre = h32.astype(np.float64)
+    h32, ice, cal = calderas(h32, spec, x, y)
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
     forest32 = np.where(h32 >= 0, sum(w * r.forest for w, r in zip(land_w, regions)) / total, 0).astype(np.float32)
     forest32[ice] = 0
@@ -725,7 +953,7 @@ def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source]
     np.savez_compressed(out / "arrays.npz", l1=cascade.block_mean(h32, int(L0_CELL_M / CELL_M)), l2=h32)
     l0 = layout.load(out)
     layout.overview(l0, out / "overview.png")
-    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, region32, ice, dips)
+    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, region32, ice, dips, pre, cal)
     (out / "report.txt").write_text(text_r)
     print(text_r, end="")
     text_b, bands, _ = layout.reach(h32, CELL_M, spec)
