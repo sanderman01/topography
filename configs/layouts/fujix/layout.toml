@@ -122,10 +122,10 @@ id = "nw-arm"
 name = "North-west knife ridges"
 class_id = 6
 terrain = "Knife ridges inland, sea cliffs on the coast"
-# A peninsula: Na Pali's own cliffs on its west coast, a sound to the north (skerries offshore), a bay to the south.
-outline = [[7000, 15500], [11500, 15000], [15000, 13000], [17500, 11500], [17000, 16000], [19500, 18000],
-  [21500, 15500], [24000, 21500], [23500, 27000], [20000, 30500], [16500, 29500], [12000, 26000], [8000, 23500],
-  [6500, 19000]]
+# A peninsula: Na Pali's own cliffs on its west coast, a sound to the north (skerries offshore), Milford's fjord to the south.
+outline = [[7000, 16000], [11500, 15500], [15000, 13500], [17500, 11500], [17000, 16000], [19500, 18000],
+  [21500, 15500], [24000, 21500], [23500, 27000], [20000, 30500], [16500, 29500], [12000, 28500], [7000, 29000],
+  [6000, 24000], [6500, 19000]]
 border_m = 3000
 forest = 0.5
 floor_m = 0
@@ -139,9 +139,10 @@ remap = [550, 2600, 400, 2800]
 [[regions.pieces]]
 source = "na-pali"
 at = [14500, 18000]
-size_m = [18000, 20000]
+size_m = [24000, 20000]  # long enough that its own coast runs south to Milford's fjord
 offset_m = [-7400, 3250]  # the north-west cliffs with their own sea
-rotate_deg = -45  # the cliffs face west, along x 7.5 km
+rotate_deg = -45  # the cliffs face west, along x 7.5 to 10 km
+tilt_m_per_km = [45, 0]  # drowns the coastal plain, so the cliffs and valleys make the coast
 class_id = 12
 
 [[regions]]
@@ -150,30 +151,30 @@ name = "North-west skerries"
 class_id = 5
 terrain = "Skerries and a small archipelago"
 # An offshore archipelago; the sound to the arm is wider than the 4 km gap closing.
-outline = [[6000, 6000], [15500, 6000], [15000, 8000], [11500, 9500], [6500, 10000]]
+outline = [[6000, 6000], [12500, 6000], [11500, 7500], [9000, 9000], [6000, 9500]]
 border_m = 2000
 forest = 0.2
 [[regions.pieces]]
-source = "senja"
-at = [10000, 7500]
-size_m = [14000, 14000]
-offset_m = [-12000, -11000]  # the outer skerries, sea to the north and west
+source = "broughton-archipelago"
+at = [9250, 7750]
+size_m = [14000, 12000]
+offset_m = [-3000, 1500]  # a cluster of rocky islands in open sea
 
 [[regions]]
 id = "w-fjords"
 name = "Western fjords"
 class_id = 3
 terrain = "Fjords between the arms, with steep walls"
-# A peninsula between bays to the north and south; Milford's own sea makes the fjord mouths.
-outline = [[16500, 29500], [20000, 30500], [22000, 37000], [18000, 41000], [16000, 43500], [12500, 41500],
-  [9000, 40000], [8500, 36500], [10000, 34000], [12500, 31500]]
+# Milford's own sea makes the fjord mouths; the sound to the south is its own region.
+outline = [[16500, 29500], [20000, 30500], [22000, 37000], [18000, 41000], [17500, 42000], [12500, 40000],
+  [8000, 38500], [7500, 34000], [7000, 29000], [12000, 28500]]
 border_m = 2500
 forest = 0.6
 summit_m = 2500
 [[regions.pieces]]
 source = "milford-sound"
 at = [14500, 36000]
-size_m = [24000, 18000]
+size_m = [24000, 24000]  # reaches the region's north-west corner
 offset_m = [-4000, 0]
 rotate_deg = -45  # the fjord mouth opens west
 remap = [0, 2400, 0, 2900]  # walls toward the design's 2,500 m
@@ -183,7 +184,7 @@ id = "sw-arm"
 name = "South-west alpine arm"
 class_id = 6
 terrain = "Alpine ridges, cirques, glaciers and horn peaks"
-outline = [[11000, 49000], [13000, 46500], [16000, 43500], [18000, 41000], [22500, 40500], [26000, 46500],
+outline = [[11000, 49000], [13000, 46500], [16000, 44500], [17500, 42000], [18000, 41000], [22500, 40500], [26000, 46500],
   [22000, 52500], [19000, 53500], [16500, 55000], [15000, 57500], [12000, 58500], [10000, 54500]]
 border_m = 3000
 forest = 0.4
@@ -203,6 +204,24 @@ size_m = [16000, 14000]
 offset_m = [-2500, 0]  # Aoraki's Main Divide at the arm's tip, the Tasman valley behind it
 rotate_deg = -45
 remap = [300, 3655, 0, 3000]
+
+# A sound between the fjords and the alpine arm, made by Doubtful Sound's own water and shores.
+[[regions]]
+id = "w-sound"
+name = "Western sound"
+class_id = 3
+terrain = "A branching sound between the fjord peninsula and the alpine arm"
+outline = [[8000, 38500], [12500, 40000], [17500, 42000], [16000, 44500], [13000, 46500], [8500, 48500], [7500, 43500]]
+border_m = 2000
+forest = 0.6
+summit_m = 2400
+[[regions.pieces]]
+source = "doubtful-sound"
+at = [11750, 44000]
+size_m = [18000, 14000]
+offset_m = [-7000, -5000]  # the main sound from its mouth to the arms, Thompson Sound branching north
+scale = 0.75
+remap = [0, 1850, 0, 2400]
 
 # Its own region, so the sounds keep their sea instead of averaging with the arm's peaks.
 [[regions]]
@@ -257,7 +276,7 @@ id = "se-range"
 name = "South-east limestone range"
 class_id = 6
 terrain = "Limestone towers and walls"
-# Its east end is a headland between the desert bay and the lowland bay.
+# Its east end is a headland between the desert coast and the lowland bay.
 outline = [[40500, 39000], [48000, 35500], [57000, 38000], [59000, 41500], [58000, 44500], [55000, 46500], [52500, 49500],
   [42000, 48000], [38500, 44000], [38500, 41500]]
 border_m = 4500
@@ -269,7 +288,7 @@ source = "dolomites"
 at = [49500, 41000]
 size_m = [26000, 18000]
 offset_m = [-2000, 0]
-remap = [1000, 3305, 300, 3000]
+remap = [1000, 3305, 300, 2850]  # with the tilt, the range's top stays near 3,000 m
 tilt_m_per_km = [-50, 0]  # the valleys drown toward the east coast as rias
 
 [[regions]]
@@ -298,18 +317,25 @@ id = "e-desert"
 name = "Eastern desert basin"
 class_id = 8
 terrain = "Desert basin with dunes and pans, open to the coast"
-# The basin opens to the sea in a broad bay.
-outline = [[46000, 25500], [52000, 27000], [58500, 28500], [56000, 30000], [51000, 31500], [50500, 34500],
-  [54500, 37000], [57000, 38000], [48000, 35500], [42000, 34500], [42000, 30000]]
+# The basin opens to the sea: the dunes' own flooded corridors make the coast inside the outline.
+outline = [[46000, 25500], [52000, 27000], [58500, 28500], [60000, 31500], [58000, 34000], [59500, 37000],
+  [57000, 38000], [48000, 35500], [42000, 34500], [42000, 30000]]
 border_m = 3000
 summit_m = 1000
 [[regions.pieces]]
 source = "sossusvlei"
-at = [47000, 31500]
-size_m = [26000, 16000]
-offset_m = [10000, -6000]  # the pan between two dune belts, inland of the bay
+at = [45500, 31500]
+size_m = [17000, 16000]  # stops short of the coast, so the flat pan meets no sea
+offset_m = [5500, -6000]  # the pan between two dune belts
 remap = [450, 1000, 0, 700]
 tilt_m_per_km = [-25, 0]
+[[regions.pieces]]
+source = "badain-jaran"
+at = [56500, 33000]
+size_m = [10000, 14000]
+offset_m = [0, 9000]  # megadunes south of the dune field's crop
+remap = [1160, 1670, -100, 410]
+tilt_m_per_km = [-60, 0]  # interdune hollows flood, so the dunes make the coast
 
 [[regions]]
 id = "ne-dunes"
