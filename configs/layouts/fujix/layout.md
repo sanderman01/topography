@@ -189,8 +189,8 @@ and rims (highest ground within 4 km on each side) along it:
 The rims near the coast stay well under the design's 1,500 m: the coast's blend and the
 river's own bend leave 600 to 900 m on the last 3 km. GLO-30's river floor carries pits up
 to 22 m deep along the way (the largest uphill step is 21 m), which hydrology v2 breaches;
-no closed depression of 1 km² lies on the canyon. The North Rim side canyons face the volcano and the South Rim side faces the north
-coast mesas. Both rims and the side canyons lie inside the outline, and the crop reaches
+no closed depression of 1 km² lies on the canyon. The North Rim side canyons face the
+volcano and the South Rim side faces the north coast mesas. Both rims and the side canyons lie inside the outline, and the crop reaches
 past it on every side.
 
 ## Passes
