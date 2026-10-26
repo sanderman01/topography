@@ -27,7 +27,7 @@ name = "Fujix volcano"
 class_id = 11
 terrain = "Stratovolcano with an ice-filled summit caldera, glaciers and flank cones"
 outline = [[41500, 33500], [40160, 38500], [36500, 42160], [31500, 43500], [26500, 42160], [22840, 38500],
-  [21500, 33500], [22840, 28500], [26500, 24840], [31500, 23500], [36500, 24840], [40160, 28500]]
+  [21500, 33500], [22840, 28500], [28000, 26600], [31500, 23500], [36500, 24840], [40160, 28500]]
 border_m = 3000
 forest = 0.3
 floor_m = 300
@@ -71,33 +71,35 @@ remap = [400, 1500, 250, 1350]
 id = "canyon-plateau"
 name = "Grand Canyon plateau"
 class_id = 13
-terrain = "Plateau cut by a Grand Canyon section; the river runs west"
-outline = [[22000, 10500], [28000, 9800], [34000, 10200], [40000, 9500], [43000, 10500], [46000, 11500],
-  [43500, 13500], [46500, 15500], [44000, 16500], [45500, 18500], [40500, 22000], [31500, 23000], [24000, 21500],
-  [21500, 16000]]
-border_m = 2500  # a jagged escarpment at the east end
+terrain = "Plateau cut by a Grand Canyon section; the river runs north-east from the volcano to the sea"
+# A diagonal from the volcano's north-west flank to the north coast, where the canyon opens into the sea.
+outline = [[23400, 23600], [24200, 25600], [26600, 26700], [28000, 26600], [31500, 23500], [36500, 24840], [38500, 25500],
+  [44000, 21000], [47500, 18200], [48500, 14500], [47500, 11500], [47000, 8500], [46300, 8000], [45000, 9000],
+  [44200, 8600], [43400, 8900], [42200, 7600], [40000, 7600], [38600, 6600], [35500, 6400], [33500, 9000],
+  [30200, 10400], [27600, 12900], [25600, 16200], [23300, 21500]]
+border_m = 2500
 forest = 0.25
-floor_m = 600
+floor_m = 0
 summit_m = 2400
 [[regions.pieces]]
 source = "grand-canyon"
-at = [34000, 16000]
-size_m = [38000, 30000]  # reaches past the outline on every side
-offset_m = [-1000, -500]
-rotate_deg = -15  # the river runs east to west
-scale = 0.72
-remap = [700, 2450, 600, 2400]
-tilt_m_per_km = [12, 0]  # the river falls west
+at = [37691, 16563]
+size_m = [49000, 35000]  # reaches past the outline on every side
+offset_m = [0, -3500]  # the river from its east end to the bend north; the North Rim side canyons face the volcano
+rotate_deg = 121.75  # the river runs north-east: its head (the real east end) at the volcano, its mouth at the coast
+scale = 0.669
+remap = [789, 2450, 396, 2124]  # the river near 900 m at the head; rims 2,400 m there
+tilt_m_per_km = [-22.8, 22.8]  # 32 m/km down the canyon, so the river reaches the sea at the mouth
 
 [[regions]]
 id = "north-coast"
 name = "North coast mesas"
 class_id = 7
 terrain = "Badlands and mesas stepping down from the plateau to the sea"
-# Its west shore is a bay's east side, where the canyon river reaches the sea.
-outline = [[17500, 11500], [20500, 10000], [21500, 7500], [23000, 7000], [27000, 6000], [31500, 6800], [36000, 6000],
-  [41000, 6500], [42500, 9500], [43000, 10500], [40000, 9500], [34000, 10200], [28000, 9800],
-  [22000, 10500], [21500, 16000], [19500, 18000], [17000, 16000]]
+# Between the north-west arm and the canyon plateau's north-west rim, open to the north.
+outline = [[17500, 11500], [20500, 10000], [21500, 7500], [23000, 7000], [27000, 6000], [31500, 6800], [35500, 6400],
+  [33500, 9000], [30200, 10400], [27600, 12900], [25600, 16200], [23300, 21500], [21500, 15500], [19500, 18000],
+  [17000, 16000]]
 border_m = 2500
 forest = 0.05
 floor_m = 0
@@ -116,6 +118,14 @@ size_m = [12000, 14000]
 offset_m = [6000, 12000]  # the mesas
 remap = [250, 700, -40, 700]
 tilt_m_per_km = [0, 20]
+[[regions.pieces]]
+source = "canyonlands"
+at = [25500, 14500]
+size_m = [14000, 14000]
+offset_m = [8000, 4000]  # the Needles' fins and mesas below the plateau's north-west rim
+rotate_deg = 180  # its river canyon runs north to the sea
+remap = [1250, 1900, 300, 1300]
+tilt_m_per_km = [0, 30]  # falling north, toward the sea
 
 [[regions]]
 id = "nw-arm"
@@ -124,7 +134,7 @@ class_id = 6
 terrain = "Knife ridges inland, sea cliffs on the coast"
 # A peninsula: Na Pali's own cliffs on its west coast, a sound to the north (skerries offshore), Milford's fjord to the south.
 outline = [[7000, 16000], [11500, 15500], [15000, 13500], [17500, 11500], [17000, 16000], [19500, 18000],
-  [21500, 15500], [24000, 21500], [23500, 27000], [20000, 30500], [16500, 29500], [12000, 28500], [7000, 29000],
+  [21500, 15500], [23300, 21500], [23500, 27000], [20000, 30500], [16500, 29500], [12000, 28500], [7000, 29000],
   [6000, 24000], [6500, 19000]]
 border_m = 3000
 forest = 0.5
@@ -343,9 +353,9 @@ name = "North-east dune field"
 class_id = 8
 terrain = "Star dunes banked against the rift's end, crest dunes toward the coast"
 # Headlands and bays wider than the 4 km gap closing, so the east coast is not one line.
-outline = [[45000, 10000], [47500, 7000], [52000, 6200], [56500, 6500], [59500, 9000], [52500, 12500], [59500, 16500],
-  [60000, 21000], [53000, 24000], [58500, 28500], [52000, 27000], [48000, 25500], [55500, 17500], [52000, 14500], [46000, 17000],
-  [46500, 15500], [43500, 13500], [46000, 11500], [43000, 10500]]
+outline = [[47000, 8500], [47500, 7000], [52000, 6200], [56500, 6500], [59500, 9000], [52500, 12500], [59500, 16500],
+  [60000, 21000], [53000, 24000], [58500, 28500], [52000, 27000], [48000, 25500], [55500, 17500], [52000, 14500],
+  [47500, 18200], [48500, 14500], [47500, 11500]]
 border_m = 2500
 summit_m = 1600
 [[regions.pieces]]
@@ -387,12 +397,12 @@ band = "middle"
 [[passes]]
 id = "nw-saddle"
 name = "North-west saddle"
-at = [24500, 27500]
+at = [25000, 27300]  # the col between the volcano, the knife ridges and the canyon head
 band = "middle"
 [[passes]]
 id = "plateau-crossing"
 name = "Plateau crossing"
-at = [34000, 20000]
+at = [37200, 22800]  # a col on the plateau between the volcano's north foot and the canyon's side canyons
 band = "middle"
 [[passes]]
 id = "alpine-col"
@@ -414,19 +424,25 @@ band = "top"
 id = "fujix"
 kind = "volcano"
 name = "Fujix"
-at = [31500, 34400]  # Kibo's summit, where the piece puts it
+at = [31500, 33500]  # Kibo's summit plateau, where the piece puts it
 radius_m = 10000
 summit_m = 5000
-# The collage cuts this caldera into the summit (Kibo's own is too shallow at 32 m).
-caldera_diameter_m = 2500
-caldera_floor_m = 4600
-note = "ice-filled summit caldera, no cone inside"
+# The collage cuts this caldera into the summit dome (Kibo's own is too shallow at 32 m),
+# breached toward the canyon head so the top band reaches its floor.
+caldera_diameter_m = 2000
+caldera_floor_m = 4250
+breach_azimuth_deg = 325
+breach_m = 4280
+breach_width_m = 600
+note = "ice-filled summit caldera, no cone inside, breached on the north-west"
 
 [[features]]
 id = "great-canyon"
 kind = "gorge"
 name = "Great Canyon"
 river = true
-path = [[44000, 17900], [38000, 16400], [34000, 16400], [30000, 17600], [26000, 16500], [22000, 15600]]
+# Along the canyon floor, from its head below the volcano's north-west flank to its mouth.
+path = [[26700, 25100], [26100, 23100], [27100, 21100], [28700, 19400], [30700, 18300], [32900, 17600], [34900, 16400],
+  [36000, 14700], [37600, 13200], [38300, 11000], [39800, 9400], [42100, 9600], [43900, 8600]]
 depth_m = 1500
-note = "Grand Canyon section; the river runs west, then north to the coast"
+note = "Grand Canyon section; the river runs north-east from the volcano's north-west flank to the north coast"
