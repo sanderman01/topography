@@ -30,7 +30,8 @@ MAX_SCALE = 1.5  # the layout spec's scale budget
 FEATHER_M = 2000.0  # a piece fades out over this distance inside its crop edge
 PYRAMID_LEVELS = 6  # 32 m to 1 km
 OCEAN_BORDER_M = 3000.0
-OCEAN_SHELF_M = 2500.0  # the seabed falls most of the way to its edge depth over about this distance
+OCEAN_SHELF_M = 1200.0  # the seabed falls most of the way to its edge depth over about this distance
+SINK_M = 1000.0  # ground past the island outline sinks to the seabed over this distance
 ISLAND_CLOSE_M = 4000.0  # gaps between region outlines narrower than this stay land
 SHELF_M = -20.0  # sea floor at the island's outline
 
@@ -197,6 +198,14 @@ def ocean(isd: np.ndarray, spec: dict) -> np.ndarray:
     out_m = np.maximum(-isd, 0)
     # Zero slope at the outline, so land that runs past it meets no crease there.
     return (SHELF_M + (edge - SHELF_M) * (1 - np.exp(-((out_m / OCEAN_SHELF_M) ** 2)))).astype(np.float32)
+
+
+def sink_outside(h: np.ndarray, isd: np.ndarray, sea: np.ndarray) -> np.ndarray:
+    """Ground the blend's coarse bands carry past the island outline sinks to the seabed;
+    sea already deeper than the seabed (pieces' own sea) is left alone."""
+    t = np.clip(-isd / SINK_M, 0, 1)
+    t = t * t * (3 - 2 * t)
+    return (h - t * np.maximum(h - sea, 0)).astype(np.float32)
 
 
 def edge_limit(n: int, spec: dict) -> np.ndarray:
@@ -496,7 +505,8 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
         covered.append(cov)
     isd = island_sd(sds)
     land_w = [weight(sd, r.border_m) for sd, r in zip(sds, regions)]
-    h32 = blend(surfaces + [ocean(isd, spec)], land_w + [weight(-isd, OCEAN_BORDER_M)])
+    sea = ocean(isd, spec)
+    h32 = sink_outside(blend(surfaces + [sea], land_w + [weight(-isd, OCEAN_BORDER_M)]), isd, sea)
     h32 = np.minimum(h32, edge_limit(n, spec))
     h32, dips = dip_passes(h32, spec)
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
