@@ -138,20 +138,27 @@ def place(p: Piece, src: Source, x: np.ndarray, y: np.ndarray):
     return h, cls, w
 
 
-def fill_nearest(a: np.ndarray) -> np.ndarray:
-    from scipy import ndimage
-
-    bad = ~np.isfinite(a)
-    if not bad.any():
+def fill_smooth(a: np.ndarray, known: np.ndarray) -> np.ndarray:
+    """Unknown cells take a smooth average of the known ones (pull-push normalised convolution,
+    coarse to fine); known cells stay exact."""
+    if known.all():
         return a
-    if bad.all():
+    if not known.any():
         return np.zeros_like(a)
-    idx = ndimage.distance_transform_edt(bad, return_distances=False, return_indices=True)
-    return a[tuple(idx)]
+    num, den = [np.where(known, a, 0).astype(np.float32)], [known.astype(np.float32)]
+    while min(num[-1].shape) > 4:
+        num.append(_down(num[-1]))
+        den.append(_down(den[-1]))
+    est = num[-1] / np.maximum(den[-1], 1e-6)
+    for nu, de in zip(reversed(num[:-1]), reversed(den[:-1])):
+        # Finer averages take over where enough known cells are near.
+        t = np.clip(2 * de, 0, 1)
+        est = t * nu / np.maximum(de, 1e-6) + (1 - t) * _up(est, nu.shape)
+    return np.where(known, a, est).astype(np.float32)
 
 
 def region_surface(r: Region, srcs: dict[str, Source], x: np.ndarray, y: np.ndarray):
-    """Heights (filled past the pieces with the nearest piece value), classes and covered cells."""
+    """Heights (filled smoothly past the pieces), classes and covered cells."""
     num = np.zeros(x.shape, np.float32)
     den = np.zeros(x.shape, np.float32)
     best = np.zeros(x.shape, np.float32)
@@ -167,7 +174,7 @@ def region_surface(r: Region, srcs: dict[str, Source], x: np.ndarray, y: np.ndar
         cls[better] = c[better]
         best = np.maximum(best, w)
     covered = den > 1e-3
-    return fill_nearest(np.where(covered, num / np.maximum(den, 1e-6), np.nan)).astype(np.float32), cls, covered
+    return fill_smooth(num / np.maximum(den, 1e-6), covered), cls, covered
 
 
 def weight(sd: np.ndarray, border_m: float) -> np.ndarray:
@@ -453,7 +460,7 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
     h32 = np.minimum(h32, edge_limit(n, spec))
     h32, dips = dip_passes(h32, spec)
     total = np.maximum(np.sum(land_w, axis=0), 1e-6)
-    forest32 = (sum(w * r.forest for w, r in zip(land_w, regions)) / total).astype(np.float32)
+    forest32 = np.where(h32 >= 0, sum(w * r.forest for w, r in zip(land_w, regions)) / total, 0).astype(np.float32)
     cls32 = dither(classes, land_w, blue_noise(n))
     write_l0(out, text, spec, h32, cls32, forest32)
     cls32.tofile(out / "class32.u8")
