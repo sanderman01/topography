@@ -3,7 +3,10 @@
 Status: design agreed with the owner 2026-10-26. Sub-project 1 (the collage layout) is
 implemented and built as `data/worlds/fujix-collage-54` (55 with class 19), pending the
 owner's review. Sub-project 3 is implemented in code (class 19, reaches, dithered borders,
-gates); its training runs, L3 run 5 and L4 run 8, are pending. The others are not started. Fujix is a new
+gates); its training runs, L3 run 5 and L4 run 8, are pending. Sub-project 2 (hydrology v2) is
+implemented: `topography world hydrology` gives water at 32 m, 4 m and 1 m, and the cascade
+chain and the L4 bands use it (verified on a Fujion 8 km crop); a full world is not yet
+generated with it. The others are not started. Fujix is a new
 64 km world that replaces Fujion (32 km) as the game's map. It follows the
 [layout spec process](world-layout-spec-v1.md), except that the agent authors the layout as
 a collage of real DEMs and the owner neither writes nor paints it.

@@ -928,6 +928,38 @@ the left, steepest descent on the right) and `scratch/hydro-v2/band1m-tributarie
 (1 m, 1 km × 768 m at column 16,384 of band B, the seam at row 256); coarse rivers blue,
 tributaries cyan with their centreline bright.
 
+### In the cascade
+
+Verified on the Fujion layout (`fujion-painted-l0-5`; L1 run 6, L2 run 8, L3 run 5 with its
+Grand Canyon expert, L4 run 8 with its expert): the chain with `--l3-km 8`, then
+`cascade_l4 --km 4 --band-m 1024` (four bands, each with its seam check), every hydrology run
+and seam passed:
+
+| Step | Time | Peak RAM (capped 7 GB) | Result |
+| --- | --- | --- | --- |
+| Chain (L1, L2, 32 m, L3 8 km, 4 m) | 5.8 min (hydrology 2 s and 8 s) | 2.7 GB | 66 lakes and 39 rivers (78 km) at 32 m; 9 lakes and 80 rivers (34 km) at 4 m, 1.5 % water |
+| L4, 4 km at 1 m | 15.7 min (hydrology 6-7 s a band) | 2.7 GB | 37 to 310 rivers a band, 0.13-0.30 % water |
+
+Generating each level from the carved level above shrinks the cuts: on this 8 km crop at 4 m
+all steps together lower ground by at most 20 m (31 m on the uncarved test world above), path
+burns 0 m (19 m), trench walls 6.8 m (28 m), with 255 cells cut more than 10 m; at 1 m at most
+7.4 m and none over 10 m (11 m and 31 m before). Compared with the old Python water on the
+same layout (`fujion-v3-chain-14`), lakes now have beds below a level surface (no flat
+128 m terraces), the Fuji summit crater keeps its lake with an outflow, and the 4 m world has
+a branching river network where the old one drew a single stream. 1 m tributaries on smooth,
+evenly sloping cone flanks still follow D8 fall lines as straight parallel lines. PNGs:
+`scratch/hydro-v2/t6/water-4m-old-vs-new.png`, `water-4m-8km.png` and `water-1m-4km.png`
+(sea navy, lakes blue, rivers cyan).
+
+The run found and fixed five robustness gaps in the Rust tool: wall cells that trench widening
+pointed back at a trench end formed receiver cycles (they now keep their old receiver, or in
+channel widening take the steepest lower neighbour not draining into them, and any cycle left
+spills like a depression); a coarse path ending in a coarse dry basin with no hollow at the finer
+level continues down the routing; coarse paths run over dry basin floors (at 1 m a glacier is a
+field of thousands of small ice basins, which had left a coarse river missing); a stream
+turning back across a seam onto the previous band's ground beside its river joins that river;
+and body lists over 1 MiB are read.
+
 ## Export
 
 ```sh
