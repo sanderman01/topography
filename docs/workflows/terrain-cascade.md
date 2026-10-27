@@ -383,8 +383,8 @@ $P -m topography_training.diffusion.landcover --world data/worlds/fujion-v3-chai
 ## Hydrology v2
 
 Water as a surface height ([Fujix plan](../plans/fujix-v1.md) section 2). The Rust command
-works on a 32 m grid now; moisture, channel carving, finer levels and the cascade calling it
-come later, and the chain still uses `hydrology.py`.
+works on a 32 m grid now, with orographic precipitation; channel carving, finer levels and
+the cascade calling it come later, and the chain still uses `hydrology.py`.
 
 ```sh
 training/.venv/bin/python -I scripts/hydrology_grid.py data/worlds/fujix-collage-55 scratch/hydro-v2/fujix55-grid
@@ -392,15 +392,39 @@ target/release/topography world hydrology --grid scratch/hydro-v2/fujix55-grid -
 ```
 
 `hydrology_grid.py` turns a collage (`arrays.npz` `l2` and `class32.u8`) into a grid
-directory: `grid.json` (`size` [w, h], `spacing_m`, `origin`, optional `classes_cell_m`),
+directory: `grid.json` (`size` [w, h], `spacing_m`, `origin`, optional `classes_cell_m`,
+optional `wind_from_deg` from the layout copy in the collage's `layout.json`),
 `elevation.f32` and optional `classes.u8` (little-endian, rows north to south). The output
 directory must not exist; it is staged and renamed into place. It holds `grid.json` (input
-plus `level` and provenance: input and output SHA-256s, water table, tool version),
-`elevation.f32` (ground after breaching), `water-surface.f32` (NaN where dry, sea 0),
-`water-body.u32` (0 dry, 1 sea, then lakes, then rivers), `discharge.f32` (drainage area in
-km²), `bodies.json` and `report.json`. Exit status 1 means a validation check failed; the
-outputs are still written so the report can be read. `--coarse` and `--wind-deg` are not
-implemented yet.
+plus `level`, `wind_from_deg`, a `discharge` entry, a `moisture` entry and provenance: input
+and output SHA-256s, water table, tool version), `elevation.f32` (ground after breaching),
+`water-surface.f32` (NaN where dry, sea 0), `water-body.u32` (0 dry, 1 sea, then lakes, then
+rivers), `discharge.f32`, `moisture.f32`, `bodies.json` and `report.json`. Exit status 1
+means a validation check failed; the outputs are still written so the report can be read.
+`--coarse` is not implemented yet.
+
+Precipitation comes first, from the input ground:
+
+- Smith and Barstad (2004) linear upslope model, solved by FFT on a 128 m grid (the input
+  block-averaged, 4 x 4 cells at 32 m; ground below 0 m counts as 0 m), padded by at least
+  half its size each side with 0 m ground so the FFT does not wrap. Negative rates (descending
+  lee air) are clipped to 0, then a uniform background rate is added.
+- Wind: `--wind-deg D` is the direction the wind comes from, clockwise from north (225 = from
+  the south-west); without it, grid.json `wind_from_deg`; without either, rain is uniform and
+  discharge equals drainage area.
+- Judgment constants (`moisture::PARAMS`, recorded in `report.json` `precipitation.params`):
+  wind 10 m/s, moist buoyancy frequency 0.005 s⁻¹, water vapour scale height 2,500 m,
+  condensation and fallout times 300 s each (the short end of the usual 200 to 2,000 s, so
+  rain lands on the windward flanks instead of drifting 20 km over the crest),
+  uplift sensitivity 0.004 kg m⁻³ and background 0.5 mm/h. Only the ratio of the orographic
+  term to the background matters downstream.
+- `moisture.f32` is that 128 m grid (size and spacing in grid.json `moisture`): precipitation
+  divided by its 99th percentile over land cells (`scale_mm_h`), clipped to 0 to 1.
+- `discharge.f32` is the drainage area weighted by precipitation over its land mean, in km² at
+  mean rain (precipitation bilinear between 128 m cell centres). Rivers start at 10 km² of
+  that, so wet windward catchments start rivers on smaller areas and the dry lee on larger
+  ones; lake selection and river depth use it too. `report.json` `precipitation` gives the
+  land mean, the 99th percentile and land means by map quadrant.
 
 Steps:
 
@@ -433,18 +457,19 @@ Steps:
   - deeper than 30 m below its spill, in a glacier or arid class (`lake_share` ≤ 0.002:
     canyons, badlands, dunes): a dry sink where flow ends (endorheic), even when its ground
     is below 0 m;
-  - deeper than 30 m elsewhere: lakes at the spill lowered by 30 m, but not below 0 m, one
+  - deeper than 30 m elsewhere: lakes at the spill lowered by 30 m, but not below 0 m or the
+    level of a lake the outlet drains into (so no dry ground beside the cut lies below it), one
     per piece of ground below that level, with the outlet cut down to it;
   - at most 30 m deep but with ground below 0 m, in any class: lakes at 0 m (lagoons), with
     the outlet cut to 0 m. Breaching therefore never cuts below sea level.
 - Lakes grow over carved ground below their level that drains into them, so one level and
   wet exactly where the level is above the ground still hold next to a cut.
-- Rivers are cells draining at least 10 km² (`--river-km2`). One body id per river system:
-  all river cells upstream of one mouth, which ends in the sea, a lake, a sink, a glacier
-  basin (flow passes through and a new river starts at its exit) or the grid edge. Water
-  surface: ground plus 0.4 m · area^0.4 (a placeholder for discharge until moisture exists),
-  but at most the lowest dry neighbour and every river surface upstream. The bed is cut to
-  the surface minus that depth, so a river never stands above its banks. Two exceptions:
+- Rivers are cells with at least 10 km² of discharge (`--river-km2`). One body id per river
+  system: all river cells upstream of one mouth, which ends in the sea, a lake, a sink, a
+  glacier basin (flow passes through and a new river starts at its exit) or the grid edge.
+  Water surface: ground plus 0.4 m · discharge^0.4 (discharge in km² at mean rain), but at
+  most the lowest dry neighbour and every river surface upstream. The bed is cut to the
+  surface minus that depth, so a river never stands above its banks. Two exceptions:
   - a lake's exit cell (a river cell a lake drains into) holds its surface at the lake
     level, a sill. Dry ground beside it below the level is raised to the level (a rock sill,
     the only ground raising), and so is any dry cell draining into a raised one that is now
@@ -454,9 +479,9 @@ Steps:
     beside it.
 
 `bodies.json` lists the sea (id 1), lakes (`exit_cell`: the first cell the lake's routed flow
-enters outside it, `parent`: the body that flow reaches), rivers (`area_km2`, `drainage_km2`,
-`length_km`, `parent`) and dry basins (`kind` `dry`, `endorheic`, `ice`; their ids are not in
-`water-body.u32`, which is 0 on dry ground).
+enters outside it, `parent`: the body that flow reaches), rivers (`area_km2`, `drainage_km2`:
+the discharge at the mouth, `length_km`, `parent`) and dry basins (`kind` `dry`,
+`endorheic`, `ice`; their ids are not in `water-body.u32`, which is 0 on dry ground).
 
 `report.json` checks (all must be 0): lakes in more than one piece or with ground at or above
 their level, lake exits off the level (an outflow river more than 1 cm from it, or dry exit
@@ -468,14 +493,19 @@ by construction and only catch bugs. Figures include lakes and dry basins (over 
 sinks, ice), carved cells, cells cut more than 10 m, the deepest cut, river bed cuts, and river
 counts and lengths. Timings go to stderr only, so identical inputs give identical outputs.
 
-On fujix-collage-55 (2048², 32 m) it takes about 1.5 s and 85 MB: 280 lakes (36 km², 1.6% of
-the land; 131 over budget, some of them lagoons), 164 dry basins (64 sinks, 47 km²; 29 ice),
-97 river systems (245 km: 25 to the sea, 60 to lakes, 12 to sinks). Breaching cut at most
-30 m; river beds are cut at most 48 m, where a lower bank beside a steep D8 reach caps the
-surface (channel shaping comes later). 22 lip cells were raised, by at most 18.8 m
-(58,000 m³); mouths plunge at most 28.5 m into sinks. All checks 0, every river exit at its
-lake level, and the summit caldera unchanged and dry. On the 8192² 4 m chain world it takes
-40 s and 1.2 GB; 16,384² at 4 m should need about 5 GB. A
+On fujix-collage-55 (2048², 32 m, wind from 225°) it takes about 2 s: land precipitation
+averages 3.1 mm/h (99th percentile 21.8 mm/h, on the volcano's upper south-west flank); land
+means by quadrant are 1.76 (SW), 1.28 (SE), 0.90 (NW) and 0.23 (NE) times the land mean. The
+volcano gets 13.6 mm/h within 5 km windward of the summit, 6.9 mm/h within 5 km in its lee
+and background only beyond 5 km in its lee; the canyon plateau west of the summit gets
+0.86 mm/h, the east desert 0.66 mm/h. Result: 287 lakes (36 km², 1.6% of the land; 138 over
+budget, some of them lagoons), 185 dry basins (64 sinks, 47 km²; 29 ice), 116 river systems
+(340 km: 29 to the sea, 82 to lakes, 4 to sinks). Breaching cut at most 30 m; river beds are
+cut at most 62 m, where a lower bank beside a steep D8 reach caps the surface (channel
+shaping comes later). 15 lip cells were raised, by at most 5.2 m; mouths plunge at most
+9.7 m into sinks. All checks 0, every river exit at its lake level, and the summit caldera
+unchanged and dry. On the 8192² 4 m chain world it takes 43 s and 1.2 GB; 16,384² at 4 m
+should need about 5 GB. A
 1024² exact flat takes under 0.1 s to breach.
 
 ## Export
