@@ -2,14 +2,26 @@
 
 Usage: training/.venv/bin/python -I scripts/hydrology_grid.py <collage-dir> <new-grid-dir>
 Then: topography world hydrology --grid <new-grid-dir> --out <new-output-dir>
+The layout's wind_from_deg (from the collage's layout.json) goes into grid.json.
 """
 
 import json
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 import numpy as np
+
+
+def layout_wind(src: Path) -> float | None:
+    """`wind_from_deg` of the layout copy the collage keeps in layout.json, if any."""
+    path = src / "layout.json"
+    if not path.exists():
+        return None
+    text = json.loads(path.read_text()).get("config_text")
+    wind = tomllib.loads(text).get("wind_from_deg") if text else None
+    return float(wind) if wind is not None else None
 
 
 def main() -> None:
@@ -38,6 +50,9 @@ def main() -> None:
         "source": str(src.resolve()),
         "source_array": "arrays.npz:l2",
     }
+    wind = layout_wind(src)
+    if wind is not None:
+        grid["wind_from_deg"] = wind
     (stage / "grid.json").write_text(json.dumps(grid, indent=1))
     stage.rename(out)
     print(out)
