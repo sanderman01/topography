@@ -1,0 +1,29 @@
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_936ad8b4d44199 659-671,674-679
+  s_8c1b40ea9c1e0d::t_e63c522c89ee99 690-702
+  s_8c1b40ea9c1e0d::t_ca81a6e1e1bc0a 499-505
+  s_8c1b40ea9c1e0d::t_e38abb8b4111df 681-684
+  s_8c1b40ea9c1e0d::t_ed57f22f823bf1 717-718
+  s_8c1b40ea9c1e0d::t_555488c8928219 752-754
+  s_8c1b40ea9c1e0d::t_2715dce064c614 398-400
+  s_8c1b40ea9c1e0d::t_7215b167ac26ef 553-560
+  s_8c1b40ea9c1e0d::t_c5607f58d16745 632-639
+  s_8c1b40ea9c1e0d::t_d2dbe492406dbb 716
+  s_8c1b40ea9c1e0d::t_2619c081b01eea 761-775,779-782,785-803,805,807-820
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6850cef697103a21a57dd40acc773776931621cb",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
