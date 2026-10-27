@@ -448,6 +448,14 @@ pub fn run(options: &Options) -> Result<Outcome> {
     if let Value::Object(m) = &mut trenches {
         m.insert("max_depth_m".into(), json!(trench_depth));
     }
+    // Water follows the steepest descent on the final ground (the flood's order only on flats).
+    let resteered = flood::steepest(dims, &ground, &flags, &body, &basins, &mut dir);
+    frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
+        class_at(i) == lakes::GLACIER
+    });
+    for f in frozen.iter_mut().take(fixed_rows * w) {
+        *f = true;
+    }
     // Coarse river paths keep their own course, descending.
     if let Some(im) = &imprint {
         fine::route(dims, &mut dir, &im.paths);
@@ -820,6 +828,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     );
     figures.insert("stream_power".into(), stream_power);
     figures.insert("trenches".into(), trenches);
+    figures.insert("receivers_set_by_steepest_descent".into(), json!(resteered));
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));

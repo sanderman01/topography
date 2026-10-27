@@ -466,6 +466,58 @@ pub(super) fn breach(
     lowered
 }
 
+/// Receivers by steepest descent (drop over distance, a diagonal √2 long) for every land cell
+/// outside basins, sea, outlets and fixed cells, on the final ground. The flood's discovery
+/// order picks the lowest neighbour, which is nearly always a diagonal and draws 45° streams
+/// across slopes. Cells with no strictly lower neighbour (flats) keep the flood receiver, so
+/// every cell still drains: strictly lower steps cannot form a cycle, and on one height only
+/// flood-tree steps remain. A fixed cell is a receiver only as an outlet. Returns the cells
+/// changed.
+pub(super) fn steepest(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    dir: &mut [u8],
+) -> u64 {
+    let mut changed = 0;
+    for i in 0..ground.len() {
+        if flags[i] & (SEA | FIXED | OUTLET) != 0 || body[i] != 0 || dir[i] == 0 {
+            continue;
+        }
+        let mut best: Option<(f32, u8)> = None;
+        for (k, j) in dims.neighbours(i) {
+            if flags[j] & FIXED != 0 && flags[j] & OUTLET == 0 {
+                continue;
+            }
+            // A basin counts at its level, as in the flood (its cells route to its exit).
+            let to = match body[j] {
+                0 => ground[j],
+                b => basins[b as usize - 1].level,
+            };
+            let drop = ground[i] - to;
+            if drop <= 0.0 {
+                continue;
+            }
+            let slope = drop
+                / if k >= 4 {
+                    std::f32::consts::SQRT_2
+                } else {
+                    1.0
+                };
+            if best.is_none_or(|(s, _)| slope > s) {
+                best = Some((slope, k as u8 + 1));
+            }
+        }
+        if let Some((_, d)) = best.filter(|&(_, d)| d != dir[i]) {
+            dir[i] = d;
+            changed += 1;
+        }
+    }
+    changed
+}
+
 /// Sum of `weight` per cell (itself included) along the receivers: drainage area when the
 /// weight is the cell area. Returns the number of cells on cycles (0 for a flood tree).
 pub(super) fn accumulate(
