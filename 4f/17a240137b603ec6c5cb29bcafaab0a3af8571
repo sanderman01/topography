@@ -1,0 +1,51 @@
+crates/topography-core/Cargo.toml
+  s_8c1b40ea9c1e0d::t_5ee66e510e4e1f 16
+crates/topography-core/src/world/hydrology/rivers.rs
+  s_8c1b40ea9c1e0d::t_b4c72134ad791a 1-2
+  s_8c1b40ea9c1e0d::t_fc6e69e02106ea 8-9,12-13
+crates/topography-cli/src/main.rs
+  s_8c1b40ea9c1e0d::t_7ffba7b668bbe2 46
+crates/topography-core/src/world/hydrology/flood.rs
+  s_8c1b40ea9c1e0d::t_3c85ed2af88e09 343-350,359-361,421
+  s_8c1b40ea9c1e0d::t_107c99f6c6e995 186-203
+  s_8c1b40ea9c1e0d::t_047148a73a0efd 279-282
+Cargo.toml
+  s_8c1b40ea9c1e0d::t_5ee66e510e4e1f 19
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_f37db9a94c4df0 49-50
+  s_8c1b40ea9c1e0d::t_65405c5bee80ee 100-102,106,115-117
+  s_8c1b40ea9c1e0d::t_bd6047ade31edc 302-305,307-311
+  s_8c1b40ea9c1e0d::t_36b610f0579413 8,122,175
+  s_8c1b40ea9c1e0d::t_86acac94926a09 103-105,107-114
+  s_8c1b40ea9c1e0d::t_24cdc492fe3553 325
+  s_8c1b40ea9c1e0d::t_0705685cbde09f 336-356
+crates/topography-core/src/world/hydrology/moisture.rs
+  s_8c1b40ea9c1e0d::t_ccbd0dcd0a9306 1-3,5-11,14-24,26-32,35-42,45-79,143-196,202-236,238-249,251-270
+  s_8c1b40ea9c1e0d::t_06adee7a0884c8 80-117,123-126,128-142
+  s_8c1b40ea9c1e0d::t_b4c72134ad791a 250
+  s_8c1b40ea9c1e0d::t_5c98757af24654 271-286,288-289,291-293,295-296
+  s_8c1b40ea9c1e0d::t_51ef1179306c6a 4
+  s_8c1b40ea9c1e0d::t_b16e4d4440f14e 33-34
+  s_8c1b40ea9c1e0d::t_86acac94926a09 118-122,127,197-201
+  s_8c1b40ea9c1e0d::t_83b665fcb2495e 12-13,25,43-44,237,287,290,294
+crates/topography-core/src/world/hydrology/report.rs
+  s_8c1b40ea9c1e0d::t_fc6e69e02106ea 278-279
+Cargo.lock
+  s_8c1b40ea9c1e0d::t_d5adbbc9cf29b9 11-16,282-308,334-342,392-405,518-523,631,639-648
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f17a240137b603ec6c5cb29bcafaab0a3af8571",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
