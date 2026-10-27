@@ -1,0 +1,23 @@
+crates/topography-core/src/world/hydrology/coarse.rs
+  s_8c1b40ea9c1e0d::t_ca47adf4c36284 252
+crates/topography-core/src/world/hydrology/grid.rs
+  s_8c1b40ea9c1e0d::t_53f13d445fd75f 153-168
+crates/topography-core/src/world/hydrology/band.rs
+  s_8c1b40ea9c1e0d::t_ca47adf4c36284 92,156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c76a04694f8beb54219201ea909662ba5eedb4f4",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
