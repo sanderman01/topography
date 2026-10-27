@@ -462,7 +462,8 @@ pub(super) fn route(dims: Dims, dir: &mut [u8], paths: &[Path]) {
 /// cells or earlier paths). A priority flood over it starts from where the coarse river ends
 /// (the sea, its lake, a dry basin cell, or a grid-edge outlet in the corridor); each coarse
 /// head (a centreline cell without a centreline donor in the window) starts its path at the
-/// lowest fine cell it holds, beside the lake when the river leaves one, and follows the flood
+/// fine cell it holds whose path climbs least (then the lowest), beside the lake when the river
+/// leaves one, and follows the flood
 /// down. A head the flood cannot reach counts as unrouted only in the core rows (a halo is
 /// made again by the next band). The surface cap is described where it is computed.
 #[allow(clippy::too_many_arguments)]
@@ -771,12 +772,31 @@ pub(super) fn rivers(
                 .collect();
             let beside =
                 |i: usize| source != 0 && dims.neighbours(i).any(|(_, j)| body[j] == source);
+            // How far the path from a cell climbs above it: a head low on a steep cell whose
+            // path climbs to the stem would have the stem burned down to it.
+            let climb = |i: usize| {
+                let (mut at, mut top) = (i as u32, ground[i]);
+                while let Some(&r) = recv.get(&at).filter(|&&r| r != u32::MAX) {
+                    top = top.max(ground[r as usize]);
+                    if seeds.contains(&r) {
+                        break;
+                    }
+                    at = r;
+                }
+                top - ground[i]
+            };
             let lowest = |f: &dyn Fn(usize) -> bool| {
                 reached
                     .iter()
                     .copied()
                     .filter(|&i| f(i))
-                    .min_by(|&a, &b| ground[a].total_cmp(&ground[b]).then(a.cmp(&b)))
+                    .map(|i| (climb(i), ground[i], i))
+                    .min_by(|a, b| {
+                        a.0.total_cmp(&b.0)
+                            .then(a.1.total_cmp(&b.1))
+                            .then(a.2.cmp(&b.2))
+                    })
+                    .map(|(_, _, i)| i)
             };
             match lowest(&beside).or_else(|| lowest(&|_| true)) {
                 Some(i) => {
@@ -858,10 +878,9 @@ pub(super) fn rivers(
                     (None, Some(&(_, v1))) => v1,
                     (None, None) => continue,
                 };
-                // Never above this river's coarse surface beside the cell, and in one of its
-                // coarse cells never below that cell's surface (a steep coarse drop stays a
-                // drop at the cell edge instead of a notch cut back into the slope above);
-                // beside them, the coarse surface beside.
+                // The highest coarse surface of this river over the cell's coarse cell and the
+                // 8 around it; the interpolation only where none is near (an inflow head).
+                // A tighter cap cuts notches where the fine relief sits a cell off the coarse.
                 let [qx, qy] = c.abs(q);
                 let local = (-1..=1)
                     .flat_map(|dy| (-1..=1).map(move |dx| [qx as isize + dx, qy as isize + dy]))
@@ -869,12 +888,7 @@ pub(super) fn rivers(
                     .filter(|&p| c.body[p] == id)
                     .map(|p| c.surface[p])
                     .fold(f32::NEG_INFINITY, f32::max);
-                let own = Some(c.surface[q]).filter(|s| c.body[q] == id && s.is_finite());
-                let v = match (own, local.is_finite()) {
-                    (Some(s), true) => v.max(s).min(local),
-                    (None, true) => local,
-                    _ => v,
-                };
+                let v = if local.is_finite() { local } else { v };
                 let e = out.cap.entry(cell).or_insert(f32::INFINITY);
                 *e = e.min(v);
             }
