@@ -15,7 +15,7 @@ use crate::acquisition::{Result, digest, ensure, io_context};
 use flood::{Dims, RIVER, SEA, receiver};
 use lakes::Kind;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, time::Instant};
+use std::{collections::HashMap, fs, path::PathBuf, time::Instant};
 
 /// Rivers start at this drainage area by default (32 m trunk network).
 pub const DEFAULT_RIVER_KM2: f64 = 10.0;
@@ -172,6 +172,38 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     eprintln!("hydrology: breach lowered {carved} cells");
     lap("breach", &mut t);
+
+    // Trenches widen into small valleys; ice and the ground draining onto it stay as they are.
+    let frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
+        class_at(i) == lakes::GLACIER
+    });
+    drop(classes);
+    let mut breach_cut: HashMap<u32, f32> = HashMap::new();
+    grid::for_each_input_row(&options.grid, grid.w, |y, row| {
+        for (x, &z) in row.iter().enumerate() {
+            let i = y * grid.w + x;
+            if flags[i] & flood::BREACHED != 0 {
+                breach_cut.insert(i as u32, z - ground[i]);
+            }
+        }
+    })?;
+    let trench_depth = breach_cut.values().copied().fold(0f32, f32::max);
+    let mut trenches = erosion::widen_trenches(
+        dims,
+        &mut ground,
+        &mut dir,
+        &flags,
+        &body,
+        &basins,
+        &frozen,
+        |i| breach_cut.get(&(i as u32)).copied().unwrap_or(0.0),
+        grid.spacing_m,
+    );
+    drop(breach_cut);
+    if let Value::Object(m) = &mut trenches {
+        m.insert("max_depth_m".into(), json!(trench_depth));
+    }
+    lap("trenches", &mut t);
     let mut acc = vec![0f32; n];
     let cycles = flood::accumulate(dims, &dir, rain_weight, &mut acc);
     lap("accumulate", &mut t);
@@ -187,7 +219,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             &flags,
             &body,
             &basins,
-            |i| class_at(i) == lakes::GLACIER,
+            &frozen,
             grid.spacing_m,
         );
         let mut breached = vec![false; n];
@@ -209,7 +241,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     } else {
         json!({ "skipped": "finer than the trunk-network level" })
     };
-    drop(classes);
+    drop(frozen);
 
     // A dry pass-through basin that a river flows into fills as a lake (not glacier basins).
     let mut inflow = vec![0f32; basins.len() + 1];
@@ -271,6 +303,17 @@ pub fn run(options: &Options) -> Result<Outcome> {
             }
         }
     }
+    let holes = rivers::fill_holes(
+        dims,
+        &mut ground,
+        &dir,
+        &flags,
+        &body,
+        &basins,
+        &band,
+        &surface,
+        grid.spacing_m,
+    );
     lap("rivers", &mut t);
 
     // Body ids: sea 1, lakes in basin order, rivers, then dry basins (not in the raster).
@@ -341,9 +384,18 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }),
     );
     figures.insert("stream_power".into(), stream_power);
+    figures.insert("trenches".into(), trenches);
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));
+    figures.insert(
+        "holes_filled".into(),
+        json!({
+            "cells_raised": holes.cells,
+            "max_raise_m": holes.max_m,
+            "volume_m3": holes.volume_m3.round(),
+        }),
+    );
     lap("report", &mut t);
 
     let mut stage = grid::Stage::new(&options.out)?;
@@ -440,7 +492,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
 
     let f = &figures;
     let summary = format!(
-        "{}\nhydrology {}: sea {:.1}%, {} lakes {:.1} km² ({} over budget), {} dry basins ({} sinks), {} rivers {:.0} km{}",
+        concat!(
+            "{}\nhydrology {}: sea {:.1}%, {} lakes {:.1} km² ({} over budget), ",
+            "{} dry basins ({} sinks), {} rivers {:.0} km{}"
+        ),
         out.display(),
         if passed { "passed" } else { "FAILED" },
         f["sea_share"].as_f64().unwrap_or(0.0) * 100.0,

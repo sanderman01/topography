@@ -13,6 +13,8 @@ pub(super) const RIVER: u8 = 4;
 const CHECKED: u8 = 8;
 /// A river centreline cell (also `RIVER`); other river cells are channel width beside it.
 pub(super) const CENTRE: u8 = 16;
+/// Lowered by breaching (a trench cell).
+pub(super) const BREACHED: u8 = 32;
 
 /// D8 neighbour offsets (row, column); a direction byte is an index here plus one, 0 none.
 const OFFSETS: [(isize, isize); 8] = [
@@ -61,6 +63,10 @@ impl Dims {
         let oy = (k / self.w) as isize - (j / self.w) as isize;
         let ox = (k % self.w) as isize - (j % self.w) as isize;
         oy * dy + ox * dx > 0
+    }
+    /// Direction byte from neighbour `k` of a cell (as in `neighbours`) back to the cell.
+    pub fn back(k: usize) -> u8 {
+        OPPOSITE[k] + 1
     }
     /// Offset of direction byte `d` (row, column).
     pub fn offset(d: u8) -> (isize, isize) {
@@ -179,10 +185,11 @@ pub(super) fn fill(dims: Dims, ground: &[f32], flags: &mut [u8], dir: &mut [u8])
 }
 
 /// Lower the path from `from` towards the outlet to at most `target`, stopping at basin cells
-/// and at ground already low enough. Returns the cells lowered.
+/// and at ground already low enough; lowered cells get `BREACHED`. Returns the cells lowered.
 fn lower(
     dims: Dims,
     ground: &mut [f32],
+    flags: &mut [u8],
     body: &[u32],
     dir: &[u8],
     from: usize,
@@ -194,6 +201,7 @@ fn lower(
             break;
         }
         ground[a] = target;
+        flags[a] |= BREACHED;
         lowered += 1;
         at = receiver(dims, dir, a);
     }
@@ -284,7 +292,7 @@ pub(super) fn breach(
                 }
                 let p = ground[low];
                 if z - p <= cap_m && p >= 0.0 {
-                    lowered += lower(dims, ground, body, dir, c, p);
+                    lowered += lower(dims, ground, flags, body, dir, c, p);
                 } else if z - p > cap_m && deep_kind(low) == Kind::Sink {
                     // (A shallow one below 0 m becomes a lagoon at 0 m in any class.)
                     basins.push(Basin::kept(Kind::Sink, z, c as u32));
@@ -329,7 +337,7 @@ pub(super) fn breach(
                 if basin.kind == Kind::Sink {
                     dir[n] = 0;
                 } else {
-                    lowered += lower(dims, ground, body, dir, c, level);
+                    lowered += lower(dims, ground, flags, body, dir, c, level);
                 }
                 if level <= z {
                     pit.push_back(n);
@@ -342,7 +350,7 @@ pub(super) fn breach(
                 continue;
             }
             if ground[n] < z {
-                lowered += lower(dims, ground, body, dir, c, ground[n]);
+                lowered += lower(dims, ground, flags, body, dir, c, ground[n]);
             }
             if ground[n] == z {
                 pit.push_back(n);

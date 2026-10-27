@@ -2,7 +2,7 @@
 
 use super::flood::{CENTRE, Dims, RIVER, SEA, receiver};
 use super::lakes::{Basin, Kind};
-use super::rivers::{Band, End, River, entered_basin, is_bank, owner};
+use super::rivers::{Band, End, River, entered_basin, hole, is_bank, owner};
 use serde_json::{Map, Value, json};
 
 /// Dry ground may sit this far below adjacent water (f32 rounding of carved rims).
@@ -51,7 +51,9 @@ impl Context<'_> {
     }
 }
 
-/// Ground lowered by breaching and river beds, against the input.
+/// Ground lowered by every step together (breaching, trench widening, stream power and
+/// channels), against the input. Per-step figures are in `trenches`, `stream_power` and
+/// `channels`.
 #[derive(Default)]
 pub(super) struct Carve {
     cells: u64,
@@ -83,7 +85,7 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
     let mut undrained = cycles;
     let (mut uphill, mut not_above, mut rises, mut not_below_level) = (0u64, 0u64, 0u64, 0u64);
     let (mut below_lake, mut below_sea, mut below_river) = (0u64, 0u64, 0u64);
-    let (mut river_below_lake, mut bed_rises) = (0u64, 0u64);
+    let (mut river_below_lake, mut bed_rises, mut holes) = (0u64, 0u64, 0u64);
     let mut lake_range = vec![(f32::INFINITY, f32::NEG_INFINITY); c.basins.len() + 1];
     for i in 0..n {
         let r = receiver(c.dims, c.dir, i);
@@ -91,7 +93,9 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
         if r.is_none() && !c.sea(i) && !c.dims.is_edge(i) && !sink {
             undrained += 1;
         }
-        // Channel beds may hold pools; only dry land must descend.
+        // Only dry land must descend. Channel cells are under water whose surface is flat
+        // across the section and never rises along the centreline, so their beds may hold
+        // pools; centreline beds have their own check.
         let land = !c.wet(i) && c.basin(i).is_none();
         if let Some(r) = r {
             if land && !c.sea(r) && c.basin(r).is_none() && c.ground[r] > c.ground[i] {
@@ -122,6 +126,12 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
             }
         }
         if !c.wet(i) {
+            holes += u64::from(
+                hole(
+                    c.dims, c.dir, c.flags, c.body, c.basins, c.band, c.ground, c.surface, i,
+                )
+                .is_some(),
+            );
             let g = c.ground[i] + BANK_TOLERANCE_M;
             let next = |kind: fn(&Context, usize) -> bool| {
                 c.dims
@@ -188,7 +198,11 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
         json!(not_above),
     );
     m.insert("river_cells_rising_downstream".into(), json!(rises));
-    m.insert("river_beds_rising_downstream".into(), json!(bed_rises));
+    m.insert(
+        "guard_river_beds_rising_downstream".into(),
+        json!(bed_rises),
+    );
+    m.insert("dry_cells_in_holes".into(), json!(holes));
     m.insert("rivers_ending_on_dry_land".into(), json!(on_land));
     m.insert("dry_cells_below_adjacent_lake".into(), json!(below_lake));
     m.insert("dry_cells_below_adjacent_sea".into(), json!(below_sea));
@@ -219,6 +233,39 @@ fn lake_pieces(c: &Context) -> usize {
         }
     }
     pieces.iter().filter(|&&p| p > 1).count()
+}
+
+/// Dry cells below an adjacent river surface that the bank check lets pass only because
+/// they lie ahead along the flow (cascades): count, more than 3 m, deepest and where.
+fn ahead_exposure(c: &Context) -> Value {
+    let (mut cells, mut over3, mut max, mut at) = (0u64, 0u64, 0f32, 0usize);
+    for i in (0..c.ground.len()).filter(|&i| !c.wet(i)) {
+        let g = c.ground[i] + BANK_TOLERANCE_M;
+        let mut exposed = 0f32;
+        for (_, j) in c.dims.neighbours(i) {
+            let Some(o) = owner(c.flags, c.band, j).filter(|_| c.surface[j] > g) else {
+                continue;
+            };
+            let entered = entered_basin(c.dims, c.dir, c.flags, c.body, o);
+            let in_entered = c.body[i] != 0 && c.body[i] == entered;
+            if !in_entered && c.dims.ahead(c.dir[o], j, i) {
+                exposed = exposed.max(c.surface[j] - c.ground[i]);
+            }
+        }
+        if exposed > 0.0 {
+            cells += 1;
+            over3 += u64::from(exposed > 3.0);
+            if exposed > max {
+                (max, at) = (exposed, i);
+            }
+        }
+    }
+    json!({
+        "cells": cells,
+        "over_3m": over3,
+        "max_m": max,
+        "max_at_cell": [at % c.dims.w, at / c.dims.w],
+    })
 }
 
 pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, Value> {
@@ -263,10 +310,13 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
         "over_budget_sinks": count(|b| b.kind == Kind::Sink),
         "ice_basins": count(|b| b.ice),
         "dry_basin_km2": km2(dry_cells),
-        "carved_cells": carve.cells,
-        "carved_cells_over_10m": carve.deep,
-        "carve_volume_m3": carve.volume_m3.round(),
-        "max_cut_m": carve.max_m,
+        "total_lowering": {
+            "cells": carve.cells,
+            "cells_over_10m": carve.deep,
+            "volume_m3": carve.volume_m3.round(),
+            "max_m": carve.max_m,
+        },
+        "river_ahead_exemptions": ahead_exposure(c),
         "river_systems": c.rivers.len(),
         "river_cells": river_cells,
         "river_centreline_cells": (0..n).filter(|&i| c.centre(i)).count(),
@@ -304,6 +354,14 @@ pub(super) fn constants(river_km2: f64, breach_max_m: f32) -> Value {
                 into the seabed as far",
         },
         "stream_power": super::erosion::json(),
+        "trench_widening": super::erosion::trench_json(),
+        "hole_m": super::rivers::HOLE_M,
+        "holes": "a dry cell (not in the basin a river enters) more than hole_m below every \
+            adjacent water surface is raised to the lowest of them, with the dry cells \
+            draining into it",
+        "ahead_rule": "ground ahead of a river cell along the flow is the next \
+            cross-section's bank, not this one's (a cascade); reported as \
+            river_ahead_exemptions",
         "breach_max_m": breach_max_m,
         "deep_depressions": "kept beyond the budget: dry sinks in glacier and arid classes \
             (lake_share <= 0.002), else lakes at the spill lowered by breach_max_m, not below 0 m",
@@ -424,6 +482,7 @@ mod tests {
         surface: Vec<f32>,
         basins: Vec<Basin>,
         rivers: Vec<River>,
+        band: Vec<Band>,
     }
 
     const W: usize = 5;
@@ -449,6 +508,11 @@ mod tests {
                 length_m: 2.0,
                 drainage_km2: 20.0,
             }],
+            band: vec![Band {
+                cell: at(2, 3) as u32,
+                owner: at(2, 2) as u32,
+                depth: 1.0,
+            }],
         };
         for x in 0..W {
             s.ground[at(4, x)] = -1.0;
@@ -463,6 +527,9 @@ mod tests {
             (s.ground[i], s.surface[i], s.body[i]) = (g, w, 1);
             s.flags[i] |= RIVER | CENTRE;
         }
+        // A channel cell beside the lake exit, at its surface.
+        let i = at(2, 3);
+        (s.ground[i], s.surface[i], s.body[i], s.flags[i]) = (4.0, 5.0, 1, RIVER);
         s
     }
 
@@ -478,7 +545,7 @@ mod tests {
             surface: &s.surface,
             basins: &s.basins,
             rivers: &s.rivers,
-            band: &[],
+            band: &s.band,
             cell_km2: 1.0,
             spacing_m: 1000.0,
         };
@@ -496,7 +563,7 @@ mod tests {
     #[test]
     fn every_check_can_fail() {
         assert!(failed(&scene()).is_empty(), "{:?}", failed(&scene()));
-        let broken: [(&str, Mutation); 14] = [
+        let broken: [(&str, Mutation); 16] = [
             ("guard_land_cells_not_draining_to_an_outlet", |s| {
                 s.dir[at(2, 1)] = 0
             }),
@@ -521,7 +588,11 @@ mod tests {
             ("river_cells_rising_downstream", |s| {
                 s.surface[at(3, 2)] = 5.1
             }),
-            ("river_beds_rising_downstream", |s| s.ground[at(3, 2)] = 4.5),
+            ("guard_river_beds_rising_downstream", |s| {
+                s.ground[at(3, 2)] = 4.5
+            }),
+            // Ahead of the river, but below every water surface beside it.
+            ("dry_cells_in_holes", |s| s.ground[at(3, 3)] = -1.0),
             ("rivers_ending_on_dry_land", |s| s.rivers[0].end = End::Land),
             ("dry_cells_below_adjacent_lake", |s| {
                 s.ground[at(0, 1)] = 4.0
@@ -531,6 +602,10 @@ mod tests {
             }),
             ("dry_cells_below_adjacent_river", |s| {
                 s.ground[at(3, 3)] = 2.0
+            }),
+            // Beside the channel cell, below its surface.
+            ("dry_cells_below_adjacent_river", |s| {
+                s.ground[at(2, 4)] = 4.5
             }),
         ];
         for (name, mutate) in broken {

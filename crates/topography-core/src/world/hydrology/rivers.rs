@@ -184,7 +184,7 @@ pub(super) fn extract(
         }
     }
 
-    let band = channel_band(dims, ground, acc, flags, body, basins, l);
+    let mut band = channel_band(dims, ground, acc, flags, body, basins, l);
     for b in &band {
         let (i, o) = (b.cell as usize, b.owner as usize);
         flags[i] |= RIVER;
@@ -269,6 +269,31 @@ pub(super) fn extract(
         }
     }
     drop(order);
+
+    // Gorge rule against the final surface: channel cells more than D above it stay dry
+    // (they are above every surface beside them, so they are valid banks).
+    let keep: Vec<bool> = band
+        .iter()
+        .map(|b| {
+            let (j, o) = (b.cell as usize, b.owner as usize);
+            ground[j] <= surface[o] + depth_m(acc[o])
+                || dims
+                    .neighbours(j)
+                    .any(|(_, k)| owner(flags, &band, k).is_some_and(|o2| ground[j] < surface[o2]))
+        })
+        .collect();
+    let mut kept = keep.iter();
+    band.retain(|b| {
+        let ok = *kept.next().unwrap_or(&true);
+        if !ok {
+            let j = b.cell as usize;
+            flags[j] &= !RIVER;
+            rivers[body[j] as usize - 1].wet_cells -= 1;
+            body[j] = 0;
+        }
+        ok
+    });
+    ch.band_cells = band.len() as u64;
 
     // Beds: the centreline below its surface by the cell's mean depth, reaching below 0 m
     // over the last cells to the sea.
@@ -424,12 +449,114 @@ fn cells_to_sea(dims: Dims, dir: &[u8], flags: &[u8], i: usize) -> Option<usize>
     None
 }
 
+/// A dry cell more than this below every adjacent water surface is a hole.
+pub(super) const HOLE_M: f32 = 0.5;
+
+/// For a dry cell with water beside it that lies more than `HOLE_M` below every adjacent water
+/// surface (sea, lake or river; not inside the basin an adjacent river enters): the lowest
+/// of those surfaces.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn hole(
+    dims: Dims,
+    dir: &[u8],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    band: &[Band],
+    ground: &[f32],
+    surface: &[f32],
+    i: usize,
+) -> Option<f32> {
+    if flags[i] & (SEA | RIVER) != 0
+        || (body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake)
+    {
+        return None;
+    }
+    let mut low = f32::INFINITY;
+    for (_, j) in dims.neighbours(i) {
+        let s = surface[j];
+        if s.is_nan() {
+            continue;
+        }
+        if body[i] != 0
+            && owner(flags, band, j)
+                .is_some_and(|o| entered_basin(dims, dir, flags, body, o) == body[i])
+        {
+            return None;
+        }
+        low = low.min(s);
+    }
+    (low.is_finite() && low > ground[i] + HOLE_M).then_some(low)
+}
+
+/// Raise each hole that is not in a basin to its lowest adjacent water surface, then every
+/// dry cell draining into a raised one that is now lower than it; repeated while holes remain
+/// (a few passes). Returns what was raised.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fill_holes(
+    dims: Dims,
+    ground: &mut [f32],
+    dir: &[u8],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    band: &[Band],
+    surface: &[f32],
+    spacing_m: f64,
+) -> Lips {
+    let dry = |i: usize| flags[i] & (SEA | RIVER) == 0 && body[i] == 0;
+    let mut filled = Lips::default();
+    let mut stack: Vec<u32> = Vec::new();
+    for _ in 0..8 {
+        let holes: Vec<(usize, f32)> = (0..ground.len())
+            .filter(|&i| dry(i))
+            .filter_map(|i| {
+                hole(dims, dir, flags, body, basins, band, ground, surface, i).map(|s| (i, s))
+            })
+            .collect();
+        if holes.is_empty() {
+            break;
+        }
+        for (i, to) in holes {
+            filled.raise(ground, i, to, spacing_m, &mut stack);
+        }
+        while let Some(r) = stack.pop() {
+            let r = r as usize;
+            for (_, d) in dims.neighbours(r) {
+                if dry(d) && ground[d] < ground[r] && receiver(dims, dir, d) == Some(r) {
+                    let to = ground[r];
+                    filled.raise(ground, d, to, spacing_m, &mut stack);
+                }
+            }
+        }
+    }
+    filled
+}
+
 /// Ground raised beside lake exits.
 #[derive(Default)]
 pub(super) struct Lips {
     pub cells: u64,
     pub max_m: f32,
     pub volume_m3: f64,
+}
+
+impl Lips {
+    fn raise(
+        &mut self,
+        ground: &mut [f32],
+        i: usize,
+        to: f32,
+        spacing_m: f64,
+        stack: &mut Vec<u32>,
+    ) {
+        let by = to - ground[i];
+        self.cells += 1;
+        self.max_m = self.max_m.max(by);
+        self.volume_m3 += by as f64 * spacing_m * spacing_m;
+        ground[i] = to;
+        stack.push(i as u32);
+    }
 }
 
 /// Raise dry ground beside each lake exit's channel that is below the lake level up to it (a

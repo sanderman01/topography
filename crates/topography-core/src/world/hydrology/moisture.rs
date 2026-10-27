@@ -171,7 +171,9 @@ impl Stats {
             "mean_land_mm_h": self.mean_land_mm_h,
             "p95_land_mm_h": self.p95_land_mm_h,
             "land_mm_h_by_quadrant": { "nw": nw, "ne": ne, "sw": sw, "se": se },
-            "land_relative_by_quadrant": { "nw": rel(nw), "ne": rel(ne), "sw": rel(sw), "se": rel(se) },
+            "land_relative_by_quadrant": {
+                "nw": rel(nw), "ne": rel(ne), "sw": rel(sw), "se": rel(se)
+            },
             "land_moisture_by_quadrant": { "nw": m[0], "ne": m[1], "sw": m[2], "se": m[3] },
         })
     }
