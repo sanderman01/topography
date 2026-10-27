@@ -178,6 +178,59 @@ pub(super) fn extract(
     (rivers, cut)
 }
 
+/// Ground raised beside lake exits.
+#[derive(Default)]
+pub(super) struct Lips {
+    pub cells: u64,
+    pub max_m: f32,
+    pub volume_m3: f64,
+}
+
+/// Raise dry ground beside each lake exit that is below the lake level up to it (a rock sill,
+/// the only raising), then every dry cell draining into a raised one that is now lower than it,
+/// so no ground drains uphill. Basin cells are left as they are.
+pub(super) fn raise_lips(
+    dims: Dims,
+    ground: &mut [f32],
+    dir: &[u8],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    spacing_m: f64,
+) -> Lips {
+    let dry = |i: usize| flags[i] & (SEA | RIVER) == 0 && body[i] == 0;
+    let mut lips = Lips::default();
+    let mut stack: Vec<u32> = Vec::new();
+    let mut raise = |ground: &mut [f32], i: usize, to: f32, stack: &mut Vec<u32>| {
+        let by = to - ground[i];
+        lips.cells += 1;
+        lips.max_m = lips.max_m.max(by);
+        lips.volume_m3 += by as f64 * spacing_m * spacing_m;
+        ground[i] = to;
+        stack.push(i as u32);
+    };
+    for x in 0..ground.len() {
+        let Some(level) = sill_level(dims, dir, flags, body, basins, x) else {
+            continue;
+        };
+        for (_, j) in dims.neighbours(x) {
+            if dry(j) && ground[j] < level {
+                raise(ground, j, level, &mut stack);
+            }
+        }
+    }
+    while let Some(r) = stack.pop() {
+        let r = r as usize;
+        for (_, d) in dims.neighbours(r) {
+            if dry(d) && ground[d] < ground[r] && receiver(dims, dir, d) == Some(r) {
+                let to = ground[r];
+                raise(ground, d, to, &mut stack);
+            }
+        }
+    }
+    lips
+}
+
 /// A river cell some lake drains into (a lake exit): that lake's level.
 pub(super) fn sill_level(
     dims: Dims,

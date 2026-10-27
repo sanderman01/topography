@@ -2,7 +2,7 @@
 
 use super::flood::{Dims, RIVER, SEA, receiver};
 use super::lakes::{Basin, Kind};
-use super::rivers::{End, River, entered_basin, sill_level};
+use super::rivers::{End, River, entered_basin};
 use serde_json::{Map, Value, json};
 
 /// Dry ground may sit this far below adjacent water (f32 rounding of carved rims).
@@ -119,12 +119,10 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
             };
             below_lake += next(|c, j| c.lake(j).is_some()) as u64;
             below_sea += next(|c, j| c.sea(j)) as u64;
-            // A lake exit's banks may drop away (waterfall lip); the basin a river enters is
-            // not its bank.
+            // The basin a river enters is not its bank (see `mouth_max_drop_m`).
             below_river += c.dims.neighbours(i).any(|(_, j)| {
                 c.river(j)
                     && c.surface[j] > g
-                    && sill_level(c.dims, c.dir, c.flags, c.body, c.basins, j).is_none()
                     && (c.body[i] == 0
                         || c.body[i] != entered_basin(c.dims, c.dir, c.flags, c.body, j))
             }) as u64;
@@ -217,6 +215,20 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
         .filter(|&i| c.basin(i).is_some_and(|b| b.kind != Kind::Lake))
         .count();
     let river_cells = (0..n).filter(|&i| c.river(i)).count();
+    // River surface above the floor of the dry basin it enters, beside the mouth.
+    let mouth_drop = (0..n)
+        .filter(|&i| c.river(i))
+        .filter_map(|i| {
+            let b = entered_basin(c.dims, c.dir, c.flags, c.body, i);
+            (b != 0 && c.basins[b as usize - 1].kind != Kind::Lake).then(|| {
+                c.dims
+                    .neighbours(i)
+                    .filter(|&(_, j)| c.basin(j).is_some() && c.body[j] == b)
+                    .map(|(_, j)| c.surface[i] - c.ground[j])
+                    .fold(0f32, f32::max)
+            })
+        })
+        .fold(0f32, f32::max);
     let count = |f: fn(&Basin) -> bool| c.basins.iter().filter(|b| f(b)).count();
     let land = (n - sea) as f64;
     let ends = |e: fn(&End) -> bool| c.rivers.iter().filter(|r| e(&r.end)).count();
@@ -248,6 +260,7 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
         "rivers_to_lakes": ends(|e| matches!(e, End::Lake(_))),
         "rivers_to_sinks": ends(|e| matches!(e, End::Sink(_))),
         "rivers_into_ice_basins": ends(|e| matches!(e, End::Dry(_))),
+        "mouth_max_drop_m": mouth_drop,
         "rivers_to_grid_edge": ends(|e| *e == End::Edge),
         "max_drainage_km2": c.acc.iter().zip(c.flags).filter(|(_, f)| **f & SEA == 0)
             .map(|(a, _)| *a).fold(0f32, f32::max),
@@ -269,7 +282,8 @@ pub(super) fn constants(river_km2: f64, breach_max_m: f32) -> Value {
             (lake_share <= 0.002), else lakes at the spill lowered by breach_max_m, not below 0 m",
         "sub_zero_depressions": "at most breach_max_m deep with ground below 0 m: lakes at 0 m \
             (lagoons) in any class",
-        "lake_exit": "an outflow river starts at the lake level; its banks may drop away",
+        "lake_exit": "an outflow river starts at the lake level; dry ground beside it below the \
+            level is raised to it (a rock sill), with the dry cells draining into those",
         "lake_min_depth_m": 1.0,
         "lake_min_area_m2": 4096.0,
         "dry_basin_min_depth_m": 2.0,

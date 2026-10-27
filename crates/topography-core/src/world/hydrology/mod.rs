@@ -196,6 +196,15 @@ pub fn run(options: &Options) -> Result<Outcome> {
         grid.spacing_m,
         &mut surface,
     );
+    let lips = rivers::raise_lips(
+        dims,
+        &mut ground,
+        &dir,
+        &flags,
+        &body,
+        &basins,
+        grid.spacing_m,
+    );
     for i in 0..n {
         if flags[i] & SEA != 0 {
             surface[i] = 0.0;
@@ -261,6 +270,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("kept_by_budget".into(), json!(kept_by_budget));
     figures.insert("river_bed_cut_cells".into(), json!(bed_cut.cells));
     figures.insert("river_bed_max_cut_m".into(), json!(bed_cut.max_m));
+    figures.insert("lip_cells_raised".into(), json!(lips.cells));
+    figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
+    figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));
     lap("report", &mut t);
 
     let mut stage = grid::Stage::new(&options.out)?;
