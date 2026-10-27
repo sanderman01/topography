@@ -1,0 +1,48 @@
+crates/topography-core/src/world/hydrology/erosion.rs
+  s_8c1b40ea9c1e0d::t_5193b71619fcc9 9
+  s_8c1b40ea9c1e0d::t_2e6d466f5a78d9 84-86,98-100,104,108-109,141,162,164-167,169,171-172,178,180,183,209,216,219-220,224,228-229
+  s_8c1b40ea9c1e0d::t_b9951b9a7e9346 101
+  s_8c1b40ea9c1e0d::t_1cdb3f40e7b5b7 19-20
+  s_8c1b40ea9c1e0d::t_6a919440a4c224 112,115-116,124-125,128-137
+  s_8c1b40ea9c1e0d::t_abeccea976bb38 40-47
+  s_8c1b40ea9c1e0d::t_c5daee9b41e876 173-176,186,201-205,208,210-215
+  s_8c1b40ea9c1e0d::t_e3ddc822c4f682 187
+  s_8c1b40ea9c1e0d::t_21cbd5ba1e6644 87-92
+  s_8c1b40ea9c1e0d::t_9fd10f95a2e4d6 120-122
+  s_8c1b40ea9c1e0d::t_d2181266bdcf81 48-51
+  s_8c1b40ea9c1e0d::t_3c38802c37e99f 6
+crates/topography-core/src/world/hydrology/rivers.rs
+  s_8c1b40ea9c1e0d::t_683c8b33b1a9fd 446
+  s_8c1b40ea9c1e0d::t_59a940474daead 123-124
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_b5e1d03eb356b6 457-459,479,483-485,491-498,501
+  s_8c1b40ea9c1e0d::t_bb4238e2152d0f 706,719-723,746-753,755-757,759-773
+  s_8c1b40ea9c1e0d::t_12a0924645db91 388-398
+  s_8c1b40ea9c1e0d::t_affda6aa2653bd 726-727,730
+  s_8c1b40ea9c1e0d::t_1d2d2642c38bc3 468
+  s_8c1b40ea9c1e0d::t_5193b71619fcc9 758
+  s_8c1b40ea9c1e0d::t_df04cfaf332811 461-464,466
+  s_8c1b40ea9c1e0d::t_d03b8023fbe0fd 742-745
+  s_8c1b40ea9c1e0d::t_6f3b511d4dbc38 460
+  s_8c1b40ea9c1e0d::t_ec5438f71be8b1 724-725,728,731-741
+  s_8c1b40ea9c1e0d::t_16a805dc560e99 1022
+  s_8c1b40ea9c1e0d::t_ebe28ebf88fcfb 45-52
+  s_8c1b40ea9c1e0d::t_35f6964b110fc7 486,729,754
+  s_8c1b40ea9c1e0d::t_bfa0eeaa98d38d 465,467
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ece796be931974f87ba6c708caa6583ee8112cfe",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
