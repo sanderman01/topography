@@ -491,13 +491,25 @@ Steps:
   would be one-cell slots up to 30 m deep, so their dry walls are cut back to a 35° side
   slope (judgment constant), ring by ring outward. Each wall cell is lowered to the side
   slope from its lowest neighbour already in the valley, but by no more than the trench's
-  breach cut, less the slope's rise per further ring, so widening dies out within a few
-  cells (two rings at 32 m, up to 11 at 4 m; at most 16). A lowered wall cell drains into
-  that neighbour, so heights fall strictly towards the trench and no pits appear. Never below
-  the trench, 0 m or a basin level beside it; basins (an ice caldera's interior too), the sea
-  and cells from the previous band are untouched. Glacier ground widens like any other (ice
-  is a surface layer), so a breach through a glacier rim is a valley, not a slot. On finer
-  levels burned coarse river paths widen the same way.
+  breach cut, less the slope's rise per further ring, so widening dies out (a cell reached
+  again from another side keeps that bound from its ground before widening). The ring count
+  follows the deepest cut: ceil(cut / (tan 35° · spacing)) + 1, so a 30 m cut at 1 m gets 44
+  rings. Trench cells are walls too, so a shallow breach crossing a deep one is lowered with
+  the valley instead of standing as a fin. A lowered wall cell drains into that neighbour, so
+  heights fall strictly towards the trench and no pits appear. Never below the trench, 0 m
+  or a kept basin level beside it. On the trunk level all basins are kept; on finer levels
+  coarse lakes, tarns and basins on a coarse dry basin (such as an ice caldera) are kept,
+  while other fine dry and ice basin cells may be lowered and then leave their basin
+  (`trenches.basin_cells_lowered`). The sea and cells from the previous band are untouched.
+  Glacier ground widens like any other (ice is a surface layer), so a breach through a
+  glacier rim is a valley, not a slot. On finer levels burned coarse river paths widen the
+  same way.
+- Channel widening, at every level, after channel carving: channel cells carved more than
+  one cell's rise (spacing · tan 35°) widen the same way from their water surface
+  (`channel_widening`). Ground is never lowered below the surface of a river it is a bank
+  of (as the bank check: not ground ahead along the river's flow), more than 0.5 m below
+  every river beside it (a hole) or a kept basin level beside it. Lowered cells drain into
+  the channel; their discharge is not recomputed.
 - Receivers, at every level: after breaching and widening, every land cell outside basins
   drains to its steepest-descent neighbour on the final ground (drop over distance, a diagonal
   √2 long; a basin neighbour counts at its level). The flood's discovery order picks the lowest
@@ -589,8 +601,10 @@ rising more than 1 cm into the next centreline cell) hold by construction and on
 bugs. Figures include lakes and dry basins (over budget, sinks, ice), `total_lowering`
 (cells, cells over 10 m, volume and deepest, all steps together against the input), river
 counts and lengths, `river_ahead_exemptions`, `holes_filled`, and per step: `trenches`
-(trench count and cells, deepest breach cut, wall cells lowered, volume, rings, and the
-steepest wall of each slot cell, cut more than one cell's rise, before and after),
+(trench count and cells, deepest breach cut, wall cells lowered, volume, rings used and
+allowed, and the steepest wall of each slot cell, cut more than one cell's rise, before and
+after: median, 90th percentile, largest and where, and how many exceed 60°; trench cells
+count as walls), `channel_widening` (the same for carved channels),
 `stream_power` (cells and volume lowered, the largest drop and where, and median, 90th
 percentile and largest drop on river cells that breaching or widening did and did not cut)
 and `channels` (channel cells beside the centreline, carved cells, deepest cut and where,
@@ -775,7 +789,7 @@ and two adjacent 1 m bands from `fujion-v3-chain-14-l4` (32,768 × 1,024 cells: 
 256-row halos) against the 4 m output. The grids come from `scripts/hydrology_grid.py`:
 
 ```sh
-py="training/.venv/bin/python -I scripts/hydrology_grid.py"; g=scratch/hydro-v2/grids; o=scratch/hydro-v2/r3
+py="training/.venv/bin/python -I scripts/hydrology_grid.py"; g=scratch/hydro-v2/grids; o=scratch/hydro-v2/r4
 $py --chain-l2 data/worlds/fujion-v3-chain-14 $g/c14-32
 $py --world data/worlds/fujion-v3-chain-14 $g/c14-4
 $py --band data/worlds/fujion-v3-chain-14-l4 16128 1024 256 $g/band-A
@@ -790,10 +804,10 @@ target/release/topography world hydrology-seam --north $o/band-A --south $o/band
 
 | Run | Time | Peak RAM | Result |
 | --- | --- | --- | --- |
-| 32 m, 1024² | 1.1 s | 34 MB | passed: 148 lakes, 49 rivers, 83 km |
-| 4 m, 8192², `--coarse` | 95 s | 1.25 GB | passed: 204 lakes (148 coarse, 56 tarns), 463 rivers (49 coarse), 596 km |
-| 1 m band A, `--coarse` | 53 s | 0.70 GB | passed: 12 coarse lakes, 350 rivers (23 coarse), 102 km |
-| 1 m band B, `--north` A | 42 s | 0.87 GB | passed: 5 lakes, 204 rivers (17 coarse), 57 km |
+| 32 m, 1024² | 1.0 s | 34 MB | passed: 148 lakes, 49 rivers, 83 km |
+| 4 m, 8192², `--coarse` | 83 s | 1.27 GB | passed: 204 lakes (148 coarse, 56 tarns), 463 rivers (49 coarse), 596 km |
+| 1 m band A, `--coarse` | 46 s | 0.73 GB | passed: 12 coarse lakes, 350 rivers (23 coarse), 102 km |
+| 1 m band B, `--north` A | 37 s | 0.89 GB | passed: 5 lakes, 203 rivers (17 coarse), 57 km |
 | `hydrology-seam` A, B | 0.2 s | small | passed: 256 shared rows identical, nothing cut, halo guess 99.7 % |
 
 Times were measured while a GPU training job ran on the same machine and vary by up to a
@@ -809,30 +823,53 @@ river inflows from band A and dropped 7 new streams at the seam; a 1 m band of 3
 1 GB and under a minute, so a whole 32 km world (64 bands of 512 rows) is about an hour, and
 64 km bands about 2 GB.
 
-Deep cuts by source (largest, metres): before the cap rule (fix round 1), after it, and now
-that slots through glacier widen (current):
+Deep cuts by source (largest, metres): before the cap rule (fix round 1), after it, with
+slots through glacier widened (round 3) and now that trench cells, fine basins and channel
+cuts widen too, over as many rings as the cut needs (current):
 
-| Source | 4 m before | 4 m after | 4 m now | 1 m A now | 1 m B before | 1 m B now |
-| --- | --- | --- | --- | --- | --- | --- |
-| Coarse path burn | 68 | 19 | 19 | 9 | 30 | 30 |
-| Later path burn (after breaching or widening) | | | 4.1 | 1.2 | | 1.8 |
-| Channel carving | 33 | 20 | 20 | 7.5 | 16 | 8 |
-| Trench and burn widening | 68 | 27 | 28 | 8.5 | 9 | 30 |
-| Lake bed | 0.3 | 0.3 | 0.3 | 0.3 | 0 | 0 |
-| All steps together | 132 | 31 | 31 | 11 | 31 | 31 |
-| Cells lowered over 10 m | 9,780 | 8,209 | 9,044 | 536 | 860 | 10,952 |
-| Cells lowered over 50 m | 628 | 0 | 0 | 0 | 0 | 0 |
+| Source | 4 m before | 4 m after | 4 m r3 | 4 m now | 1 m A now | 1 m B before | 1 m B r3 | 1 m B now |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Coarse path burn | 68 | 19 | 19 | 19 | 9 | 30 | 30 | 30 |
+| Later path burn (after breaching or widening) | | | 4.1 | 4.1 | 0.5 | | 1.8 | 1.8 |
+| Channel carving | 33 | 20 | 20 | 20 | 7.5 | 16 | 8 | 6.9 |
+| Trench and burn widening | 68 | 27 | 28 | 28 | 8.5 | 9 | 30 | 30 |
+| Channel widening | | | | 20 | 7.5 | | | 6.9 |
+| Lake bed | 0.3 | 0.3 | 0.3 | 0.3 | 0.3 | 0 | 0 | 0 |
+| All steps together | 132 | 31 | 31 | 31 | 11 | 31 | 31 | 31 |
+| Cells lowered over 10 m | 9,780 | 8,209 | 9,044 | 9,474 | 540 | 860 | 10,952 | 14,095 |
+| Cells lowered over 50 m | 628 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 The Fuji summit crater (coarse lake 149 at 3,386.7 m) drains through a breach in its glacier
 rim. Trench widening used to skip glacier walls, which left that exit as a slot one cell
-wide and 20 to 31 m deep at every level. Widening now treats glacier ground like any other,
-so at 4 m the exit's walls went from 73 to 82° to the 35° side slope (37° measured between
-cells) and the cut from one cell to 14 to 23 cells wide; at 1 m (band B) from 1 m to 31 to
-49 m wide, which is most of band B's 10,952 cells lowered over 10 m. At 32 m the slot already
-stood at 35°. On fujix the caldera's 632 ice-basin cells and all 2,141 glacier cells within
-4 km of the summit are unchanged and dry; widening there lowered 4,961 wall cells (4,921
-before). The steepest wall left at 4 m (83°, at (4634, 6141)) is a 20 m channel cut, which
-is not widened.
+wide and 20 to 31 m deep at every level; round 3 widened it through glacier but left a
+fin and, at 1 m, vertical walls. Now, at 4 m, the shallow breach cells that crossed the
+widened valley as a blade 20 m high ((3447, 4359) to (3450, 4356)) are lowered with it: the
+section along row 4358 falls from 3,429 m to the river at 3,386 m and climbs to 3,422 m at
+the side slope, and no wall in the exit (3420–3480, 4340–4375) is steeper than 54° (81°
+before). At 1 m (band B) the cut needs 44 rings (16 were allowed), and the ice-basin cells
+on its east side are lowered too (892 basin cells left their basin): along row 822 both
+walls now climb at 35° to the original ground, where round 3 left an 18 m step on the west
+side and a 29 m wall on the east. In the exit (13770–13830, 790–880) no cell is a fin and 6
+cells keep a wall over 60° (at most 68°, at (13770, 832), where widening dies out on the
+crater wall); 522 did before. All steps together still lower at most 31 m; band B's cells
+over 10 m rose from 10,952 to 14,095 (0.5 M m³ in all). Cells more than 10 m above both
+opposite neighbours with a cut under 3 m: 66 → 13 at 4 m, 1 → 0 in band A, 121 → 0 in band B.
+The 2 new ones at 4 m ((4634, 6127), (4633, 6131), about 10.3 m) lie on a river falling
+12 m per 4 m cell down a 70° cliff: a bank cell raised to the river surface above it (a
+hole) stands beside walls that channel widening lowered.
+
+Channel cuts deeper than one cell's rise now widen: at 4 m 9,238 such cells, 11,600 wall
+cells lowered (at most 20 m, 0.4 M m³); their walls over 60° fell from 874 to 141 (steepest
+83° → 76°). The 20 m gorge at (4634, 6141) is a cascade down that cliff; 311 cells around
+it are now lowered (up to 20 m), but banks may not drop below the river surface they hold,
+so walls there stay steep. Slot walls left over 60° are mostly natural steps in the input
+that a cut no deeper than the trench's cannot remove (for example the 78° at (3908, 1952),
+a 15 m terrace edge beside a burned path), and at 1 m a dry breach line under a wide river
+whose channel cells 7 m above it were not lowered ((26410, 693), 82°, as in round 3). On
+fujix the caldera's 632 ice-basin cells and all 2,141 glacier cells within 4 km of the
+summit are unchanged and dry; 27 cells elsewhere changed (shallow trench cells, at most
+10.5 m lower or 3.4 m higher than before), and the 32 m Fujion level is unchanged. Peak
+memory rose by about 2 % (1.27 GB at 4 m).
 The 132 m at 4 m (3775, 6418) was not uncarved coarse ground: the path ran a coarse column
 beside a river falling 45 m per 32 m cell, and the cap took the surface of the river cell
 downstream of it (the coarse level had cut there only 16 m). The rule above removes it
