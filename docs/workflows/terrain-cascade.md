@@ -659,24 +659,29 @@ are read. The coarse network is then held fixed:
 - Coarse lakes keep their id and level. Wet is fine ground below the level, 8-connected to
   seed cells (fine cells below the level inside the coarse lake's cells, and the previous
   band's cells of the lake); no ground is dug out, so coarse lake cells whose fine ground is
-  above the level stay dry. The region grows over ground below the level with no coarse-cell
-  limit, but not over a coarse river's cells (the river keeps its course). Where it would
-  leak (beside the sea for a lake above 0 m, at the world's or the grid's edge, or beside a
-  lake with a lower level), the leaking branch is cut at the fine cells one coarse cell out
-  from the seeds by a sill raised to the level plus 0.05 m (a leak nearer the seeds is raised
-  where it is, except on a band edge, where the lake may go on); cut-off ground stays out of
-  lakes as high. One piece per lake (the largest, and any touching a band edge or the
-  previous band's cells); smaller pieces stay dry. Dry ground left beside a lake below its
-  level, and a coarse river's cells beside it below the level plus 0.05 m, are raised to
-  that (a shore). A lake with no fine ground below its level keeps its lowest cell 0.25 m
+  above the level stay dry. The region grows breadth first over ground below the level, not
+  over a coarse river's cells (the river keeps its course), up to four coarse cells out from
+  the seeds; still growing there counts as a leak, as does water beside the sea for a lake
+  above 0 m, at the world's or the grid's edge, or beside a lake with a lower level. A leaking
+  branch is cut at its narrowest breadth-first layer between one and two coarse cells out
+  (and nearer than its nearest leak) by a sill raised to the level plus 0.05 m; a leak nearer
+  the seeds is raised where it is, except on a band edge, where the lake may go on. Cut-off
+  ground stays out of lakes as high, and the rounds repeat (at most 8); a leak left after them
+  fails `coarse_lake_leaks_left`. One piece per lake (the largest, and any touching a band
+  edge or the previous band's cells); smaller pieces stay dry. Dry ground left beside a lake
+  below its level, and a coarse river's cells beside it below the level plus 0.05 m, are
+  raised to that (a shore), except a notch with 6 or more cells of that lake around it, which
+  joins the lake. A lake with no fine ground below its level keeps its lowest cell 0.25 m
   below. The coarse river leaving a lake starts beside it in the coarse exit cell, at the
   level. A depression the flood reaches from a lake joins it; one around a lake is breached
   past the cap (not below 0 m; its ground below the lake's level joins the lake), so the lake
-  drains. `coarse.lakes` reports `bed_max_lowering_m` (only that one-cell case), sill and
-  shore cells raised with the largest raise and example cells, cut-off pieces left dry and
-  leaking cells cut off (counted per lake). `lake_exits_off_the_coarse_exit` counts lakes
-  whose fine exit is more than one coarse cell from the coarse one, with examples (a figure,
-  by ruling).
+  drains. At the end, a dry cell with 6 or more cells of one lake around it (a sill or divide
+  row the lake later surrounded) goes back to its input ground and joins the lake when that is
+  below the level (`notch_cells_joined_to_a_lake`). `coarse.lakes` reports
+  `bed_max_lowering_m` (only the one-cell case), sill and shore cells raised with the largest
+  raise and example cells, cut-off pieces left dry, distinct leaking cells cut off and
+  `leaks_left`. `lake_exits_off_the_coarse_exit` counts lakes whose fine exit is more than one
+  coarse cell from the coarse one, with examples (a figure, by ruling).
 - Coarse rivers keep their id and get a fine centreline, largest first. Its corridor is the
   fine cells of the river's coarse cells and their neighbours (and of the river it joins,
   and all of the lake it ends in, whose fine water may lie further in), not other coarse
@@ -692,14 +697,19 @@ are read. The coarse network is then held fixed:
   centreline donor in the grid) starts a path at the fine cell whose path climbs least (then
   the lowest), which follows the flood down; a low head on a steep cell whose path climbed to
   the stem would have the stem burned down to it. The surface cap along a path is the
-  highest coarse surface of the river over the coarse cell it is in and the 8 around it (the
-  coarse surface interpolated along the path only where none is near, at an inflow head). The
-  path is burned in (a running minimum from its head, at most the cap, not below a lake floor
-  beside it or 0 m) before the fine flood, so the fine routing follows it; burned cells widen
-  like breach trenches, and after breaching the path is routed and burned again. Its
-  discharge is the coarse one. `coarse.rivers` reports paths, cells, burned cells and the
-  deepest burn and where, and rivers whose head the flood did not reach (counted only in the
-  grid's core rows: a band's halo is made again by the next band).
+  highest coarse surface of the river over the coarse cell it is in and the 8 around it, from
+  the river's coarse cells not downstream of where the path is (the coarse order of the last
+  river cell it passed, or of the upstream-most river cell beside it), and never below the
+  coarse surface interpolated along the path between the middles of its runs through the
+  river's coarse cells. A downstream cell's surface beside a steep coarse drop would otherwise
+  cut a gash (132 m at 4 m before this rule). The path is burned in (a running minimum from
+  its head, at most the cap, not below a lake floor beside it or 0 m), and each cut then
+  tapers off upstream at the 35° trench side slope instead of ending in a cliff, before the
+  fine flood, so the fine routing follows it; burned cells widen like breach trenches, and
+  after breaching the path is routed and burned again. Its discharge is the coarse one.
+  `coarse.rivers` reports paths, cells, burned cells and the deepest burn below the ground
+  the path had (about the input ground) and where, and rivers whose head the flood did not
+  reach (counted only in the grid's core rows: a band's halo is made again by the next band).
 - Depressions: no new lakes but tarns at 4 m (from 2 m spacing: the class `tarn_share` as
   the lake budget), none at 1 m, and no new dry basins. A depression touching a coarse dry
   basin (`flow.u8`) stays a dry basin (endorheic if the coarse one was), glacier depressions
@@ -714,8 +724,9 @@ are read. The coarse network is then held fixed:
   `coarse_rivers_missing_or_unrouted` (a coarse river with a centreline here but no fine
   centreline, or a head the flood did not reach) and `water_above_coarse_surface` (a fine
   centreline of a coarse river more than 1 cm above the highest of its coarse surfaces over
-  its coarse cell and the 8 around it, as the cap). A unit test breaks each of them.
-  `coarse.consistency` lists the cells and rivers.
+  its coarse cell and the 8 around it, or above its path's cap where that is higher) and
+  `coarse_lake_leaks_left` (above). Unit tests break each of them. `coarse.consistency` lists
+  the cells and rivers. `total_lowering` gives the deepest lowering and where.
 
 ### Bands and seams
 
@@ -761,7 +772,7 @@ and two adjacent 1 m bands from `fujion-v3-chain-14-l4` (32,768 × 1,024 cells: 
 256-row halos) against the 4 m output. The grids come from `scripts/hydrology_grid.py`:
 
 ```sh
-py="training/.venv/bin/python -I scripts/hydrology_grid.py"; g=scratch/hydro-v2/grids; o=scratch/hydro-v2/r1
+py="training/.venv/bin/python -I scripts/hydrology_grid.py"; g=scratch/hydro-v2/grids; o=scratch/hydro-v2/r2
 $py --chain-l2 data/worlds/fujion-v3-chain-14 $g/c14-32
 $py --world data/worlds/fujion-v3-chain-14 $g/c14-4
 $py --band data/worlds/fujion-v3-chain-14-l4 16128 1024 256 $g/band-A
@@ -777,43 +788,53 @@ target/release/topography world hydrology-seam --north $o/band-A --south $o/band
 | Run | Time | Peak RAM | Result |
 | --- | --- | --- | --- |
 | 32 m, 1024² | 0.9 s | 37 MB | passed: 148 lakes, 49 rivers, 83 km |
-| 4 m, 8192², `--coarse` | 91 s | 1.31 GB | passed: 199 lakes (148 coarse, 51 tarns), 461 rivers (49 coarse), 596 km |
-| 1 m band A, `--coarse` | 44 s | 0.70 GB | passed: 12 coarse lakes, 354 rivers (23 coarse), 101 km |
-| 1 m band B, `--north` A | 35 s | 0.88 GB | passed: 5 lakes, 194 rivers (17 coarse), 57 km |
-| `hydrology-seam` A, B | 0.2 s | small | passed: 256 shared rows identical, nothing cut, halo guess 99.8 % |
+| 4 m, 8192², `--coarse` | 96 s | 1.26 GB | passed: 204 lakes (148 coarse, 56 tarns), 463 rivers (49 coarse), 596 km |
+| 1 m band A, `--coarse` | 51 s | 0.70 GB | passed: 12 coarse lakes, 350 rivers (23 coarse), 102 km |
+| 1 m band B, `--north` A | 40 s | 0.87 GB | passed: 5 lakes, 204 rivers (17 coarse), 57 km |
+| `hydrology-seam` A, B | 0.2 s | small | passed: 256 shared rows identical, nothing cut, halo guess 99.7 % |
 
-About 50 % of land receivers are diagonal at every level. At 4 m: 91 tributaries end in a
-coarse river; 41 centreline cells were raised to a lake or the water below; lake beds were
-lowered only for one lake without fine ground below its level (0.32 m); 415 sill cells
-(at most 9.4 m) and 486 shore cells (at most 9.3 m) were raised, where coarse lake levels
-stand above the fine ground around them; 11 lake exits lie more than a coarse cell from the
-coarse exit. 4 m memory is about 20 bytes a cell, so 16,384² (64 km) needs about 5.2 GB. At
-1 m, sills and shores rise at most 2.8 m, band B took 14 river inflows from band A and dropped
-7 new streams at the seam; a 1 m band of 32 km is under 1 GB and under a minute, so a whole
-32 km world (64 bands of 512 rows) is about 40 minutes, and 64 km bands about 2 GB.
+Times were measured while a GPU training job ran on the same machine and vary by up to a
+third between runs. About 50 % of land receivers are diagonal at every level. At 4 m: 91
+tributaries end in a coarse river; 41 centreline cells were raised to a lake or the water
+below; lake beds were lowered only for one lake without fine ground below its level
+(0.32 m); 290 sill cells (at most 9.4 m) and 507 shore cells (at most 9.3 m) were raised,
+where coarse lake levels stand above the fine ground around them; 17,244 leaking cells were
+cut off, no leak is left; 150 cells raised inside a lake joined it; 7 lake exits lie more
+than a coarse cell from the coarse exit. 4 m memory is about 20 bytes a cell, so 16,384²
+(64 km) needs about 5 GB. At 1 m, sills rise at most 2.8 m and shores 1.5 m; band B took 14
+river inflows from band A and dropped 7 new streams at the seam; a 1 m band of 32 km is under
+1 GB and under a minute, so a whole 32 km world (64 bands of 512 rows) is about an hour, and
+64 km bands about 2 GB.
 
-Deep cuts, by source (largest, metres):
+Deep cuts by source (largest, metres; before and after this rule set, fix round 2):
 
-| Source | 4 m | 1 m band A | 1 m band B |
-| --- | --- | --- | --- |
-| Coarse path burn | 68 | 9 | 30 |
-| Channel carving | 33 | 8 | 16 |
-| Trench and burn widening (walls) | 68 | 8.5 | 9 |
-| Lake bed | 0.3 | 0.3 | 0 |
-| All steps together | 132 | 14 | 31 |
+| Source | 4 m before | 4 m after | 1 m A before | 1 m A after | 1 m B before | 1 m B after |
+| --- | --- | --- | --- | --- | --- | --- |
+| Coarse path burn | 68 | 19 | 9 | 9 | 30 | 30 |
+| Channel carving | 33 | 20 | 8 | 7.5 | 16 | 8 |
+| Trench and burn widening | 68 | 27 | 8.5 | 8.5 | 9 | 9 |
+| Lake bed | 0.3 | 0.3 | 0.3 | 0.3 | 0 | 0 |
+| All steps together | 132 | 31 | 14 | 11 | 31 | 31 |
+| Cells lowered over 50 m | 628 | 0 | 0 | 0 | 0 | 0 |
 
-The test worlds were generated from uncarved coarser ground (the 4 m world from the 32 m
-`l2` before hydrology, the 1 m world from the 4 m world before it), so where the coarse level
-cut down (breach trenches, stream power and channels on steep 32 m coasts) the finer level
-must cut again to stay at or below the coarse water. The largest, 132 m at 4 m (3775, 6418),
-is a coarse river falling 45 m per 32 m cell down a coastal slope, where the fine slope lies a
-coarse cell further down: the path burns 68 m to the coarse surface and widening to 35°
-walls over 16 rings spreads it. Generating each level from the carved coarse ground
-(Task 6) should remove most path burns and their widening; channel cuts follow discharge and
-stay. Task 6 should also not flatten water per coarse cell: the 4 m test world holds 128 m
-flat water terraces (values in 32-cell strips), and lakes and tarns on them inherit block
-shapes. Tributaries on those flats still run straight. PNG crops:
-`scratch/hydro-v2/c14-4m-tributaries.png` (4 m, 4 km square at cells 1024, 5120),
+The 132 m at 4 m (3775, 6418) was not uncarved coarse ground: the path ran a coarse column
+beside a river falling 45 m per 32 m cell, and the cap took the surface of the river cell
+downstream of it (the coarse level had cut there only 16 m). The rule above removes it
+(11.5 m there now). The largest left at 4 m are path burns (19 m at (2358, 3800)) and their
+widening, and channels; together at most 31 m at (3911, 1951). In band B the 30 m burn at
+(13797, 853) is the outflow of a coarse summit lake whose level lies about 30 m below the 1 m
+ground around it: the head is held at the lake level and the path cut down to it. The test
+worlds were generated from uncarved coarser ground (the 4 m world from the 32 m `l2` before
+hydrology, the 1 m world from the 4 m world before it), so where the coarse level cut down
+(breach trenches, stream power, channels, lakes held below their surroundings) the finer level
+cuts again; generating each level from the carved coarse ground (Task 6) should shrink those,
+while channel cuts follow discharge and stay. Task 6 should also not flatten water per coarse
+cell: the 4 m test world holds 128 m flat water terraces (values in 32-cell strips), and lakes
+and tarns on them inherit block shapes; tributaries on those flats still run straight.
+Sills form straight runs where a leaking branch is cut on a breadth-first layer (now its
+narrowest layer); placing them at the highest cells of the leak front would need a saddle
+search and is left. PNG crops:
+`scratch/hydro-v2/c14-4m-tributaries.png` (4 m, 4 km square at cells 1024, 5120, fix round 2),
 `scratch/hydro-v2/c14-4m-steepest-comparison.png` (that crop with flood-order receivers on
 the left, steepest descent on the right) and `scratch/hydro-v2/band1m-tributaries-seam.png`
 (1 m, 1 km × 768 m at column 16,384 of band B, the seam at row 256); coarse rivers blue,
