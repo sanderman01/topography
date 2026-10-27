@@ -1,0 +1,74 @@
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_19d5caa6bf43c1 252-254
+  s_8c1b40ea9c1e0d::t_5382232ab49728 240
+  s_8c1b40ea9c1e0d::t_f54a806db4716f 179-188
+  s_8c1b40ea9c1e0d::t_b28c4e5c4e3358 754,776
+  s_8c1b40ea9c1e0d::t_c072ff32e65adb 454
+  s_8c1b40ea9c1e0d::t_9a68b6be564986 220
+  s_8c1b40ea9c1e0d::t_d8e6e0a8bc832f 227
+  s_8c1b40ea9c1e0d::t_a625423f15480f 784,788-791
+  s_8c1b40ea9c1e0d::t_6bfffd2e05066b 267-279,281,286,290,293,296-318,350
+  s_8c1b40ea9c1e0d::t_b3156d90b94855 353,470
+  s_8c1b40ea9c1e0d::t_750de39ef4ff7e 325-326,333,338-341,348-349
+  s_8c1b40ea9c1e0d::t_a55001b5cee920 787
+  s_8c1b40ea9c1e0d::t_329504808d9ab1 625-629
+  s_8c1b40ea9c1e0d::t_137c64d4ac59f4 582
+  s_8c1b40ea9c1e0d::t_50e7a956631fee 783
+crates/topography-core/src/world/hydrology/report.rs
+  s_8c1b40ea9c1e0d::t_28176def2d9050 228,234-236
+  s_8c1b40ea9c1e0d::t_46bce103887e90 229,233
+crates/topography-core/src/world/hydrology/band.rs
+  s_8c1b40ea9c1e0d::t_a55001b5cee920 5,152,182-183
+  s_8c1b40ea9c1e0d::t_0314328d428a5e 170,240
+  s_8c1b40ea9c1e0d::t_40b894e8c405dc 204
+  s_8c1b40ea9c1e0d::t_d7baaa10704ee0 171,193-203,226,241
+crates/topography-core/src/world/hydrology/rivers.rs
+  s_8c1b40ea9c1e0d::t_760626ceeabded 370-372,374,376,381-387
+  s_8c1b40ea9c1e0d::t_6f3e495f732b41 484
+  s_8c1b40ea9c1e0d::t_396e50d1d25cc7 447-468
+  s_8c1b40ea9c1e0d::t_e16125ecdf2516 482-483
+crates/topography-core/src/world/hydrology/fine.rs
+  s_8c1b40ea9c1e0d::t_137c64d4ac59f4 314,455,815
+  s_8c1b40ea9c1e0d::t_dc2105c269a529 354-355
+  s_8c1b40ea9c1e0d::t_c3d195a190ec5a 818-840,855-916,919,923-932,938-940
+  s_8c1b40ea9c1e0d::t_dfd22328499eda 841-854,920-922,933-937
+  s_8c1b40ea9c1e0d::t_247912ec7680b4 670
+  s_8c1b40ea9c1e0d::t_ca96077fc00692 917-918
+  s_8c1b40ea9c1e0d::t_7b766e93073d4f 218,222,242-244,281-288
+  s_8c1b40ea9c1e0d::t_1b7b24064fd1c2 446,492,801
+  s_8c1b40ea9c1e0d::t_98495f4043d8ee 414
+  s_8c1b40ea9c1e0d::t_a1b95238a29aad 550,592-594,599,601-615,618,626-629,632,639,646,651
+  s_8c1b40ea9c1e0d::t_0519296c029210 363-364,374-376,381
+  s_8c1b40ea9c1e0d::t_9d3d78809b0e65 554-573
+  s_8c1b40ea9c1e0d::t_e9277839461b98 771-774,782-787
+  s_8c1b40ea9c1e0d::t_f9a21fcc9a8bc8 315-316,456
+  s_8c1b40ea9c1e0d::t_a2162ec61ba30c 443-444
+  s_8c1b40ea9c1e0d::t_5692842f615036 543
+  s_8c1b40ea9c1e0d::t_c072ff32e65adb 812
+  s_8c1b40ea9c1e0d::t_46bce103887e90 445,536,584-586,595-598,600,622-625
+  s_8c1b40ea9c1e0d::t_057359b11dd17c 8
+  s_8c1b40ea9c1e0d::t_2415bac4ef9026 535
+  s_8c1b40ea9c1e0d::t_9854b267f12ee8 464,466-467
+  s_8c1b40ea9c1e0d::t_af3e233fc0714d 229
+  s_8c1b40ea9c1e0d::t_3df898bdfefcf9 362,366-367,369,371
+  s_8c1b40ea9c1e0d::t_6361cb21457ef9 513-530
+  s_8c1b40ea9c1e0d::t_bb43286ec2c868 537-540
+  s_8c1b40ea9c1e0d::t_f8029690220ce4 724,727
+  s_8c1b40ea9c1e0d::t_6c775a81ddb3cd 549,551-553,574-583,587-591,649
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "afee26103f82b9ad1eca222ebbfa76e33829ac2a",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
