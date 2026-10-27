@@ -15,8 +15,8 @@ Current models (2026-10-27), all on terrain legend v3 with form channels:
 | --- | --- | --- | --- |
 | L1 128 m | `cascade-l1-run-6` | `context-v5` (GLO-30 + GEBCO) | pass |
 | L2 32 m | `cascade-l2-run-8` | `context-v5` | pass |
-| L3 4 m | `cascade-l3-run-5` | `lidar-v3` (lidar averaged to 4 m), dithered borders | pass, except Grand Canyon (see below) |
-| L4 1 m | `cascade-l4-run-8` | `diffusion-v9` (1 m library tiles), dithered borders | pass, except Grand Canyon (see below) |
+| L3 4 m | `cascade-l3-run-5` + experts `cascade-l3-run-5-experts` | `lidar-v3` (lidar averaged to 4 m), dithered borders | pass (Grand Canyon vs plain under floor, see below) |
+| L4 1 m | `cascade-l4-run-8` + experts `cascade-l4-run-8-experts` | `diffusion-v9` (1 m library tiles), dithered borders | pass |
 
 ## Training data
 
@@ -153,10 +153,15 @@ Results (2026-10-27; L3 stopped at step 7,156, L4 at 7,650). Both pass the class
 recognition (L3 own 0.26 vs swapped 0.14; L4 0.38 vs 0.11), roughness (hidden rank 0.83
 and 0.90) and the dithered-border gate. Both fail Grand Canyon vs 13 (L3 0.58 between
 classes vs 0.67 between seeds; L4 0.45 vs 0.59) and L3 fails vs plain (1.30 vs floor 1.56),
-so `class_gates` exits 1. Ruling: the runs become the current L3 and L4 models; class 19
-behaves as its parent 13 at 4 m and 1 m, and the Grand Canyon's character comes from its
-real 32 m surface. The reaches give few 4 m windows (one 4096² region); a retrain that
-oversamples them is the way to a distinct class if wanted.
+so `class_gates` exits 1: alone, the runs treat class 19 as its parent 13.
+
+Grand Canyon experts (2026-10-27): class-19-only fine-tunes of these runs (`--only-class 19
+--init-from`, no mixed windows, lr 1e-4; L3 2 h, 2,740 steps; L4 3 h) in
+`cascade-l3-run-5-experts/c19` and `cascade-l4-run-8-experts/c19`, used as a `ClassMixture`
+over the base run (class gates `--class-runs`). With them Grand Canyon vs 13 passes (L3 0.81
+between classes vs 0.76 between seeds; L4 1.36 vs 0.79), the dithered border passes, and the
+other gates are unchanged. L3 vs plain stays under its floor (1.09 vs 1.56, above seed noise
+0.76); accepted, since the floor uses real centroids of windows with different coarse input.
 
 `cascade_eval` writes a blind review (`review.html`; keep `key.json` and
 `compare.html` closed until the votes are in), terrain statistics, a
