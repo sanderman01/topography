@@ -384,8 +384,10 @@ $P -m topography_training.diffusion.landcover --world data/worlds/fujion-v3-chai
 
 Water as a surface height ([Fujix plan](../plans/fujix-v1.md) section 2). The Rust command
 works on one grid at a time, with orographic precipitation, stream power at 32 m and
-discharge-sized channels; holding a coarser network fixed (`--coarse`) and the cascade
-calling it come later, and the chain still uses `hydrology.py`.
+discharge-sized channels. A finer level holds the coarser level's network fixed (`--coarse`,
+[below](#finer-levels)), and 1 m bands carry the previous band's rows (`--north`,
+[below](#bands-and-seams)). The cascade calling it comes later; the chain still uses
+`hydrology.py`.
 
 ```sh
 training/.venv/bin/python -I scripts/hydrology_grid.py data/worlds/fujix-collage-55 scratch/hydro-v2/fujix55-grid
@@ -393,17 +395,23 @@ target/release/topography world hydrology --grid scratch/hydro-v2/fujix55-grid -
 ```
 
 `hydrology_grid.py` turns a collage (`arrays.npz` `l2` and `class32.u8`) into a grid
-directory: `grid.json` (`size` [w, h], `spacing_m`, `origin`, optional `classes_cell_m`,
-optional `wind_from_deg` from the layout copy in the collage's `layout.json`),
-`elevation.f32` and optional `classes.u8` (little-endian, rows north to south). The output
+directory (with `wind_from_deg` from the layout copy in the collage's `layout.json`). A grid
+directory holds `grid.json` (`size` [w, h], `spacing_m`, `origin`, optional `offset_m`,
+`core_rows`, `classes_cell_m` and `wind_from_deg`), `elevation.f32` and optional
+`classes.u8` (little-endian, rows north to south). `origin` [x, y] is the world's north-west corner in the layout plane (x east,
+y north; default [0, h · spacing]); `offset_m` [east, south] places a band or window inside
+that world, so its north-west corner is (origin x + east, origin y − south); `core_rows`
+[start, end) are the rows a band delivers (default all; the rest is halo). The output
 directory must not exist; it is staged and renamed into place. It holds `grid.json` (input
-plus `level`, `wind_from_deg`, a `discharge` entry, a `moisture` entry and provenance: input
-and output SHA-256s, water table, tool version), `elevation.f32` (ground after breaching,
-stream power and channel carving),
-`water-surface.f32` (NaN where dry, sea 0), `water-body.u32` (0 dry, 1 sea, then lakes, then
-rivers), `discharge.f32`, `moisture.f32`, `bodies.json` and `report.json`. Exit status 1
-means a validation check failed; the outputs are still written so the report can be read.
-`--coarse` is not implemented yet.
+plus `level`, `wind_from_deg`, a `discharge` entry, a `moisture` entry, a `flow` entry and
+provenance: input and output SHA-256s, the coarse level's and previous band's files, water
+table, tool version), `elevation.f32` (ground after breaching, stream power and channel
+carving), `water-surface.f32` (NaN where dry, sea 0), `water-body.u32` (0 dry, 1 sea, then
+lakes, then rivers), `discharge.f32`, `moisture.f32`, `flow.u8` (low 4 bits the D8 receiver,
+0 none; 16 river centreline, 32 dry basin, 64 endorheic basin; what a finer level and the
+next band read), `bodies.json` and `report.json`. Exit status 1 means a validation check
+failed; the outputs are still written so the report can be read. `--river-km2` defaults by
+spacing: 10 km² at 16 m and coarser, 0.5 km² from 2 m, 0.05 km² below.
 
 Precipitation comes first, from the input ground:
 
@@ -527,17 +535,24 @@ Steps:
   cell, so the bed ramps down over many cells instead of a one-cell notch. The bed is the
   surface minus the cell's depth. Into the sea, near sea level (surface at most 4 D), the bed
   of the last four cells descends to −D at the mouth and continues four cells into the
-  seabed. Two exceptions:
+  seabed. Three exceptions:
   - a lake's exit cell (a river cell a lake drains into) holds its surface at the lake
     level, a sill. Dry ground beside it or its channel below the level is raised to the
-    level (a rock sill, the only ground raising), and so is any dry cell draining into a
-    raised one that is now below it, so nothing drains uphill;
+    level (a rock sill), and so is any dry cell draining into a raised one that is now below
+    it, so nothing drains uphill;
+  - a centreline never stands below an adjacent lake's level or the water it flows into (a
+    sill, the previous band's river): it rises to it, and lower surfaces upstream rise too
+    (a backwater; an outflow running along its lake's shore stays at the level). Dry ground
+    beside a raised channel below its surface is raised as at a sill.
+    `channels.centreline_cells_raised_to_a_lake` counts them (0 on fujix; on finer levels
+    they are where the fine valley lies below the coarse water);
   - the basin a river drains into is not its bank, so mouths into sinks are not cut down to
     the sink floor. `mouth_max_drop_m` reports the largest plunge from a mouth to the floor
     beside it.
-- Holes: a dry cell more than 0.5 m below every adjacent water surface (sea, lake or river;
-  not inside the basin an adjacent river enters) is raised to the lowest of them, and so is
-  any dry cell draining into a raised one that is now lower, repeated while holes remain.
+- Holes: a dry cell (dry basin cells too) more than 0.5 m below every adjacent water surface
+  (sea, lake or river; not inside the basin an adjacent river enters) is raised to the lowest
+  of them, and so is any dry cell draining into a raised one that is now lower, repeated while
+  holes remain.
   `holes_filled` reports the cells, the largest raise and the volume.
 
 `bodies.json` lists the sea (id 1), lakes (`exit_cell`: the first cell the lake's routed flow
@@ -566,8 +581,10 @@ steepest wall of each slot cell, cut more than one cell's rise, before and after
 percentile and largest drop on river cells that breaching or widening did and did not cut)
 and `channels` (channel cells beside the centreline, carved cells, deepest cut and where,
 carve volume, the largest bank-forced surface drop, seabed cells lowered past mouths, widest
-and deepest channel). Timings and the peak resident memory go to stderr only, so identical
-inputs give identical outputs.
+and deepest channel). `check_examples` gives up to three failing cells ([column, row]) per
+failed check. Timings and the peak resident memory go to stderr only, so identical inputs
+give identical outputs. A lake piece touching a band edge row is not counted as a second
+piece (it may join the rest beyond the band).
 
 On fujix-collage-55 (2048², 32 m, wind from 225°) it takes about 3 s and 110 MB: land precipitation
 averages 2.4 mm/h (95th percentile 7.6 mm/h). Land means by quadrant are 3.9 (SW), 3.1 (SE),
@@ -593,12 +610,149 @@ at most 4.8 m. The Grand Canyon river (25 km, 47 km² at its mouth) descends eve
 805 m to its lagoon at the north coast with no bed rise. 17 lip cells were raised, by at
 most 5.2 m; mouths plunge at most 14.5 m into sinks. All steps together lowered ground by at
 most 54 m (that coastal cliff), 0.46 km³. All checks 0, every river exit at its lake level,
-and the summit caldera's ice and walls unchanged and dry. On the 8192² 4 m chain world it
-takes 54 s and 1.2 GB peak: widening lowered 102,000 wall cells at most 27 m (up to 11
-rings) and brought slot walls from a median 51° (90th percentile 71°) to 35° (35°); 45,600
-channel cells beside 21,600 centreline cells (widest 25 m), carved at most 10.2 m; the
-ahead rule leaves 2,664 cells, 1 by more than 3 m, at most 4.2 m; no holes. 16,384² at 4 m
-should need about 5 GB. A 1024² exact flat takes under 0.1 s to breach.
+and the summit caldera's ice and walls unchanged and dry. On the 8192² 4 m chain world run
+alone (as a trunk level, without `--coarse`) it takes 54 s and 1.2 GB peak: widening lowered
+102,000 wall cells at most 27 m (up to 11 rings) and brought slot walls from a median 51°
+(90th percentile 71°) to 35° (35°); 45,600 channel cells beside 21,600 centreline cells
+(widest 25 m), carved at most 10.2 m; the ahead rule leaves 2,664 cells, 1 by more than
+3 m, at most 4.2 m; no holes. A 1024² exact flat takes under 0.1 s to breach.
+
+### Finer levels
+
+```sh
+target/release/topography world hydrology --grid <4m-grid> --coarse <32m-out> --out <4m-out>
+```
+
+`--coarse` is the previous level's `--out`. The finer grid must lie inside it, aligned to its
+cells (the spacing a whole multiple, `origin`/`offset_m` on a fine-cell boundary), or the run
+stops with an error. Only the coarse rows and columns over the grid, plus one cell around,
+are read. The coarse network is then held fixed:
+
+- Moisture: the coarse `moisture.f32` is reused (bilinear, placed by its `nw_m`) and copied to
+  the output, never recomputed; discharge weights are moisture × the coarse `scale_mm_h` / the
+  coarse `mean_land_mm_h`, so discharge stays in the coarse level's km² at mean rain.
+  `--wind-deg` is refused.
+- Sea: input ground below 0 m connected to the world edge, to a coarse sea cell or to the
+  previous band's sea. A window edge is an outlet only where it is the world's edge or the
+  coarse cell there drains out across it; coarse discharge entering across a window edge is
+  added to the edge cells it enters (`edge_inflow_cells`).
+- Coarse lakes keep their id and level. Wet is fine ground below the level, 8-connected to the
+  coarse lake's cells and within one coarse cell of them; coarse cells at least 1 m deep keep
+  their fine bed 0.25 m below the level. One piece per lake (the largest, and any touching a
+  band edge or the previous band's cells); smaller cut-off pieces stay dry. Dry ground beside
+  a lake below the level plus 0.05 m is raised to that (a thin shore, so the lake leaves only
+  by its exit). A lake with no fine ground below its level keeps its lowest cell 0.25 m
+  below. The coarse river leaving a lake starts beside it in the coarse exit cell, at the
+  level. A depression the flood reaches from a lake joins it; one around a lake is breached
+  past the cap, so the lake drains. `coarse.lakes` reports the bed cells lowered, cut-off
+  cells left dry, shore cells raised and the largest raise; `lake_exits_off_the_coarse_exit`
+  counts lakes whose fine exit is more than one coarse cell from the coarse one.
+- Coarse rivers keep their id and get a fine centreline, largest first. Its corridor is the
+  fine cells of the river's coarse cells and their neighbours (and of the river it joins),
+  not other coarse rivers or lakes, the sea, earlier paths, or ground beside a lake other
+  than the one it ends in or leaves. A priority flood over the corridor starts where the
+  coarse river ends: the sea, its lake, the fine path of the river it joins, the dry basin it
+  flows into, the previous band's cells of it, or the grid edge within a coarse cell of where
+  it leaves the grid. Each flood branch carries the highest coarse order it has reached
+  (centreline steps to the river's end) and enters no cell more than one step below, so the
+  flood climbs the river upstream; a stretch that leaves the grid and comes back is not routed
+  back to where it left. Each coarse head (a centreline cell without a centreline donor in the
+  grid) starts a path at its lowest fine cell, which follows the flood down. The surface cap
+  along a path is the coarse surface interpolated between the middles of its runs through the
+  river's coarse cells, never below the surface of the coarse cell it is in nor above the
+  highest of the river's coarse cells around it; in the coarse cells beside, that highest
+  surface. The path is burned in (a running minimum from its head, at most the cap, not
+  below a lake floor beside it) before the fine flood, so the fine routing follows it; burned
+  cells widen like breach trenches, and after breaching the path is routed and burned again.
+  Its discharge is the coarse one. `coarse.rivers` reports paths, cells, burned cells and the
+  deepest burn and where, and rivers whose head the flood did not reach.
+- Depressions: no new lakes but tarns at 4 m (from 2 m spacing: the class `tarn_share` as
+  the lake budget), none at 1 m, and no new dry basins. A depression touching a coarse dry
+  basin (`flow.u8`) stays a dry basin (endorheic if the coarse one was), glacier depressions
+  stay ice basins, and none is kept in or beside a coarse lake or (but these) beside a coarse
+  river path. Deeper than the cap, or below 0 m, a depression becomes a dry sink, not a lake.
+- Tributaries start from the fine discharge at `--river-km2` (0.5 km² at 4 m, 0.05 km² at
+  1 m), each a system with its own id above every coarse id (`bodies.json` `coarse` false,
+  `parent` the body it joins); reaching a coarse river, it ends there (`rivers_to_rivers`).
+  Channels as on the trunk level; stream power only from 32 m.
+- Checks added on finer levels (all must be 0): `coarse_lakes_missing` (a coarse lake with
+  fine cells here but no fine lake cell), `guard_coarse_lake_levels_changed`,
+  `coarse_rivers_missing_or_unrouted` (a coarse river with a centreline here but no fine
+  centreline, or a head the flood did not reach) and `water_above_coarse_surface` (a fine
+  centreline of a coarse river more than 1 cm above the highest of its coarse surfaces within
+  two coarse cells). A unit test breaks each of them. `coarse.consistency` lists the cells and
+  rivers.
+
+### Bands and seams
+
+The 1 m level runs in bands of rows (as `cascade_l4.py` generates it): a band's grid holds its
+core rows and a halo above and below (`offset_m`, `core_rows`). Outputs cover the whole band
+grid; the cascade keeps the core rows. Bands run north to south, each with `--north` set to
+the previous band's output:
+
+```sh
+topography world hydrology --grid <band-k> --coarse <4m-out> --north <band-k-1-out> --out <band-k-out>
+topography world hydrology-seam --north <band-k-1-out> --south <band-k-out>
+```
+
+The grid's top rows must lie in the previous band's core, and its core must start where that
+core ends. Those rows are taken as they are (ground, surface, body ids, discharge, flow) and
+never changed, so adjacent bands agree on the seam by construction; the check then shows the
+cells this band makes are consistent with them. A taken cell that drains into this band's
+cells feeds it its discharge; a taken river entering continues with its id (a coarse river as
+the head of its path, a tributary down the routing while its discharge holds), and the taken
+dry cells around its entry are not outlets, so it cannot turn straight back. Other taken
+cells beside this band's cells are outlets. A new stream that would run onto taken dry ground
+(the previous band did not see enough discharge for it) is dropped
+(`band.streams_pruned_at_seam`); beds draining into a taken channel stay at or above its bed.
+Checks run on this band's cells and on taken cells against them; `rivers_cut_at_seam` (a
+taken centreline flowing into this band onto dry ground that is not a basin) must be 0.
+
+`hydrology-seam` compares two band outputs and exits 1 on a failure: the rows of the northern
+core that the southern grid holds must match (ground and surface within 1 mm, body ids
+equal); across the seam (the last northern core row against the first southern one) no
+centreline may flow onto dry ground that is not a basin, no dry cell may sit more than 1 cm
+below an adjacent lake or the sea, and a lake keeps one level. Dry cells below an adjacent
+river across the seam are left to the southern band's own checks (its grid holds both sides
+with each channel cell's centreline); the tool reports those not ahead of the wet cell's own
+flow as a figure. `halo_agreement_share` is how often the northern band's halo guess matched
+the southern core.
+
+### Fine-level figures
+
+Measured on the Fujion chain: a 32 m coarse level from `fujion-v3-chain-14` (`arrays.npz` `l2`,
+1024², most common 4 m class per 32 m cell, wind from 225°), the 8192² 4 m world against it,
+and two adjacent 1 m bands from `fujion-v3-chain-14-l4` (32,768 × 1,024 cells: 512 core rows,
+256-row halos, rows 16,128 to 17,151 and 16,640 to 17,663) against the 4 m output. Each run
+capped at 5 GB with `systemd-run`:
+
+| Run | Time | Peak RAM | Result |
+| --- | --- | --- | --- |
+| 32 m, 1024² | 0.7 s | 37 MB | passed: 147 lakes, 47 rivers, 88 km |
+| 4 m, 8192², `--coarse` | 57 s | 1.30 GB | passed: 199 lakes (147 coarse, 52 tarns), 449 rivers (47 coarse), 623 km |
+| 1 m band A, `--coarse` | 32 s | 0.71 GB | passed: 12 coarse lakes, 322 rivers (25 coarse), 93 km |
+| 1 m band B, `--north` A | 26 s | 0.88 GB | passed: 5 lakes, 245 rivers (19 coarse), 57 km |
+| `hydrology-seam` A, B | 0.2 s | small | passed: 256 shared rows identical, nothing cut, halo guess 99.8 % |
+
+At 4 m: 91 tributaries end in a coarse river, 53 coarse paths (22,245 cells), 94 centreline
+cells raised to a lake or the water below, 3,463 shore cells raised (at most 10.7 m), 1,056
+cut-off lake cells left dry, 8 lake exits more than a coarse cell from the coarse exit. 4 m
+memory is about 20 bytes a cell, so 16,384² (64 km) needs about 5.2 GB. At 1 m, band B took
+18 river inflows from band A and dropped 9 new streams at the seam; a 1 m band of 32 km is
+under 1 GB and about 30 s, so a whole 32 km world (64 bands of 512 rows) is about half an
+hour, and 64 km bands about 2 GB.
+
+These test worlds were generated from uncarved coarser ground (the 4 m world from the 32 m
+`l2` before hydrology, the 1 m world from the 4 m world before it), so where the coarse level
+cut down (stream power on the steep 32 m coast, breach trenches, channels) the finer level
+must cut again to stay at or below the coarse water: paths burned up to 47 m at 4 m (68 m of
+lowering at most, on a coastal river the 32 m level incised by 30 m) and 30 m at 1 m, widened
+to 35° walls over up to 16 rings. With the cascade feeding each model the carved coarse
+ground (Task 6) these cuts should mostly vanish. D8 routing over smooth or flat ground still
+draws some tributaries as long straight diagonals. PNG crops:
+`scratch/hydro-v2/c14-4m-tributaries.png` (4 m, 4 km square at cells 1024, 5120) and
+`scratch/hydro-v2/band1m-tributaries-seam.png` (1 m, 1 km × 768 m at column 16,384 of band B,
+the seam at row 256); coarse rivers blue, tributaries cyan with their centreline bright.
 
 ## Export
 
