@@ -1,7 +1,7 @@
 //! Validation checks, figures and the body list.
 
-use super::flood::{CENTRE, Dims, RIVER, SEA, receiver};
-use super::lakes::{Basin, Kind};
+use super::flood::{CENTRE, Dims, FIXED, OUTLET, RIVER, SEA, receiver};
+use super::lakes::{Basin, Kind, NO_EXIT};
 use super::rivers::{Band, End, River, entered_basin, hole, is_bank, owner};
 use serde_json::{Map, Value, json};
 
@@ -25,9 +25,14 @@ pub(super) struct Context<'a> {
     pub band: &'a [Band],
     pub cell_km2: f64,
     pub spacing_m: f64,
+    /// Top and bottom rows are band edges (not the world's), where a lake may continue.
+    pub open_rows: [bool; 2],
 }
 
 impl Context<'_> {
+    fn fixed(&self, i: usize) -> bool {
+        self.flags[i] & FIXED != 0
+    }
     fn sea(&self, i: usize) -> bool {
         self.flags[i] & SEA != 0
     }
@@ -80,82 +85,116 @@ impl Carve {
 
 /// Hard checks; every value must be 0. `guard_` checks hold by construction and only catch
 /// bugs; the others test the water contract on the outputs.
-pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
+pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<String, Value>) {
     let n = c.ground.len();
     let mut undrained = cycles;
     let (mut uphill, mut not_above, mut rises, mut not_below_level) = (0u64, 0u64, 0u64, 0u64);
     let (mut below_lake, mut below_sea, mut below_river) = (0u64, 0u64, 0u64);
     let (mut river_below_lake, mut bed_rises, mut holes) = (0u64, 0u64, 0u64);
     let mut lake_range = vec![(f32::INFINITY, f32::NEG_INFINITY); c.basins.len() + 1];
+    // Up to three failing cells per check, [column, row].
+    let mut examples = Map::new();
+    let mut note = |name: &str, i: usize| {
+        let v = examples.entry(name).or_insert_with(|| json!([]));
+        if let Some(v) = v.as_array_mut().filter(|v| v.len() < 3) {
+            v.push(json!([i % c.dims.w, i / c.dims.w]));
+        }
+    };
     for i in 0..n {
+        // Cells copied from the previous band were checked there; here only against the
+        // cells beside them that this run made.
+        let fixed = c.fixed(i);
         let r = receiver(c.dims, c.dir, i);
         let sink = c.basin(i).is_some_and(|b| b.kind == Kind::Sink);
-        if r.is_none() && !c.sea(i) && !c.dims.is_edge(i) && !sink {
+        if r.is_none() && !c.sea(i) && c.flags[i] & (OUTLET | FIXED) == 0 && !sink {
             undrained += 1;
+            note("guard_land_cells_not_draining_to_an_outlet", i);
         }
         // Only dry land must descend. Channel cells are under water whose surface is flat
         // across the section and never rises along the centreline, so their beds may hold
         // pools; centreline beds have their own check.
-        let land = !c.wet(i) && c.basin(i).is_none();
+        let land = !c.wet(i) && c.basin(i).is_none() && !fixed;
         if let Some(r) = r {
             if land && !c.sea(r) && c.basin(r).is_none() && c.ground[r] > c.ground[i] {
                 uphill += 1;
+                note("land_cells_draining_uphill", i);
             }
         }
         let s = c.surface[i];
         if !s.is_nan() && s <= c.ground[i] {
             not_above += 1;
+            note("wet_cells_with_surface_not_above_ground", i);
         }
         if let Some(l) = c.lake(i) {
             let range = &mut lake_range[l as usize];
             *range = (range.0.min(s), range.1.max(s));
             if c.ground[i] >= c.basins[l as usize - 1].level {
                 not_below_level += 1;
+                note("lake_cells_not_below_level", i);
             }
         }
-        if c.centre(i) {
+        if c.centre(i) && !fixed {
             let below = match r {
                 Some(r) if c.wet(r) => c.surface[r],
                 _ => f32::NEG_INFINITY,
             };
             if below > s {
                 rises += 1;
+                note("river_cells_rising_downstream", i);
             }
             if r.is_some_and(|r| c.centre(r) && c.ground[r] > c.ground[i] + BED_TOLERANCE_M) {
                 bed_rises += 1;
+                note("guard_river_beds_rising_downstream", i);
             }
         }
         if !c.wet(i) {
-            holes += u64::from(
-                hole(
+            if !fixed
+                && hole(
                     c.dims, c.dir, c.flags, c.body, c.basins, c.band, c.ground, c.surface, i,
                 )
-                .is_some(),
-            );
+                .is_some()
+            {
+                holes += 1;
+                note("dry_cells_in_holes", i);
+            }
             let g = c.ground[i] + BANK_TOLERANCE_M;
+            let near = |j: usize| !fixed || !c.fixed(j);
             let next = |kind: fn(&Context, usize) -> bool| {
                 c.dims
                     .neighbours(i)
-                    .any(|(_, j)| kind(c, j) && c.surface[j] > g)
+                    .any(|(_, j)| near(j) && kind(c, j) && c.surface[j] > g)
             };
-            below_lake += next(|c, j| c.lake(j).is_some()) as u64;
-            below_sea += next(|c, j| c.sea(j)) as u64;
+            if next(|c, j| c.lake(j).is_some()) {
+                below_lake += 1;
+                note("dry_cells_below_adjacent_lake", i);
+            }
+            if next(|c, j| c.sea(j)) {
+                below_sea += 1;
+                note("dry_cells_below_adjacent_sea", i);
+            }
             // Banks as in `rivers::is_bank`: not the basin the river enters (see
             // `mouth_max_drop_m`), not ground ahead along the flow.
-            below_river += c.dims.neighbours(i).any(|(_, j)| {
-                c.surface[j] > g
+            if c.dims.neighbours(i).any(|(_, j)| {
+                near(j)
+                    && c.surface[j] > g
                     && owner(c.flags, c.band, j).is_some_and(|o| {
                         let entered = entered_basin(c.dims, c.dir, c.flags, c.body, o);
                         is_bank(c.dims, c.dir, c.flags, c.body, c.basins, entered, o, j, i)
                     })
-            }) as u64;
+            }) {
+                below_river += 1;
+                note("dry_cells_below_adjacent_river", i);
+            }
         }
-        if c.river(i) {
+        if c.river(i) && !fixed {
             let low = s + BANK_TOLERANCE_M;
-            river_below_lake +=
-                c.dims
-                    .neighbours(i)
-                    .any(|(_, j)| c.lake(j).is_some() && c.surface[j] > low) as u64;
+            if c.dims
+                .neighbours(i)
+                .any(|(_, j)| c.lake(j).is_some() && c.surface[j] > low)
+            {
+                river_below_lake += 1;
+                note("river_cells_below_adjacent_lake", i);
+            }
         }
     }
     let several = lake_range
@@ -166,19 +205,31 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
     let exits_off = c
         .basins
         .iter()
-        .filter(|b| b.kind == Kind::Lake)
+        .filter(|b| b.kind == Kind::Lake && b.exit != NO_EXIT)
         .filter(|b| {
             let e = b.exit as usize;
-            if c.sea(e) || c.lake(e).is_some() {
+            let off = if c.sea(e) || c.lake(e).is_some() {
                 false
             } else if c.river(e) {
                 (c.surface[e] - b.level).abs() > BANK_TOLERANCE_M
             } else {
                 c.ground[e] > b.level + BANK_TOLERANCE_M
+            };
+            if off {
+                note("lake_exits_off_level", e);
             }
+            off
         })
         .count();
-    let on_land = c.rivers.iter().filter(|r| r.end == End::Land).count();
+    let (pieces, split) = lake_pieces(c);
+    for i in split {
+        note("lakes_in_several_pieces", i);
+    }
+    let on_land = c
+        .rivers
+        .iter()
+        .filter(|r| r.cells > 0 && r.end == End::Land)
+        .count();
     let mut m = Map::new();
     m.insert(
         "guard_land_cells_not_draining_to_an_outlet".into(),
@@ -186,7 +237,7 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
     );
     m.insert("guard_lakes_with_several_levels".into(), json!(several));
     m.insert("land_cells_draining_uphill".into(), json!(uphill));
-    m.insert("lakes_in_several_pieces".into(), json!(lake_pieces(c)));
+    m.insert("lakes_in_several_pieces".into(), json!(pieces));
     m.insert("lake_cells_not_below_level".into(), json!(not_below_level));
     m.insert("lake_exits_off_level".into(), json!(exits_off));
     m.insert(
@@ -207,23 +258,27 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
     m.insert("dry_cells_below_adjacent_lake".into(), json!(below_lake));
     m.insert("dry_cells_below_adjacent_sea".into(), json!(below_sea));
     m.insert("dry_cells_below_adjacent_river".into(), json!(below_river));
-    m
+    (m, examples)
 }
 
-/// Lakes whose cells form more than one 8-connected piece.
-fn lake_pieces(c: &Context) -> usize {
+/// Lakes whose cells form more than one 8-connected piece. A piece touching a band edge row
+/// may join the rest beyond it and does not count. Also a cell of each extra piece.
+fn lake_pieces(c: &Context) -> (usize, Vec<usize>) {
     let n = c.ground.len();
     let mut seen = vec![false; n];
     let mut pieces = vec![0u32; c.basins.len() + 1];
+    let mut extra = Vec::new();
     let mut stack = Vec::new();
+    let open = |i: usize| (c.open_rows[0] && i < c.dims.w) || (c.open_rows[1] && i >= n - c.dims.w);
     for i in 0..n {
         let Some(id) = c.lake(i).filter(|_| !seen[i]) else {
             continue;
         };
-        pieces[id as usize] += 1;
         seen[i] = true;
         stack.push(i);
+        let mut edge = false;
         while let Some(a) = stack.pop() {
+            edge |= open(a);
             for (_, j) in c.dims.neighbours(a) {
                 if !seen[j] && c.lake(j) == Some(id) {
                     seen[j] = true;
@@ -231,8 +286,14 @@ fn lake_pieces(c: &Context) -> usize {
                 }
             }
         }
+        if !edge {
+            pieces[id as usize] += 1;
+            if pieces[id as usize] > 1 {
+                extra.push(i);
+            }
+        }
     }
-    pieces.iter().filter(|&&p| p > 1).count()
+    (pieces.iter().filter(|&&p| p > 1).count(), extra)
 }
 
 /// Dry cells below an adjacent river surface that the bank check lets pass only because
@@ -292,7 +353,8 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
         .fold(0f32, f32::max);
     let count = |f: fn(&Basin) -> bool| c.basins.iter().filter(|b| f(b)).count();
     let land = (n - sea) as f64;
-    let ends = |e: fn(&End) -> bool| c.rivers.iter().filter(|r| e(&r.end)).count();
+    let here = || c.rivers.iter().filter(|r| r.cells > 0);
+    let ends = |e: fn(&End) -> bool| here().filter(|r| e(&r.end)).count();
     let km2 = |cells: usize| cells as f64 * c.cell_km2;
     let value = json!({
         "cells": n,
@@ -317,10 +379,12 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
             "max_m": carve.max_m,
         },
         "river_ahead_exemptions": ahead_exposure(c),
-        "river_systems": c.rivers.len(),
+        "river_systems": here().count(),
+        "coarse_river_systems": here().filter(|r| r.coarse).count(),
         "river_cells": river_cells,
         "river_centreline_cells": (0..n).filter(|&i| c.centre(i)).count(),
         "river_length_km": c.rivers.iter().map(|r| r.length_m).sum::<f64>() / 1000.0,
+        "rivers_to_rivers": ends(|e| matches!(e, End::Joins(_))),
         "rivers_to_sea": ends(|e| *e == End::Sea),
         "rivers_to_lakes": ends(|e| matches!(e, End::Lake(_))),
         "rivers_to_sinks": ends(|e| matches!(e, End::Sink(_))),
@@ -382,12 +446,8 @@ pub(super) fn constants(river_km2: f64, breach_max_m: f32) -> Value {
 
 /// `bodies.json`: sea, lakes and rivers (ids as in `water-body.u32`), then dry basins (ids
 /// not in the raster) with their parent body (where their water goes; 0 for the grid edge).
-pub(super) fn bodies(
-    c: &Context,
-    body_id: &dyn Fn(usize) -> u32,
-    basin_id: &[u32],
-    river_base: u32,
-) -> Value {
+/// Rivers without centreline cells here (dropped, or only in the previous band) are left out.
+pub(super) fn bodies(c: &Context, body_id: &dyn Fn(usize) -> u32) -> Value {
     let cell = |i: u32| json!([i as usize % c.dims.w, i as usize / c.dims.w]);
     let mut cells = vec![0u64; c.basins.len() + 1];
     let mut depth = vec![0f32; c.basins.len() + 1];
@@ -418,7 +478,7 @@ pub(super) fn bodies(
     let mut dry = Vec::new();
     for (b, basin) in c.basins.iter().enumerate() {
         let common = json!({
-            "id": basin_id[b + 1],
+            "id": basin.id,
             "level_m": basin.level,
             "area_km2": cells[b + 1] as f64 * c.cell_km2,
             "max_depth_m": depth[b + 1],
@@ -429,10 +489,14 @@ pub(super) fn bodies(
             _ => Map::new(),
         };
         if basin.kind == Kind::Lake {
+            let exit = (basin.exit != NO_EXIT).then_some(basin.exit);
             entry.insert("kind".into(), json!("lake"));
-            entry.insert("exit_cell".into(), cell(basin.exit));
+            entry.insert("exit_cell".into(), exit.map_or(Value::Null, cell));
             entry.insert("filled_by_river".into(), json!(basin.filled_by_river));
-            entry.insert("parent".into(), json!(parent(basin.exit as usize)));
+            entry.insert(
+                "parent".into(),
+                json!(exit.map_or(0, |e| parent(e as usize))),
+            );
             list.push(Value::Object(entry));
         } else {
             entry.insert("kind".into(), json!("dry"));
@@ -441,15 +505,17 @@ pub(super) fn bodies(
             dry.push(Value::Object(entry));
         }
     }
-    for (r, river) in c.rivers.iter().enumerate() {
+    for river in c.rivers.iter().filter(|r| r.cells > 0) {
         let parent = match river.end {
             End::Sea => 1,
-            End::Lake(b) | End::Sink(b) | End::Dry(b) => basin_id[b as usize],
+            End::Lake(b) | End::Sink(b) | End::Dry(b) => c.basins[b as usize - 1].id,
+            End::Joins(r) => c.rivers[r as usize - 1].id,
             End::Edge | End::Land => 0,
         };
         list.push(json!({
-            "id": river_base + r as u32 + 1,
+            "id": river.id,
             "kind": "river",
+            "coarse": river.coarse,
             "mouth_cell": cell(river.mouth),
             "area_km2": river.wet_cells as f64 * c.cell_km2,
             "drainage_km2": river.drainage_km2,
@@ -501,6 +567,8 @@ mod tests {
             surface: vec![f32::NAN; n],
             basins: vec![Basin::kept(Kind::Lake, 5.0, at(2, 2) as u32)],
             rivers: vec![River {
+                id: 0,
+                coarse: false,
                 mouth: at(3, 2) as u32,
                 end: End::Sea,
                 cells: 2,
@@ -548,8 +616,9 @@ mod tests {
             band: &s.band,
             cell_km2: 1.0,
             spacing_m: 1000.0,
+            open_rows: [false, false],
         };
-        checks(&c, 0)
+        checks(&c, 0).0
     }
 
     fn failed(s: &Scene) -> Vec<String> {

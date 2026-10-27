@@ -11,7 +11,6 @@ pub(super) const DEFAULT: &str = include_str!("../../../../../configs/hydrology/
 #[serde(deny_unknown_fields)]
 pub(super) struct Water {
     pub lake_share: f64,
-    #[allow(dead_code)] // finer levels (Task 5)
     pub tarn_share: f64,
     #[allow(dead_code)] // per-class stream start (finer levels)
     pub stream_km2: f64,
@@ -68,5 +67,20 @@ impl Table {
 
     pub fn get(&self, class: u8) -> &Water {
         &self.0[class as usize]
+    }
+
+    /// Budgets on a finer level: new lakes only as tarns (`tarn_share`, when `tarns`), no new
+    /// dry basins.
+    pub fn fine(&self, tarns: bool) -> Self {
+        Self(
+            self.0
+                .iter()
+                .map(|w| Water {
+                    lake_share: if tarns { w.tarn_share } else { 0.0 },
+                    dry_share: 0.0,
+                    ..*w
+                })
+                .collect(),
+        )
     }
 }

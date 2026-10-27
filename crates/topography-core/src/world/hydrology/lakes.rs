@@ -1,6 +1,6 @@
 //! Depressions of the filled surface, and which of them stay as lakes or dry basins.
 
-use super::flood::{Dims, SEA, receiver};
+use super::flood::{Dims, FIXED, SEA, receiver};
 use super::water::Table;
 
 /// Judgment constants: the smallest kept lake, and dry basins (compact and deep, as the
@@ -25,6 +25,11 @@ pub(super) struct Depression {
     pub span: u32,
     /// Drainage area into it, km².
     pub inflow_km2: f32,
+    /// Kept as this kind whatever the budget (a coarse dry basin on a finer level).
+    pub forced: Option<Kind>,
+    /// Never kept, even when forced (on a finer level: it holds or touches a coarse lake or
+    /// river path).
+    pub excluded: bool,
 }
 
 /// Label each depression (8-connected cells with filled > ground) in `label` (id = index + 1).
@@ -89,6 +94,8 @@ pub(super) fn find(
             class,
             span: ((y1 - y0).max(x1 - x0) + 1) as u32,
             inflow_km2: 0.0,
+            forced: None,
+            excluded: false,
         });
     }
     found
@@ -115,7 +122,12 @@ pub(super) struct Basin {
     pub over_budget: bool,
     /// A glacier basin: never a lake, never breached.
     pub ice: bool,
+    /// Body id: a coarse lake's id on finer levels, else 0 until ids are assigned.
+    pub id: u32,
 }
+
+/// No exit known (a coarse lake whose flow leaves outside the grid).
+pub(super) const NO_EXIT: u32 = u32::MAX;
 
 impl Basin {
     /// A basin kept beyond the budget because breaching it would cut too deep.
@@ -127,6 +139,7 @@ impl Basin {
             filled_by_river: false,
             over_budget: true,
             ice: false,
+            id: 0,
         }
     }
 }
@@ -153,13 +166,18 @@ pub(super) fn select(
             .collect()
     };
     let mut kind: Vec<Option<Kind>> = (0..deps.len())
-        .map(|k| (deps[k].class == GLACIER).then_some(Kind::Dry))
+        .map(|k| {
+            let d = &deps[k];
+            let glacier = (d.class == GLACIER).then_some(Kind::Dry);
+            d.forced.or(glacier).filter(|_| !d.excluded)
+        })
         .collect();
 
     let mut lake_budget = budget(|w| w.lake_share);
     let mut order: Vec<usize> = (0..deps.len())
         .filter(|&k| {
             kind[k].is_none()
+                && !deps[k].excluded
                 && deps[k].max_depth >= LAKE_MIN_DEPTH_M
                 && deps[k].cells as f64 * cell_m2 >= LAKE_MIN_AREA_M2
         })
@@ -178,6 +196,7 @@ pub(super) fn select(
         .filter(|&k| {
             let d = &deps[k];
             kind[k].is_none()
+                && !d.excluded
                 && dry_budget[d.class as usize] > 0.0
                 && d.max_depth >= DRY_MIN_DEPTH_M
                 && (d.span as f64).powi(2) / d.cells as f64 <= DRY_MAX_ELONGATION
@@ -196,7 +215,7 @@ pub(super) fn select(
     // Lakes first, so body ids follow lake size.
     let mut basins: Vec<Basin> = Vec::new();
     let mut map = vec![0u32; deps.len() + 1];
-    for want in [Kind::Lake, Kind::Dry] {
+    for want in [Kind::Lake, Kind::Dry, Kind::Sink] {
         let mut ks: Vec<usize> = (0..deps.len()).filter(|&k| kind[k] == Some(want)).collect();
         ks.sort_by(|&a, &b| deps[b].volume.total_cmp(&deps[a].volume));
         for dep in ks {
@@ -208,17 +227,11 @@ pub(super) fn select(
                 filled_by_river: false,
                 over_budget: false,
                 ice: deps[dep].class == GLACIER,
+                id: 0,
             });
         }
     }
     (basins, map)
-}
-
-/// Rewrite depression labels as basin ids (`map` from `select`), 0 for breached ones.
-pub(super) fn relabel(label: &mut [u32], map: &[u32]) {
-    for l in label.iter_mut() {
-        *l = map[*l as usize];
-    }
 }
 
 /// Grow each lake over ground below its level that drains into it (cut by breaching next
@@ -243,7 +256,7 @@ pub(super) fn extend(
         let level = basins[id as usize - 1].level;
         for (_, n) in dims.neighbours(c) {
             if basin[n] == 0
-                && flags[n] & SEA == 0
+                && flags[n] & (SEA | FIXED) == 0
                 && ground[n] < level
                 && receiver(dims, dir, n).is_some_and(|r| basin[r] == id)
             {

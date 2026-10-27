@@ -15,7 +15,59 @@ pub(super) struct Grid {
     pub w: usize,
     pub h: usize,
     pub spacing_m: f64,
+    /// North-west corner in the layout plane (x east, y north): `origin` plus `offset_m`
+    /// ([east, south] of a band or window inside the world).
+    pub nw_m: [f64; 2],
+    /// Rows this grid delivers (`core_rows` [start, end)); the rest is halo.
+    pub core_rows: [usize; 2],
     pub manifest: Map<String, Value>,
+}
+
+/// `grid.json` fields: size, spacing, origin, offset and core rows.
+pub(super) fn shape(manifest: &Map<String, Value>) -> Result<Grid> {
+    let size: [usize; 2] =
+        serde_json::from_value(manifest.get("size").cloned().unwrap_or_default())
+            .map_err(|_| AcquisitionError::Invalid("grid.json size must be [w, h]".into()))?;
+    let spacing_m = manifest
+        .get("spacing_m")
+        .and_then(Value::as_f64)
+        .unwrap_or(f64::NAN);
+    ensure(
+        spacing_m.is_finite() && spacing_m > 0.0,
+        "grid.json spacing_m must be a positive number",
+    )?;
+    let [w, h] = size;
+    let pair = |key: &str, default: [f64; 2]| -> Result<[f64; 2]> {
+        match manifest.get(key) {
+            None | Some(Value::Null) => Ok(default),
+            Some(v) => serde_json::from_value::<[f64; 2]>(v.clone())
+                .ok()
+                .filter(|p| p.iter().all(|c| c.is_finite()))
+                .ok_or_else(|| {
+                    AcquisitionError::Invalid(format!("grid.json {key} must be [x, y]"))
+                }),
+        }
+    };
+    let origin = pair("origin", [0.0, spacing_m * h as f64])?;
+    let offset = pair("offset_m", [0.0, 0.0])?;
+    let core_rows: [usize; 2] = match manifest.get("core_rows") {
+        None | Some(Value::Null) => [0, h],
+        Some(v) => serde_json::from_value(v.clone()).map_err(|_| {
+            AcquisitionError::Invalid("grid.json core_rows must be [start, end]".into())
+        })?,
+    };
+    ensure(
+        core_rows[0] < core_rows[1] && core_rows[1] <= h,
+        "grid.json core_rows must be [start, end] within the grid",
+    )?;
+    Ok(Grid {
+        w,
+        h,
+        spacing_m,
+        nw_m: [origin[0] + offset[0], origin[1] - offset[1]],
+        core_rows,
+        manifest: manifest.clone(),
+    })
 }
 
 impl Grid {
@@ -38,30 +90,14 @@ pub(super) struct Input {
 pub(super) fn read(dir: &Path) -> Result<Input> {
     let manifest_bytes = read_small(&dir.join("grid.json"))?;
     let manifest: Map<String, Value> = serde_json::from_slice(&manifest_bytes)?;
-    let size: [usize; 2] =
-        serde_json::from_value(manifest.get("size").cloned().unwrap_or_default())
-            .map_err(|_| AcquisitionError::Invalid("grid.json size must be [w, h]".into()))?;
-    let spacing_m = manifest
-        .get("spacing_m")
-        .and_then(Value::as_f64)
-        .unwrap_or(f64::NAN);
-    ensure(
-        spacing_m.is_finite() && spacing_m > 0.0,
-        "grid.json spacing_m must be a positive number",
-    )?;
-    let [w, h] = size;
+    let grid = shape(&manifest)?;
+    let (w, h, spacing_m) = (grid.w, grid.h, grid.spacing_m);
     ensure(w >= 3 && h >= 3, "grid must be at least 3 x 3 cells")?;
     // Cell indices are u32.
     let n = w
         .checked_mul(h)
         .filter(|&n| n < u32::MAX as usize)
         .ok_or_else(|| AcquisitionError::Invalid("grid has too many cells".into()))?;
-    let grid = Grid {
-        w,
-        h,
-        spacing_m,
-        manifest,
-    };
     let mut digests = Map::new();
     digests.insert(
         "grid.json".into(),
@@ -154,6 +190,46 @@ pub(super) fn for_each_input_row(
         f(y, &row);
         y += 1;
     }
+}
+
+/// Rows `y0..y1`, columns `x0..x1` of a `w` x `h` raster of `B`-byte little-endian cells.
+pub(super) fn read_window<const B: usize, T>(
+    path: &Path,
+    [w, h]: [usize; 2],
+    [x0, x1]: [usize; 2],
+    [y0, y1]: [usize; 2],
+    decode: impl Fn([u8; B]) -> T,
+) -> Result<Vec<T>> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = io_context(format!("open {}", path.display()), fs::File::open(path))?;
+    let size = io_context("inspect input", file.metadata())?.len();
+    ensure(
+        size == (w * h * B) as u64,
+        format!(
+            "{} has {size} bytes, expected {}",
+            path.display(),
+            w * h * B
+        ),
+    )?;
+    ensure(
+        x0 < x1 && x1 <= w && y0 < y1 && y1 <= h,
+        "raster window out of range",
+    )?;
+    let mut row = vec![0u8; (x1 - x0) * B];
+    let mut out = Vec::with_capacity((x1 - x0) * (y1 - y0));
+    for y in y0..y1 {
+        let at = ((y * w + x0) * B) as u64;
+        io_context("seek", file.seek(SeekFrom::Start(at)))?;
+        io_context(
+            format!("read {}", path.display()),
+            file.read_exact(&mut row),
+        )?;
+        out.extend(
+            row.chunks_exact(B)
+                .map(|c| decode(c.try_into().unwrap_or([0; B]))),
+        );
+    }
+    Ok(out)
 }
 
 fn hex(bytes: &[u8]) -> String {

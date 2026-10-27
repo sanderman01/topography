@@ -1,8 +1,12 @@
 //! Hydrology v2: water as a surface height on a generated ground grid. Sea, lakes at their
 //! spill level, breached depressions, flow accumulation and rivers, with a validation report.
-//! See docs/workflows/terrain-cascade.md ("Hydrology v2").
+//! Finer levels hold a coarser level's network fixed (`--coarse`); bands carry the previous
+//! band's rows (`--north`). See docs/workflows/terrain-cascade.md ("Hydrology v2").
 
+mod band;
+mod coarse;
 mod erosion;
+mod fine;
 mod flood;
 mod grid;
 mod lakes;
@@ -11,26 +15,44 @@ mod report;
 mod rivers;
 mod water;
 
+pub use band::seam;
+
 use crate::acquisition::{Result, digest, ensure, io_context};
-use flood::{Dims, RIVER, SEA, receiver};
+use band::BodyKind;
+use flood::{CENTRE, Dims, FIXED, FLOW_CENTRE, FLOW_DRY, FLOW_SINK, OUTLET, RIVER, SEA, receiver};
 use lakes::Kind;
 use serde_json::{Value, json};
 use std::{collections::HashMap, fs, path::PathBuf, time::Instant};
 
-/// Rivers start at this drainage area by default (32 m trunk network).
+/// Rivers start at this drainage area by default on the trunk level (32 m).
 pub const DEFAULT_RIVER_KM2: f64 = 10.0;
 /// Judgment constant: the deepest cut breaching may make below a depression's spill. Deeper
 /// depressions are kept (lakes at the spill lowered by this much, or dry sinks).
 pub const BREACH_MAX_M: f32 = 30.0;
 
+/// Default river start by grid spacing: 10 km² at 32 m and coarser, 0.5 km² at 4 m (from
+/// 2 m), 0.05 km² at 1 m.
+pub fn default_river_km2(spacing_m: f64) -> f64 {
+    if spacing_m >= 16.0 {
+        DEFAULT_RIVER_KM2
+    } else if spacing_m >= 2.0 {
+        0.5
+    } else {
+        0.05
+    }
+}
+
 pub struct Options {
     pub grid: PathBuf,
     pub out: PathBuf,
     pub coarse: Option<PathBuf>,
+    /// The previous band's output, whose core holds this grid's top rows.
+    pub north: Option<PathBuf>,
     pub wind_deg: Option<f64>,
     /// Water table TOML; the built-in configs/hydrology/water-v1.toml when absent.
     pub water: Option<PathBuf>,
-    pub river_km2: f64,
+    /// River start (km² at mean rain); by spacing when absent.
+    pub river_km2: Option<f64>,
 }
 
 pub struct Outcome {
@@ -43,16 +65,20 @@ pub struct Outcome {
 /// validation check fails (`passed` false), so the report can be read. Timings go to stderr.
 pub fn run(options: &Options) -> Result<Outcome> {
     ensure(
-        options.coarse.is_none(),
-        "--coarse is not implemented yet (hydrology v2, fine levels)",
-    )?;
-    ensure(
         options.wind_deg.is_none_or(f64::is_finite),
         "--wind-deg must be a number",
     )?;
     ensure(
-        options.river_km2.is_finite() && options.river_km2 > 0.0,
+        options.river_km2.is_none_or(|a| a.is_finite() && a > 0.0),
         "--river-km2 must be positive",
+    )?;
+    ensure(
+        options.north.is_none() || options.coarse.is_some(),
+        "--north needs --coarse",
+    )?;
+    ensure(
+        options.coarse.is_none() || options.wind_deg.is_none(),
+        "--wind-deg applies to the trunk level only; finer levels reuse the coarse moisture",
     )?;
     ensure(
         !options.out.exists(),
@@ -83,48 +109,231 @@ pub fn run(options: &Options) -> Result<Outcome> {
         w: grid.w,
         h: grid.h,
     };
-    let n = grid.cells();
+    let (w, h, n) = (grid.w, grid.h, grid.cells());
     let cell_km2 = grid.cell_km2() as f32;
-    let river_km2 = options.river_km2 as f32;
+    let river_km2_f64 = options
+        .river_km2
+        .unwrap_or_else(|| default_river_km2(grid.spacing_m));
+    let river_km2 = river_km2_f64 as f32;
+    let coarse = options
+        .coarse
+        .as_ref()
+        .map(|d| coarse::read(d, &grid))
+        .transpose()?;
+    let north = options
+        .north
+        .as_ref()
+        .map(|d| band::read_north(d, &grid))
+        .transpose()?;
     eprintln!(
-        "hydrology: {} x {} cells at {} m",
-        grid.w, grid.h, grid.spacing_m
-    );
-    lap("read", &mut t);
-
-    // Sea (from the input ground only) and the plain filled surface give the depressions.
-    let mut flags = vec![0u8; n];
-    let mut dir = vec![0u8; n];
-    flood::open_sea(dims, &ground, |_| false, &mut flags);
-    let filled = flood::fill(dims, &ground, &mut flags, &mut dir);
-    lap("fill", &mut t);
-
-    // Precipitation from the input ground; discharge weights each cell by its rain relative
-    // to the land mean, so the river threshold holds at mean rain.
-    let wind_from_deg = options
-        .wind_deg
-        .or_else(|| grid.manifest.get("wind_from_deg").and_then(Value::as_f64));
-    let params = &moisture::PARAMS;
-    let rain = moisture::precipitation(
-        &ground,
-        |i| flags[i] & SEA == 0,
+        "hydrology: {} x {} cells at {} m{}",
         grid.w,
         grid.h,
         grid.spacing_m,
-        wind_from_deg,
-        params,
+        coarse
+            .as_ref()
+            .map_or(String::new(), |c| format!(", coarse {} m", c.spacing_m))
     );
-    let rain_stats = moisture::Stats::new(&rain, grid.w, &flags, wind_from_deg.is_none());
-    let rain_weight = |i: usize| cell_km2 * rain.at(grid.w, i) / rain_stats.mean_land_mm_h;
-    lap("moisture", &mut t);
+    lap("read", &mut t);
+
+    let mut flags = vec![0u8; n];
+    let mut dir = vec![0u8; n];
     let mut body = vec![0u32; n];
-    let mut deps = lakes::find(dims, &ground, &filled, &dir, classes.as_deref(), &mut body);
+    let mut surface = vec![f32::NAN; n];
+    // Rows from the previous band, as they are.
+    let fixed_rows = north.as_ref().map_or(0, |b| b.rows);
+    let fixed_id = |i: usize| north.as_ref().map_or(0, |b| b.body[i]);
+    let fixed_kind = |i: usize| {
+        north
+            .as_ref()
+            .and_then(|b| b.kinds.get(&b.body[i]).copied())
+    };
+    let mut inflow = Vec::new();
+    if let Some(b) = &north {
+        for i in 0..fixed_rows * w {
+            ground[i] = b.ground[i];
+            surface[i] = b.surface[i];
+            flags[i] |= FIXED;
+            match fixed_kind(i) {
+                Some(BodyKind::Sea) => flags[i] |= SEA,
+                Some(BodyKind::River) => {
+                    flags[i] |= RIVER;
+                    if b.flow[i] & FLOW_CENTRE != 0 {
+                        flags[i] |= CENTRE;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Fixed cells draining into this run's cells feed it; the others beside them are
+        // outlets.
+        for (i, f) in flags.iter_mut().enumerate().take(fixed_rows * w) {
+            let d = b.flow[i] & 15;
+            let to = (d != 0)
+                .then(|| dims.neighbour(i, d as usize - 1))
+                .flatten();
+            if let Some(r) = to.filter(|&r| r >= fixed_rows * w) {
+                inflow.push((i, r));
+            } else if dims.neighbours(i).any(|(_, j)| j >= fixed_rows * w) {
+                *f |= OUTLET;
+            }
+        }
+    }
+    match &coarse {
+        Some(c) => {
+            for (i, f) in flags.iter_mut().enumerate() {
+                if dims.is_edge(i) && *f & FIXED == 0 && c.edge_outlet(w, h, i) {
+                    *f |= OUTLET;
+                }
+            }
+        }
+        None => flood::edge_outlets(dims, &mut flags),
+    }
+
+    // Sea (from the input ground only): below 0 m connected to the world edge, coarse sea or
+    // the previous band's sea.
+    match &coarse {
+        Some(c) => flood::open_sea(
+            dims,
+            &ground,
+            |i| c.world_edge(w, h, i) || c.body[c.cell(w, i)] == 1,
+            &mut flags,
+        ),
+        None => flood::open_sea(dims, &ground, |i| dims.is_edge(i), &mut flags),
+    }
+
+    // The coarse network on the fine ground: lakes at their level, river paths burned in.
+    let mut basins = Vec::new();
+    let (lake_figures, imprint) = match &coarse {
+        Some(c) => {
+            let figures = fine::lakes(dims, &mut ground, &flags, &mut body, &mut basins, c, |i| {
+                (fixed_kind(i) == Some(BodyKind::Lake)).then(|| fixed_id(i))
+            });
+            let inflows: Vec<fine::Inflow> = inflow
+                .iter()
+                .filter(|&&(i, _)| flags[i] & CENTRE != 0 && c.rivers.contains_key(&fixed_id(i)))
+                .map(|&(i, r)| fine::Inflow {
+                    cell: r as u32,
+                    id: fixed_id(i),
+                    surface: surface[i],
+                    q: north.as_ref().map_or(0.0, |b| b.discharge[i]),
+                })
+                .collect();
+            let imprint = fine::rivers(
+                dims,
+                &mut ground,
+                &flags,
+                &body,
+                &basins,
+                c,
+                &inflows,
+                fixed_id,
+            );
+            (Some(figures), Some(imprint))
+        }
+        None => (None, None),
+    };
+    let coarse_lakes = basins.len() as u32;
+    // Burned path slots widen into valleys as breach trenches do.
+    if let Some(im) = &imprint {
+        for &c in &im.burned {
+            flags[c as usize] |= flood::BREACHED;
+        }
+    }
+    let filled = flood::fill(dims, &ground, &mut flags, &mut dir);
+    lap("fill", &mut t);
+
+    // Precipitation: from the input ground on the trunk level, else the coarse moisture.
+    let wind_from_deg = match &coarse {
+        Some(c) => c.moisture.wind_from_deg,
+        None => options
+            .wind_deg
+            .or_else(|| grid.manifest.get("wind_from_deg").and_then(Value::as_f64)),
+    };
+    let params = &moisture::PARAMS;
+    let (rain, mut weight) = match &coarse {
+        None => {
+            let rain = moisture::precipitation(
+                &ground,
+                |i| flags[i] & SEA == 0,
+                grid.w,
+                grid.h,
+                grid.spacing_m,
+                wind_from_deg,
+                params,
+            );
+            let stats = moisture::Stats::new(&rain, grid.w, &flags, wind_from_deg.is_none());
+            // Each cell's rain relative to the land mean, so the threshold holds at mean rain.
+            let weight: Vec<f32> = (0..n)
+                .map(|i| cell_km2 * rain.at(grid.w, i) / stats.mean_land_mm_h)
+                .collect();
+            (Some((rain, stats)), weight)
+        }
+        Some(c) => {
+            let m = &c.moisture;
+            let weight = (0..n)
+                .map(|i| {
+                    if m.windless {
+                        return cell_km2;
+                    }
+                    let x = grid.nw_m[0] + ((i % w) as f64 + 0.5) * grid.spacing_m;
+                    let y = grid.nw_m[1] - ((i / w) as f64 + 0.5) * grid.spacing_m;
+                    cell_km2 * m.at(x, y) * m.weight
+                })
+                .collect();
+            (None, weight)
+        }
+    };
+    // Discharge entering across window edges and from the previous band.
+    let mut edge_inflow_cells = 0u64;
+    if let Some(c) = &coarse {
+        for i in (0..n).filter(|&i| dims.is_edge(i) && flags[i] & FIXED == 0) {
+            let q = c.edge_inflow(w, h, i);
+            if q > 0.0 {
+                weight[i] += q;
+                edge_inflow_cells += 1;
+            }
+        }
+    }
+    weight[..fixed_rows * w].fill(0.0);
+    if let Some(b) = &north {
+        for &(i, _) in &inflow {
+            weight[i] = b.discharge[i];
+        }
+    }
+    lap("moisture", &mut t);
+
+    let mut label = vec![0u32; n];
+    let mut deps = lakes::find(dims, &ground, &filled, &dir, classes.as_deref(), &mut label);
     drop(filled);
+    if let Some(c) = &coarse {
+        // No new lake beside a coarse river path: the path is cut down through it later.
+        let mut on_path = vec![false; n];
+        for p in imprint.iter().flat_map(|im| &im.paths) {
+            for &x in &p.cells {
+                on_path[x as usize] = true;
+            }
+        }
+        for i in 0..n {
+            if label[i] == 0 {
+                continue;
+            }
+            let d = &mut deps[label[i] as usize - 1];
+            d.excluded |= body[i] != 0
+                || on_path[i]
+                || dims.neighbours(i).any(|(_, j)| on_path[j] || body[j] != 0);
+            match c.dry_basin(c.cell(w, i)) {
+                Some(true) => d.forced = Some(Kind::Sink),
+                Some(false) if d.forced.is_none() => d.forced = Some(Kind::Dry),
+                _ => {}
+            }
+        }
+    }
     let mut acc = vec![0f32; n];
-    flood::accumulate(dims, &dir, rain_weight, &mut acc);
+    flood::accumulate(dims, &dir, |i| weight[i], &mut acc);
     for i in 0..n {
-        if body[i] != 0 {
-            let d = &mut deps[body[i] as usize - 1];
+        if label[i] != 0 {
+            let d = &mut deps[label[i] as usize - 1];
             d.inflow_km2 = d.inflow_km2.max(acc[i]);
         }
     }
@@ -136,18 +345,28 @@ pub fn run(options: &Options) -> Result<Outcome> {
             land_by_class[class_at(i) as usize] += 1;
         }
     }
-    let (mut basins, map) = lakes::select(
+    // Finer levels: no new lakes but tarns at 4 m, no new dry basins.
+    let fine_table = coarse.as_ref().map(|_| table.fine(grid.spacing_m >= 2.0));
+    let (selected, map) = lakes::select(
         &deps,
         &land_by_class,
-        &table,
+        fine_table.as_ref().unwrap_or(&table),
         grid.spacing_m * grid.spacing_m,
-        options.river_km2,
+        river_km2_f64,
     );
-    lakes::relabel(&mut body, &map);
+    basins.extend(selected);
+    for i in 0..n {
+        let b = map[label[i] as usize];
+        if b != 0 && body[i] == 0 {
+            body[i] = b + coarse_lakes;
+        }
+    }
+    drop(label);
     let kept_by_budget = basins.len();
     lap("depressions", &mut t);
 
     // Breach every other depression up to the cap, then route over the result.
+    let fine_level = coarse.is_some();
     let carved = flood::breach(
         dims,
         &mut ground,
@@ -156,9 +375,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &mut flags,
         &mut dir,
         BREACH_MAX_M,
-        |pit| {
+        coarse.is_some(),
+        |pit, deep| {
             let class = class_at(pit);
-            if class == lakes::GLACIER || table.get(class).lake_share <= lakes::ARID_LAKE_SHARE {
+            let arid =
+                class == lakes::GLACIER || table.get(class).lake_share <= lakes::ARID_LAKE_SHARE;
+            if fine_level || (deep && arid) {
                 Kind::Sink
             } else {
                 Kind::Lake
@@ -173,11 +395,14 @@ pub fn run(options: &Options) -> Result<Outcome> {
     eprintln!("hydrology: breach lowered {carved} cells");
     lap("breach", &mut t);
 
-    // Trenches widen into small valleys; ice and the ground draining onto it stay as they are.
-    let frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
+    // Trenches widen into small valleys; ice, the ground draining onto it and cells from
+    // the previous band stay as they are.
+    let mut frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
         class_at(i) == lakes::GLACIER
     });
-    drop(classes);
+    for f in frozen.iter_mut().take(fixed_rows * w) {
+        *f = true;
+    }
     let mut breach_cut: HashMap<u32, f32> = HashMap::new();
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
         for (x, &z) in row.iter().enumerate() {
@@ -203,9 +428,27 @@ pub fn run(options: &Options) -> Result<Outcome> {
     if let Value::Object(m) = &mut trenches {
         m.insert("max_depth_m".into(), json!(trench_depth));
     }
+    // Coarse river paths keep their own course, descending.
+    if let Some(im) = &imprint {
+        fine::route(dims, &mut dir, &im.paths);
+        fine::burn(dims, &mut ground, &body, &basins, &im.paths);
+    }
+    // Fixed cells end the routing here, except where they drain into this run's cells.
+    let mut check_dir = Vec::new();
+    if let Some(b) = &north {
+        dir[..fixed_rows * w].fill(0);
+        for &(i, _) in &inflow {
+            dir[i] = b.flow[i] & 15;
+        }
+        check_dir = dir.clone();
+        for (d, f) in check_dir.iter_mut().zip(&b.flow) {
+            *d = f & 15;
+        }
+    }
     lap("trenches", &mut t);
     let mut acc = vec![0f32; n];
-    let cycles = flood::accumulate(dims, &dir, rain_weight, &mut acc);
+    let cycles = flood::accumulate(dims, &dir, |i| weight[i], &mut acc);
+    drop(weight);
     lap("accumulate", &mut t);
 
     // Stream power at the trunk-network level only, before lakes take river inflow.
@@ -242,14 +485,28 @@ pub fn run(options: &Options) -> Result<Outcome> {
         json!({ "skipped": "finer than the trunk-network level" })
     };
     drop(frozen);
+    // Coarse rivers carry the coarse discharge; fixed cells keep the previous band's.
+    if let Some(im) = &imprint {
+        for (&cell, &q) in &im.q {
+            acc[cell as usize] = acc[cell as usize].max(q);
+        }
+    }
+    if let Some(b) = &north {
+        acc[..fixed_rows * w].copy_from_slice(&b.discharge);
+    }
 
-    // A dry pass-through basin that a river flows into fills as a lake (not glacier basins).
-    let mut inflow = vec![0f32; basins.len() + 1];
+    // A dry pass-through basin that a river flows into fills as a lake (not glacier basins;
+    // on finer levels coarse dry basins stay dry).
+    let mut inflow_by_basin = vec![0f32; basins.len() + 1];
     for i in 0..n {
-        inflow[body[i] as usize] = inflow[body[i] as usize].max(acc[i]);
+        inflow_by_basin[body[i] as usize] = inflow_by_basin[body[i] as usize].max(acc[i]);
     }
     for (b, basin) in basins.iter_mut().enumerate() {
-        if basin.kind == Kind::Dry && !basin.ice && inflow[b + 1] >= river_km2 {
+        if !fine_level
+            && basin.kind == Kind::Dry
+            && !basin.ice
+            && inflow_by_basin[b + 1] >= river_km2
+        {
             basin.kind = Kind::Lake;
             basin.filled_by_river = true;
         }
@@ -259,7 +516,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut exit_acc = vec![-1f32; basins.len() + 1];
     for i in 0..n {
         let b = body[i] as usize;
-        if b == 0 {
+        if b == 0 || flags[i] & FIXED != 0 {
             continue;
         }
         if let Some(r) = receiver(dims, &dir, i).filter(|&r| body[r] as usize != b) {
@@ -270,7 +527,81 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }
     }
 
-    let mut surface = vec![f32::NAN; n];
+    // Rivers with given ids: coarse rivers along their paths, then the previous band's.
+    let mut given = rivers::Given::default();
+    let mut path_figures = Value::Null;
+    let mut unrouted: Vec<u32> = Vec::new();
+    if let Some(im) = imprint {
+        for &id in &im.ids {
+            given.rivers.push(rivers::River {
+                id,
+                coarse: true,
+                mouth: 0,
+                end: rivers::End::Edge,
+                cells: 0,
+                wet_cells: 0,
+                length_m: 0.0,
+                drainage_km2: 0.0,
+            });
+        }
+        let mut cells = 0u64;
+        for p in &im.paths {
+            for &c in &p.cells {
+                if body[c as usize] != 0 || flags[c as usize] & FIXED != 0 {
+                    break;
+                }
+                given.cells.push((c, p.river as u32 + 1));
+                cells += 1;
+            }
+        }
+        path_figures = json!({
+            "coarse_rivers": im.ids.len(),
+            "paths": im.paths.len(),
+            "path_cells": cells,
+            "burned_cells": im.burned.len(),
+            "burn_max_m": im.burn_max_m,
+            "unrouted_rivers": im.unrouted,
+        });
+        given.cap = im.cap;
+        unrouted = im.unrouted;
+    }
+    let mut seam_inflow = 0u64;
+    if north.is_some() {
+        let mut index: HashMap<u32, u32> = given
+            .rivers
+            .iter()
+            .enumerate()
+            .map(|(k, r)| (r.id, k as u32 + 1))
+            .collect();
+        for i in 0..fixed_rows * w {
+            if flags[i] & RIVER == 0 {
+                continue;
+            }
+            let id = fixed_id(i);
+            let k = *index.entry(id).or_insert_with(|| {
+                given.rivers.push(rivers::River {
+                    id,
+                    coarse: false,
+                    mouth: 0,
+                    end: rivers::End::Edge,
+                    cells: 0,
+                    wet_cells: 0,
+                    length_m: 0.0,
+                    drainage_km2: 0.0,
+                });
+                given.rivers.len() as u32
+            });
+            body[i] = k;
+        }
+        for &(i, r) in &inflow {
+            if flags[i] & CENTRE != 0 {
+                seam_inflow += 1;
+                if !given.rivers[body[i] as usize - 1].coarse {
+                    given.follow.push((r as u32, body[i]));
+                }
+            }
+        }
+    }
     let (rivers, band, channels) = rivers::extract(
         dims,
         &mut ground,
@@ -282,6 +613,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         river_km2,
         grid.spacing_m,
         &mut surface,
+        given,
     );
     let lips = rivers::raise_lips(
         dims,
@@ -291,9 +623,14 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &body,
         &basins,
         &band,
+        &surface,
+        &channels.raised,
         grid.spacing_m,
     );
     for i in 0..n {
+        if flags[i] & FIXED != 0 {
+            continue;
+        }
         if flags[i] & SEA != 0 {
             surface[i] = 0.0;
         } else if flags[i] & RIVER == 0 && body[i] != 0 {
@@ -316,30 +653,41 @@ pub fn run(options: &Options) -> Result<Outcome> {
     );
     lap("rivers", &mut t);
 
-    // Body ids: sea 1, lakes in basin order, rivers, then dry basins (not in the raster).
-    let mut basin_id = vec![0u32; basins.len() + 1];
-    let mut next = 2;
-    for (b, basin) in basins.iter().enumerate() {
-        if basin.kind == Kind::Lake {
-            basin_id[b + 1] = next;
-            next += 1;
-        }
+    // Body ids: sea 1, coarse lakes and rivers keep theirs; new ones from above every id the
+    // coarse level and the previous band use: lakes, rivers, then dry basins (not in the
+    // raster).
+    let mut rivers = rivers;
+    let mut next = match &coarse {
+        Some(c) => c.max_id.max(north.as_ref().map_or(0, |b| b.max_id)) + 1,
+        None => 2,
+    };
+    for basin in basins
+        .iter_mut()
+        .filter(|b| b.kind == Kind::Lake && b.id == 0)
+    {
+        basin.id = next;
+        next += 1;
     }
-    let river_base = next - 1;
-    next += rivers.len() as u32;
-    for (b, basin) in basins.iter().enumerate() {
-        if basin.kind != Kind::Lake {
-            basin_id[b + 1] = next;
-            next += 1;
-        }
+    for river in rivers.iter_mut().filter(|r| r.id == 0 && r.cells > 0) {
+        river.id = next;
+        next += 1;
+    }
+    for basin in basins
+        .iter_mut()
+        .filter(|b| b.kind != Kind::Lake && b.id == 0)
+    {
+        basin.id = next;
+        next += 1;
     }
     let body_id = |i: usize| -> u32 {
-        if flags[i] & SEA != 0 {
+        if flags[i] & FIXED != 0 {
+            fixed_id(i)
+        } else if flags[i] & SEA != 0 {
             1
         } else if flags[i] & RIVER != 0 {
-            river_base + body[i]
+            rivers[body[i] as usize - 1].id
         } else if body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake {
-            basin_id[body[i] as usize]
+            basins[body[i] as usize - 1].id
         } else {
             0
         }
@@ -347,12 +695,22 @@ pub fn run(options: &Options) -> Result<Outcome> {
 
     let mut carve = report::Carve::default();
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
-        carve.add(row, &ground[y * grid.w..(y + 1) * grid.w], grid.spacing_m);
+        if y >= fixed_rows {
+            carve.add(row, &ground[y * grid.w..(y + 1) * grid.w], grid.spacing_m);
+        }
     })?;
+    let open_rows = coarse.as_ref().map_or([false; 2], |c| {
+        let ch = c.size[1] * c.k;
+        [c.off[1] > 0, c.off[1] + h < ch]
+    });
     let ctx = report::Context {
         dims,
         ground: &ground,
-        dir: &dir,
+        dir: if check_dir.is_empty() {
+            &dir
+        } else {
+            &check_dir
+        },
         acc: &acc,
         flags: &flags,
         body: &body,
@@ -362,10 +720,59 @@ pub fn run(options: &Options) -> Result<Outcome> {
         band: &band,
         cell_km2: cell_km2 as f64,
         spacing_m: grid.spacing_m,
+        open_rows,
     };
-    let checks = report::checks(&ctx, cycles);
-    let bodies = report::bodies(&ctx, &body_id, &basin_id, river_base);
+    let (mut checks, examples) = report::checks(&ctx, cycles);
+    let bodies = report::bodies(&ctx, &body_id);
     let mut figures = report::figures(&ctx, &carve, extended);
+    if let Some(c) = &coarse {
+        let (consistency, above_max) =
+            fine::consistency(dims, &flags, &surface, &basins, c, &unrouted, &body_id);
+        checks.extend(consistency);
+        let exits_moved = basins
+            .iter()
+            .filter(|b| b.kind == Kind::Lake && b.exit != lakes::NO_EXIT)
+            .filter(|b| {
+                c.lakes
+                    .get(&b.id)
+                    .and_then(|l| l.exit)
+                    .is_some_and(|[ex, ey]| {
+                        let [qx, qy] = c.abs(c.cell(w, b.exit as usize));
+                        qx.abs_diff(ex) > 1 || qy.abs_diff(ey) > 1
+                    })
+            })
+            .count();
+        figures.insert(
+            "coarse".into(),
+            json!({
+                "spacing_m": c.spacing_m,
+                "lakes": lake_figures,
+                "rivers": path_figures,
+                "water_above_coarse_max_m": above_max,
+                "lake_exits_off_the_coarse_exit": exits_moved,
+                "edge_inflow_cells": edge_inflow_cells,
+            }),
+        );
+    }
+    if north.is_some() {
+        // A centreline from the previous band must go on as water here.
+        let cut = inflow
+            .iter()
+            .filter(|&&(i, r)| flags[i] & CENTRE != 0 && flags[r] & (RIVER | SEA) == 0)
+            .filter(|&&(_, r)| body[r] == 0 || basins[body[r] as usize - 1].kind != Kind::Lake)
+            .count();
+        checks.insert("rivers_cut_at_seam".into(), json!(cut));
+        figures.insert(
+            "band".into(),
+            json!({
+                "fixed_rows": fixed_rows,
+                "inflow_cells": inflow.len(),
+                "river_inflow_cells": seam_inflow,
+                "streams_pruned_at_seam": channels.streams_pruned,
+            }),
+        );
+    }
+    figures.insert("check_examples".into(), Value::Object(examples));
     figures.insert("depressions".into(), json!(deps.len()));
     figures.insert("kept_by_budget".into(), json!(kept_by_budget));
     figures.insert(
@@ -381,6 +788,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "seabed_cells_lowered_past_mouths": channels.sea_cells_lowered,
             "widest_m": channels.widest_m,
             "deepest_m": channels.deepest_m,
+            "centreline_cells_raised_to_a_lake": channels.raised.len(),
         }),
     );
     figures.insert("stream_power".into(), stream_power);
@@ -403,16 +811,74 @@ pub fn run(options: &Options) -> Result<Outcome> {
     stage.raster("water-surface.f32", n, |i| surface[i].to_le_bytes())?;
     stage.raster("water-body.u32", n, |i| body_id(i).to_le_bytes())?;
     stage.raster("discharge.f32", n, |i| acc[i].to_le_bytes())?;
-    let scale = rain_stats.p95_land_mm_h;
-    stage.raster("moisture.f32", rain.mm_h.len(), |c| {
-        rain_stats.moisture(rain.mm_h[c]).to_le_bytes()
-    })?;
+    let flow_byte = |i: usize| -> u8 {
+        if let Some(b) = north.as_ref().filter(|_| flags[i] & FIXED != 0) {
+            return b.flow[i];
+        }
+        let mut f = dir[i];
+        if flags[i] & CENTRE != 0 {
+            f |= FLOW_CENTRE;
+        }
+        if flags[i] & (SEA | RIVER) == 0 && body[i] != 0 {
+            match basins[body[i] as usize - 1].kind {
+                Kind::Lake => {}
+                Kind::Dry => f |= FLOW_DRY,
+                Kind::Sink => f |= FLOW_DRY | FLOW_SINK,
+            }
+        }
+        f
+    };
+    stage.raster("flow.u8", n, |i| [flow_byte(i)])?;
+    let (moisture_entry, precipitation) = match (&coarse, &rain) {
+        (Some(c), _) => {
+            let m = &c.moisture;
+            stage.raster("moisture.f32", m.values.len(), |k| {
+                m.values[k].to_le_bytes()
+            })?;
+            let mut entry = m.entry.clone();
+            entry.insert("nw_m".into(), json!(m.nw_m));
+            entry.insert("from".into(), json!("the coarse level, unchanged"));
+            (
+                Value::Object(entry),
+                json!({
+                    "source": "coarse moisture.f32, bilinear; discharge weight moisture × \
+                        scale_mm_h / the coarse mean_land_mm_h",
+                    "weight_per_moisture": m.weight,
+                    "windless": m.windless,
+                    "wind_from_deg": wind_from_deg,
+                }),
+            )
+        }
+        (None, Some((rain, stats))) => {
+            stage.raster("moisture.f32", rain.mm_h.len(), |k| {
+                stats.moisture(rain.mm_h[k]).to_le_bytes()
+            })?;
+            let mut precipitation = stats.json();
+            if let Value::Object(m) = &mut precipitation {
+                m.insert("wind_from_deg".into(), json!(wind_from_deg));
+                m.insert("params".into(), params.json());
+            }
+            (
+                json!({
+                    "file": "moisture.f32",
+                    "size": [rain.w, rain.h],
+                    "spacing_m": grid.spacing_m * rain.k as f64,
+                    "nw_m": grid.nw_m,
+                    "dtype": "float32",
+                    "value": if wind_from_deg.is_some() {
+                        json!("precipitation / scale_mm_h, clipped to 0..1")
+                    } else {
+                        json!(format!("{} everywhere (no wind)", moisture::NEUTRAL_MOISTURE))
+                    },
+                    "scale_mm_h": stats.p95_land_mm_h,
+                    "scale": "95th percentile of precipitation on land cells",
+                }),
+                precipitation,
+            )
+        }
+        (None, None) => unreachable!("rain is computed without a coarse level"),
+    };
     stage.json("bodies.json", &bodies)?;
-    let mut precipitation = rain_stats.json();
-    if let Value::Object(m) = &mut precipitation {
-        m.insert("wind_from_deg".into(), json!(wind_from_deg));
-        m.insert("params".into(), params.json());
-    }
     let failures: Vec<&str> = checks
         .iter()
         .filter(|(_, v)| v.as_u64() != Some(0))
@@ -427,7 +893,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         "checks": checks,
         "figures": figures,
         "precipitation": precipitation,
-        "constants": report::constants(options.river_km2, BREACH_MAX_M),
+        "constants": report::constants(river_km2_f64, BREACH_MAX_M),
     });
     stage.json("report.json", &report)?;
     let mut manifest = grid.manifest.clone();
@@ -438,41 +904,57 @@ pub fn run(options: &Options) -> Result<Outcome> {
         .map_or(Value::Null, |(_, l)| json!(l));
     manifest.entry("level").or_insert(level);
     manifest.insert("wind_from_deg".into(), json!(wind_from_deg));
+    let mean_land_mm_h = match (&coarse, &rain) {
+        (Some(c), _) => {
+            c.moisture.entry["scale_mm_h"].as_f64().unwrap_or(1.0) / c.moisture.weight as f64
+        }
+        (None, Some((_, stats))) => stats.mean_land_mm_h as f64,
+        (None, None) => 1.0,
+    };
     manifest.insert(
         "discharge".into(),
         json!({
             "file": "discharge.f32",
             "unit": "km² at the mean land precipitation (drainage area weighted by rain / mean)",
-            "mean_land_mm_h": rain_stats.mean_land_mm_h,
+            "mean_land_mm_h": mean_land_mm_h,
         }),
     );
+    manifest.insert("moisture".into(), moisture_entry);
     manifest.insert(
-        "moisture".into(),
+        "flow".into(),
         json!({
-            "file": "moisture.f32",
-            "size": [rain.w, rain.h],
-            "spacing_m": grid.spacing_m * rain.k as f64,
-            "dtype": "float32",
-            "value": if wind_from_deg.is_some() {
-                json!("precipitation / scale_mm_h, clipped to 0..1")
-            } else {
-                json!(format!("{} everywhere (no wind)", moisture::NEUTRAL_MOISTURE))
-            },
-            "scale_mm_h": scale,
-            "scale": "95th percentile of precipitation on land cells",
+            "file": "flow.u8",
+            "bits": "low 4: D8 receiver (0 none; 1 N, 2 S, 3 W, 4 E, 5 NW, 6 NE, 7 SW, 8 SE); \
+                16 river centreline; 32 dry basin; 64 endorheic",
         }),
     );
-    manifest.insert(
-        "provenance".into(),
-        json!({
-            "tool": "topography world hydrology",
-            "version": env!("CARGO_PKG_VERSION"),
-            "inputs": inputs,
-            "water_table": { "source": water_source, "sha256": digest(water_text.as_bytes()) },
-            "river_km2": options.river_km2,
-            "outputs": stage.digests.clone(),
-        }),
-    );
+    let mut provenance = json!({
+        "tool": "topography world hydrology",
+        "version": env!("CARGO_PKG_VERSION"),
+        "inputs": inputs,
+        "water_table": { "source": water_source, "sha256": digest(water_text.as_bytes()) },
+        "river_km2": river_km2_f64,
+        "outputs": stage.digests.clone(),
+    });
+    if let (Some(c), Value::Object(m)) = (&coarse, &mut provenance) {
+        m.insert(
+            "coarse".into(),
+            json!({
+                "dir": options.coarse.as_ref().map(|d| d.display().to_string()),
+                "files": c.digests,
+            }),
+        );
+    }
+    if let (Some(b), Value::Object(m)) = (&north, &mut provenance) {
+        m.insert(
+            "north".into(),
+            json!({
+                "dir": options.north.as_ref().map(|d| d.display().to_string()),
+                "files": b.digests,
+            }),
+        );
+    }
+    manifest.insert("provenance".into(), provenance);
     stage.json("grid.json", &Value::Object(manifest))?;
     let out = stage.publish()?;
     lap("write", &mut t);

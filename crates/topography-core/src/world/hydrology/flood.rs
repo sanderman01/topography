@@ -15,6 +15,16 @@ const CHECKED: u8 = 8;
 pub(super) const CENTRE: u8 = 16;
 /// Lowered by breaching (a trench cell).
 pub(super) const BREACHED: u8 = 32;
+/// Copied from the previous band (`--north`): never changed here.
+pub(super) const FIXED: u8 = 64;
+/// A flood outlet that is not sea: a grid edge the water leaves by, or a fixed cell beside
+/// the free ones.
+pub(super) const OUTLET: u8 = 128;
+
+/// `flow.u8` bits above the D8 direction (low 4 bits): centreline, dry basin, endorheic.
+pub(super) const FLOW_CENTRE: u8 = 16;
+pub(super) const FLOW_DRY: u8 = 32;
+pub(super) const FLOW_SINK: u8 = 64;
 
 /// D8 neighbour offsets (row, column); a direction byte is an index here plus one, 0 none.
 const OFFSETS: [(isize, isize); 8] = [
@@ -72,6 +82,17 @@ impl Dims {
     pub fn offset(d: u8) -> (isize, isize) {
         OFFSETS[d as usize - 1]
     }
+    /// Direction byte from cell `a` to its neighbour `b`.
+    pub fn towards(self, a: usize, b: usize) -> u8 {
+        let off = (
+            (b / self.w) as isize - (a / self.w) as isize,
+            (b % self.w) as isize - (a % self.w) as isize,
+        );
+        OFFSETS
+            .iter()
+            .position(|&o| o == off)
+            .map_or(0, |k| k as u8 + 1)
+    }
 }
 
 pub(super) fn receiver(dims: Dims, dir: &[u8], i: usize) -> Option<usize> {
@@ -99,24 +120,26 @@ impl PartialOrd for Item {
     }
 }
 
-/// Mark ground below 0 connected (8-way) to the grid edge as sea, not crossing `blocked`.
-pub(super) fn open_sea(
-    dims: Dims,
-    ground: &[f32],
-    blocked: impl Fn(usize) -> bool,
-    flags: &mut [u8],
-) {
+/// Mark ground below 0 connected (8-way) to a `seed` cell below 0 (the world edge, coarse
+/// sea) or to fixed sea as sea. Fixed cells keep their flags.
+pub(super) fn open_sea(dims: Dims, ground: &[f32], seed: impl Fn(usize) -> bool, flags: &mut [u8]) {
     let mut stack: Vec<u32> = Vec::new();
     for i in 0..ground.len() {
+        if flags[i] & FIXED != 0 {
+            if flags[i] & SEA != 0 {
+                stack.push(i as u32);
+            }
+            continue;
+        }
         flags[i] &= !SEA;
-        if dims.is_edge(i) && ground[i] < 0.0 && !blocked(i) {
+        if ground[i] < 0.0 && seed(i) {
             flags[i] |= SEA;
             stack.push(i as u32);
         }
     }
     while let Some(i) = stack.pop() {
         for (_, j) in dims.neighbours(i as usize) {
-            if flags[j] & SEA == 0 && ground[j] < 0.0 && !blocked(j) {
+            if flags[j] & (SEA | FIXED) == 0 && ground[j] < 0.0 {
                 flags[j] |= SEA;
                 stack.push(j as u32);
             }
@@ -124,7 +147,7 @@ pub(super) fn open_sea(
     }
 }
 
-/// Seed the flood: sea cells are seen, those on the coast and non-sea edge cells are queued.
+/// Seed the flood: sea and fixed cells are seen; coast cells and outlets (`OUTLET`) are queued.
 fn seeds(dims: Dims, value: impl Fn(usize) -> f32, flags: &mut [u8], heap: &mut BinaryHeap<Item>) {
     for f in flags.iter_mut() {
         *f &= !(SEEN | CHECKED);
@@ -138,18 +161,29 @@ fn seeds(dims: Dims, value: impl Fn(usize) -> f32, flags: &mut [u8], heap: &mut 
                     i: i as u32,
                 });
             }
-        } else if dims.is_edge(i) {
+        } else if flags[i] & (FIXED | OUTLET) != 0 {
             flags[i] |= SEEN;
-            heap.push(Item {
-                z: value(i),
-                i: i as u32,
-            });
+            if flags[i] & OUTLET != 0 {
+                heap.push(Item {
+                    z: value(i),
+                    i: i as u32,
+                });
+            }
+        }
+    }
+}
+
+/// Every edge cell an outlet (a whole world, no coarse level).
+pub(super) fn edge_outlets(dims: Dims, flags: &mut [u8]) {
+    for (i, f) in flags.iter_mut().enumerate() {
+        if dims.is_edge(i) {
+            *f |= OUTLET;
         }
     }
 }
 
 /// Depression-filled surface (no gradient across flats) and receivers along the flood.
-/// Outlets are the sea and the grid edge.
+/// Outlets are the sea and `OUTLET` cells.
 pub(super) fn fill(dims: Dims, ground: &[f32], flags: &mut [u8], dir: &mut [u8]) -> Vec<f32> {
     let mut filled = ground.to_vec();
     let mut heap = BinaryHeap::new();
@@ -197,7 +231,7 @@ fn lower(
 ) -> u64 {
     let (mut at, mut lowered) = (Some(from), 0);
     while let Some(a) = at {
-        if body[a] != 0 || ground[a] <= target {
+        if body[a] != 0 || ground[a] <= target || flags[a] & FIXED != 0 {
             break;
         }
         ground[a] = target;
@@ -206,6 +240,29 @@ fn lower(
         at = receiver(dims, dir, a);
     }
     lowered
+}
+
+/// `lower` from `from` to `target` would stop at a fixed cell above `target`.
+fn blocked(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    dir: &[u8],
+    from: usize,
+    target: f32,
+) -> bool {
+    let mut at = Some(from);
+    while let Some(a) = at {
+        if body[a] != 0 || ground[a] <= target {
+            return false;
+        }
+        if flags[a] & FIXED != 0 {
+            return true;
+        }
+        at = receiver(dims, dir, a);
+    }
+    false
 }
 
 /// Level of the lake that flow from `from` reaches first along the receivers, if it reaches a
@@ -233,10 +290,14 @@ fn lake_downstream(dims: Dims, body: &[u32], basins: &[Basin], dir: &[u8], from:
 /// where the ground falls away). Equal heights are a flat, crossed without carving, so the
 /// result descends or stays level along every receiver. Basin cells are never lowered.
 ///
-/// A depression deeper than `cap_m` below its spill is kept instead, as `deep_kind(pit)` says:
-/// a sink (dry, flow ends there) or lakes at the spill lowered by `cap_m` (not below 0 m), one
-/// per piece of ground below that level. A shallower one with ground below 0 m becomes lakes at
-/// 0 m (lagoons), so cuts never go below sea level. Returns cells lowered.
+/// A depression deeper than `cap_m` below its spill is kept instead, as `keep_kind(pit, true)`
+/// says: a sink (dry, flow ends there) or lakes at the spill lowered by `cap_m` (not below
+/// 0 m), one per piece of ground below that level. A shallower one with ground below 0 m is
+/// kept as `keep_kind(pit, false)` says, lakes at 0 m (lagoons) or a sink, so cuts never go
+/// below sea level. One whose path out starts at a fixed cell (from the previous band) above
+/// the pit is a sink. On a finer level (`fine`), a depression the flood reaches from a lake
+/// joins it, and one beside a lake is breached past the cap (the coarse lake must drain).
+/// Returns cells lowered.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn breach(
     dims: Dims,
@@ -246,7 +307,8 @@ pub(super) fn breach(
     flags: &mut [u8],
     dir: &mut [u8],
     cap_m: f32,
-    deep_kind: impl Fn(usize) -> Kind,
+    fine: bool,
+    keep_kind: impl Fn(usize, bool) -> Kind,
 ) -> u64 {
     let value = |g: &[f32], body: &[u32], basins: &[Basin], i: usize| match body[i] {
         0 => g[i],
@@ -291,9 +353,48 @@ pub(super) fn breach(
                     }
                 }
                 let p = ground[low];
-                if z - p <= cap_m && p >= 0.0 {
+                let deep = z - p > cap_m;
+                let blocked = blocked(dims, ground, flags, body, dir, c, p);
+                let lake =
+                    |i: usize| body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake;
+                if fine && lake(c) {
+                    // Below the lake's level beside it: it joins the lake (`lakes::extend`).
+                } else if !deep && p >= 0.0 && !blocked {
                     lowered += lower(dims, ground, flags, body, dir, c, p);
-                } else if z - p > cap_m && deep_kind(low) == Kind::Sink {
+                } else if let Some(beside) = region
+                    .iter()
+                    .flat_map(|&a| dims.neighbours(a as usize))
+                    .find(|&(_, m)| lake(m))
+                    .map(|(_, m)| body[m])
+                    .filter(|_| fine && !blocked)
+                {
+                    // Around a lake that must drain: cut past the cap, not below 0 m; ground
+                    // below the lake's level beside it joins the lake.
+                    let level = basins[beside as usize - 1].level;
+                    if p < 0.0 {
+                        for &a in &region {
+                            let a = a as usize;
+                            if ground[a] < level
+                                && dims.neighbours(a).any(|(_, m)| body[m] == beside)
+                            {
+                                body[a] = beside;
+                                stack.push(a as u32);
+                            }
+                        }
+                        while let Some(b) = stack.pop() {
+                            for (_, m) in dims.neighbours(b as usize) {
+                                if flags[m] & (SEEN | CHECKED) == CHECKED
+                                    && body[m] == 0
+                                    && ground[m] < level
+                                {
+                                    body[m] = beside;
+                                    stack.push(m as u32);
+                                }
+                            }
+                        }
+                    }
+                    lowered += lower(dims, ground, flags, body, dir, c, p.max(0.0));
+                } else if blocked || keep_kind(low, deep) == Kind::Sink {
                     // (A shallow one below 0 m becomes a lagoon at 0 m in any class.)
                     basins.push(Basin::kept(Kind::Sink, z, c as u32));
                     let id = basins.len() as u32;
@@ -417,7 +518,8 @@ mod tests {
         ];
         let mut flags = vec![0u8; 25];
         let mut dir = vec![0u8; 25];
-        open_sea(dims, &ground, |_| false, &mut flags);
+        edge_outlets(dims, &mut flags);
+        open_sea(dims, &ground, |i| dims.is_edge(i), &mut flags);
         let filled = fill(dims, &ground, &mut flags, &mut dir);
         assert_eq!(filled[12], 5.0);
         let (mut body, mut basins) = (vec![0u32; 25], Vec::new());
@@ -429,7 +531,8 @@ mod tests {
             &mut flags,
             &mut dir,
             30.0,
-            |_| Kind::Lake,
+            false,
+            |_, _| Kind::Lake,
         );
         assert!(basins.is_empty(), "a 4 m deep pit is breached");
         // Every land cell descends to the sea.
@@ -463,7 +566,8 @@ mod tests {
             let mut ground = start.clone();
             let (mut flags, mut dir) = (vec![0u8; 25], vec![0u8; 25]);
             let (mut body, mut basins) = (vec![0u32; 25], Vec::new());
-            open_sea(dims, &ground, |_| false, &mut flags);
+            edge_outlets(dims, &mut flags);
+            open_sea(dims, &ground, |i| dims.is_edge(i), &mut flags);
             breach(
                 dims,
                 &mut ground,
@@ -472,7 +576,8 @@ mod tests {
                 &mut flags,
                 &mut dir,
                 2.0,
-                |_| kind,
+                false,
+                |_, deep| if deep { kind } else { Kind::Lake },
             );
             assert_eq!(basins.len(), 1);
             assert_eq!(body[12], 1);

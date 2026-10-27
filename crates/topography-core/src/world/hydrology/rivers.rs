@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::flood::{CENTRE, Dims, RIVER, SEA, receiver};
+use super::flood::{CENTRE, Dims, FIXED, RIVER, SEA, receiver};
 use super::lakes::{Basin, Kind};
 
 /// Judgment constants: width W = WIDTH_A · Q^0.5 and depth D = DEPTH_B · Q^0.4 (m), with Q
@@ -50,11 +50,18 @@ pub(super) enum End {
     /// A dry basin flow passes through (glacier ice): the river continues past its exit.
     Dry(u32),
     Edge,
+    /// A confluence with a river whose id was given (index + 1): a coarse river or one from
+    /// the previous band.
+    Joins(u32),
     /// Dry land: never expected (rivers grow downstream), reported as a failure.
     Land,
 }
 
 pub(super) struct River {
+    /// Body id: given for coarse rivers and rivers from the previous band, else 0 until ids
+    /// are assigned.
+    pub id: u32,
+    pub coarse: bool,
     pub mouth: u32,
     pub end: End,
     /// Centreline cells.
@@ -72,17 +79,34 @@ pub(super) struct Band {
     pub depth: f32,
 }
 
-/// The centreline cell a river cell belongs to (itself on the centreline).
+/// The centreline cell a river cell belongs to (itself on the centreline, and for a channel
+/// cell copied from the previous band).
 pub(super) fn owner(flags: &[u8], band: &[Band], i: usize) -> Option<usize> {
     if flags[i] & CENTRE != 0 {
         Some(i)
     } else if flags[i] & RIVER != 0 {
-        band.binary_search_by_key(&(i as u32), |b| b.cell)
-            .ok()
-            .map(|k| band[k].owner as usize)
+        Some(
+            band.binary_search_by_key(&(i as u32), |b| b.cell)
+                .map_or(i, |k| band[k].owner as usize),
+        )
     } else {
         None
     }
+}
+
+/// Rivers with given ids and where they run, for `extract` (none at the trunk level).
+#[derive(Default)]
+pub(super) struct Given {
+    /// Coarse rivers, then rivers from the previous band; cells copied from that band are
+    /// already flagged and labelled (index + 1).
+    pub rivers: Vec<River>,
+    /// Centreline cells of a given river (index + 1): the coarse rivers' fine paths.
+    pub cells: Vec<(u32, u32)>,
+    /// Cells where a river from the previous band enters: it continues down the routing
+    /// while the discharge stays above the threshold.
+    pub follow: Vec<(u32, u32)>,
+    /// Highest surface per centreline cell (the coarse surface along coarse paths).
+    pub cap: HashMap<u32, f32>,
 }
 
 /// Channel figures.
@@ -101,6 +125,10 @@ pub(super) struct Channels {
     pub sea_cells_lowered: u64,
     pub widest_m: f32,
     pub deepest_m: f32,
+    /// New streams dropped because they ran onto dry ground of the previous band.
+    pub streams_pruned: u64,
+    /// Centreline cells raised to an adjacent lake's level, or behind one (sorted).
+    pub raised: Vec<u32>,
 }
 
 /// Mark the centreline (flags `RIVER | CENTRE`) and channel cells (`RIVER`), store river ids
@@ -117,23 +145,56 @@ pub(super) fn extract(
     river_km2: f32,
     spacing_m: f64,
     surface: &mut [f32],
+    given: Given,
 ) -> (Vec<River>, Vec<Band>, Channels) {
     let n = ground.len();
     let l = spacing_m as f32;
+    let free = |flags: &[u8], body: &[u32], i: usize| {
+        flags[i] & (SEA | RIVER | FIXED) == 0 && body[i] == 0
+    };
+    for &(i, r) in &given.cells {
+        let i = i as usize;
+        if free(flags, body, i) {
+            flags[i] |= RIVER | CENTRE;
+            body[i] = r;
+        }
+    }
+    for &(i, r) in &given.follow {
+        let mut c = Some(i as usize);
+        while let Some(i) = c.filter(|&i| free(flags, body, i) && acc[i] >= river_km2) {
+            flags[i] |= RIVER | CENTRE;
+            body[i] = r;
+            c = receiver(dims, dir, i);
+        }
+    }
     for i in 0..n {
-        if flags[i] & SEA == 0 && body[i] == 0 && acc[i] >= river_km2 {
+        if free(flags, body, i) && acc[i] >= river_km2 {
             flags[i] |= RIVER | CENTRE;
         }
     }
     let centre = |flags: &[u8], i: usize| flags[i] & CENTRE != 0;
+    let fixed = |flags: &[u8], i: usize| flags[i] & FIXED != 0;
     let lake = |flags: &[u8], body: &[u32], i: usize| {
         flags[i] & (SEA | RIVER) == 0
             && body[i] != 0
             && basins[body[i] as usize - 1].kind == Kind::Lake
     };
+    let end_at = |flags: &[u8], body: &[u32], r: Option<usize>| match r {
+        None => End::Edge,
+        Some(r) if flags[r] & RIVER != 0 => End::Joins(body[r]),
+        Some(r) if flags[r] & SEA != 0 => End::Sea,
+        Some(r) if lake(flags, body, r) => End::Lake(body[r]),
+        Some(r) if body[r] != 0 && basins[body[r] as usize - 1].kind == Kind::Sink => {
+            End::Sink(body[r])
+        }
+        Some(r) if body[r] != 0 => End::Dry(body[r]),
+        Some(_) => End::Land,
+    };
 
     // Ids: walk down to a river cell with an id or the river's end, then fill in from below.
-    let mut rivers: Vec<River> = Vec::new();
+    // A river reaching a given one is a tributary with its own id.
+    let given_count = given.rivers.len() as u32;
+    let mut rivers: Vec<River> = given.rivers;
     let mut chain: Vec<u32> = Vec::new();
     for i in 0..n {
         if !centre(flags, i) || body[i] != 0 {
@@ -151,23 +212,13 @@ pub(super) fn extract(
         for &x in chain.iter().rev() {
             let x = x as usize;
             let id = match receiver(dims, dir, x) {
-                Some(r) if centre(flags, r) => body[r],
+                Some(r) if centre(flags, r) && body[r] > given_count => body[r],
                 r => {
-                    let end = match r {
-                        None => End::Edge,
-                        Some(r) if flags[r] & SEA != 0 => End::Sea,
-                        Some(r) if lake(flags, body, r) => End::Lake(body[r]),
-                        Some(r)
-                            if body[r] != 0 && basins[body[r] as usize - 1].kind == Kind::Sink =>
-                        {
-                            End::Sink(body[r])
-                        }
-                        Some(r) if body[r] != 0 => End::Dry(body[r]),
-                        Some(_) => End::Land,
-                    };
                     rivers.push(River {
+                        id: 0,
+                        coarse: false,
                         mouth: x as u32,
-                        end,
+                        end: end_at(flags, body, r),
                         cells: 0,
                         wet_cells: 0,
                         length_m: 0.0,
@@ -177,10 +228,48 @@ pub(super) fn extract(
                 }
             };
             body[x] = id;
-            let river = &mut rivers[id as usize - 1];
+        }
+    }
+    // Given rivers end where their cells here leave them (the largest discharge such cell).
+    let mut mouth: Vec<Option<usize>> = vec![None; given_count as usize];
+    for i in 0..n {
+        let k = body[i];
+        if !centre(flags, i) || fixed(flags, i) || k == 0 || k > given_count {
+            continue;
+        }
+        let out = receiver(dims, dir, i).is_none_or(|r| !centre(flags, r) || body[r] != k);
+        let m = &mut mouth[k as usize - 1];
+        if out && m.is_none_or(|m| acc[i] > acc[m]) {
+            *m = Some(i);
+        }
+    }
+    for (k, m) in mouth.iter().enumerate() {
+        if let Some(m) = *m {
+            let r = &mut rivers[k];
+            (r.mouth, r.drainage_km2) = (m as u32, acc[m]);
+            r.end = end_at(flags, body, receiver(dims, dir, m));
+        }
+    }
+    // A new stream that runs onto dry ground copied from the previous band (which did not
+    // see enough discharge for it there) is dropped: it would end on dry land.
+    let mut pruned = vec![false; rivers.len()];
+    for (k, r) in rivers.iter().enumerate().skip(given_count as usize) {
+        let m = r.mouth as usize;
+        pruned[k] = r.end == End::Land && receiver(dims, dir, m).is_some_and(|x| fixed(flags, x));
+    }
+    for i in 0..n {
+        if centre(flags, i) && !fixed(flags, i) && pruned[body[i] as usize - 1] {
+            flags[i] &= !(RIVER | CENTRE);
+            body[i] = 0;
+        }
+    }
+    let streams_pruned = pruned.iter().filter(|&&p| p).count() as u64;
+    for i in 0..n {
+        if centre(flags, i) && !fixed(flags, i) {
+            let river = &mut rivers[body[i] as usize - 1];
             river.cells += 1;
             river.wet_cells += 1;
-            river.length_m += Dims::step(dir[x]) * spacing_m;
+            river.length_m += Dims::step(dir[i]) * spacing_m;
         }
     }
 
@@ -193,18 +282,21 @@ pub(super) fn extract(
     }
     let mut ch = Channels {
         band_cells: band.len() as u64,
+        streams_pruned,
         ..Channels::default()
     };
 
     // Surfaces at the centreline: its ground, at most every dry bank beside or behind any of
     // its channel cells, then at most every surface upstream (upstream first, by donors).
+    // Cells copied from the previous band keep their surface.
     let sills: HashMap<u32, f32> = (0..n)
-        .filter(|&i| centre(flags, i))
+        .filter(|&i| centre(flags, i) && !fixed(flags, i))
         .filter_map(|i| sill_level(dims, dir, flags, body, basins, i).map(|s| (i as u32, s)))
         .collect();
     for i in 0..n {
-        if centre(flags, i) {
-            surface[i] = sills.get(&(i as u32)).copied().unwrap_or(ground[i]);
+        if centre(flags, i) && !fixed(flags, i) {
+            let s = sills.get(&(i as u32)).copied().unwrap_or(ground[i]);
+            surface[i] = given.cap.get(&(i as u32)).map_or(s, |&c| s.min(c));
         }
     }
     let wet_cells = (0..n)
@@ -212,7 +304,7 @@ pub(super) fn extract(
         .map(|i| (i, i))
         .chain(band.iter().map(|b| (b.cell as usize, b.owner as usize)));
     for (j, o) in wet_cells.collect::<Vec<_>>() {
-        if sills.contains_key(&(o as u32)) {
+        if sills.contains_key(&(o as u32)) || fixed(flags, o) {
             continue;
         }
         let entered = entered_basin(dims, dir, flags, body, o);
@@ -234,7 +326,7 @@ pub(super) fn extract(
             donors[c] = u8::MAX;
             match receiver(dims, dir, c).filter(|&r| centre(flags, r)) {
                 Some(r) => {
-                    if !sills.contains_key(&(r as u32)) {
+                    if !sills.contains_key(&(r as u32)) && !fixed(flags, r) {
                         surface[r] = surface[r].min(surface[c]);
                     }
                     donors[r] -= 1;
@@ -249,7 +341,11 @@ pub(super) fn extract(
     // Grade: where a low bank pulls the surface below the ground, the drop tapers upstream
     // by at most GRADE_SLOPE, so the bed ramps down over many cells instead of a notch.
     let mut order: Vec<u32> = (0..n)
-        .filter(|&i| centre(flags, i) && receiver(dims, dir, i).is_none_or(|r| !centre(flags, r)))
+        .filter(|&i| {
+            centre(flags, i)
+                && !fixed(flags, i)
+                && receiver(dims, dir, i).is_none_or(|r| !centre(flags, r) || fixed(flags, r))
+        })
         .map(|i| i as u32)
         .collect();
     let mut k = 0;
@@ -258,7 +354,7 @@ pub(super) fn extract(
         k += 1;
         ch.max_bank_drop_m = ch.max_bank_drop_m.max(ground[c] - surface[c]);
         for (_, d) in dims.neighbours(c) {
-            if centre(flags, d) && receiver(dims, dir, d) == Some(c) {
+            if centre(flags, d) && !fixed(flags, d) && receiver(dims, dir, d) == Some(c) {
                 order.push(d as u32);
                 if !sills.contains_key(&(d as u32)) {
                     let taper = GRADE_SLOPE * (Dims::step(dir[d]) * spacing_m) as f32;
@@ -269,6 +365,40 @@ pub(super) fn extract(
         }
     }
     drop(order);
+
+    // Beside a lake a river never stands below it: the surface rises to the level there (an
+    // outflow along the shore stays at it), and lower surfaces upstream rise to it too (a
+    // backwater). Dry banks below a raised surface are raised later, as lips are.
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, s) in surface.iter_mut().enumerate() {
+        if centre(flags, i) && !fixed(flags, i) {
+            let level = dims
+                .neighbours(i)
+                .filter(|&(_, j)| lake(flags, body, j))
+                .map(|(_, j)| basins[body[j] as usize - 1].level)
+                .fold(f32::NEG_INFINITY, f32::max);
+            if *s < level {
+                *s = level;
+                ch.raised.push(i as u32);
+                stack.push(i);
+            }
+        }
+    }
+    while let Some(c) = stack.pop() {
+        for (_, d) in dims.neighbours(c) {
+            if centre(flags, d)
+                && !fixed(flags, d)
+                && receiver(dims, dir, d) == Some(c)
+                && surface[d] < surface[c]
+            {
+                surface[d] = surface[c];
+                ch.raised.push(d as u32);
+                stack.push(d);
+            }
+        }
+    }
+    ch.raised.sort_unstable();
+    ch.raised.dedup();
 
     // Gorge rule against the final surface: channel cells more than D above it stay dry
     // (they are above every surface beside them, so they are valid banks).
@@ -309,7 +439,7 @@ pub(super) fn extract(
         }
     };
     for i in 0..n {
-        if !centre(flags, i) {
+        if !centre(flags, i) || fixed(flags, i) {
             continue;
         }
         let (q, s) = (acc[i], surface[i]);
@@ -330,7 +460,7 @@ pub(super) fn extract(
     }
     // The channel continues into the seabed past each sea mouth.
     for i in 0..n {
-        if !centre(flags, i) || cells_to_sea(dims, dir, flags, i) != Some(0) {
+        if !centre(flags, i) || fixed(flags, i) || cells_to_sea(dims, dir, flags, i) != Some(0) {
             continue;
         }
         let (dy, dx) = Dims::offset(dir[i]);
@@ -342,7 +472,7 @@ pub(super) fn extract(
                 break;
             }
             let j = y as usize * dims.w + x as usize;
-            if flags[j] & SEA == 0 {
+            if flags[j] & SEA == 0 || fixed(flags, j) {
                 break;
             }
             let bed = ground[i] - step * k as f32;
@@ -409,7 +539,7 @@ fn channel_band(
         for y in (cy - reach).max(0)..=(cy + reach).min(dims.h as isize - 1) {
             for x in (cx - reach).max(0)..=(cx + reach).min(dims.w as isize - 1) {
                 let j = y as usize * dims.w + x as usize;
-                if j == c || flags[j] & (SEA | RIVER) != 0 || body[j] != 0 {
+                if j == c || flags[j] & (SEA | RIVER | FIXED) != 0 || body[j] != 0 {
                     continue;
                 }
                 let r = l * (((y - cy).pow(2) + (x - cx).pow(2)) as f32).sqrt();
@@ -489,9 +619,10 @@ pub(super) fn hole(
     (low.is_finite() && low > ground[i] + HOLE_M).then_some(low)
 }
 
-/// Raise each hole that is not in a basin to its lowest adjacent water surface, then every
-/// dry cell draining into a raised one that is now lower than it; repeated while holes remain
-/// (a few passes). Returns what was raised.
+/// Raise each hole (dry basin cells too, as `hole` counts them) to its lowest adjacent water
+/// surface, then every dry cell draining into a raised one that is now lower than it;
+/// repeated while holes remain (a few passes). Cells from the previous band stay. Returns
+/// what was raised.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fill_holes(
     dims: Dims,
@@ -504,7 +635,10 @@ pub(super) fn fill_holes(
     surface: &[f32],
     spacing_m: f64,
 ) -> Lips {
-    let dry = |i: usize| flags[i] & (SEA | RIVER) == 0 && body[i] == 0;
+    let dry = |i: usize| {
+        flags[i] & (SEA | RIVER | FIXED) == 0
+            && (body[i] == 0 || basins[body[i] as usize - 1].kind != Kind::Lake)
+    };
     let mut filled = Lips::default();
     let mut stack: Vec<u32> = Vec::new();
     for _ in 0..8 {
@@ -560,8 +694,9 @@ impl Lips {
 }
 
 /// Raise dry ground beside each lake exit's channel that is below the lake level up to it (a
-/// rock sill, the only raising), then every dry cell draining into a raised one that is now
-/// lower than it, so no ground drains uphill. Basin cells are left as they are.
+/// rock sill), and beside channels raised to a lake's level (`raised`) up to their surface,
+/// then every dry cell draining into a raised one that is now lower than it, so no ground
+/// drains uphill. Basin cells are left as they are.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn raise_lips(
     dims: Dims,
@@ -571,9 +706,11 @@ pub(super) fn raise_lips(
     body: &[u32],
     basins: &[Basin],
     band: &[Band],
+    surface: &[f32],
+    raised: &[u32],
     spacing_m: f64,
 ) -> Lips {
-    let dry = |i: usize| flags[i] & (SEA | RIVER) == 0 && body[i] == 0;
+    let dry = |i: usize| flags[i] & (SEA | RIVER | FIXED) == 0 && body[i] == 0;
     let mut lips = Lips::default();
     let mut stack: Vec<u32> = Vec::new();
     let mut raise = |ground: &mut [f32], i: usize, to: f32, stack: &mut Vec<u32>| {
@@ -589,7 +726,12 @@ pub(super) fn raise_lips(
         .map(|i| (i, i))
         .chain(band.iter().map(|b| (b.cell as usize, b.owner as usize)));
     for (x, o) in wet {
-        let Some(level) = sill_level(dims, dir, flags, body, basins, o) else {
+        let Some(level) = sill_level(dims, dir, flags, body, basins, o).or_else(|| {
+            raised
+                .binary_search(&(o as u32))
+                .is_ok()
+                .then_some(surface[o])
+        }) else {
             continue;
         };
         for (_, j) in dims.neighbours(x) {
