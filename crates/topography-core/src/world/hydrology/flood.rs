@@ -518,13 +518,19 @@ pub(super) fn steepest(
         }
     }
     let restored = restore_on_cycles(dims, dir, |_, i| Some(flood_dir[i]));
-    changed.saturating_sub(restored) + spill_cycles(dims, ground, dir)
+    changed.saturating_sub(restored) + spill_cycles(dims, ground, dir, |_| true)
 }
 
 /// A pit lowered after the flood (a trench end) drains uphill, so a neighbour stepping down
 /// into it closes a cycle. Each cycle then spills like a depression: the member beside the
-/// lowest cell outside it (not draining into it) drains there. Returns the cells redirected.
-fn spill_cycles(dims: Dims, ground: &[f32], dir: &mut [u8]) -> u64 {
+/// lowest cell outside it (not draining into it) drains there; only members `may` allows
+/// are redirected. Returns the cells redirected.
+pub(super) fn spill_cycles(
+    dims: Dims,
+    ground: &[f32],
+    dir: &mut [u8],
+    may: impl Fn(usize) -> bool,
+) -> u64 {
     let mut redirected = 0;
     for _ in 0..32 {
         let cycles = on_cycles(dims, dir);
@@ -547,15 +553,28 @@ fn spill_cycles(dims: Dims, ground: &[f32], dir: &mut [u8]) -> u64 {
                 members.push(c);
                 c = receiver(dims, dir, c).unwrap_or(start);
             }
-            let mut best: Option<(f32, usize, u8)> = None;
-            for &m in &members {
-                for (k, j) in dims.neighbours(m) {
-                    let into = receiver(dims, dir, j).is_some_and(|r| on[r]);
-                    if !on[j] && !into && best.is_none_or(|b| ground[j] < b.0) {
-                        best = Some((ground[j], m, k as u8 + 1));
+            // A neighbour whose flow reaches a cycle would only lengthen it.
+            let reaches_cycle = |mut j: usize| loop {
+                if on[j] {
+                    return true;
+                }
+                match receiver(dims, dir, j) {
+                    Some(r) => j = r,
+                    None => return false,
+                }
+            };
+            let spill = |allowed: &dyn Fn(usize) -> bool| {
+                let mut best: Option<(f32, usize, u8)> = None;
+                for &m in members.iter().filter(|&&m| allowed(m)) {
+                    for (k, j) in dims.neighbours(m) {
+                        if best.is_none_or(|b| ground[j] < b.0) && !reaches_cycle(j) {
+                            best = Some((ground[j], m, k as u8 + 1));
+                        }
                     }
                 }
-            }
+                best
+            };
+            let best = spill(&may).or_else(|| spill(&|_| true));
             if let Some((_, m, d)) = best {
                 dir[m] = d;
                 redirected += 1;

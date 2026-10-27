@@ -512,7 +512,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     // Coarse river paths keep their own course, descending (widening may have lowered cells).
     if let Some(im) = &imprint {
-        fine::route(dims, &mut dir, &im.paths);
+        fine::route(dims, &ground, &mut dir, &im.paths);
         let (_, max, at) = fine::burn(
             dims,
             &mut ground,
@@ -640,7 +640,11 @@ pub fn run(options: &Options) -> Result<Outcome> {
         let mut cells = 0u64;
         for p in &im.paths {
             for &c in &p.cells {
-                if body[c as usize] != 0 || flags[c as usize] & FIXED != 0 {
+                // A path stops at a lake, a sink or the previous band, not on a dry basin floor.
+                let b = body[c as usize];
+                if (b != 0 && basins[b as usize - 1].kind != Kind::Dry)
+                    || flags[c as usize] & FIXED != 0
+                {
                     break;
                 }
                 given.cells.push((c, p.river as u32 + 1));

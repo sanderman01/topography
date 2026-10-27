@@ -154,9 +154,16 @@ pub(super) fn extract(
     let free = |flags: &[u8], body: &[u32], i: usize| {
         flags[i] & (SEA | RIVER | FIXED) == 0 && body[i] == 0
     };
+    // Coarse paths also run over dry basin floors (at 1 m a glacier is a field of small ice
+    // basins), not through lakes or endorheic sinks.
+    let dry_floor = |flags: &[u8], body: &[u32], i: usize| {
+        flags[i] & (SEA | RIVER | FIXED) == 0
+            && body[i] != 0
+            && basins[body[i] as usize - 1].kind == Kind::Dry
+    };
     for &(i, r) in &given.cells {
         let i = i as usize;
-        if free(flags, body, i) {
+        if free(flags, body, i) || dry_floor(flags, body, i) {
             flags[i] |= RIVER | CENTRE;
             body[i] = r;
         }

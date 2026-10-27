@@ -5,7 +5,7 @@
 //! no higher than the coarse one.
 
 use super::coarse::Coarse;
-use super::flood::{CENTRE, Dims, FIXED, OUTLET, SEA};
+use super::flood::{self, CENTRE, Dims, FIXED, OUTLET, SEA};
 use super::lakes::{Basin, Kind, NO_EXIT};
 use serde_json::{Map, Value, json};
 use std::{
@@ -542,16 +542,21 @@ pub(super) fn burn(
     (cells, max, at)
 }
 
-/// Point each path cell at the next.
-pub(super) fn route(dims: Dims, dir: &mut [u8], paths: &[Path]) {
+/// Point each path cell at the next. A path ending where its flow comes back (a dry basin
+/// whose exit is the path's last cell) would close a cycle: that cell outside the path spills
+/// elsewhere.
+pub(super) fn route(dims: Dims, ground: &[f32], dir: &mut [u8], paths: &[Path]) {
+    let mut on_path = vec![false; dir.len()];
     for p in paths {
         for (k, &c) in p.cells.iter().enumerate() {
+            on_path[c as usize] = true;
             let to = p.cells.get(k + 1).copied().or(p.next);
             if let Some(to) = to {
                 dir[c as usize] = dims.towards(c as usize, to as usize);
             }
         }
     }
+    flood::spill_cycles(dims, ground, dir, |i| !on_path[i]);
 }
 
 /// Fine centrelines of the coarse rivers (largest first). A river's corridor is the fine cells
@@ -656,8 +661,10 @@ pub(super) fn rivers(
         let mut corridor: HashSet<u32> = HashSet::new();
         for &q in &cq {
             for i in c.fine_cells(q, w, h) {
+                // Dry basin floors stay open (at 1 m a glacier is a field of ice basins).
+                let open = body[i] == 0 || basins[body[i] as usize - 1].kind == Kind::Dry;
                 if flags[i] & (SEA | FIXED) == 0
-                    && body[i] == 0
+                    && open
                     && !claimed.contains_key(&(i as u32))
                     && !shore(i)
                 {
