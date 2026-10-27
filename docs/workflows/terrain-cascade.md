@@ -494,8 +494,10 @@ Steps:
   breach cut, less the slope's rise per further ring, so widening dies out within a few
   cells (two rings at 32 m, up to 11 at 4 m; at most 16). A lowered wall cell drains into
   that neighbour, so heights fall strictly towards the trench and no pits appear. Never below
-  the trench, 0 m or a basin level beside it; basins, the sea, glacier and all ground
-  draining onto glacier or into an ice basin are untouched.
+  the trench, 0 m or a basin level beside it; basins (an ice caldera's interior too), the sea
+  and cells from the previous band are untouched. Glacier ground widens like any other (ice
+  is a surface layer), so a breach through a glacier rim is a valley, not a slot. On finer
+  levels burned coarse river paths widen the same way.
 - Receivers, at every level: after breaching and widening, every land cell outside basins
   drains to its steepest-descent neighbour on the final ground (drop over distance, a diagonal
   √2 long; a basin neighbour counts at its level). The flood's discovery order picks the lowest
@@ -667,12 +669,11 @@ are read. The coarse network is then held fixed:
   (and nearer than its nearest leak) by a sill raised to the level plus 0.05 m; a leak nearer
   the seeds is raised where it is, except on a band edge, where the lake may go on. Cut-off
   ground stays out of lakes as high, and the rounds repeat (at most 8); a leak left after them
-  fails `coarse_lake_leaks_left`. One piece per lake (the largest, and any touching a band
-  edge or the previous band's cells); smaller pieces stay dry. Dry ground left beside a lake
-  below its level, and a coarse river's cells beside it below the level plus 0.05 m, are
-  raised to that (a shore), except a notch with 6 or more cells of that lake around it, which
-  joins the lake. A lake with no fine ground below its level keeps its lowest cell 0.25 m
-  below. The coarse river leaving a lake starts beside it in the coarse exit cell, at the
+  fails `coarse_lake_leaks_left` (a lake still growing at the bound included). One piece per
+  lake (the largest, and any touching a band edge or the previous band's cells); smaller
+  pieces stay dry. Dry ground left beside a lake below its level, and a coarse river's cells
+  beside it below the level plus 0.05 m, are raised to that (a shore). A lake with no fine
+  ground below its level keeps its lowest cell 0.25 m below. The coarse river leaving a lake starts beside it in the coarse exit cell, at the
   level. A depression the flood reaches from a lake joins it; one around a lake is breached
   past the cap (not below 0 m; its ground below the lake's level joins the lake), so the lake
   drains. At the end, a dry cell with 6 or more cells of one lake around it (a sill or divide
@@ -705,10 +706,12 @@ are read. The coarse network is then held fixed:
   cut a gash (132 m at 4 m before this rule). The path is burned in (a running minimum from
   its head, at most the cap, not below a lake floor beside it or 0 m), and each cut then
   tapers off upstream at the 35° trench side slope instead of ending in a cliff, before the
-  fine flood, so the fine routing follows it; burned cells widen like breach trenches, and
-  after breaching the path is routed and burned again. Its discharge is the coarse one.
-  `coarse.rivers` reports paths, cells, burned cells and the deepest burn below the ground
-  the path had (about the input ground) and where, and rivers whose head the flood did not
+  fine flood, so the fine routing follows it. After breaching the path is burned again (cuts
+  breaching made along it), and both burns' cells widen like breach trenches; after widening
+  and the steepest-descent step it is routed and burned a last time. Its discharge is the
+  coarse one. `coarse.rivers` reports paths, cells, burned cells, the deepest burn below the
+  ground the path had (about the input ground) and where, the deepest later burn
+  (`burn_after_breach_max_m`) and where, and rivers whose head the flood did not
   reach (counted only in the grid's core rows: a band's halo is made again by the next band).
 - Depressions: no new lakes but tarns at 4 m (from 2 m spacing: the class `tarn_share` as
   the lake budget), none at 1 m, and no new dry basins. A depression touching a coarse dry
@@ -772,7 +775,7 @@ and two adjacent 1 m bands from `fujion-v3-chain-14-l4` (32,768 × 1,024 cells: 
 256-row halos) against the 4 m output. The grids come from `scripts/hydrology_grid.py`:
 
 ```sh
-py="training/.venv/bin/python -I scripts/hydrology_grid.py"; g=scratch/hydro-v2/grids; o=scratch/hydro-v2/r2
+py="training/.venv/bin/python -I scripts/hydrology_grid.py"; g=scratch/hydro-v2/grids; o=scratch/hydro-v2/r3
 $py --chain-l2 data/worlds/fujion-v3-chain-14 $g/c14-32
 $py --world data/worlds/fujion-v3-chain-14 $g/c14-4
 $py --band data/worlds/fujion-v3-chain-14-l4 16128 1024 256 $g/band-A
@@ -787,10 +790,10 @@ target/release/topography world hydrology-seam --north $o/band-A --south $o/band
 
 | Run | Time | Peak RAM | Result |
 | --- | --- | --- | --- |
-| 32 m, 1024² | 0.9 s | 37 MB | passed: 148 lakes, 49 rivers, 83 km |
-| 4 m, 8192², `--coarse` | 96 s | 1.26 GB | passed: 204 lakes (148 coarse, 56 tarns), 463 rivers (49 coarse), 596 km |
-| 1 m band A, `--coarse` | 51 s | 0.70 GB | passed: 12 coarse lakes, 350 rivers (23 coarse), 102 km |
-| 1 m band B, `--north` A | 40 s | 0.87 GB | passed: 5 lakes, 204 rivers (17 coarse), 57 km |
+| 32 m, 1024² | 1.1 s | 34 MB | passed: 148 lakes, 49 rivers, 83 km |
+| 4 m, 8192², `--coarse` | 95 s | 1.25 GB | passed: 204 lakes (148 coarse, 56 tarns), 463 rivers (49 coarse), 596 km |
+| 1 m band A, `--coarse` | 53 s | 0.70 GB | passed: 12 coarse lakes, 350 rivers (23 coarse), 102 km |
+| 1 m band B, `--north` A | 42 s | 0.87 GB | passed: 5 lakes, 204 rivers (17 coarse), 57 km |
 | `hydrology-seam` A, B | 0.2 s | small | passed: 256 shared rows identical, nothing cut, halo guess 99.7 % |
 
 Times were measured while a GPU training job ran on the same machine and vary by up to a
@@ -799,24 +802,37 @@ tributaries end in a coarse river; 41 centreline cells were raised to a lake or 
 below; lake beds were lowered only for one lake without fine ground below its level
 (0.32 m); 290 sill cells (at most 9.4 m) and 507 shore cells (at most 9.3 m) were raised,
 where coarse lake levels stand above the fine ground around them; 17,244 leaking cells were
-cut off, no leak is left; 150 cells raised inside a lake joined it; 7 lake exits lie more
-than a coarse cell from the coarse exit. 4 m memory is about 20 bytes a cell, so 16,384²
-(64 km) needs about 5 GB. At 1 m, sills rise at most 2.8 m and shores 1.5 m; band B took 14
+cut off, no leak is left; 150 cells raised inside a lake joined it (at the end, from the
+input ground); 7 lake exits lie more than a coarse cell from the coarse exit. 4 m memory is
+about 20 bytes a cell, so 16,384² (64 km) needs about 5 GB. At 1 m, sills rise at most 2.8 m and shores 1.5 m; band B took 14
 river inflows from band A and dropped 7 new streams at the seam; a 1 m band of 32 km is under
 1 GB and under a minute, so a whole 32 km world (64 bands of 512 rows) is about an hour, and
 64 km bands about 2 GB.
 
-Deep cuts by source (largest, metres; before and after this rule set, fix round 2):
+Deep cuts by source (largest, metres): before the cap rule (fix round 1), after it, and now
+that slots through glacier widen (current):
 
-| Source | 4 m before | 4 m after | 1 m A before | 1 m A after | 1 m B before | 1 m B after |
+| Source | 4 m before | 4 m after | 4 m now | 1 m A now | 1 m B before | 1 m B now |
 | --- | --- | --- | --- | --- | --- | --- |
-| Coarse path burn | 68 | 19 | 9 | 9 | 30 | 30 |
-| Channel carving | 33 | 20 | 8 | 7.5 | 16 | 8 |
-| Trench and burn widening | 68 | 27 | 8.5 | 8.5 | 9 | 9 |
+| Coarse path burn | 68 | 19 | 19 | 9 | 30 | 30 |
+| Later path burn (after breaching or widening) | | | 4.1 | 1.2 | | 1.8 |
+| Channel carving | 33 | 20 | 20 | 7.5 | 16 | 8 |
+| Trench and burn widening | 68 | 27 | 28 | 8.5 | 9 | 30 |
 | Lake bed | 0.3 | 0.3 | 0.3 | 0.3 | 0 | 0 |
-| All steps together | 132 | 31 | 14 | 11 | 31 | 31 |
+| All steps together | 132 | 31 | 31 | 11 | 31 | 31 |
+| Cells lowered over 10 m | 9,780 | 8,209 | 9,044 | 536 | 860 | 10,952 |
 | Cells lowered over 50 m | 628 | 0 | 0 | 0 | 0 | 0 |
 
+The Fuji summit crater (coarse lake 149 at 3,386.7 m) drains through a breach in its glacier
+rim. Trench widening used to skip glacier walls, which left that exit as a slot one cell
+wide and 20 to 31 m deep at every level. Widening now treats glacier ground like any other,
+so at 4 m the exit's walls went from 73 to 82° to the 35° side slope (37° measured between
+cells) and the cut from one cell to 14 to 23 cells wide; at 1 m (band B) from 1 m to 31 to
+49 m wide, which is most of band B's 10,952 cells lowered over 10 m. At 32 m the slot already
+stood at 35°. On fujix the caldera's 632 ice-basin cells and all 2,141 glacier cells within
+4 km of the summit are unchanged and dry; widening there lowered 4,961 wall cells (4,921
+before). The steepest wall left at 4 m (83°, at (4634, 6141)) is a 20 m channel cut, which
+is not widened.
 The 132 m at 4 m (3775, 6418) was not uncarved coarse ground: the path ran a coarse column
 beside a river falling 45 m per 32 m cell, and the cap took the surface of the river cell
 downstream of it (the coarse level had cut there only 16 m). The rule above removes it
@@ -834,7 +850,7 @@ and tarns on them inherit block shapes; tributaries on those flats still run str
 Sills form straight runs where a leaking branch is cut on a breadth-first layer (now its
 narrowest layer); placing them at the highest cells of the leak front would need a saddle
 search and is left. PNG crops:
-`scratch/hydro-v2/c14-4m-tributaries.png` (4 m, 4 km square at cells 1024, 5120, fix round 2),
+`scratch/hydro-v2/c14-4m-tributaries.png` (4 m, 4 km square at cells 1024, 5120, fix round 3),
 `scratch/hydro-v2/c14-4m-steepest-comparison.png` (that crop with flood-order receivers on
 the left, steepest descent on the right) and `scratch/hydro-v2/band1m-tributaries-seam.png`
 (1 m, 1 km × 768 m at column 16,384 of band B, the seam at row 256); coarse rivers blue,
