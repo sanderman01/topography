@@ -299,9 +299,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
     stage.raster("water-surface.f32", n, |i| surface[i].to_le_bytes())?;
     stage.raster("water-body.u32", n, |i| body_id(i).to_le_bytes())?;
     stage.raster("discharge.f32", n, |i| acc[i].to_le_bytes())?;
-    let scale = rain_stats.p99_land_mm_h;
+    let scale = rain_stats.p95_land_mm_h;
     stage.raster("moisture.f32", rain.mm_h.len(), |c| {
-        (rain.mm_h[c] / scale).clamp(0.0, 1.0).to_le_bytes()
+        rain_stats.moisture(rain.mm_h[c]).to_le_bytes()
     })?;
     stage.json("bodies.json", &bodies)?;
     let mut precipitation = rain_stats.json();
@@ -351,7 +351,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "dtype": "float32",
             "value": "precipitation / scale_mm_h, clipped to 0..1",
             "scale_mm_h": scale,
-            "scale": "99th percentile of precipitation on land cells",
+            "scale": "95th percentile of precipitation on land cells",
         }),
     );
     manifest.insert(

@@ -1,5 +1,6 @@
 //! Orographic precipitation on a 128 m grid: the linear upslope model of Smith and Barstad
-//! (2004), solved by FFT, plus a uniform background rate.
+//! (2004), solved by FFT, plus a uniform background rate, both depleted downwind by the
+//! water already rained out over land.
 
 use super::flood::SEA;
 use rustfft::{FftPlanner, num_complex::Complex};
@@ -24,6 +25,9 @@ pub(super) struct Params {
     pub cw: f64,
     /// Uniform background rate (mm/h), added after clipping: the lee is dry, not rainless.
     pub background_mm_h: f64,
+    /// Column water budget (mm): the air keeps e⁻¹ of its water after raining this much out
+    /// over land, so rain fades downwind across the island.
+    pub budget_mm: f64,
 }
 
 pub(super) const PARAMS: Params = Params {
@@ -33,7 +37,8 @@ pub(super) const PARAMS: Params = Params {
     tau_c_s: 300.0,
     tau_f_s: 300.0,
     cw: 0.004,
-    background_mm_h: 0.5,
+    background_mm_h: 1.5,
+    budget_mm: 3.0,
 };
 
 impl Params {
@@ -49,6 +54,9 @@ impl Params {
             "tau_f_s": self.tau_f_s,
             "cw_kg_m3": self.cw,
             "background_mm_h": self.background_mm_h,
+            "budget_mm": self.budget_mm,
+            "depletion": "rain scaled by the moisture left after what rained out over land upwind, \
+                exp(-rained mm / budget_mm), full at the upwind grid edge",
         })
     }
 }
@@ -77,13 +85,14 @@ impl Rain {
     }
 }
 
-/// Land precipitation figures: the mean weights discharge, the 99th percentile scales
+/// Land precipitation figures: the mean weights discharge, the 95th percentile scales
 /// `moisture.f32`.
 pub(super) struct Stats {
     pub mean_land_mm_h: f32,
-    pub p99_land_mm_h: f32,
+    pub p95_land_mm_h: f32,
     /// Land means by map quadrant: NW, NE, SW, SE.
     pub quadrants_mm_h: [f32; 4],
+    pub quadrants_moisture: [f32; 4],
 }
 
 impl Stats {
@@ -114,28 +123,47 @@ impl Stats {
             .map(|c| rain.mm_h[c])
             .collect();
         wet.sort_by(f32::total_cmp);
-        let p99 = wet.get(wet.len() * 99 / 100).copied().unwrap_or(fallback);
+        let p95 = wet.get(wet.len() * 95 / 100).copied().unwrap_or(fallback);
         let mean = if n > 0 {
             (sum / n as f64) as f32
         } else {
             fallback
         };
-        Self {
+        let mut stats = Self {
             // Positive so weights and moisture stay finite on rainless land.
             mean_land_mm_h: mean.max(1e-6),
-            p99_land_mm_h: p99.max(1e-6),
+            p95_land_mm_h: p95.max(1e-6),
             quadrants_mm_h: std::array::from_fn(|q| (quad[q] / quad_n[q].max(1) as f64) as f32),
+            quadrants_moisture: [0.0; 4],
+        };
+        let mut quad = [0f64; 4];
+        for (i, &f) in flags.iter().enumerate() {
+            if f & SEA == 0 {
+                let (x, y) = (i % fine_w, i / fine_w);
+                let q = usize::from(x >= fine_w / 2) + 2 * usize::from(y >= fine_h / 2);
+                quad[q] += stats.moisture(rain.at(fine_w, i)) as f64;
+            }
         }
+        stats.quadrants_moisture =
+            std::array::from_fn(|q| (quad[q] / quad_n[q].max(1) as f64) as f32);
+        stats
+    }
+
+    /// `moisture.f32` value: rain over the 95th percentile, so most land spans 0 to 1.
+    pub fn moisture(&self, mm_h: f32) -> f32 {
+        (mm_h / self.p95_land_mm_h).clamp(0.0, 1.0)
     }
 
     pub fn json(&self) -> Value {
         let [nw, ne, sw, se] = self.quadrants_mm_h;
         let rel = |v: f32| v / self.mean_land_mm_h;
+        let m = self.quadrants_moisture;
         json!({
             "mean_land_mm_h": self.mean_land_mm_h,
-            "p99_land_mm_h": self.p99_land_mm_h,
+            "p95_land_mm_h": self.p95_land_mm_h,
             "land_mm_h_by_quadrant": { "nw": nw, "ne": ne, "sw": sw, "se": se },
             "land_relative_by_quadrant": { "nw": rel(nw), "ne": rel(ne), "sw": rel(sw), "se": rel(se) },
+            "land_moisture_by_quadrant": { "nw": m[0], "ne": m[1], "sw": m[2], "se": m[3] },
         })
     }
 }
@@ -170,10 +198,12 @@ pub(super) fn precipitation(
     // Block means of the ground, sea level as the floor.
     let mut sum = vec![0f64; cw * ch];
     let mut count = vec![0u32; cw * ch];
+    let mut land = vec![0u32; cw * ch];
     for (i, &g) in ground.iter().enumerate() {
         let c = (i / w / k) * cw + (i % w) / k;
         sum[c] += g.max(0.0) as f64;
         count[c] += 1;
+        land[c] += u32::from(g > 0.0);
     }
 
     // Pad by half the size each side (at least), to a power of two against wrap-around.
@@ -237,11 +267,70 @@ pub(super) fn precipitation(
             mm_h[y * cw + x] = (orographic as f32).max(0.0) + background;
         }
     }
+    let land: Vec<bool> = (0..cw * ch).map(|c| 2 * land[c] > count[c]).collect();
+    deplete(
+        &mut mm_h,
+        &land,
+        cw,
+        ch,
+        dx,
+        u / p.wind_ms,
+        v / p.wind_ms,
+        p,
+    );
     Rain {
         w: cw,
         h: ch,
         k,
         mm_h,
+    }
+}
+
+/// Scale `mm_h` by the moisture left in the air: it enters full at the upwind grid edge and
+/// loses what rains out over land on the way (an upwind march along the wind, mixing the two
+/// upwind neighbours that bracket its direction). (`wx`, `wy`) is the unit wind toward east
+/// and toward rows (south).
+#[allow(clippy::too_many_arguments)]
+fn deplete(
+    mm_h: &mut [f32],
+    land: &[bool],
+    w: usize,
+    h: usize,
+    dx: f64,
+    wx: f64,
+    wy: f64,
+    p: &Params,
+) {
+    // March along the dominant axis `a`; `b` is the other one.
+    let x_major = wx.abs() >= wy.abs();
+    let (na, nb) = if x_major { (w, h) } else { (h, w) };
+    let (wa, wb) = if x_major { (wx, wy) } else { (wy, wx) };
+    let idx = |a: usize, b: usize| if x_major { b * w + a } else { a * w + b };
+    let (sa, sb) = (wa.signum() as isize, wb.signum() as isize);
+    let t = (wb.abs() / wa.abs()) as f32;
+    // Water rained out per step (mm) for 1 mm/h, relative to the column budget.
+    let per_step = (dx / wa.abs() / p.wind_ms / 3600.0 / p.budget_mm) as f32;
+    let mut q = vec![1f32; na * nb];
+    for s in 0..na {
+        let a = if sa > 0 { s } else { na - 1 - s };
+        let up_a = a as isize - sa;
+        for b in 0..nb {
+            let q_at = |bb: isize| {
+                if up_a < 0 || up_a >= na as isize || bb < 0 || bb >= nb as isize {
+                    1.0
+                } else {
+                    q[idx(up_a as usize, bb as usize)]
+                }
+            };
+            let q_in = (1.0 - t) * q_at(b as isize) + t * q_at(b as isize - sb);
+            let c = idx(a, b);
+            mm_h[c] *= q_in;
+            q[c] = if land[c] {
+                q_in * (-mm_h[c] * per_step).exp()
+            } else {
+                q_in
+            };
+        }
     }
 }
 
