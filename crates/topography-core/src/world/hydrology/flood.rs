@@ -11,6 +11,8 @@ pub(super) const SEEN: u8 = 2;
 pub(super) const RIVER: u8 = 4;
 /// Inside a depression already checked by `breach`.
 const CHECKED: u8 = 8;
+/// A river centreline cell (also `RIVER`); other river cells are channel width beside it.
+pub(super) const CENTRE: u8 = 16;
 
 /// D8 neighbour offsets (row, column); a direction byte is an index here plus one, 0 none.
 const OFFSETS: [(isize, isize); 8] = [
@@ -48,6 +50,21 @@ impl Dims {
     /// Step length in cells for a direction byte.
     pub fn step(d: u8) -> f64 {
         if d > 4 { std::f64::consts::SQRT_2 } else { 1.0 }
+    }
+    /// Neighbour `k` of `j` lies ahead along direction byte `d` (positive projection): it is
+    /// the next cross-section's bank, not this one's.
+    pub fn ahead(self, d: u8, j: usize, k: usize) -> bool {
+        if d == 0 {
+            return false;
+        }
+        let (dy, dx) = OFFSETS[d as usize - 1];
+        let oy = (k / self.w) as isize - (j / self.w) as isize;
+        let ox = (k % self.w) as isize - (j % self.w) as isize;
+        oy * dy + ox * dx > 0
+    }
+    /// Offset of direction byte `d` (row, column).
+    pub fn offset(d: u8) -> (isize, isize) {
+        OFFSETS[d as usize - 1]
     }
 }
 

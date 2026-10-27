@@ -2,6 +2,7 @@
 //! spill level, breached depressions, flow accumulation and rivers, with a validation report.
 //! See docs/workflows/terrain-cascade.md ("Hydrology v2").
 
+mod erosion;
 mod flood;
 mod grid;
 mod lakes;
@@ -106,13 +107,14 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let params = &moisture::PARAMS;
     let rain = moisture::precipitation(
         &ground,
+        |i| flags[i] & SEA == 0,
         grid.w,
         grid.h,
         grid.spacing_m,
         wind_from_deg,
         params,
     );
-    let rain_stats = moisture::Stats::new(&rain, grid.w, &flags);
+    let rain_stats = moisture::Stats::new(&rain, grid.w, &flags, wind_from_deg.is_none());
     let rain_weight = |i: usize| cell_km2 * rain.at(grid.w, i) / rain_stats.mean_land_mm_h;
     lap("moisture", &mut t);
     let mut body = vec![0u32; n];
@@ -163,7 +165,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
             }
         },
     );
-    drop(classes);
     for i in 0..n {
         if flags[i] & SEA != 0 {
             dir[i] = 0;
@@ -174,6 +175,41 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut acc = vec![0f32; n];
     let cycles = flood::accumulate(dims, &dir, rain_weight, &mut acc);
     lap("accumulate", &mut t);
+
+    // Stream power at the trunk-network level only, before lakes take river inflow.
+    let stream_power = if grid.spacing_m >= erosion::MIN_SPACING_M {
+        let before = ground.clone();
+        erosion::stream_power(
+            dims,
+            &mut ground,
+            &dir,
+            &acc,
+            &flags,
+            &body,
+            &basins,
+            |i| class_at(i) == lakes::GLACIER,
+            grid.spacing_m,
+        );
+        let mut breached = vec![false; n];
+        grid::for_each_input_row(&options.grid, grid.w, |y, row| {
+            for (x, &z) in row.iter().enumerate() {
+                breached[y * grid.w + x] = before[y * grid.w + x] < z;
+            }
+        })?;
+        let figures = erosion::figures(
+            dims,
+            &before,
+            &ground,
+            &breached,
+            |i| flags[i] & SEA == 0 && body[i] == 0 && acc[i] >= river_km2,
+            grid.spacing_m,
+        );
+        lap("stream power", &mut t);
+        figures
+    } else {
+        json!({ "skipped": "finer than the trunk-network level" })
+    };
+    drop(classes);
 
     // A dry pass-through basin that a river flows into fills as a lake (not glacier basins).
     let mut inflow = vec![0f32; basins.len() + 1];
@@ -203,7 +239,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
 
     let mut surface = vec![f32::NAN; n];
-    let (rivers, bed_cut) = rivers::extract(
+    let (rivers, band, channels) = rivers::extract(
         dims,
         &mut ground,
         &dir,
@@ -222,6 +258,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &flags,
         &body,
         &basins,
+        &band,
         grid.spacing_m,
     );
     for i in 0..n {
@@ -279,6 +316,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         surface: &surface,
         basins: &basins,
         rivers: &rivers,
+        band: &band,
         cell_km2: cell_km2 as f64,
         spacing_m: grid.spacing_m,
     };
@@ -287,8 +325,22 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut figures = report::figures(&ctx, &carve, extended);
     figures.insert("depressions".into(), json!(deps.len()));
     figures.insert("kept_by_budget".into(), json!(kept_by_budget));
-    figures.insert("river_bed_cut_cells".into(), json!(bed_cut.cells));
-    figures.insert("river_bed_max_cut_m".into(), json!(bed_cut.max_m));
+    figures.insert(
+        "channels".into(),
+        json!({
+            "channel_cells_beside_centreline": channels.band_cells,
+            "carved_cells": channels.cut_cells,
+            "carved_cells_over_10m": channels.deep_cells,
+            "max_cut_m": channels.max_cut_m,
+            "max_cut_at_cell": [channels.max_cut_at % grid.w, channels.max_cut_at / grid.w],
+            "carve_volume_m3": channels.volume_m3.round(),
+            "max_bank_drop_m": channels.max_bank_drop_m,
+            "seabed_cells_lowered_past_mouths": channels.sea_cells_lowered,
+            "widest_m": channels.widest_m,
+            "deepest_m": channels.deepest_m,
+        }),
+    );
+    figures.insert("stream_power".into(), stream_power);
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));
@@ -349,7 +401,11 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "size": [rain.w, rain.h],
             "spacing_m": grid.spacing_m * rain.k as f64,
             "dtype": "float32",
-            "value": "precipitation / scale_mm_h, clipped to 0..1",
+            "value": if wind_from_deg.is_some() {
+                json!("precipitation / scale_mm_h, clipped to 0..1")
+            } else {
+                json!(format!("{} everywhere (no wind)", moisture::NEUTRAL_MOISTURE))
+            },
             "scale_mm_h": scale,
             "scale": "95th percentile of precipitation on land cells",
         }),
@@ -368,7 +424,19 @@ pub fn run(options: &Options) -> Result<Outcome> {
     stage.json("grid.json", &Value::Object(manifest))?;
     let out = stage.publish()?;
     lap("write", &mut t);
-    eprintln!("hydrology: total {:.1} s", started.elapsed().as_secs_f64());
+    // Peak resident memory where the OS reports it (Linux).
+    let peak = fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmHWM:"))
+                .map(String::from)
+        })
+        .map_or(String::new(), |l| format!(", peak {}", l[6..].trim()));
+    eprintln!(
+        "hydrology: total {:.1} s{peak}",
+        started.elapsed().as_secs_f64()
+    );
 
     let f = &figures;
     let summary = format!(

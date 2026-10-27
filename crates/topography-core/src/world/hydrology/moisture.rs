@@ -93,12 +93,17 @@ pub(super) struct Stats {
     /// Land means by map quadrant: NW, NE, SW, SE.
     pub quadrants_mm_h: [f32; 4],
     pub quadrants_moisture: [f32; 4],
+    /// No wind: rain is uniform and moisture is `NEUTRAL_MOISTURE` everywhere.
+    pub windless: bool,
 }
+
+/// Judgment value: moisture without a wind, neither wet nor dry for vegetation.
+pub(super) const NEUTRAL_MOISTURE: f32 = 0.5;
 
 impl Stats {
     /// Land is input cells without `SEA` in `flags`; a rain cell is land when most of its
     /// block is. Falls back to the background rate without land.
-    pub fn new(rain: &Rain, fine_w: usize, flags: &[u8]) -> Self {
+    pub fn new(rain: &Rain, fine_w: usize, flags: &[u8], windless: bool) -> Self {
         let fine_h = flags.len() / fine_w;
         let mut land = vec![0u32; rain.mm_h.len()];
         let mut cells = vec![0u32; rain.mm_h.len()];
@@ -135,6 +140,7 @@ impl Stats {
             p95_land_mm_h: p95.max(1e-6),
             quadrants_mm_h: std::array::from_fn(|q| (quad[q] / quad_n[q].max(1) as f64) as f32),
             quadrants_moisture: [0.0; 4],
+            windless,
         };
         let mut quad = [0f64; 4];
         for (i, &f) in flags.iter().enumerate() {
@@ -151,6 +157,9 @@ impl Stats {
 
     /// `moisture.f32` value: rain over the 95th percentile, so most land spans 0 to 1.
     pub fn moisture(&self, mm_h: f32) -> f32 {
+        if self.windless {
+            return NEUTRAL_MOISTURE;
+        }
         (mm_h / self.p95_land_mm_h).clamp(0.0, 1.0)
     }
 
@@ -174,9 +183,11 @@ pub(super) fn block(spacing_m: f64) -> usize {
 }
 
 /// Precipitation over `ground` (`w` x `h`, `spacing_m`), with the wind coming from
-/// `wind_from_deg` (clockwise from north); uniform background rain without a wind.
+/// `wind_from_deg` (clockwise from north); uniform background rain without a wind. Rain
+/// depletes over cells where `land_at` holds (the input's non-sea cells).
 pub(super) fn precipitation(
     ground: &[f32],
+    land_at: impl Fn(usize) -> bool,
     w: usize,
     h: usize,
     spacing_m: f64,
@@ -203,7 +214,7 @@ pub(super) fn precipitation(
         let c = (i / w / k) * cw + (i % w) / k;
         sum[c] += g.max(0.0) as f64;
         count[c] += 1;
-        land[c] += u32::from(g > 0.0);
+        land[c] += u32::from(land_at(i));
     }
 
     // Pad by half the size each side (at least), to a power of two against wrap-around.
@@ -374,11 +385,27 @@ mod tests {
             .collect();
         let bg = PARAMS.background_mm_h as f32;
         // From the west: wet windward flank 2.5 km west, only background 6 km east.
-        let rain = precipitation(&ground, n, n, 128.0, Some(270.0), &PARAMS);
+        let rain = precipitation(
+            &ground,
+            |i| ground[i] > 0.0,
+            n,
+            n,
+            128.0,
+            Some(270.0),
+            &PARAMS,
+        );
         let at = |x: usize, y: usize| rain.mm_h[y * n + x];
         assert!(at(108, 128) > 1.5 * bg && at(175, 128) < 1.01 * bg);
         // From the south-west, along the diagonal (rows run south).
-        let rain = precipitation(&ground, n, n, 128.0, Some(225.0), &PARAMS);
+        let rain = precipitation(
+            &ground,
+            |i| ground[i] > 0.0,
+            n,
+            n,
+            128.0,
+            Some(225.0),
+            &PARAMS,
+        );
         let at = |x: usize, y: usize| rain.mm_h[y * n + x];
         assert!(at(114, 142) > 1.5 * bg && at(161, 95) < 1.01 * bg);
     }
