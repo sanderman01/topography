@@ -183,6 +183,24 @@ fn lower(
     lowered
 }
 
+/// Level of the lake that flow from `from` reaches first along the receivers, if it reaches a
+/// kept basin that is a lake; else -inf.
+fn lake_downstream(dims: Dims, body: &[u32], basins: &[Basin], dir: &[u8], from: usize) -> f32 {
+    let mut at = Some(from);
+    while let Some(a) = at {
+        if body[a] != 0 {
+            let basin = &basins[body[a] as usize - 1];
+            return if basin.kind == Kind::Lake {
+                basin.level
+            } else {
+                f32::NEG_INFINITY
+            };
+        }
+        at = receiver(dims, dir, a);
+    }
+    f32::NEG_INFINITY
+}
+
 /// Priority flood over ground in which kept basins (`body` > 0) are flat at their level.
 /// Every other depression is breached: when the flood first reaches it, the path it came along
 /// is lowered once to the depression's lowest ground, and cells inside lower than their path
@@ -258,7 +276,10 @@ pub(super) fn breach(
                         body[a as usize] = id;
                     }
                 } else {
-                    let level = (z - cap_m).max(0.0);
+                    // Not below a lake the outlet drains into: no dry ground below its level.
+                    let level = (z - cap_m)
+                        .max(0.0)
+                        .max(lake_downstream(dims, body, basins, dir, c));
                     for &a in &region {
                         let a = a as usize;
                         if body[a] != 0 || ground[a] >= level {
@@ -319,9 +340,14 @@ pub(super) fn breach(
     lowered
 }
 
-/// Drainage area in km² per cell (itself included) along the receivers. Returns the number
-/// of cells on cycles, which never resolve (0 for a flood tree).
-pub(super) fn accumulate(dims: Dims, dir: &[u8], cell_km2: f32, acc: &mut [f32]) -> u64 {
+/// Sum of `weight` per cell (itself included) along the receivers: drainage area when the
+/// weight is the cell area. Returns the number of cells on cycles (0 for a flood tree).
+pub(super) fn accumulate(
+    dims: Dims,
+    dir: &[u8],
+    weight: impl Fn(usize) -> f32,
+    acc: &mut [f32],
+) -> u64 {
     const DONE: u8 = u8::MAX;
     let n = dir.len();
     let mut donors = vec![0u8; n];
@@ -330,7 +356,9 @@ pub(super) fn accumulate(dims: Dims, dir: &[u8], cell_km2: f32, acc: &mut [f32])
             donors[r] += 1;
         }
     }
-    acc.fill(cell_km2);
+    for (i, a) in acc.iter_mut().enumerate() {
+        *a = weight(i);
+    }
     for i in 0..n {
         let mut c = i;
         while donors[c] == 0 {
@@ -390,7 +418,7 @@ mod tests {
         }
         assert_eq!(ground[12], 1.0);
         let mut acc = vec![0f32; 25];
-        assert_eq!(accumulate(dims, &dir, 1.0, &mut acc), 0);
+        assert_eq!(accumulate(dims, &dir, |_| 1.0, &mut acc), 0);
         let below = receiver(dims, &dir, 12).expect("the pit drains");
         assert!(acc[below] >= 2.0);
     }

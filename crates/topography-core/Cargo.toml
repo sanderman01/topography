@@ -13,6 +13,7 @@ sha2.workspace = true
 tempfile.workspace = true
 rusqlite.workspace = true
 png.workspace = true
+rustfft.workspace = true
 
 [lints]
 workspace = true

@@ -1,16 +1,16 @@
-//! Rivers: cells draining at least a threshold area, one body per river system (all river
-//! cells upstream of one mouth). The water surface never rises downstream and never stands
+//! Rivers: cells with at least a threshold discharge (rain-weighted drainage area), one body
+//! per river system (all river cells upstream of one mouth). The water surface never rises downstream and never stands
 //! above a dry bank; the bed is cut below it instead.
 
 use super::flood::{Dims, RIVER, SEA, receiver};
 use super::lakes::{Basin, Kind};
 
-/// Judgment constant: depth D = RIVER_DEPTH_M · A^0.4 with A the drainage area in km² standing
-/// in for discharge (1 m at 10 km², 6 m at 1000 km²). Channel shape is a later task.
+/// Judgment constant: depth D = RIVER_DEPTH_M · A^0.4 with A the discharge in km² at mean
+/// rain (1 m at 10 km², 6 m at 1000 km²). Channel shape is a later task.
 const RIVER_DEPTH_M: f32 = 0.4;
 
-pub(super) fn depth_m(area_km2: f32) -> f32 {
-    RIVER_DEPTH_M * area_km2.powf(0.4)
+pub(super) fn depth_m(discharge_km2: f32) -> f32 {
+    RIVER_DEPTH_M * discharge_km2.powf(0.4)
 }
 
 /// Where a river system ends.

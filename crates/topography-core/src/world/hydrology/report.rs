@@ -275,7 +275,8 @@ pub(super) fn constants(river_km2: f64, breach_max_m: f32) -> Value {
     json!({
         "sea": "input ground below 0 m connected 8-way to the grid edge; surface 0",
         "river_start_km2": river_km2,
-        "river_depth": "0.4 m * drainage_km2^0.4; surface at most the lowest dry bank and every \
+        "discharge": "drainage area weighted by precipitation / its land mean (km² at mean rain)",
+        "river_depth": "0.4 m * discharge_km2^0.4 (km² at mean rain); surface at most the lowest dry bank and every \
             surface upstream, bed cut to surface minus depth",
         "breach_max_m": breach_max_m,
         "deep_depressions": "kept beyond the budget: dry sinks in glacier and arid classes \

@@ -43,7 +43,7 @@ Usage: topography [--help | --version]
        topography world sketch <sketch.toml> <new-output-dir>
        topography world layout <layout.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
-       topography world hydrology --grid <grid-dir> --out <new-output-dir> [--water water.toml] [--river-km2 10]
+       topography world hydrology --grid <grid-dir> --out <new-output-dir> [--wind-deg 225] [--water water.toml] [--river-km2 10]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>

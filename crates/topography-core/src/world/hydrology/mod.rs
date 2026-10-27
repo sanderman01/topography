@@ -5,6 +5,7 @@
 mod flood;
 mod grid;
 mod lakes;
+mod moisture;
 mod report;
 mod rivers;
 mod water;
@@ -45,8 +46,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
         "--coarse is not implemented yet (hydrology v2, fine levels)",
     )?;
     ensure(
-        options.wind_deg.is_none(),
-        "--wind-deg is not implemented yet (hydrology v2, moisture)",
+        options.wind_deg.is_none_or(f64::is_finite),
+        "--wind-deg must be a number",
     )?;
     ensure(
         options.river_km2.is_finite() && options.river_km2 > 0.0,
@@ -96,11 +97,29 @@ pub fn run(options: &Options) -> Result<Outcome> {
     flood::open_sea(dims, &ground, |_| false, &mut flags);
     let filled = flood::fill(dims, &ground, &mut flags, &mut dir);
     lap("fill", &mut t);
+
+    // Precipitation from the input ground; discharge weights each cell by its rain relative
+    // to the land mean, so the river threshold holds at mean rain.
+    let wind_from_deg = options
+        .wind_deg
+        .or_else(|| grid.manifest.get("wind_from_deg").and_then(Value::as_f64));
+    let params = &moisture::PARAMS;
+    let rain = moisture::precipitation(
+        &ground,
+        grid.w,
+        grid.h,
+        grid.spacing_m,
+        wind_from_deg,
+        params,
+    );
+    let rain_stats = moisture::Stats::new(&rain, grid.w, &flags);
+    let rain_weight = |i: usize| cell_km2 * rain.at(grid.w, i) / rain_stats.mean_land_mm_h;
+    lap("moisture", &mut t);
     let mut body = vec![0u32; n];
     let mut deps = lakes::find(dims, &ground, &filled, &dir, classes.as_deref(), &mut body);
     drop(filled);
     let mut acc = vec![0f32; n];
-    flood::accumulate(dims, &dir, cell_km2, &mut acc);
+    flood::accumulate(dims, &dir, rain_weight, &mut acc);
     for i in 0..n {
         if body[i] != 0 {
             let d = &mut deps[body[i] as usize - 1];
@@ -153,7 +172,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     eprintln!("hydrology: breach lowered {carved} cells");
     lap("breach", &mut t);
     let mut acc = vec![0f32; n];
-    let cycles = flood::accumulate(dims, &dir, cell_km2, &mut acc);
+    let cycles = flood::accumulate(dims, &dir, rain_weight, &mut acc);
     lap("accumulate", &mut t);
 
     // A dry pass-through basin that a river flows into fills as a lake (not glacier basins).
@@ -280,7 +299,16 @@ pub fn run(options: &Options) -> Result<Outcome> {
     stage.raster("water-surface.f32", n, |i| surface[i].to_le_bytes())?;
     stage.raster("water-body.u32", n, |i| body_id(i).to_le_bytes())?;
     stage.raster("discharge.f32", n, |i| acc[i].to_le_bytes())?;
+    let scale = rain_stats.p99_land_mm_h;
+    stage.raster("moisture.f32", rain.mm_h.len(), |c| {
+        (rain.mm_h[c] / scale).clamp(0.0, 1.0).to_le_bytes()
+    })?;
     stage.json("bodies.json", &bodies)?;
+    let mut precipitation = rain_stats.json();
+    if let Value::Object(m) = &mut precipitation {
+        m.insert("wind_from_deg".into(), json!(wind_from_deg));
+        m.insert("params".into(), params.json());
+    }
     let failures: Vec<&str> = checks
         .iter()
         .filter(|(_, v)| v.as_u64() != Some(0))
@@ -294,6 +322,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         "failures": failures,
         "checks": checks,
         "figures": figures,
+        "precipitation": precipitation,
         "constants": report::constants(options.river_km2, BREACH_MAX_M),
     });
     stage.json("report.json", &report)?;
@@ -304,6 +333,27 @@ pub fn run(options: &Options) -> Result<Outcome> {
         .find(|(m, _)| *m == grid.spacing_m)
         .map_or(Value::Null, |(_, l)| json!(l));
     manifest.entry("level").or_insert(level);
+    manifest.insert("wind_from_deg".into(), json!(wind_from_deg));
+    manifest.insert(
+        "discharge".into(),
+        json!({
+            "file": "discharge.f32",
+            "unit": "km² at the mean land precipitation (drainage area weighted by rain / mean)",
+            "mean_land_mm_h": rain_stats.mean_land_mm_h,
+        }),
+    );
+    manifest.insert(
+        "moisture".into(),
+        json!({
+            "file": "moisture.f32",
+            "size": [rain.w, rain.h],
+            "spacing_m": grid.spacing_m * rain.k as f64,
+            "dtype": "float32",
+            "value": "precipitation / scale_mm_h, clipped to 0..1",
+            "scale_mm_h": scale,
+            "scale": "99th percentile of precipitation on land cells",
+        }),
+    );
     manifest.insert(
         "provenance".into(),
         json!({
