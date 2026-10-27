@@ -409,6 +409,10 @@ Precipitation comes first, from the input ground:
   block-averaged, 4 x 4 cells at 32 m; ground below 0 m counts as 0 m), padded by at least
   half its size each side with 0 m ground so the FFT does not wrap. Negative rates (descending
   lee air) are clipped to 0, then a uniform background rate is added.
+- Depletion: the air enters full at the upwind grid edge and loses what rains out over land
+  on its way (an upwind march along the wind on the 128 m grid). Rain at each cell is scaled
+  by the fraction left, exp(−rained mm / budget), with rained mm = rate · distance / wind
+  speed. This gives the large-scale gradient: wet windward coasts and ranges, a dry far lee.
 - Wind: `--wind-deg D` is the direction the wind comes from, clockwise from north (225 = from
   the south-west); without it, grid.json `wind_from_deg`; without either, rain is uniform and
   discharge equals drainage area.
@@ -416,15 +420,17 @@ Precipitation comes first, from the input ground:
   wind 10 m/s, moist buoyancy frequency 0.005 s⁻¹, water vapour scale height 2,500 m,
   condensation and fallout times 300 s each (the short end of the usual 200 to 2,000 s, so
   rain lands on the windward flanks instead of drifting 20 km over the crest),
-  uplift sensitivity 0.004 kg m⁻³ and background 0.5 mm/h. Only the ratio of the orographic
-  term to the background matters downstream.
+  uplift sensitivity 0.004 kg m⁻³, background 1.5 mm/h and a column water budget of 3 mm
+  (tuned on fujix so the SW is wet and the NE lee dry; a real column holds more, but these
+  are steady storm rates). Only relative rain matters downstream.
 - `moisture.f32` is that 128 m grid (size and spacing in grid.json `moisture`): precipitation
-  divided by its 99th percentile over land cells (`scale_mm_h`), clipped to 0 to 1.
+  divided by its 95th percentile over land cells (`scale_mm_h`), clipped to 0 to 1, so most
+  land spans the range for vegetation.
 - `discharge.f32` is the drainage area weighted by precipitation over its land mean, in km² at
   mean rain (precipitation bilinear between 128 m cell centres). Rivers start at 10 km² of
   that, so wet windward catchments start rivers on smaller areas and the dry lee on larger
   ones; lake selection and river depth use it too. `report.json` `precipitation` gives the
-  land mean, the 99th percentile and land means by map quadrant.
+  land mean, the 95th percentile and land means of rain and moisture by map quadrant.
 
 Steps:
 
@@ -494,15 +500,16 @@ sinks, ice), carved cells, cells cut more than 10 m, the deepest cut, river bed 
 counts and lengths. Timings go to stderr only, so identical inputs give identical outputs.
 
 On fujix-collage-55 (2048², 32 m, wind from 225°) it takes about 2 s: land precipitation
-averages 3.1 mm/h (99th percentile 21.8 mm/h, on the volcano's upper south-west flank); land
-means by quadrant are 1.76 (SW), 1.28 (SE), 0.90 (NW) and 0.23 (NE) times the land mean. The
-volcano gets 13.6 mm/h within 5 km windward of the summit, 6.9 mm/h within 5 km in its lee
-and background only beyond 5 km in its lee; the canyon plateau west of the summit gets
-0.86 mm/h, the east desert 0.66 mm/h. Result: 287 lakes (36 km², 1.6% of the land; 138 over
-budget, some of them lagoons), 185 dry basins (64 sinks, 47 km²; 29 ice), 116 river systems
-(340 km: 29 to the sea, 82 to lakes, 4 to sinks). Breaching cut at most 30 m; river beds are
-cut at most 62 m, where a lower bank beside a steep D8 reach caps the surface (channel
-shaping comes later). 15 lip cells were raised, by at most 5.2 m; mouths plunge at most
+averages 2.4 mm/h (95th percentile 7.6 mm/h). Land means by quadrant are 3.9 (SW), 3.1 (SE),
+2.3 (NW) and 0.57 mm/h (NE), moisture 0.49, 0.40, 0.30 and 0.08. The wettest regions are the
+SW sounds (6.0 mm/h), the SW arm, the W sound and the SE lowland (about 4 mm/h); the NE dunes,
+rift and east desert get 0.5 to 0.8 mm/h. The volcano gets 6.2 mm/h within 5 km windward of
+the summit and 2.7 mm/h within 5 km in its lee; the canyon head on its north-west flank gets
+1.9 mm/h, 2.5 times the east desert. Result: 287 lakes (36 km², 1.6% of the land; 138 over
+budget, some of them lagoons), 168 dry basins (64 sinks, 47 km²; 29 ice), 117 river systems
+(298 km: 34 to the sea, 78 to lakes, 5 to sinks). Breaching cut at most 30 m; river beds are
+cut at most 61 m, where a lower bank beside a steep D8 reach caps the surface (channel
+shaping comes later). 17 lip cells were raised, by at most 5.2 m; mouths plunge at most
 9.7 m into sinks. All checks 0, every river exit at its lake level, and the summit caldera
 unchanged and dry. On the 8192² 4 m chain world it takes 43 s and 1.2 GB; 16,384² at 4 m
 should need about 5 GB. A
