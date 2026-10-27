@@ -13,21 +13,23 @@ use std::{
     collections::{BinaryHeap, HashMap, HashSet},
 };
 
-/// Judgment constants: deep coarse lake cells keep fine ground this far below the level; dry
-/// shore cells beside a lake are at least this far above it, so a lake leaves only by its
-/// coarse exit.
+/// Judgment constants: a coarse lake with no fine ground below its level keeps one cell this
+/// far below it; a sill that stops a lake leaking stands this far above the level.
 pub(super) const LAKE_BED_M: f32 = 0.25;
 pub(super) const SHORE_M: f32 = 0.05;
-/// Coarse lake cells at least this deep get the fine bed below the level.
-const DEEP_LAKE_M: f32 = 1.0;
 /// Fine water of a coarse body may stand this far above the coarse surface (f32 rounding).
 pub(super) const SURFACE_TOLERANCE_M: f32 = 0.01;
 
 /// Coarse lakes on the fine ground: one lake basin per coarse lake in the window, in `basins`
-/// order with the coarse id. Wet where the fine ground is below the level, connected to the
-/// coarse lake's cells within one coarse cell of them; deep coarse cells get the bed below the
-/// level; dry ground beside the lake below `level + SHORE_M` is raised to it. `fixed_lake`
-/// gives the coarse lake id of cells copied from the previous band.
+/// order with the coarse id. Wet where the fine ground is below the level, connected to fine
+/// cells below the level inside the coarse lake's cells (seeds; a lake with none keeps its
+/// lowest cell, lowered to just below the level). The region grows as far as the ground stays
+/// below the level, unless it leaks to the sea, the world's edge, the grid's edge or a lake
+/// with another level: then the leaking branch is cut more than one coarse cell out from the
+/// seeds by a sill raised to the level plus `SHORE_M` (a leak nearer the seeds is raised where
+/// it is, but not on a band edge). `fixed_lake` gives the coarse lake id of cells copied from
+/// the previous band (seeds too). Coarse lake cells whose fine ground is above the level stay
+/// dry.
 pub(super) fn lakes(
     dims: Dims,
     ground: &mut [f32],
@@ -37,19 +39,7 @@ pub(super) fn lakes(
     c: &Coarse,
     fixed_lake: impl Fn(usize) -> Option<u32>,
 ) -> Value {
-    let n = ground.len();
-    let cd = c.dims();
-    // Lake each coarse cell is near: its own, else the lowest id among its neighbours.
-    let near: Vec<u32> = (0..c.body.len())
-        .map(|q| {
-            c.lake(q).unwrap_or_else(|| {
-                cd.neighbours(q)
-                    .filter_map(|(_, p)| c.lake(p))
-                    .min()
-                    .unwrap_or(0)
-            })
-        })
-        .collect();
+    let (n, w, h) = (ground.len(), dims.w, dims.h);
     let mut ids: Vec<u32> = (0..c.body.len()).filter_map(|q| c.lake(q)).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -62,75 +52,149 @@ pub(super) fn lakes(
         basins.push(basin);
         index.insert(id, basins.len() as u32);
     }
+    let level_of = |b: u32| basins[b as usize - 1].level;
     let free = |flags: &[u8], i: usize| flags[i] & (SEA | FIXED) == 0;
-    let (mut bed_cells, mut restored) = (0u64, 0u64);
-    let mut stack: Vec<u32> = Vec::new();
-    let mut bed: Vec<u32> = Vec::new();
-    for i in 0..n {
-        if flags[i] & FIXED != 0 {
-            if let Some(b) = fixed_lake(i).and_then(|id| index.get(&id)) {
-                body[i] = *b;
-                stack.push(i as u32);
-            }
-            continue;
-        }
-        let q = c.cell(dims.w, i);
-        let Some(id) = c.lake(q).filter(|_| free(flags, i)) else {
-            continue;
-        };
-        let level = c.lakes[&id].level;
-        // Deep coarse cells are wet; their bed is lowered once the lake's piece is known.
-        let deep = level - c.ground[q] >= DEEP_LAKE_M && ground[i] >= level - LAKE_BED_M;
-        if deep {
-            bed.push(i as u32);
-        }
-        if ground[i] < level || deep {
-            body[i] = index[&id];
-            stack.push(i as u32);
-        }
-    }
-    // A lake whose fine ground is all above its level keeps one cell below it.
+    // A lake with no fine ground below its level keeps its lowest cell, just below.
     let mut lowest: HashMap<u32, usize> = HashMap::new();
+    let mut seeded: HashSet<u32> = HashSet::new();
     for i in 0..n {
-        let q = c.cell(dims.w, i);
-        if let Some(id) = c.lake(q).filter(|_| free(flags, i)) {
+        let id = if flags[i] & FIXED != 0 {
+            fixed_lake(i).filter(|id| index.contains_key(id))
+        } else {
+            c.lake(c.cell(w, i)).filter(|_| free(flags, i))
+        };
+        let Some(id) = id else { continue };
+        if flags[i] & FIXED != 0 || ground[i] < c.lakes[&id].level {
+            seeded.insert(id);
+        } else {
             let e = lowest.entry(id).or_insert(i);
             if ground[i] < ground[*e] {
                 *e = i;
             }
         }
     }
-    let mut present = vec![false; basins.len() + 1];
-    for i in 0..n {
-        present[body[i] as usize] = true;
-    }
+    let (mut restored, mut bed_max, mut bed_at) = (0u64, 0f32, 0usize);
     for (id, i) in lowest {
-        if !present[index[&id] as usize] {
-            ground[i] = ground[i].min(c.lakes[&id].level - LAKE_BED_M);
-            body[i] = index[&id];
-            stack.push(i as u32);
+        if !seeded.contains(&id) {
+            let to = c.lakes[&id].level - LAKE_BED_M;
+            if ground[i] - to > bed_max {
+                (bed_max, bed_at) = (ground[i] - to, i);
+            }
+            ground[i] = ground[i].min(to);
             restored += 1;
         }
     }
-    // Connected ground below the level near the coarse lake.
-    let level_of = |b: u32| basins[b as usize - 1].level;
-    let id_of: HashMap<u32, u32> = index.iter().map(|(&id, &b)| (b, id)).collect();
-    while let Some(a) = stack.pop() {
-        let b = body[a as usize];
-        for (_, j) in dims.neighbours(a as usize) {
-            if body[j] == 0
-                && free(flags, j)
-                && ground[j] < level_of(b)
-                && near[c.cell(dims.w, j)] == id_of[&b]
-            {
-                body[j] = b;
-                stack.push(j as u32);
+    let seed_of = |flags: &[u8], ground: &[f32], i: usize| -> Option<u32> {
+        if flags[i] & FIXED != 0 {
+            return fixed_lake(i).and_then(|id| index.get(&id).copied());
+        }
+        c.lake(c.cell(w, i))
+            .filter(|id| free(flags, i) && ground[i] < c.lakes[id].level)
+            .map(|id| index[&id])
+    };
+    let reach = c.k as u32;
+    // Coarse river cells are not lake: the river keeps its course (beside the lake, a shore).
+    let on_river = |j: usize| c.river(c.cell(w, j)).is_some();
+    let mut depth = vec![u32::MAX; n];
+    // Leaking ground cut off from a lake: the cutting level; kept out of lakes as high.
+    let mut cut = vec![f32::INFINITY; n];
+    let (mut sills, mut sill_max, mut sill_at, mut removed) = (0u64, 0f32, Vec::new(), 0u64);
+    let mut queue = std::collections::VecDeque::new();
+    let mut raise = |ground: &mut [f32], i: usize, top: f32| {
+        sills += 1;
+        sill_max = sill_max.max(top - ground[i]);
+        if sill_at.len() < 3 {
+            sill_at.push([i % w, i / w]);
+        }
+        ground[i] = top;
+    };
+    for round in 0..=8 {
+        // Grow every lake breadth first from its seeds, so `depth` is the fine distance.
+        for i in 0..n {
+            if body[i] > first {
+                body[i] = 0;
+            }
+            depth[i] = u32::MAX;
+            if let Some(b) = seed_of(flags, ground, i) {
+                body[i] = b;
+                depth[i] = 0;
+                queue.push_back(i as u32);
             }
         }
+        while let Some(a) = queue.pop_front() {
+            let a = a as usize;
+            let b = body[a];
+            for (_, j) in dims.neighbours(a) {
+                if body[j] == 0
+                    && free(flags, j)
+                    && ground[j] < level_of(b)
+                    && !on_river(j)
+                    && level_of(b) < cut[j]
+                {
+                    body[j] = b;
+                    depth[j] = depth[a] + 1;
+                    queue.push_back(j as u32);
+                }
+            }
+        }
+        if round == 8 {
+            break;
+        }
+        // Leaks: water beside the sea, at an edge, or beside a lake with another level.
+        let leaks: Vec<usize> = (0..n)
+            .filter(|&i| {
+                let b = body[i];
+                b > first
+                    && flags[i] & FIXED == 0
+                    && (dims.is_edge(i)
+                        || dims.neighbours(i).any(|(_, j)| {
+                            (flags[j] & SEA != 0 && level_of(b) > 0.0)
+                                || (body[j] > first && level_of(body[j]) < level_of(b))
+                        }))
+            })
+            .collect();
+        // Cut each leaking branch at the layer `reach` cells out from the seeds; a leak
+        // nearer is raised where it is (not on a band edge: the lake may go on there).
+        let mut stack: Vec<usize> = Vec::new();
+        let mut fresh = vec![false; n];
+        let mut acted = false;
+        for &i in &leaks {
+            if depth[i] > reach {
+                cut[i] = level_of(body[i]);
+                fresh[i] = true;
+                removed += 1;
+                acted = true;
+                stack.push(i);
+            } else if !dims.is_edge(i) || c.world_edge(w, h, i) {
+                raise(ground, i, level_of(body[i]) + SHORE_M);
+                acted = true;
+            }
+        }
+        while let Some(a) = stack.pop() {
+            for (_, j) in dims.neighbours(a) {
+                if !fresh[j] && body[j] == body[a] && depth[j] > reach {
+                    cut[j] = level_of(body[j]);
+                    fresh[j] = true;
+                    removed += 1;
+                    stack.push(j);
+                }
+            }
+        }
+        for i in 0..n {
+            if body[i] > first && depth[i] == reach && dims.neighbours(i).any(|(_, j)| fresh[j]) {
+                raise(ground, i, level_of(body[i]) + SHORE_M);
+                acted = true;
+            }
+        }
+        if !acted {
+            break;
+        }
     }
+    drop(depth);
     // One piece per lake: the largest, and any that may join it beyond the grid (fixed
     // cells or the top and bottom rows); a smaller piece cut off by fine ground above the
     // level stays dry.
+    let mut stack: Vec<u32> = Vec::new();
     let mut piece = vec![0u32; n];
     let mut best: HashMap<u32, (u64, u32)> = HashMap::new();
     let mut open: HashSet<u32> = HashSet::new();
@@ -146,7 +210,7 @@ pub(super) fn lakes(
         while let Some(a) = stack.pop() {
             let a = a as usize;
             size += 1;
-            edge |= flags[a] & FIXED != 0 || a < dims.w || a >= n - dims.w;
+            edge |= flags[a] & FIXED != 0 || a < w || a >= n - w;
             for (_, j) in dims.neighbours(a) {
                 if body[j] == b && piece[j] == 0 {
                     piece[j] = count;
@@ -170,34 +234,33 @@ pub(super) fn lakes(
             dropped += 1;
         }
     }
-    drop(piece);
-    for &i in &bed {
-        let i = i as usize;
-        if body[i] != 0 {
-            ground[i] = basins[body[i] as usize - 1].level - LAKE_BED_M;
-            bed_cells += 1;
-        }
-    }
-    // Shore: dry ground beside a lake stays above its level.
+    // Shore: dry ground beside a lake stays above its level (a coarse river's cells by a thin
+    // margin, so the lake leaves only by its exit).
     let (mut shore, mut shore_max) = (0u64, 0f32);
     for i in 0..n {
         if body[i] <= first || flags[i] & SEA != 0 {
             continue;
         }
-        let top = level_of(body[i]) + SHORE_M;
+        let level = level_of(body[i]);
         for (_, j) in dims.neighbours(i) {
+            let top = if on_river(j) { level + SHORE_M } else { level };
             if body[j] == 0 && free(flags, j) && ground[j] < top {
                 shore += 1;
-                shore_max = shore_max.max(top - ground[j]);
-                ground[j] = top;
+                shore_max = shore_max.max(level + SHORE_M - ground[j]);
+                ground[j] = level + SHORE_M;
             }
         }
     }
     json!({
         "coarse_lakes": ids.len(),
-        "bed_cells_lowered": bed_cells,
         "lakes_given_one_cell": restored,
+        "bed_max_lowering_m": bed_max,
+        "bed_max_lowering_at_cell": [bed_at % w, bed_at / w],
         "cut_off_cells_left_dry": dropped,
+        "leaking_cells_cut_off": removed,
+        "sill_cells_raised": sills,
+        "sill_max_raise_m": sill_max,
+        "sill_at_cells": sill_at,
         "shore_cells_raised": shore,
         "shore_max_raise_m": shore_max,
     })
@@ -205,7 +268,7 @@ pub(super) fn lakes(
 
 /// Coarse-consistency checks (each must be 0): every coarse lake with fine cells here present
 /// at the same level, every coarse river present and routed, no fine water of a coarse river
-/// above its coarse surface (the highest within two coarse cells) by more than the tolerance.
+/// above its coarse surface (the highest over its coarse cell and the 8 around it, as the cap) by more than the tolerance.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn consistency(
     dims: Dims,
@@ -230,8 +293,8 @@ pub(super) fn consistency(
             continue;
         }
         let [cx, cy] = c.abs(c.cell(w, i));
-        let top = (-2..=2)
-            .flat_map(|dy| (-2..=2).map(move |dx| [cx as isize + dx, cy as isize + dy]))
+        let top = (-1..=1)
+            .flat_map(|dy| (-1..=1).map(move |dx| [cx as isize + dx, cy as isize + dy]))
             .filter_map(|p| c.at(p))
             .filter(|&q| c.body[q] == id)
             .map(|q| c.surface[q])
@@ -461,14 +524,19 @@ pub(super) fn rivers(
         let mut cq: HashSet<usize> = HashSet::new();
         for &q in own {
             cq.insert(q);
-            // The river it joins is in reach, so the path can run to its centreline.
+            // The river or lake it ends in is in reach (a coarse lake cell can be dry ground at
+            // the finer level), so the path can run to it.
             for (_, p) in cd.neighbours(q) {
-                let other =
-                    c.lake(p).is_some() || c.river(p).is_some_and(|r| r != id && r != parent);
+                let other = c.lake(p).is_some_and(|l| l != parent)
+                    || c.river(p).is_some_and(|r| r != id && r != parent);
                 if !other && c.dry_basin(p).is_none() {
                     cq.insert(p);
                 }
             }
+        }
+        // All of the lake it ends in: its fine water may lie further in.
+        if c.lakes.contains_key(&parent) {
+            cq.extend((0..c.body.len()).filter(|&q| c.lake(q) == Some(parent)));
         }
         // A path touches only the lake it ends in, and a lake it leaves within that lake's
         // exit cell. Elsewhere a river beside a lake would stand below its level, and shores
@@ -642,14 +710,31 @@ pub(super) fn rivers(
                 }
             }
         }
-        while let Some(Item(z, a)) = heap.pop() {
-            let ra = top[&a];
-            for (_, j) in dims.neighbours(a as usize) {
-                let jj = j as u32;
-                if corridor.contains(&jj) && !recv.contains_key(&jj) && rank_of(j) + 1 >= ra {
-                    recv.insert(jj, a);
-                    top.insert(jj, ra.max(rank_of(j)));
-                    heap.push(Item(ground[j].max(z), jj));
+        // Corridor cells the river's own end cannot reach (another river's path cuts across)
+        // end at that river instead: a confluence.
+        for pass in 0..2 {
+            if pass == 1 {
+                for &i in &corridor {
+                    if recv.contains_key(&i) {
+                        continue;
+                    }
+                    for (_, j) in dims.neighbours(i as usize) {
+                        if claimed.contains_key(&(j as u32)) && seeds.insert(j as u32) {
+                            top.insert(j as u32, rank_of(i as usize).saturating_sub(1));
+                            heap.push(Item(ground[j], j as u32));
+                        }
+                    }
+                }
+            }
+            while let Some(Item(z, a)) = heap.pop() {
+                let ra = top[&a];
+                for (_, j) in dims.neighbours(a as usize) {
+                    let jj = j as u32;
+                    if corridor.contains(&jj) && !recv.contains_key(&jj) && rank_of(j) + 1 >= ra {
+                        recv.insert(jj, a);
+                        top.insert(jj, ra.max(rank_of(j)));
+                        heap.push(Item(ground[j].max(z), jj));
+                    }
                 }
             }
         }
@@ -833,7 +918,6 @@ mod tests {
             y0: 0,
             ww: 2,
             wh: 2,
-            ground: vec![3.0, 3.5, 6.0, 6.0],
             surface: vec![5.0, 4.0, f32::NAN, f32::NAN],
             body: vec![2, 3, 0, 0],
             flow: vec![0, FLOW_CENTRE | 2, 0, 0],

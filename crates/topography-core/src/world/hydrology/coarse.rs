@@ -1,5 +1,5 @@
 //! The coarser level a finer grid lies in (`--coarse`, the previous level's `--out`): its
-//! carved ground, water, flow, discharge and body list over the window the finer grid covers,
+//! water, flow, discharge and body list over the window the finer grid covers,
 //! and its moisture grid.
 
 use super::flood::{Dims, FLOW_CENTRE, FLOW_DRY, FLOW_SINK};
@@ -66,7 +66,6 @@ pub(super) struct Coarse {
     pub y0: usize,
     pub ww: usize,
     pub wh: usize,
-    pub ground: Vec<f32>,
     pub surface: Vec<f32>,
     pub body: Vec<u32>,
     pub flow: Vec<u8>,
@@ -233,7 +232,6 @@ pub(super) fn read(dir: &Path, fine: &Grid) -> Result<Coarse> {
             dir.display()
         ),
     )?;
-    let ground = grid::read_window(&raster("elevation.f32"), size, [x0, x1], [y0, y1], f32le)?;
     let surface = grid::read_window(
         &raster("water-surface.f32"),
         size,
@@ -339,7 +337,6 @@ pub(super) fn read(dir: &Path, fine: &Grid) -> Result<Coarse> {
         y0,
         ww: x1 - x0,
         wh: y1 - y0,
-        ground,
         surface,
         body,
         flow,

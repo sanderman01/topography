@@ -2,7 +2,7 @@
 //! those rows as they are, so adjacent bands agree on the seam by construction, and the seam
 //! check that compares two band outputs.
 
-use super::flood::{Dims, FLOW_CENTRE, FLOW_DRY};
+use super::flood::{CENTRE, Dims, FLOW_CENTRE, FLOW_DRY, RIVER, SEA};
 use super::grid::{self, Grid};
 use crate::acquisition::{Result, digest, ensure, read_small};
 use serde_json::{Map, Value, json};
@@ -150,7 +150,32 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     };
     let (ga, sa, ba, fa) = load(north, &a, ra)?;
     let (gb, sb, bb, fb) = load(south, &b, rb)?;
-    let overlap = rb[1];
+    let (bk, _) = kinds(&serde_json::from_slice(&read_small(
+        &south.join("bodies.json"),
+    )?)?);
+    let mut report = compare(w, t, rows, (&ga, &sa, &ba, &fa), (&gb, &sb, &bb, &fb), &bk);
+    if let Value::Object(m) = &mut report {
+        m.insert("north".into(), json!(north.display().to_string()));
+        m.insert("south".into(), json!(south.display().to_string()));
+    }
+    let passed = report["passed"].as_bool().unwrap_or(false);
+    Ok((serde_json::to_string_pretty(&report)?, passed))
+}
+
+/// Ground, surface, body and flow rows of a band output.
+type RowsRef<'a> = (&'a [f32], &'a [f32], &'a [u32], &'a [u8]);
+
+/// The seam comparison over rows from the southern grid's first row (`t` in the northern
+/// one): the first `rows` are the northern core, the rest the northern halo.
+fn compare(
+    w: usize,
+    t: usize,
+    rows: usize,
+    (ga, sa, ba, fa): RowsRef,
+    (gb, sb, bb, fb): RowsRef,
+    bk: &HashMap<u32, BodyKind>,
+) -> Value {
+    let overlap = ga.len().min(gb.len()) / w;
     let (mut ground_diff, mut surface_diff, mut body_diff) = (0u64, 0u64, 0u64);
     for i in 0..rows * w {
         ground_diff += u64::from((ga[i] - gb[i]).abs() > 1e-3);
@@ -170,9 +195,6 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     let mut step_at: Vec<[usize; 2]> = Vec::new();
     let mut river_steps = 0u64;
     let mut lake_level: HashMap<u32, f32> = HashMap::new();
-    let (bk, _) = kinds(&serde_json::from_slice(&read_small(
-        &south.join("bodies.json"),
-    )?)?);
     for x in 0..w {
         let i = (rows - 1) * w + x;
         // A northern centreline flowing south across the seam must land on water.
@@ -204,7 +226,7 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
                 }
             }
         }
-        for c in [i, (rows) * w + x] {
+        for c in [i, rows * w + x] {
             let (_, s, id) = pick(c);
             if bk.get(&id) == Some(&BodyKind::Lake) {
                 let l = *lake_level.entry(id).or_insert(s);
@@ -229,10 +251,8 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     let passed = checks
         .as_object()
         .is_some_and(|m| m.values().all(|v| v.as_u64() == Some(0)));
-    let report = json!({
+    json!({
         "kind": "hydrology_seam",
-        "north": north.display().to_string(),
-        "south": south.display().to_string(),
         "shared_core_rows": rows,
         "passed": passed,
         "checks": checks,
@@ -240,6 +260,95 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
         "dry_cells_below_water_at": step_at,
         "dry_cells_below_a_river_across_seam_not_ahead_of_its_own_flow": river_steps,
         "halo_agreement_share": if halo > 0 { same as f64 / halo as f64 } else { 1.0 },
-    });
-    Ok((serde_json::to_string_pretty(&report)?, passed))
+    })
+}
+
+/// Fixed centrelines (index into the grid) that flow into this band's cells (`inflow`:
+/// fixed cell, cell it drains into) onto dry ground that is no basin: cut at the seam.
+pub(super) fn cut_at_seam(inflow: &[(usize, usize)], flags: &[u8], body: &[u32]) -> Vec<usize> {
+    inflow
+        .iter()
+        .filter(|&&(i, r)| flags[i] & CENTRE != 0 && flags[r] & (RIVER | SEA) == 0 && body[r] == 0)
+        .map(|&(i, _)| i)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Owned = (Vec<f32>, Vec<f32>, Vec<u32>, Vec<u8>);
+
+    /// Two 4-wide bands sharing two core rows, then two halo rows: a lake (id 2) on the left,
+    /// a river (id 3) flowing south across the seam in column 2.
+    fn rows() -> Owned {
+        let (w, h) = (4, 4);
+        let mut g = vec![10.0; w * h];
+        let mut s = vec![f32::NAN; w * h];
+        let mut b = vec![0; w * h];
+        let mut f = vec![0; w * h];
+        for y in 0..h {
+            (g[y * w], s[y * w], b[y * w]) = (4.0, 5.0, 2);
+            let i = y * w + 2;
+            (g[i], s[i], b[i], f[i]) = (8.0, 9.0, 3, FLOW_CENTRE | 2);
+        }
+        (g, s, b, f)
+    }
+
+    /// Checks failing after `mutate` changes the southern band.
+    fn failed(mutate: fn(&mut Owned)) -> Vec<String> {
+        let (a, mut b) = (rows(), rows());
+        mutate(&mut b);
+        let kinds = HashMap::from([(2, BodyKind::Lake), (3, BodyKind::River)]);
+        let r = compare(
+            4,
+            0,
+            2,
+            (&a.0, &a.1, &a.2, &a.3),
+            (&b.0, &b.1, &b.2, &b.3),
+            &kinds,
+        );
+        r["checks"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(_, v)| v.as_u64() != Some(0))
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
+    #[test]
+    fn every_seam_check_can_fail() {
+        assert!(failed(|_| {}).is_empty(), "{:?}", failed(|_| {}));
+        type Mutation = fn(&mut Owned);
+        let cases: [(&str, Mutation); 6] = [
+            ("shared_core_ground_differs", |r| r.0[5] = 11.0),
+            ("shared_core_surface_differs", |r| r.1[0] = 5.5),
+            ("shared_core_body_differs", |r| r.2[2] = 4),
+            // The river runs onto dry ground below the seam.
+            ("centrelines_cut_at_seam", |r| {
+                (r.1[10], r.2[10]) = (f32::NAN, 0)
+            }),
+            // Dry ground below the lake beside it across the seam.
+            ("dry_cells_below_lake_or_sea_across_seam", |r| {
+                (r.0[9], r.1[9], r.2[9]) = (4.5, f32::NAN, 0);
+                (r.0[8], r.1[8], r.2[8]) = (4.5, f32::NAN, 0);
+            }),
+            ("lakes_with_two_levels_at_seam", |r| r.1[8] = 5.5),
+        ];
+        for (name, mutate) in cases {
+            let got = failed(mutate);
+            assert!(got.contains(&name.to_string()), "{name}: {got:?}");
+        }
+    }
+
+    #[test]
+    fn a_river_cut_at_the_seam_fails() {
+        // A fixed centreline (cell 0) drains into cell 1.
+        let mut flags = vec![CENTRE | RIVER, RIVER];
+        let mut body = vec![3, 3];
+        assert!(cut_at_seam(&[(0, 1)], &flags, &body).is_empty());
+        (flags[1], body[1]) = (0, 0);
+        assert_eq!(cut_at_seam(&[(0, 1)], &flags, &body), vec![0]);
+    }
 }

@@ -484,6 +484,32 @@ pub(super) fn extract(
         }
         cut(ground, i, bed, &mut ch);
     }
+    // Beds never rise downstream (a raised surface leaves an older, deeper bed upstream):
+    // each centreline bed at most every bed upstream, upstream first.
+    let mut donors = vec![0u8; n];
+    for i in 0..n {
+        if let Some(r) = receiver(dims, dir, i).filter(|&r| centre(flags, i) && centre(flags, r)) {
+            donors[r] += 1;
+        }
+    }
+    for i in 0..n {
+        let mut c = i;
+        while centre(flags, c) && donors[c] == 0 {
+            donors[c] = u8::MAX;
+            match receiver(dims, dir, c).filter(|&r| centre(flags, r)) {
+                Some(r) => {
+                    if !fixed(flags, r) && !fixed(flags, c) {
+                        let to = ground[c];
+                        cut(ground, r, to, &mut ch);
+                    }
+                    donors[r] -= 1;
+                    c = r;
+                }
+                None => break,
+            }
+        }
+    }
+    drop(donors);
     for b in &band {
         let (j, o) = (b.cell as usize, b.owner as usize);
         surface[j] = surface[o];
@@ -725,7 +751,8 @@ impl Lips {
 }
 
 /// Raise dry ground beside each lake exit's channel that is below the lake level up to it (a
-/// rock sill), and beside channels raised to a lake's level (`raised`) up to their surface,
+/// rock sill), beside channels raised to a lake's level (`raised`) up to their surface, and
+/// any dry cell beside a lake below its level up to it (a divide),
 /// then every dry cell draining into a raised one that is now lower than it, so no ground
 /// drains uphill. Basin cells are left as they are.
 #[allow(clippy::too_many_arguments)]
@@ -769,6 +796,25 @@ pub(super) fn raise_lips(
             if dry(j) && ground[j] < level {
                 raise(ground, j, level, &mut stack);
             }
+        }
+    }
+    // A dry cell beside a lake below its level (left by carving next to a lake grown over
+    // carved ground) becomes a divide at the level.
+    for j in 0..ground.len() {
+        if !dry(j) {
+            continue;
+        }
+        let level = dims
+            .neighbours(j)
+            .filter(|&(_, k)| {
+                flags[k] & (SEA | RIVER) == 0
+                    && body[k] != 0
+                    && basins[body[k] as usize - 1].kind == Kind::Lake
+            })
+            .map(|(_, k)| basins[body[k] as usize - 1].level)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if ground[j] < level {
+            raise(ground, j, level, &mut stack);
         }
     }
     while let Some(r) = stack.pop() {

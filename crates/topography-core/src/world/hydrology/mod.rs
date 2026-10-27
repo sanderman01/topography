@@ -774,7 +774,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
                         qx.abs_diff(ex) > 1 || qy.abs_diff(ey) > 1
                     })
             })
-            .count();
+            .map(|b| json!({ "lake": b.id, "exit_cell": [b.exit as usize % w, b.exit as usize / w] }))
+            .collect::<Vec<_>>();
         figures.insert(
             "coarse".into(),
             json!({
@@ -782,18 +783,17 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 "lakes": lake_figures,
                 "rivers": path_figures,
                 "consistency": consistency_figures,
-                "lake_exits_off_the_coarse_exit": exits_moved,
+                "lake_exits_off_the_coarse_exit": exits_moved.len(),
+                "lake_exits_off_the_coarse_exit_examples": &exits_moved[..exits_moved.len().min(5)],
                 "edge_inflow_cells": edge_inflow_cells,
             }),
         );
     }
     if north.is_some() {
         // A centreline from the previous band must go on as water here (or end in a basin).
-        let cut: Vec<[usize; 2]> = inflow
-            .iter()
-            .filter(|&&(i, r)| flags[i] & CENTRE != 0 && flags[r] & (RIVER | SEA) == 0)
-            .filter(|&&(_, r)| body[r] == 0)
-            .map(|&(i, _)| [i % w, i / w])
+        let cut: Vec<[usize; 2]> = band::cut_at_seam(&inflow, &flags, &body)
+            .into_iter()
+            .map(|i| [i % w, i / w])
             .collect();
         checks.insert("rivers_cut_at_seam".into(), json!(cut.len()));
         figures.insert("rivers_cut_at_seam_cells".into(), json!(cut));
