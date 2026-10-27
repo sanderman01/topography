@@ -417,14 +417,27 @@ pub fn run(options: &Options) -> Result<Outcome> {
     eprintln!("hydrology: breach lowered {carved} cells");
     lap("breach", &mut t);
 
-    // Trenches widen into small valleys; ice, the ground draining onto it and cells from
-    // the previous band stay as they are.
-    let mut frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
-        class_at(i) == lakes::GLACIER
-    });
-    for f in frozen.iter_mut().take(fixed_rows * w) {
-        *f = true;
+    // Coarse river paths burned again after breaching (which may have lowered some of their
+    // cells); these cuts widen as trenches do.
+    let mut burn_again = (0f32, 0usize);
+    if let Some(im) = &imprint {
+        let (cells, max, at) = fine::burn(
+            dims,
+            &mut ground,
+            &body,
+            &basins,
+            &im.paths,
+            &im.cap,
+            grid.spacing_m,
+        );
+        for c in cells {
+            flags[c as usize] |= flood::BREACHED;
+        }
+        burn_again = (max, at);
     }
+    // Trenches widen into small valleys, through glacier too (ice is a surface layer); basin
+    // interiors (such as an ice caldera) and cells from the previous band stay as they are.
+    let walls_kept: Vec<bool> = (0..n).map(|i| i < fixed_rows * w).collect();
     let mut breach_cut: HashMap<u32, f32> = HashMap::new();
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
         for (x, &z) in row.iter().enumerate() {
@@ -442,26 +455,28 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &flags,
         &body,
         &basins,
-        &frozen,
+        &walls_kept,
         |i| breach_cut.get(&(i as u32)).copied().unwrap_or(0.0),
         grid.spacing_m,
     );
     drop(breach_cut);
+    drop(walls_kept);
     if let Value::Object(m) = &mut trenches {
         m.insert("max_depth_m".into(), json!(trench_depth));
     }
     // Water follows the steepest descent on the final ground (the flood's order only on flats).
     let resteered = flood::steepest(dims, &ground, &flags, &body, &basins, &mut dir);
-    frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
+    // Stream power leaves ice, ice basins and the ground draining onto them as they are.
+    let mut frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
         class_at(i) == lakes::GLACIER
     });
     for f in frozen.iter_mut().take(fixed_rows * w) {
         *f = true;
     }
-    // Coarse river paths keep their own course, descending.
+    // Coarse river paths keep their own course, descending (widening may have lowered cells).
     if let Some(im) = &imprint {
         fine::route(dims, &mut dir, &im.paths);
-        fine::burn(
+        let (_, max, at) = fine::burn(
             dims,
             &mut ground,
             &body,
@@ -470,6 +485,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
             &im.cap,
             grid.spacing_m,
         );
+        if max > burn_again.0 {
+            burn_again = (max, at);
+        }
     }
     // Fixed cells end the routing here, except where they drain into this run's cells.
     let mut check_dir = Vec::new();
@@ -599,6 +617,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "burned_cells": im.burned.len(),
             "burn_max_m": im.burn_max_m,
             "burn_max_at_cell": im.burn_max_at,
+            "burn_after_breach_max_m": burn_again.0,
+            "burn_after_breach_max_at_cell": [burn_again.1 % w, burn_again.1 / w],
             "unrouted_rivers": im.unrouted,
         });
         path_cap = im.cap.clone();

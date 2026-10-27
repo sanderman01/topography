@@ -38,15 +38,16 @@ pub(super) fn trench_json() -> Value {
     json!({
         "side_slope_deg": SIDE_SLOPE_DEG,
         "max_rings": WIDEN_RINGS,
-        "rule": "dry ground beside a breach trench is lowered to the trench side slope from \
-            the lowest neighbour already in the valley, ring by ring, and drains into it; \
-            never below the trench, a basin level beside it or 0 m; basins, the sea, glacier \
-            and ground draining onto glacier or into an ice basin unchanged",
+        "rule": "dry ground beside a breach trench or a burned coarse river path is lowered \
+            to the trench side slope from the lowest neighbour already in the valley, ring by \
+            ring, and drains into it; never below the trench, a basin level beside it or 0 m; \
+            basins (an ice caldera too), the sea and cells from the previous band unchanged; \
+            glacier ground widens like any other (ice is a surface layer)",
     })
 }
 
-/// Ice (glacier class), ice-basin cells and everything draining onto them. Not eroded or
-/// widened, which keeps the summit caldera and its walls as they are.
+/// Ice (glacier class), ice-basin cells and everything draining onto them. Not eroded by
+/// stream power, which keeps the summit caldera and its walls as they are.
 pub(super) fn ice_catchment(
     dims: Dims,
     dir: &[u8],

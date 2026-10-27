@@ -157,10 +157,11 @@ pub(super) fn lakes(
                     .any(|(_, j)| grows(body, ground, &cut, body[i], j))
         }));
         if round == 8 || leaks.is_empty() {
-            leaks_left = leak_cells(dims, flags, body, first, &levels, |i| {
-                !dims.is_edge(i) || c.world_edge(w, h, i)
-            })
-            .len();
+            // Leaks left (a band edge excepted: the lake may go on there), bound included.
+            leaks_left = leaks
+                .iter()
+                .filter(|&&i| !dims.is_edge(i) || c.world_edge(w, h, i))
+                .count();
             break;
         }
         // Cut each leaking branch at its narrowest layer between `reach` and twice that out
@@ -229,10 +230,11 @@ pub(super) fn lakes(
             }
         }
         if !acted {
-            leaks_left = leak_cells(dims, flags, body, first, &levels, |i| {
-                !dims.is_edge(i) || c.world_edge(w, h, i)
-            })
-            .len();
+            // Leaks left (a band edge excepted: the lake may go on there), bound included.
+            leaks_left = leaks
+                .iter()
+                .filter(|&&i| !dims.is_edge(i) || c.world_edge(w, h, i))
+                .count();
             break;
         }
     }
@@ -282,30 +284,18 @@ pub(super) fn lakes(
     }
     // Shore: dry ground beside a lake stays above its level (a coarse river's cells by a thin
     // margin, so the lake leaves only by its exit).
-    let (mut shore, mut shore_max, mut joined) = (0u64, 0f32, 0u64);
-    for pass in 0..2 {
-        for i in 0..n {
-            if body[i] <= first || flags[i] & SEA != 0 {
-                continue;
-            }
-            let level = level_of(body[i]);
-            for (_, j) in dims.neighbours(i) {
-                let top = if on_river(j) { level + SHORE_M } else { level };
-                if body[j] == 0 && free(flags, j) && ground[j] < top {
-                    // A notch inside the lake (6 or more of its cells around) joins it instead.
-                    let inside = dims
-                        .neighbours(j)
-                        .filter(|&(_, k)| body[k] == body[i])
-                        .count();
-                    if pass == 0 && inside >= 6 && ground[j] < level {
-                        body[j] = body[i];
-                        joined += 1;
-                        continue;
-                    }
-                    shore += 1;
-                    shore_max = shore_max.max(level + SHORE_M - ground[j]);
-                    ground[j] = level + SHORE_M;
-                }
+    let (mut shore, mut shore_max) = (0u64, 0f32);
+    for i in 0..n {
+        if body[i] <= first || flags[i] & SEA != 0 {
+            continue;
+        }
+        let level = level_of(body[i]);
+        for (_, j) in dims.neighbours(i) {
+            let top = if on_river(j) { level + SHORE_M } else { level };
+            if body[j] == 0 && free(flags, j) && ground[j] < top {
+                shore += 1;
+                shore_max = shore_max.max(level + SHORE_M - ground[j]);
+                ground[j] = level + SHORE_M;
             }
         }
     }
@@ -321,7 +311,6 @@ pub(super) fn lakes(
         "sill_max_raise_m": sill_max,
         "sill_at_cells": sill_at,
         "shore_cells_raised": shore,
-        "notch_cells_joined": joined,
         "shore_max_raise_m": shore_max,
     })
 }
