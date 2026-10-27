@@ -1,0 +1,49 @@
+training/src/topography_training/diffusion/cascade_l4.py
+  s_8c1b40ea9c1e0d::t_d1b508732f1d06 301-302
+  s_8c1b40ea9c1e0d::t_c5da3c34db7e58 8-15,22,29,35-36,84-87,95-97,115,123,127-130,135-136,138,161,165-185,187-207,238,248-249,251,254,256-282,299-300,303-309,313-318
+  s_8c1b40ea9c1e0d::t_3f5629d5350b58 112-113
+  s_8c1b40ea9c1e0d::t_fcde411f84ad83 61,150
+  s_8c1b40ea9c1e0d::t_704f1c2179d71d 186
+training/src/topography_training/diffusion/cascade_chain.py
+  s_8c1b40ea9c1e0d::t_f37cba6af95f0a 290-291
+  s_8c1b40ea9c1e0d::t_e9e4743d2609ac 68-69,72,75-78
+  s_8c1b40ea9c1e0d::t_4332106368f995 333,378,431
+  s_8c1b40ea9c1e0d::t_2fe76a8401de1b 211-218,220
+  s_8c1b40ea9c1e0d::t_bf0ac422863bcb 12-17
+  s_8c1b40ea9c1e0d::t_9c5cbe9635f999 498-501
+  s_8c1b40ea9c1e0d::t_19eb6306395408 422-423,525
+  s_8c1b40ea9c1e0d::t_3e7de606e2c94d 421
+  s_8c1b40ea9c1e0d::t_43f7b449b5221a 459-474,477-480,484-485
+  s_8c1b40ea9c1e0d::t_f1509285d55b1e 447
+  s_8c1b40ea9c1e0d::t_224a0c43da278c 84-88
+  s_8c1b40ea9c1e0d::t_289faa441a1b01 321,325-327
+  s_8c1b40ea9c1e0d::t_0b72c8051ccdce 303-306
+  s_8c1b40ea9c1e0d::t_ef19e8a51f9dfc 442
+  s_8c1b40ea9c1e0d::t_a2edf68dae920a 517-520,522-523
+  s_8c1b40ea9c1e0d::t_25ef7bf2a1cc36 417
+  s_8c1b40ea9c1e0d::t_7b5be517d98da0 26,35
+  s_8c1b40ea9c1e0d::t_4ce1e85b895487 391-392,394-405,408-411
+  s_8c1b40ea9c1e0d::t_e7e0f77579c7d7 51-57,60-65
+  s_8c1b40ea9c1e0d::t_52977cb69b0b5b 66-67
+training/src/topography_training/diffusion/cascade.py
+  s_8c1b40ea9c1e0d::t_fa2c8c6fd5cc18 460-461,464
+training/src/topography_training/diffusion/hydrology.py
+  s_8c1b40ea9c1e0d::t_254e79d8d077c2 1,3-6,12-16,18,23-25,30-32,38-52,161,164-172,186,195,209-291,316-344
+  s_8c1b40ea9c1e0d::t_242857155f5089 292-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4926adf8b1188681312717fc1522150021d72da4",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
