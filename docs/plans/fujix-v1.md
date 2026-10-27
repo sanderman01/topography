@@ -146,7 +146,7 @@ and no dry cell may lie below every water surface beside it
 | Step | Level | What happens |
 | --- | --- | --- |
 | Moisture | 128 m | Orographic precipitation from the SW wind, with the Smith and Barstad (2004) linear upslope model. It feeds discharge, the coarse `moisture` layer, vegetation and snow |
-| Trunk network | 32 m | Priority-flood drainage weighted by precipitation. Depressions become lakes at their spill level, within the existing per-class lake budgets (`Water` in `hydrology.py`); the rest are breached, not filled. A few iterations of implicit stream-power erosion (Braun and Willett 2013) cut valleys across collage seams and barely change real ones. Rivers start at about 10 km² of drainage |
+| Trunk network | 32 m | Priority-flood drainage weighted by precipitation. Depressions become lakes at their spill level, within the per-class lake budgets (`configs/hydrology/water-v1.toml`); the rest are breached, not filled. A few iterations of implicit stream-power erosion (Braun and Willett 2013) cut valleys across collage seams and barely change real ones. Rivers start at about 10 km² of drainage |
 | Tributaries | 4 m, then 1 m | Each level routes flow on its own surface with the coarser network held fixed, and adds streams from about 0.5 km² at 4 m and 0.05 km² at 1 m. Every stream ends at a confluence, a lake or the sea |
 | Channels | Each level | Width and depth from discharge, roughly W ∝ Q^0.5 and D ∝ Q^0.4, so rivers grow downstream. A smooth cross-section is carved below a surface that never rises downstream. Mouths slope down into the sea |
 | Lakes | Each level | One level per lake id at every level. After each level, the bed inside stays below that level, the shore outside stays above it, and the outlet is carved to it |
@@ -158,7 +158,7 @@ between L4 bands.
 
 It is written in Rust, as `world::hydrology` in `topography-core`, and run by the cascade
 through `topography world hydrology`. The Python `heapq` flood is already slow at 32 m, and 1 m
-across 64 km is 4.3 billion cells. `hydrology.py` is retired once v2 runs.
+across 64 km is 4.3 billion cells. Its cascade water functions are retired; only the L1 drainage and the analysis flood stay in `hydrology.py`.
 
 ## 3. Grand Canyon subclass and dithered borders
 

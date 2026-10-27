@@ -336,22 +336,33 @@ from a layout derived from a real context region (`--release` and `--region`):
 ```sh
 $P -m topography_training.diffusion.cascade_chain --layout data/worlds/fujion-painted-l0-5 \
     --l1-run data/models/cascade-l1-run-6 --l2-run data/models/cascade-l2-run-8 \
-    --l3-run data/models/cascade-l3-run-4 --out data/worlds/fujion-v3-chain-14
+    --l3-run data/models/cascade-l3-run-5 --out data/worlds/fujion-v3-chain-14
 ```
 
 L3 covers the whole field by default, the size the layout specifies; `--l3-km N`
 limits it to a central N × 1,024 m square (a derived region is 48 km, so use it there).
 The chain writes the class per 4 m cell (`classes.u8`) for L4 and the cover.
 
-After L1 the land is made to drain (largest depressions kept as lakes,
-others carved; hollows of crater, karst and dune cells stay dry basins); after L2
-compact deep hollows become tarns and streams are traced. Streams flow through lakes
-and dry basins to the sea (only karst basins swallow them), follow smoothed paths, are
-continued to the water after L3 refines the coast, and their beds are carved to descend.
-Water amounts follow the region class (`hydrology.WATER`) unless overridden with
-`--lake-share`, `--tarn-share` and `--stream-km2`. The output is a 4 m world
+After L1 the land is made to drain in Python (`hydrology.drain`: largest depressions kept
+as lakes, others carved; hollows of crater, karst and dune cells stay dry basins). Water
+after L2 and L3 comes from [Hydrology v2](#hydrology-v2) (`topography world hydrology`, the
+release binary, which the chain builds with Cargo when it is stale): L1 lakes get a bed
+sloping down from their shore (0.1, at most 40 m) so the 32 m run keeps them, then the 32 m
+run (wind from the layout) carves L2's ground and sets its sea, lakes and rivers. L3
+refines that carved ground, with the 32 m water as its water channel (32 m rivers drawn
+about 20 m wide), and its ground under lakes and rivers eases down to the carved 32 m
+ground. The 4 m run (`--coarse` the 32 m output) then holds the 32 m network fixed, adds
+tarns and tributaries and carves the 4 m ground; that is the world's elevation. Outputs
+stay in `hydrology/32m` and `hydrology/4m` (L4 reads the 4 m one). Water amounts follow
+the region class (`configs/hydrology/water-v1.toml`, which Rust and Python both read);
+`--lake-share` and `--tarn-share` set them for every class, `--stream-km2` the 32 m river
+start (default 10 km²). `--l1-class-runs`, `--l2-class-runs` and `--l3-class-runs` mix
+per-class expert runs (`cN` subdirectories) over a level's run. The output is a 4 m world
 (`manifest.json`, layers, hillshades of each level) that
-exports directly. A 32 km L3 takes about an hour. `--guidance w` applies class
+exports directly. Beside `water.u8` (kept until export v2) it holds `water-surface.f32`
+(NaN dry, sea 0), `water-body.u32`, `bodies.json` and the 128 m `moisture.f32` (placed by
+the manifest's `moisture` entry); the hydrology layers are hard links into
+`hydrology/4m`. A 32 km L3 takes about an hour. `--guidance w` applies class
 guidance at every level (1: off). L1 runs trained on 128-cell crops are sampled in
 overlapping local windows, and generation takes the form channels from the run's
 per-class table (`python -m topography_training.diffusion.forms --run-dir <run>`
@@ -369,16 +380,25 @@ hollows always stay dry basins through drainage.
 `cascade_l4` refines that 4 m world to 1 m in bands of rows:
 
 ```sh
-$P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-7 \
+$P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
     --world data/worlds/fujion-v3-chain-14 --out data/worlds/fujion-v3-chain-14-l4 --band-m 1024
 ```
 
 Bands default to 2,048 m with a 256 m halo (`--band-m`, `--halo-m`); overlapping bands
-share their starting noise and are cross-faded. Output layers are memory-mapped, so
-host memory depends on the band, not the world. Across 32 km, 2,048 m bands exceed a
-7 GB cap, so use `--band-m 1024` there. Rerunning the same command resumes after the
-last finished band. Water keeps the smooth 4 m surface. `--km N` limits the run to a
-central N × 1,024 m square for quick checks; older chain worlds need `--class-id`. At
+share their starting noise and are cross-faded; the halo may be at most two thirds of a
+band. Once the band below is generated, a band's rows are final and it gets its 1 m water
+from `topography world hydrology` with `--coarse` the world's `hydrology/4m` and `--north`
+the previous band ([Bands and seams](#bands-and-seams)), over its rows plus a halo as wide
+as `--halo-m`; it keeps the core rows, and `hydrology-seam` checks each pair (a failure
+stops the run). Under water the ground is the refined 4 m ground (L4 learned land only).
+The output adds `water-surface.f32`, `water-body.u32`, `bodies.json` (merged from the bands,
+areas from the delivered cells) and the world's 128 m `moisture.f32`; band reports stay in
+`hydrology/`. Output layers are memory-mapped, so host memory depends on the band, not the
+world. Across 32 km, 2,048 m bands exceed a 7 GB cap, so use `--band-m 1024` there.
+Rerunning the same command resumes after the last finished band (diffusion or hydrology).
+`--km N` limits the run to a central N × 1,024 m square for quick checks; worlds without a
+`hydrology/4m` output (made before hydrology v2) must be regenerated, and older chain
+worlds need `--class-id`. `--class-runs` mixes per-class expert runs over `--run`. At
 12 steps and stride 192, 32 km takes about 17 h (32 bands of about 31 min); a central
 4 km about 14 min.
 
@@ -395,8 +415,9 @@ Water as a surface height ([Fujix plan](../plans/fujix-v1.md) section 2). The Ru
 works on one grid at a time, with orographic precipitation, stream power at 32 m and
 discharge-sized channels. A finer level holds the coarser level's network fixed (`--coarse`,
 [below](#finer-levels)), and 1 m bands carry the previous band's rows (`--north`,
-[below](#bands-and-seams)). The cascade calling it comes later; the chain still uses
-`hydrology.py`.
+[below](#bands-and-seams)). The cascade calls it at every level from 32 m down
+([Generating a world](#generating-a-world)); `hydrology_grid.py` below makes grids for
+running it by hand.
 
 ```sh
 training/.venv/bin/python -I scripts/hydrology_grid.py data/worlds/fujix-collage-55 scratch/hydro-v2/fujix55-grid
@@ -468,8 +489,8 @@ Steps:
 - A priority flood (Barnes et al. 2014) gives the filled surface; each connected region
   filled above the ground is a depression with one spill level and outlet.
 - Lakes: within each class's `lake_share` of its land (classes from
-  [configs/hydrology/water-v1.toml](../../configs/hydrology/water-v1.toml), a copy of
-  `hydrology.WATER`), the largest depressions by volume, at least 1 m deep and 4,096 m².
+  [configs/hydrology/water-v1.toml](../../configs/hydrology/water-v1.toml), which Python's
+  `hydrology.WATER` reads too), the largest depressions by volume, at least 1 m deep and 4,096 m².
   A depression belongs to its most common class. Nested depressions count as one, at the
   outer spill: when that is over budget, a smaller inner lake that would fit is not kept
   (a known limitation, revisited with finer levels).

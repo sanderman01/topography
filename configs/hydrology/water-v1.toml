@@ -1,7 +1,6 @@
 # Water amounts per terrain class (legend topography terrain-v3), read by
-# `topography world hydrology`. Copied from `WATER` in
-# training/src/topography_training/diffusion/hydrology.py (judgment values from the inland water
-# share of the real context regions, 2026-10-03); Python moves to this file later.
+# `topography world hydrology` and the Python cascade (`hydrology.WATER`). Judgment values from
+# the inland water share of the real context regions, 2026-10-03.
 #
 # lake_share:   share of the class's land kept as lakes (largest depressions by volume)
 # tarn_share:   share kept as small compact lakes on finer levels (not used at 32 m yet)
