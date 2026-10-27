@@ -2,7 +2,7 @@
 
 use super::flood::{Dims, RIVER, SEA, receiver};
 use super::lakes::{Basin, Kind};
-use super::rivers::{End, River};
+use super::rivers::{End, River, entered_basin, sill_level};
 use serde_json::{Map, Value, json};
 
 /// Dry ground may sit this far below adjacent water (f32 rounding of carved rims).
@@ -76,6 +76,7 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
     let mut undrained = cycles;
     let (mut uphill, mut not_above, mut rises, mut not_below_level) = (0u64, 0u64, 0u64, 0u64);
     let (mut below_lake, mut below_sea, mut below_river) = (0u64, 0u64, 0u64);
+    let mut river_below_lake = 0u64;
     let mut lake_range = vec![(f32::INFINITY, f32::NEG_INFINITY); c.basins.len() + 1];
     for i in 0..n {
         let r = receiver(c.dims, c.dir, i);
@@ -118,26 +119,42 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
             };
             below_lake += next(|c, j| c.lake(j).is_some()) as u64;
             below_sea += next(|c, j| c.sea(j)) as u64;
-            below_river += next(|c, j| c.river(j)) as u64;
+            // A lake exit's banks may drop away (waterfall lip); the basin a river enters is
+            // not its bank.
+            below_river += c.dims.neighbours(i).any(|(_, j)| {
+                c.river(j)
+                    && c.surface[j] > g
+                    && sill_level(c.dims, c.dir, c.flags, c.body, c.basins, j).is_none()
+                    && (c.body[i] == 0
+                        || c.body[i] != entered_basin(c.dims, c.dir, c.flags, c.body, j))
+            }) as u64;
+        }
+        if c.river(i) {
+            let low = s + BANK_TOLERANCE_M;
+            river_below_lake +=
+                c.dims
+                    .neighbours(i)
+                    .any(|(_, j)| c.lake(j).is_some() && c.surface[j] > low) as u64;
         }
     }
     let several = lake_range
         .iter()
         .filter(|(lo, hi)| lo.is_finite() && lo != hi)
         .count();
-    // Lake exits: ground at the level, and an outflow river not above it.
-    let exits_above = c
+    // Lake exits: an outflow river at the level (a sill), dry ground not above it.
+    let exits_off = c
         .basins
         .iter()
         .filter(|b| b.kind == Kind::Lake)
         .filter(|b| {
             let e = b.exit as usize;
-            let s = if c.river(e) {
-                c.surface[e]
+            if c.sea(e) || c.lake(e).is_some() {
+                false
+            } else if c.river(e) {
+                (c.surface[e] - b.level).abs() > BANK_TOLERANCE_M
             } else {
-                c.ground[e]
-            };
-            !c.sea(e) && c.lake(e).is_none() && s > b.level + BANK_TOLERANCE_M
+                c.ground[e] > b.level + BANK_TOLERANCE_M
+            }
         })
         .count();
     let on_land = c.rivers.iter().filter(|r| r.end == End::Land).count();
@@ -150,7 +167,11 @@ pub(super) fn checks(c: &Context, cycles: u64) -> Map<String, Value> {
     m.insert("land_cells_draining_uphill".into(), json!(uphill));
     m.insert("lakes_in_several_pieces".into(), json!(lake_pieces(c)));
     m.insert("lake_cells_not_below_level".into(), json!(not_below_level));
-    m.insert("lake_exits_above_level".into(), json!(exits_above));
+    m.insert("lake_exits_off_level".into(), json!(exits_off));
+    m.insert(
+        "river_cells_below_adjacent_lake".into(),
+        json!(river_below_lake),
+    );
     m.insert(
         "wet_cells_with_surface_not_above_ground".into(),
         json!(not_above),
@@ -226,6 +247,7 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
         "rivers_to_sea": ends(|e| *e == End::Sea),
         "rivers_to_lakes": ends(|e| matches!(e, End::Lake(_))),
         "rivers_to_sinks": ends(|e| matches!(e, End::Sink(_))),
+        "rivers_into_ice_basins": ends(|e| matches!(e, End::Dry(_))),
         "rivers_to_grid_edge": ends(|e| *e == End::Edge),
         "max_drainage_km2": c.acc.iter().zip(c.flags).filter(|(_, f)| **f & SEA == 0)
             .map(|(a, _)| *a).fold(0f32, f32::max),
@@ -243,8 +265,11 @@ pub(super) fn constants(river_km2: f64, breach_max_m: f32) -> Value {
         "river_depth": "0.4 m * drainage_km2^0.4; surface at most the lowest dry bank and every \
             surface upstream, bed cut to surface minus depth",
         "breach_max_m": breach_max_m,
-        "deep_depressions": "kept beyond the budget: lakes at the spill lowered by breach_max_m, \
-            or dry sinks in glacier and arid classes (lake_share <= 0.002)",
+        "deep_depressions": "kept beyond the budget: dry sinks in glacier and arid classes \
+            (lake_share <= 0.002), else lakes at the spill lowered by breach_max_m, not below 0 m",
+        "sub_zero_depressions": "at most breach_max_m deep with ground below 0 m: lakes at 0 m \
+            (lagoons) in any class",
+        "lake_exit": "an outflow river starts at the lake level; its banks may drop away",
         "lake_min_depth_m": 1.0,
         "lake_min_area_m2": 4096.0,
         "dry_basin_min_depth_m": 2.0,
@@ -320,7 +345,7 @@ pub(super) fn bodies(
     for (r, river) in c.rivers.iter().enumerate() {
         let parent = match river.end {
             End::Sea => 1,
-            End::Lake(b) | End::Sink(b) => basin_id[b as usize],
+            End::Lake(b) | End::Sink(b) | End::Dry(b) => basin_id[b as usize],
             End::Edge | End::Land => 0,
         };
         list.push(json!({
@@ -348,7 +373,8 @@ pub(super) fn bodies(
 mod tests {
     use super::*;
 
-    /// A 5 x 5 world: a lake cell at (1, 1) drains into a river down column 2 to the sea row.
+    /// A 5 x 5 world: a lake cell at (1, 1) drains into a river down column 2 to the sea row;
+    /// (2, 2) is its exit, at the lake level.
     struct Scene {
         ground: Vec<f32>,
         dir: Vec<u8>,
@@ -390,7 +416,7 @@ mod tests {
         }
         let lake = at(1, 1);
         (s.ground[lake], s.body[lake], s.surface[lake], s.dir[lake]) = (3.0, 1, 5.0, 8);
-        for (y, g, w) in [(2, 4.0, 4.5), (3, 2.5, 3.0)] {
+        for (y, g, w) in [(2, 4.0, 5.0), (3, 2.5, 3.0)] {
             let i = at(y, 2);
             (s.ground[i], s.surface[i], s.body[i]) = (g, w, 1);
             s.flags[i] |= RIVER;
@@ -427,7 +453,7 @@ mod tests {
     #[test]
     fn every_check_can_fail() {
         assert!(failed(&scene()).is_empty(), "{:?}", failed(&scene()));
-        let broken: [(&str, Mutation); 12] = [
+        let broken: [(&str, Mutation); 13] = [
             ("guard_land_cells_not_draining_to_an_outlet", |s| {
                 s.dir[at(2, 1)] = 0
             }),
@@ -442,12 +468,15 @@ mod tests {
                 (s.ground[i], s.body[i], s.surface[i]) = (3.0, 1, 5.0);
             }),
             ("lake_cells_not_below_level", |s| s.ground[at(1, 1)] = 6.0),
-            ("lake_exits_above_level", |s| s.surface[at(2, 2)] = 5.5),
+            ("lake_exits_off_level", |s| s.surface[at(2, 2)] = 5.5),
+            ("river_cells_below_adjacent_lake", |s| {
+                s.surface[at(2, 2)] = 4.5
+            }),
             ("wet_cells_with_surface_not_above_ground", |s| {
                 s.surface[at(2, 2)] = 3.9
             }),
             ("river_cells_rising_downstream", |s| {
-                s.surface[at(3, 2)] = 4.6
+                s.surface[at(3, 2)] = 5.1
             }),
             ("rivers_ending_on_dry_land", |s| s.rivers[0].end = End::Land),
             ("dry_cells_below_adjacent_lake", |s| {
@@ -457,7 +486,7 @@ mod tests {
                 s.ground[at(3, 0)] = -0.5
             }),
             ("dry_cells_below_adjacent_river", |s| {
-                s.ground[at(2, 3)] = 4.0
+                s.ground[at(3, 3)] = 2.0
             }),
         ];
         for (name, mutate) in broken {

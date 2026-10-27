@@ -20,6 +20,8 @@ pub(super) enum End {
     Lake(u32),
     /// A closed dry basin (sink): an endorheic river.
     Sink(u32),
+    /// A dry basin flow passes through (glacier ice): the river continues past its exit.
+    Dry(u32),
     Edge,
     /// Dry land: never expected (rivers grow downstream), reported as a failure.
     Land,
@@ -93,7 +95,12 @@ pub(super) fn extract(
                         None => End::Edge,
                         Some(r) if flags[r] & SEA != 0 => End::Sea,
                         Some(r) if lake(flags, body, r) => End::Lake(body[r]),
-                        Some(r) if body[r] != 0 => End::Sink(body[r]),
+                        Some(r)
+                            if body[r] != 0 && basins[body[r] as usize - 1].kind == Kind::Sink =>
+                        {
+                            End::Sink(body[r])
+                        }
+                        Some(r) if body[r] != 0 => End::Dry(body[r]),
                         Some(_) => End::Land,
                     };
                     rivers.push(River {
@@ -120,17 +127,23 @@ pub(super) fn extract(
         if !river(flags, i) {
             continue;
         }
-        let mut s = ground[i] + depth_m(acc[i]);
-        for (_, j) in dims.neighbours(i) {
-            if lake(flags, body, j) {
-                if receiver(dims, dir, j) == Some(i) {
-                    s = s.min(basins[body[j] as usize - 1].level);
+        surface[i] = match sill_level(dims, dir, flags, body, basins, i) {
+            // A lake's outflow starts at its level; its banks may drop away (a waterfall lip).
+            Some(level) => level,
+            None => {
+                let entered = entered_basin(dims, dir, flags, body, i);
+                let mut s = ground[i] + depth_m(acc[i]);
+                for (_, j) in dims.neighbours(i) {
+                    if flags[j] & (SEA | RIVER) == 0
+                        && !lake(flags, body, j)
+                        && (body[j] == 0 || body[j] != entered)
+                    {
+                        s = s.min(ground[j]);
+                    }
                 }
-            } else if flags[j] & (SEA | RIVER) == 0 {
-                s = s.min(ground[j]);
+                s
             }
-        }
-        surface[i] = s;
+        };
         if let Some(r) = receiver(dims, dir, i).filter(|&r| river(flags, r)) {
             donors[r] += 1;
         }
@@ -141,7 +154,9 @@ pub(super) fn extract(
             donors[c] = u8::MAX;
             match receiver(dims, dir, c).filter(|&r| river(flags, r)) {
                 Some(r) => {
-                    surface[r] = surface[r].min(surface[c]);
+                    if sill_level(dims, dir, flags, body, basins, r).is_none() {
+                        surface[r] = surface[r].min(surface[c]);
+                    }
                     donors[r] -= 1;
                     c = r;
                 }
@@ -161,4 +176,35 @@ pub(super) fn extract(
         }
     }
     (rivers, cut)
+}
+
+/// A river cell some lake drains into (a lake exit): that lake's level.
+pub(super) fn sill_level(
+    dims: Dims,
+    dir: &[u8],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    i: usize,
+) -> Option<f32> {
+    if flags[i] & RIVER == 0 {
+        return None;
+    }
+    dims.neighbours(i)
+        .filter(|&(_, j)| {
+            flags[j] & (SEA | RIVER) == 0
+                && body[j] != 0
+                && basins[body[j] as usize - 1].kind == Kind::Lake
+                && receiver(dims, dir, j) == Some(i)
+        })
+        .map(|(_, j)| basins[body[j] as usize - 1].level)
+        .reduce(f32::min)
+}
+
+/// The dry basin a river cell drains straight into, or 0. Its cells are not banks.
+pub(super) fn entered_basin(dims: Dims, dir: &[u8], flags: &[u8], body: &[u32], i: usize) -> u32 {
+    match receiver(dims, dir, i) {
+        Some(r) if flags[r] & (SEA | RIVER) == 0 => body[r],
+        _ => 0,
+    }
 }
