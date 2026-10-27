@@ -150,6 +150,22 @@ pub(super) fn read(dir: &Path) -> Result<Input> {
     })
 }
 
+/// A body list (`bodies.json`): thousands of basins in a 1 m band pass the 1 MiB metadata limit.
+pub(super) fn read_bodies(path: &Path) -> Result<Vec<u8>> {
+    const LIMIT: u64 = 256 << 20;
+    let file = io_context(format!("open {}", path.display()), fs::File::open(path))?;
+    let mut bytes = Vec::new();
+    io_context(
+        format!("read {}", path.display()),
+        file.take(LIMIT + 1).read_to_end(&mut bytes),
+    )?;
+    ensure(
+        bytes.len() as u64 <= LIMIT,
+        format!("{} exceeds 256 MiB", path.display()),
+    )?;
+    Ok(bytes)
+}
+
 /// A whole file of exactly `len` bytes and its SHA-256.
 fn read_raw(path: &Path, len: usize) -> Result<(Vec<u8>, String)> {
     let mut file = io_context(format!("open {}", path.display()), fs::File::open(path))?;

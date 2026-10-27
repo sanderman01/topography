@@ -89,7 +89,7 @@ pub(super) fn read_north(dir: &Path, grid: &Grid) -> Result<North> {
     let body = grid::read_window(&p, size, xs, ys, u32::from_le_bytes)?;
     let (p, xs, ys) = window("flow.u8");
     let flow = grid::read_window(&p, size, xs, ys, |b: [u8; 1]| b[0])?;
-    let bodies_bytes = read_small(&dir.join("bodies.json"))?;
+    let bodies_bytes = grid::read_bodies(&dir.join("bodies.json"))?;
     let (kinds, max_id) = kinds(&serde_json::from_slice(&bodies_bytes)?);
     let mut digests = Map::new();
     digests.insert("grid.json".into(), digest(&bytes).into());
@@ -153,7 +153,7 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     // Body kinds from both bands (a river may run only in the northern rows).
     let mut bk = HashMap::new();
     for dir in [north, south] {
-        let (k, _) = kinds(&serde_json::from_slice(&read_small(
+        let (k, _) = kinds(&serde_json::from_slice(&grid::read_bodies(
             &dir.join("bodies.json"),
         )?)?);
         bk.extend(k);

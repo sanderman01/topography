@@ -249,7 +249,7 @@ pub(super) fn read(dir: &Path, fine: &Grid) -> Result<Coarse> {
     let flow = grid::read_window(&flow_path, size, [x0, x1], [y0, y1], |b: [u8; 1]| b[0])?;
     let discharge = grid::read_window(&raster("discharge.f32"), size, [x0, x1], [y0, y1], f32le)?;
 
-    let bodies_bytes = read_small(&raster("bodies.json"))?;
+    let bodies_bytes = grid::read_bodies(&raster("bodies.json"))?;
     digests.insert("bodies.json".into(), digest(&bodies_bytes).into());
     let bodies: Value = serde_json::from_slice(&bodies_bytes)?;
     let (mut lakes, mut rivers, mut dry, mut max_id) =
