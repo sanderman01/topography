@@ -261,6 +261,8 @@ def main(argv=None) -> int:
         # Four distinct trained classes (legend v2 runs: canyons, alpine, dunes, cones).
         pick = (2, 6, 8, 11) if model.num_classes == data.NUM_CLASSES else tuple(
             dict.fromkeys(int(c) for c in train.lut[[19, 13, 6, 16, 17, 2, 8, 11, 1]] if c > 0))[:4]
+        if len(pick) < 2:  # per-class fine-tune: nothing to swap
+            return float("nan")
         for i in range(2):
             res = []
             for cls in pick:
