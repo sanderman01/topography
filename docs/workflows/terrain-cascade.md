@@ -477,13 +477,23 @@ Steps:
     per piece of ground below that level, with the outlet cut down to it;
   - at most 30 m deep but with ground below 0 m, in any class: lakes at 0 m (lagoons), with
     the outlet cut to 0 m. Breaching therefore never cuts below sea level.
+- Trench widening, at every level (`erosion.rs`): breach trenches (cells breaching lowered)
+  would be one-cell slots up to 30 m deep, so their dry walls are cut back to a 35° side
+  slope (judgment constant), ring by ring outward. Each wall cell is lowered to the side
+  slope from its lowest neighbour already in the valley, but by no more than the trench's
+  breach cut, less the slope's rise per further ring, so widening dies out within a few
+  cells (two rings at 32 m, up to 11 at 4 m; at most 16). A lowered wall cell drains into
+  that neighbour, so heights fall strictly towards the trench and no pits appear. Never below
+  the trench, 0 m or a basin level beside it; basins, the sea, glacier and all ground
+  draining onto glacier or into an ice basin are untouched.
 - Stream power, on grids of 32 m or coarser only (`erosion.rs`): five iterations of the
   implicit stream-power law (Braun and Willett 2013, FastScape) with n = 1, no uplift:
   each land cell, in receiver order from the outlets up, moves to
   (z + F · z_receiver) / (1 + F) with F = K·dt · A^0.5 / step length, A the discharge in m²
   (km² at mean rain × 10⁶) and K·dt = 7 × 10⁻⁴ per iteration (judgment constants, tuned on
   fujix so real valley floors move about 2 m). Steep steps, such as collage seams and cliffs
-  under a river, retreat and grade; flat breach trenches barely change. The sea is base level
+  under a river, retreat and grade; trench floors are flat, so stream power barely changes
+  them (widening shapes their walls instead). The sea is base level
   at 0 m and a kept basin at its level; nothing goes below 0 m, cells beside a basin stay at
   or above its level (spills and shores hold), and basin cells, glacier cells and all ground
   draining onto glacier or into an ice basin are not touched, which keeps the summit caldera
@@ -501,13 +511,18 @@ Steps:
   channel narrower than a cell is one shallower cell (at 32 m all but the largest rivers).
   Cells beside the centreline join the channel where the section reaches into them with at
   least a tenth of D, nearest centreline cell first, but not the sea, basins, cells next to a
-  lake, or ground more than D above the centreline (in a gorge the channel stays narrower).
+  lake, or ground more than D above the centreline's final surface (in a gorge the channel
+  stays narrower; such a cell is above every surface beside it, so it is a valid bank).
   They share their centreline cell's surface and body id.
 - Water surface along the centreline: its ground, at most every dry bank of any of its
   channel cells and at most every surface upstream, so it never rises downstream. A bank is
   a dry neighbour beside or behind the channel cell along the flow; ground ahead (a positive
   step along the flow direction) is the next cross-section's bank, which keeps a river on a
-  steep slope from being cut down to the next cell's ground. Where a low bank still pulls the
+  steep slope from being cut down to the next cell's ground. This cascade rule is an
+  accepted change to "water cannot climb a bank" (ruling, Task 4 review: the export uses
+  1 m and 32 m water is not rendered). It is bounded: `report.json` figure
+  `river_ahead_exemptions` gives the dry cells it lets sit below an adjacent river (count,
+  more than 3 m, deepest and where), and no dry cell may be a hole (below). Where a low bank still pulls the
   surface below the ground, the drop tapers upstream by at most 5 % of the step length per
   cell, so the bed ramps down over many cells instead of a one-cell notch. The bed is the
   surface minus the cell's depth. Into the sea, near sea level (surface at most 4 D), the bed
@@ -520,6 +535,10 @@ Steps:
   - the basin a river drains into is not its bank, so mouths into sinks are not cut down to
     the sink floor. `mouth_max_drop_m` reports the largest plunge from a mouth to the floor
     beside it.
+- Holes: a dry cell more than 0.5 m below every adjacent water surface (sea, lake or river;
+  not inside the basin an adjacent river enters) is raised to the lowest of them, and so is
+  any dry cell draining into a raised one that is now lower, repeated while holes remain.
+  `holes_filled` reports the cells, the largest raise and the volume.
 
 `bodies.json` lists the sea (id 1), lakes (`exit_cell`: the first cell the lake's routed flow
 enters outside it, `parent`: the body that flow reaches), rivers (`area_km2`, `drainage_km2`:
@@ -530,19 +549,25 @@ the discharge at the mouth, `length_km`, `parent`) and dry basins (`kind` `dry`,
 their level, lake exits off the level (an outflow river more than 1 cm from it, or dry exit
 ground more than 1 cm above it), river cells more than 1 cm below an adjacent lake, wet cells
 whose surface is not above the ground, centreline surfaces rising downstream (including into
-a lake or the sea), centreline beds rising more than 1 cm into the next centreline cell,
-rivers ending on dry land, dry land draining uphill (channel beds may hold pools), and dry
-cells more than 1 cm below an adjacent lake, sea or river surface (for rivers, only banks as
-above: not inside the basin the river enters, not ahead along the flow). A unit test breaks
-each of the 14 checks on a small scene. Two `guard_` checks (land not draining to an outlet,
-lakes with several levels) hold by construction and only catch bugs. Figures include lakes
-and dry basins (over budget, sinks, ice), carved cells, cells cut more than 10 m, the deepest
-cut, river counts and lengths, `stream_power` (cells and volume lowered, the largest drop and
-where, and median, 90th percentile and largest drop on river cells that breaching did and
-did not cut) and `channels` (channel cells beside the centreline, carved cells, deepest cut
-and where, carve volume, the largest bank-forced surface drop, seabed cells lowered past
-mouths, widest and deepest channel). Timings and the peak resident memory go to stderr
-only, so identical inputs give identical outputs.
+a lake or the sea), rivers ending on dry land, dry land draining uphill, dry cells more than
+1 cm below an adjacent lake, sea or river surface (for rivers, only banks as above: not
+inside the basin the river enters, not ahead along the flow) and dry cells in holes. Channel
+cells are left out of the uphill check: they lie under water whose surface is flat across
+the section and never rises along the centreline, so their beds may hold pools. A unit test
+breaks each of the 15 checks on a small scene with a centreline and one channel cell. Three
+`guard_` checks (land not draining to an outlet, lakes with several levels, centreline beds
+rising more than 1 cm into the next centreline cell) hold by construction and only catch
+bugs. Figures include lakes and dry basins (over budget, sinks, ice), `total_lowering`
+(cells, cells over 10 m, volume and deepest, all steps together against the input), river
+counts and lengths, `river_ahead_exemptions`, `holes_filled`, and per step: `trenches`
+(trench count and cells, deepest breach cut, wall cells lowered, volume, rings, and the
+steepest wall of each slot cell, cut more than one cell's rise, before and after),
+`stream_power` (cells and volume lowered, the largest drop and where, and median, 90th
+percentile and largest drop on river cells that breaching or widening did and did not cut)
+and `channels` (channel cells beside the centreline, carved cells, deepest cut and where,
+carve volume, the largest bank-forced surface drop, seabed cells lowered past mouths, widest
+and deepest channel). Timings and the peak resident memory go to stderr only, so identical
+inputs give identical outputs.
 
 On fujix-collage-55 (2048², 32 m, wind from 225°) it takes about 3 s and 110 MB: land precipitation
 averages 2.4 mm/h (95th percentile 7.6 mm/h). Land means by quadrant are 3.9 (SW), 3.1 (SE),
@@ -552,21 +577,28 @@ rift and east desert get 0.5 to 0.8 mm/h. The volcano gets 6.2 mm/h within 5 km 
 the summit and 2.7 mm/h within 5 km in its lee; the canyon head on its north-west flank gets
 1.9 mm/h, 2.5 times the east desert. Result: 287 lakes (36 km², 1.6% of the land; 138 over
 budget, some of them lagoons), 168 dry basins (64 sinks, 47 km²; 29 ice), 117 river systems
-(298 km: 34 to the sea, 78 to lakes, 5 to sinks). Breaching cut at most 30 m. Stream power
-lowered unbreached river cells by a median 2.2 m (90th percentile 7.8 m) and breach trenches
-by a median 0.01 m (they are flat); the largest drop, 28 m, is on a river down a cliff of
-about 50 m per cell on the volcano (cell 915, 1159), and it moved 0.36 km³ in all, mostly
-fractions of a metre on hillsides. Channels: 7,546 cells, all one cell wide at 32 m
-(widest 33 m, deepest 4.0 m), 8.5 million m³ carved; low banks pulled a surface down at most
-31 m (it was 61 m before the ahead rule), the deepest channel cut is 36 m at a mouth at the
-foot of a coastal cliff (371, 1466) and 89 cells are cut more than 10 m. The Grand Canyon
-river (25 km, 47 km² at its mouth) descends evenly from 805 m to its lagoon at the north
-coast with no bed rise. 17 lip cells were
-raised, by at most 5.2 m; mouths plunge at most 14.5 m into sinks. All checks 0, every river
-exit at its lake level, and the summit caldera's ice and walls unchanged and dry. On the
-8192² 4 m chain world it takes 44 s and 1.2 GB peak: 48,000 channel cells beside 21,600
-centreline cells (widest 25 m), carved at most 10.2 m; 16,384² at 4 m should need about
-5 GB. A 1024² exact flat takes under 0.1 s to breach.
+(298 km: 34 to the sea, 78 to lakes, 5 to sinks). Breaching cut 3,732 trenches (11,195
+cells), at most 30 m deep; widening lowered 4,921 wall cells (at most 30 m, 0.03 km³, two
+rings), and on the 540 slot cells the steepest wall went from a median 45° (90th percentile
+52°, max 68°) to 35° (35°, 59°). Stream power lowered uncut river cells by a median 2.2 m
+(90th percentile 7.8 m) and trench floors by a median 0.01 m; the largest drop, 28 m, is on
+a river down a cliff of about 50 m per cell on the volcano (cell 915, 1159), and it moved
+0.36 km³ in all, mostly fractions of a metre on hillsides. Channels: 7,548 cells, all one
+cell wide at 32 m (widest 33 m, deepest 4.0 m), 8.4 million m³ carved; low banks pulled a
+surface down at most 31 m (it was 61 m before the ahead rule), the deepest channel cut is
+36 m at a mouth at the foot of a coastal cliff (371, 1466) and 82 cells are cut more than
+10 m. The ahead rule leaves 3,804 dry cells below an adjacent river, 1,429 by more than 3 m,
+at most 33 m beside a river down a 60 % volcano flank (914, 1159); 2 holes were raised, by
+at most 4.8 m. The Grand Canyon river (25 km, 47 km² at its mouth) descends evenly from
+805 m to its lagoon at the north coast with no bed rise. 17 lip cells were raised, by at
+most 5.2 m; mouths plunge at most 14.5 m into sinks. All steps together lowered ground by at
+most 54 m (that coastal cliff), 0.46 km³. All checks 0, every river exit at its lake level,
+and the summit caldera's ice and walls unchanged and dry. On the 8192² 4 m chain world it
+takes 54 s and 1.2 GB peak: widening lowered 102,000 wall cells at most 27 m (up to 11
+rings) and brought slot walls from a median 51° (90th percentile 71°) to 35° (35°); 45,600
+channel cells beside 21,600 centreline cells (widest 25 m), carved at most 10.2 m; the
+ahead rule leaves 2,664 cells, 1 by more than 3 m, at most 4.2 m; no holes. 16,384² at 4 m
+should need about 5 GB. A 1024² exact flat takes under 0.1 s to breach.
 
 ## Export
 

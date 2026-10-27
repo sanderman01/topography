@@ -138,7 +138,10 @@ The descriptive part of `layout.toml` runs through to the export:
 
 Water is a surface height. A cell is wet only where that surface is above the ground. The
 wet extent follows from the two heights, so a lake with one level is flat, and water cannot
-climb a bank.
+climb a bank. Ruling (hydrology v2, Task 4): ground ahead of a river cell along the flow is
+the next cross-section's bank, so on a cascade water may stand above it; this is reported
+and no dry cell may lie below every water surface beside it
+([Hydrology v2](../workflows/terrain-cascade.md#hydrology-v2)).
 
 | Step | Level | What happens |
 | --- | --- | --- |
