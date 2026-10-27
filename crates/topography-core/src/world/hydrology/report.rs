@@ -454,7 +454,8 @@ pub(super) fn constants(river_km2: f64, breach_max_m: f32) -> Value {
 
 /// `bodies.json`: sea, lakes and rivers (ids as in `water-body.u32`), then dry basins (ids
 /// not in the raster) with their parent body (where their water goes; 0 for the grid edge).
-/// Rivers without centreline cells here (dropped, or only in the previous band) are left out.
+/// Rivers without centreline cells here (dropped, or only in the previous band) and basins
+/// without cells are left out.
 pub(super) fn bodies(c: &Context, body_id: &dyn Fn(usize) -> u32) -> Value {
     let cell = |i: u32| json!([i as usize % c.dims.w, i as usize / c.dims.w]);
     let mut cells = vec![0u64; c.basins.len() + 1];
@@ -485,6 +486,10 @@ pub(super) fn bodies(c: &Context, body_id: &dyn Fn(usize) -> u32) -> Value {
     })];
     let mut dry = Vec::new();
     for (b, basin) in c.basins.iter().enumerate() {
+        // Basins emptied here (fine basins that trench widening lowered) are left out.
+        if cells[b + 1] == 0 {
+            continue;
+        }
         let common = json!({
             "id": basin.id,
             "level_m": basin.level,
@@ -516,6 +521,7 @@ pub(super) fn bodies(c: &Context, body_id: &dyn Fn(usize) -> u32) -> Value {
     for river in c.rivers.iter().filter(|r| r.cells > 0) {
         let parent = match river.end {
             End::Sea => 1,
+            End::Lake(b) | End::Sink(b) | End::Dry(b) if cells[b as usize] == 0 => 0,
             End::Lake(b) | End::Sink(b) | End::Dry(b) => c.basins[b as usize - 1].id,
             End::Joins(r) => c.rivers[r as usize - 1].id,
             End::Edge | End::Land => 0,
