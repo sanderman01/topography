@@ -1,0 +1,64 @@
+crates/topography-core/src/world/hydrology/rivers.rs
+  s_8c1b40ea9c1e0d::t_bcdc1741c1d251 273-279,283-297
+  s_8c1b40ea9c1e0d::t_e24394a76854eb 280-282,545-552
+  s_8c1b40ea9c1e0d::t_59a48be7c8d65f 544,553-561
+  s_8c1b40ea9c1e0d::t_fe70674269dd14 452-535
+  s_8c1b40ea9c1e0d::t_b13ab0d147bfd1 187
+crates/topography-core/src/world/hydrology/erosion.rs
+  s_8c1b40ea9c1e0d::t_3aa1a73f7f94ab 77-78
+  s_8c1b40ea9c1e0d::t_593b6959dbded8 79-82
+  s_8c1b40ea9c1e0d::t_43863f563012bb 92
+  s_8c1b40ea9c1e0d::t_2ff4aff7bc1bdd 1-2,4,6,11-12,18-21,30-32,37-76,83-91,93-99,103-104,106-143,150,152-153,155-156,158-163,165,167-176,178-184,186-194,198-200,202,236-237,241-243,253,274
+  s_8c1b40ea9c1e0d::t_e24394a76854eb 100
+  s_8c1b40ea9c1e0d::t_019c1ec8a47494 144-145
+  s_8c1b40ea9c1e0d::t_d0367f94ac6ddc 157
+  s_8c1b40ea9c1e0d::t_27ad153e0927bf 146-149,151,154,177,185
+  s_8c1b40ea9c1e0d::t_caa38a8948eed6 195-197
+  s_8c1b40ea9c1e0d::t_e0d7a208596e69 164,166
+  s_8c1b40ea9c1e0d::t_64c320ed5fd199 101-102,105
+crates/topography-core/src/world/hydrology/report.rs
+  s_8c1b40ea9c1e0d::t_3398a0c8ff6032 96-98
+  s_8c1b40ea9c1e0d::t_bf9319c9659f84 88
+  s_8c1b40ea9c1e0d::t_aa8963a44898f0 606-609
+  s_8c1b40ea9c1e0d::t_2a7d4b4c4604c6 238-262,269-270
+  s_8c1b40ea9c1e0d::t_d669652c98cadf 263-268
+  s_8c1b40ea9c1e0d::t_005e93d7adf6be 357-364
+  s_8c1b40ea9c1e0d::t_8ecb3543f8c1b1 5
+  s_8c1b40ea9c1e0d::t_f41186268d37a4 54-56
+  s_8c1b40ea9c1e0d::t_2841ff979db567 205
+  s_8c1b40ea9c1e0d::t_e24394a76854eb 201-204
+  s_8c1b40ea9c1e0d::t_0f469eb1856cfd 313-319
+  s_8c1b40ea9c1e0d::t_e4d9a7b07bd7eb 129-134
+  s_8c1b40ea9c1e0d::t_bf9beb4060b199 485,511-515,530-532,548,566,591-595
+crates/topography-core/src/world/hydrology/flood.rs
+  s_8c1b40ea9c1e0d::t_1ff346718da040 295,340,353
+  s_8c1b40ea9c1e0d::t_2b8a2c31bd4398 16-17
+  s_8c1b40ea9c1e0d::t_658870c1f307d1 67-70
+  s_8c1b40ea9c1e0d::t_5cdd5b8c422558 188,192,204
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_c5997d5fa436c5 18
+  s_8c1b40ea9c1e0d::t_544c753256558a 391-398
+  s_8c1b40ea9c1e0d::t_4edb2ed7a2e2a0 495-498
+  s_8c1b40ea9c1e0d::t_970d3fbb6da067 306-316
+  s_8c1b40ea9c1e0d::t_63b37afa4919fe 387
+  s_8c1b40ea9c1e0d::t_da7dbc824abc5c 181-190,199,202
+  s_8c1b40ea9c1e0d::t_0ff76f1b18de60 175-180,191-198,200-201,203-206,222,244
+crates/topography-core/src/world/hydrology/moisture.rs
+  s_8c1b40ea9c1e0d::t_a6374329760d62 174-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7dfb3ac3e1ad78e8325916cf2dd26ad5027dfcd7",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
