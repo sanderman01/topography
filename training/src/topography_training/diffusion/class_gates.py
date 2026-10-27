@@ -309,9 +309,11 @@ def main(argv=None) -> int:
     level = cascade.LEVELS[config["level"]]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.class_runs:
+        from .legend import NUM_CLASSES
         from .model import load_mixture
 
-        runs = {c: args.class_runs / f"c{c}" for c in CLASSES if (args.class_runs / f"c{c}" / "config.json").exists()}
+        runs = {c: args.class_runs / f"c{c}" for c in range(1, NUM_CLASSES)
+                if (args.class_runs / f"c{c}" / "config.json").exists()}
         model = load_mixture(args.run_dir, runs, device)
         print(f"mixture of {len(runs)} per-class runs over {args.run_dir.name}", flush=True)
     else:
