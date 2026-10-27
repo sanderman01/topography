@@ -428,19 +428,27 @@ Steps:
   level along every receiver. Kept basins are flat at their level in this flood, and the path
   into one is lowered to its level.
 - Breaching cuts at most `BREACH_MAX_M` = 30 m (judgment constant, the same at every level for
-  now). A depression deeper than that below its spill, or with ground below 0 m, is kept
-  beyond the budget: in glacier and arid classes (`lake_share` ≤ 0.002: canyons, badlands,
-  dunes) as a dry sink where flow ends (endorheic), elsewhere as lakes at the spill lowered by
-  30 m (not below 0 m), one per piece of ground below that level, with the outlet cut down to
-  it.
+  now). The pit class (the class at the depression's lowest cell) decides what happens to a
+  deeper one:
+  - deeper than 30 m below its spill, in a glacier or arid class (`lake_share` ≤ 0.002:
+    canyons, badlands, dunes): a dry sink where flow ends (endorheic), even when its ground
+    is below 0 m;
+  - deeper than 30 m elsewhere: lakes at the spill lowered by 30 m, but not below 0 m, one
+    per piece of ground below that level, with the outlet cut down to it;
+  - at most 30 m deep but with ground below 0 m, in any class: lakes at 0 m (lagoons), with
+    the outlet cut to 0 m. Breaching therefore never cuts below sea level.
 - Lakes grow over carved ground below their level that drains into them, so one level and
   wet exactly where the level is above the ground still hold next to a cut.
 - Rivers are cells draining at least 10 km² (`--river-km2`). One body id per river system:
-  all river cells upstream of one mouth, which ends in the sea, a lake, a sink or the grid
-  edge. Water surface: ground plus 0.4 m · area^0.4 (a placeholder for discharge until
-  moisture exists), but at most the lowest dry neighbour, the level of a lake draining in and
-  every river surface upstream. The bed is cut to the surface minus that depth, so a river
-  never stands above its banks and a lake's outflow starts at or below the lake level.
+  all river cells upstream of one mouth, which ends in the sea, a lake, a sink, a glacier
+  basin (flow passes through and a new river starts at its exit) or the grid edge. Water
+  surface: ground plus 0.4 m · area^0.4 (a placeholder for discharge until moisture exists),
+  but at most the lowest dry neighbour and every river surface upstream. The bed is cut to
+  the surface minus that depth, so a river never stands above its banks. Two exceptions:
+  - a lake's exit cell (a river cell a lake drains into) holds its surface at the lake
+    level, a sill, and its banks may drop away beside it like a waterfall lip;
+  - the basin a river drains into is not its bank, so mouths into sinks are not cut down to
+    the sink floor.
 
 `bodies.json` lists the sea (id 1), lakes (`exit_cell`: the first cell the lake's routed flow
 enters outside it, `parent`: the body that flow reaches), rivers (`area_km2`, `drainage_km2`,
@@ -448,18 +456,22 @@ enters outside it, `parent`: the body that flow reaches), rivers (`area_km2`, `d
 `water-body.u32`, which is 0 on dry ground).
 
 `report.json` checks (all must be 0): lakes in more than one piece or with ground at or above
-their level, lake exits above the level, wet cells whose surface is not above the ground,
-river cells rising downstream (including into a lake or the sea), rivers ending on dry land,
-land draining uphill, and dry cells more than 1 cm below an adjacent lake, sea or river
-surface. Two `guard_` checks (land not draining to an outlet, lakes with several levels) hold
+their level, lake exits off the level (an outflow river more than 1 cm from it, or dry exit
+ground more than 1 cm above it), river cells more than 1 cm below an adjacent lake, wet cells
+whose surface is not above the ground, river cells rising downstream (including into a lake
+or the sea), rivers ending on dry land, land draining uphill, and dry cells more than 1 cm
+below an adjacent lake, sea or river surface (except beside a lake exit and inside the basin
+the river enters). A unit test breaks each check on a small scene. Two `guard_` checks (land not draining to an outlet, lakes with several levels) hold
 by construction and only catch bugs. Figures include lakes and dry basins (over budget,
 sinks, ice), carved cells, cells cut more than 10 m, the deepest cut, river bed cuts, and river
 counts and lengths. Timings go to stderr only, so identical inputs give identical outputs.
 
-On fujix-collage-55 (2048², 32 m) it takes about 1.7 s and 85 MB: 270 lakes (36 km², 1.6% of
-the land; 121 over budget), 172 dry basins (72 sinks, 29 ice), 93 river systems (242 km),
-breaching cut at most 30 m, river beds at most 60 m on steep reaches, all checks 0. On the
-8192² 4 m chain world it takes 37 s and 1.2 GB; 16,384² at 4 m should need about 5 GB. A
+On fujix-collage-55 (2048², 32 m) it takes about 1.5 s and 85 MB: 280 lakes (36 km², 1.6% of
+the land; 131 over budget, some of them lagoons), 164 dry basins (64 sinks, 47 km²; 29 ice),
+97 river systems (245 km: 25 to the sea, 60 to lakes, 12 to sinks). Breaching cut at most
+30 m; river beds are cut at most 48 m, where a lower bank beside a steep D8 reach caps the
+surface (channel shaping comes later). All checks 0, every river exit at its lake level, and
+the summit caldera unchanged and dry. On the 8192² 4 m chain world it takes 41 s and 1.2 GB; 16,384² at 4 m should need about 5 GB. A
 1024² exact flat takes under 0.1 s to breach.
 
 ## Export
