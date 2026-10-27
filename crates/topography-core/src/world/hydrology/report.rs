@@ -66,18 +66,21 @@ pub(super) struct Carve {
     deep: u64,
     volume_m3: f64,
     max_m: f32,
+    max_at: [usize; 2],
 }
 
 impl Carve {
-    pub fn add(&mut self, input: &[f32], carved: &[f32], spacing_m: f64) {
-        for (a, b) in input.iter().zip(carved) {
+    pub fn add(&mut self, y: usize, input: &[f32], carved: &[f32], spacing_m: f64) {
+        for (x, (a, b)) in input.iter().zip(carved).enumerate() {
             if b < a {
                 self.cells += 1;
                 if a - b > 10.0 {
                     self.deep += 1;
                 }
                 self.volume_m3 += (a - b) as f64 * spacing_m * spacing_m;
-                self.max_m = self.max_m.max(a - b);
+                if a - b > self.max_m {
+                    (self.max_m, self.max_at) = (a - b, [x, y]);
+                }
             }
         }
     }
@@ -381,6 +384,7 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
             "cells_over_10m": carve.deep,
             "volume_m3": carve.volume_m3.round(),
             "max_m": carve.max_m,
+            "max_at_cell": carve.max_at,
         },
         "river_ahead_exemptions": ahead_exposure(c),
         "river_systems": here().count(),

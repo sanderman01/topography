@@ -239,6 +239,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 fixed_id,
                 |j| feeds.contains(&j),
                 grid.core_rows,
+                grid.spacing_m,
             );
             (Some(figures), Some(imprint))
         }
@@ -460,7 +461,15 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // Coarse river paths keep their own course, descending.
     if let Some(im) = &imprint {
         fine::route(dims, &mut dir, &im.paths);
-        fine::burn(dims, &mut ground, &body, &basins, &im.paths, &im.cap);
+        fine::burn(
+            dims,
+            &mut ground,
+            &body,
+            &basins,
+            &im.paths,
+            &im.cap,
+            grid.spacing_m,
+        );
     }
     // Fixed cells end the routing here, except where they drain into this run's cells.
     let mut check_dir = Vec::new();
@@ -559,6 +568,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut given = rivers::Given::default();
     let mut path_figures = Value::Null;
     let mut unrouted: Vec<u32> = Vec::new();
+    let mut path_cap: HashMap<u32, f32> = HashMap::new();
     if let Some(im) = imprint {
         for &id in &im.ids {
             given.rivers.push(rivers::River {
@@ -591,6 +601,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "burn_max_at_cell": im.burn_max_at,
             "unrouted_rivers": im.unrouted,
         });
+        path_cap = im.cap.clone();
         given.cap = im.cap;
         unrouted = im.unrouted;
     }
@@ -661,6 +672,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &channels.raised,
         grid.spacing_m,
     );
+    for &(j, b) in &lips.joins {
+        body[j as usize] = b;
+    }
     for i in 0..n {
         if flags[i] & FIXED != 0 {
             continue;
@@ -685,6 +699,59 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &surface,
         grid.spacing_m,
     );
+    // A dry cell left inside a lake (6 or more of its cells around, such as a sill or divide
+    // row the lake later surrounded) is not kept raised: it joins the lake at its input ground
+    // when that is below the level.
+    let mut inside: HashMap<u32, u32> = HashMap::new();
+    for _ in 0..2 {
+        for j in 0..n {
+            if flags[j] & (SEA | RIVER | FIXED) != 0
+                || body[j] != 0
+                || inside.contains_key(&(j as u32))
+            {
+                continue;
+            }
+            let lake_at = |k: usize| {
+                (flags[k] & (SEA | RIVER) == 0
+                    && body[k] != 0
+                    && basins[body[k] as usize - 1].kind == Kind::Lake)
+                    .then_some(body[k])
+            };
+            let wet = dims
+                .neighbours(j)
+                .filter(|&(_, k)| lake_at(k).is_some() || inside.contains_key(&(k as u32)))
+                .count();
+            if wet < 6 {
+                continue;
+            }
+            let mut count: HashMap<u32, u32> = HashMap::new();
+            for (_, k) in dims.neighbours(j) {
+                if let Some(b) = lake_at(k).or_else(|| inside.get(&(k as u32)).copied()) {
+                    *count.entry(b).or_insert(0) += 1;
+                }
+            }
+            if let Some((&b, _)) = count.iter().find(|&(_, &c)| c >= 6) {
+                inside.insert(j as u32, b);
+            }
+        }
+    }
+    let mut notches = 0u64;
+    grid::for_each_input_row(&options.grid, grid.w, |y, row| {
+        if y < fixed_rows {
+            return;
+        }
+        for (x, &z) in row.iter().enumerate() {
+            let j = y * grid.w + x;
+            if let Some(&b) = inside.get(&(j as u32)) {
+                let level = basins[b as usize - 1].level;
+                let g = ground[j].min(z);
+                if g < level {
+                    (ground[j], body[j], surface[j]) = (g, b, level);
+                    notches += 1;
+                }
+            }
+        }
+    })?;
     lap("rivers", &mut t);
 
     // Body ids: sea 1, coarse lakes and rivers keep theirs; new ones from above every id the
@@ -730,7 +797,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut carve = report::Carve::default();
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
         if y >= fixed_rows {
-            carve.add(row, &ground[y * grid.w..(y + 1) * grid.w], grid.spacing_m);
+            carve.add(
+                y,
+                row,
+                &ground[y * grid.w..(y + 1) * grid.w],
+                grid.spacing_m,
+            );
         }
     })?;
     let open_rows = coarse.as_ref().map_or([false; 2], |c| {
@@ -760,9 +832,16 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let bodies = report::bodies(&ctx, &body_id);
     let mut figures = report::figures(&ctx, &carve, extended);
     if let Some(c) = &coarse {
-        let (consistency, consistency_figures) =
-            fine::consistency(dims, &flags, &surface, &basins, c, &unrouted, &body_id);
+        let (consistency, consistency_figures) = fine::consistency(
+            dims, &flags, &surface, &basins, c, &unrouted, &path_cap, &body_id,
+        );
         checks.extend(consistency);
+        // Coarse lakes still leaking after the sill rounds.
+        let left = lake_figures
+            .as_ref()
+            .and_then(|f| f["leaks_left"].as_u64())
+            .unwrap_or(0);
+        checks.insert("coarse_lake_leaks_left".into(), json!(left));
         let exits_moved = basins
             .iter()
             .filter(|b| b.kind == Kind::Lake && b.exit != lakes::NO_EXIT)
@@ -833,6 +912,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));
+    figures.insert(
+        "notch_cells_joined_to_a_lake".into(),
+        json!(lips.joins.len() as u64 + notches),
+    );
     figures.insert(
         "holes_filled".into(),
         json!({

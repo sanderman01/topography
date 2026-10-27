@@ -108,6 +108,17 @@ pub(super) fn lakes(
         }
         ground[i] = top;
     };
+    // Growth stops this far from the seeds; a lake still growing there counts as leaking.
+    let bound = 4 * reach;
+    let levels: Vec<f32> = basins.iter().map(|b| b.level).collect();
+    let grows = |body: &[u32], ground: &[f32], cut: &[f32], b: u32, j: usize| {
+        body[j] == 0
+            && free(flags, j)
+            && ground[j] < level_of(b)
+            && !on_river(j)
+            && level_of(b) < cut[j]
+    };
+    let mut leaks_left = 0usize;
     for round in 0..=8 {
         // Grow every lake breadth first from its seeds, so `depth` is the fine distance.
         for i in 0..n {
@@ -124,47 +135,46 @@ pub(super) fn lakes(
         while let Some(a) = queue.pop_front() {
             let a = a as usize;
             let b = body[a];
+            if depth[a] >= bound {
+                continue;
+            }
             for (_, j) in dims.neighbours(a) {
-                if body[j] == 0
-                    && free(flags, j)
-                    && ground[j] < level_of(b)
-                    && !on_river(j)
-                    && level_of(b) < cut[j]
-                {
+                if grows(body, ground, &cut, b, j) {
                     body[j] = b;
                     depth[j] = depth[a] + 1;
                     queue.push_back(j as u32);
                 }
             }
         }
-        if round == 8 {
+        // Leaks: water beside the sea, at an edge, beside a lake with a lower level, or still
+        // growing at the bound.
+        let mut leaks = leak_cells(dims, flags, body, first, &levels, |_| true);
+        leaks.extend((0..n).filter(|&i| {
+            body[i] > first
+                && depth[i] == bound
+                && dims
+                    .neighbours(i)
+                    .any(|(_, j)| grows(body, ground, &cut, body[i], j))
+        }));
+        if round == 8 || leaks.is_empty() {
+            leaks_left = leak_cells(dims, flags, body, first, &levels, |i| {
+                !dims.is_edge(i) || c.world_edge(w, h, i)
+            })
+            .len();
             break;
         }
-        // Leaks: water beside the sea, at an edge, or beside a lake with another level.
-        let leaks: Vec<usize> = (0..n)
-            .filter(|&i| {
-                let b = body[i];
-                b > first
-                    && flags[i] & FIXED == 0
-                    && (dims.is_edge(i)
-                        || dims.neighbours(i).any(|(_, j)| {
-                            (flags[j] & SEA != 0 && level_of(b) > 0.0)
-                                || (body[j] > first && level_of(body[j]) < level_of(b))
-                        }))
-            })
-            .collect();
-        // Cut each leaking branch at the layer `reach` cells out from the seeds; a leak
-        // nearer is raised where it is (not on a band edge: the lake may go on there).
+        // Cut each leaking branch at its narrowest layer between `reach` and twice that out
+        // from the seeds; a leak nearer is raised where it is (not on a band edge: the lake
+        // may go on there).
         let mut stack: Vec<usize> = Vec::new();
-        let mut fresh = vec![false; n];
+        let mut branch = vec![false; n];
         let mut acted = false;
         for &i in &leaks {
             if depth[i] > reach {
-                cut[i] = level_of(body[i]);
-                fresh[i] = true;
-                removed += 1;
-                acted = true;
-                stack.push(i);
+                if !branch[i] {
+                    branch[i] = true;
+                    stack.push(i);
+                }
             } else if !dims.is_edge(i) || c.world_edge(w, h, i) {
                 raise(ground, i, level_of(body[i]) + SHORE_M);
                 acted = true;
@@ -172,21 +182,57 @@ pub(super) fn lakes(
         }
         while let Some(a) = stack.pop() {
             for (_, j) in dims.neighbours(a) {
-                if !fresh[j] && body[j] == body[a] && depth[j] > reach {
-                    cut[j] = level_of(body[j]);
-                    fresh[j] = true;
-                    removed += 1;
+                if !branch[j] && body[j] == body[a] && depth[j] > reach {
+                    branch[j] = true;
                     stack.push(j);
                 }
             }
         }
+        // Narrowest layer of each lake's leaking branches, nearer than its nearest leak.
+        let mut nearest: HashMap<u32, u32> = HashMap::new();
+        for &i in leaks.iter().filter(|&&i| depth[i] > reach) {
+            let e = nearest.entry(body[i]).or_insert(u32::MAX);
+            *e = (*e).min(depth[i]);
+        }
+        let mut width: HashMap<(u32, u32), u32> = HashMap::new();
+        for i in (0..n).filter(|&i| branch[i] && depth[i] <= 2 * reach) {
+            if depth[i] < nearest.get(&body[i]).copied().unwrap_or(u32::MAX) {
+                *width.entry((body[i], depth[i])).or_insert(0) += 1;
+            }
+        }
+        let mut layer: HashMap<u32, (u32, u32)> = HashMap::new();
+        for (&(b, d), &cells) in &width {
+            let e = layer.entry(b).or_insert((u32::MAX, reach));
+            if (cells, d) < *e {
+                *e = (cells, d);
+            }
+        }
+        let layer_of = |b: u32| layer.get(&b).map_or(reach, |&(_, d)| d);
         for i in 0..n {
-            if body[i] > first && depth[i] == reach && dims.neighbours(i).any(|(_, j)| fresh[j]) {
+            if branch[i] && depth[i] <= layer_of(body[i]) {
+                branch[i] = false;
+            } else if branch[i] {
+                if cut[i].is_infinite() {
+                    removed += 1;
+                }
+                cut[i] = level_of(body[i]);
+                acted = true;
+            }
+        }
+        for i in 0..n {
+            if body[i] > first
+                && depth[i] == layer_of(body[i])
+                && dims.neighbours(i).any(|(_, j)| branch[j])
+            {
                 raise(ground, i, level_of(body[i]) + SHORE_M);
                 acted = true;
             }
         }
         if !acted {
+            leaks_left = leak_cells(dims, flags, body, first, &levels, |i| {
+                !dims.is_edge(i) || c.world_edge(w, h, i)
+            })
+            .len();
             break;
         }
     }
@@ -236,18 +282,30 @@ pub(super) fn lakes(
     }
     // Shore: dry ground beside a lake stays above its level (a coarse river's cells by a thin
     // margin, so the lake leaves only by its exit).
-    let (mut shore, mut shore_max) = (0u64, 0f32);
-    for i in 0..n {
-        if body[i] <= first || flags[i] & SEA != 0 {
-            continue;
-        }
-        let level = level_of(body[i]);
-        for (_, j) in dims.neighbours(i) {
-            let top = if on_river(j) { level + SHORE_M } else { level };
-            if body[j] == 0 && free(flags, j) && ground[j] < top {
-                shore += 1;
-                shore_max = shore_max.max(level + SHORE_M - ground[j]);
-                ground[j] = level + SHORE_M;
+    let (mut shore, mut shore_max, mut joined) = (0u64, 0f32, 0u64);
+    for pass in 0..2 {
+        for i in 0..n {
+            if body[i] <= first || flags[i] & SEA != 0 {
+                continue;
+            }
+            let level = level_of(body[i]);
+            for (_, j) in dims.neighbours(i) {
+                let top = if on_river(j) { level + SHORE_M } else { level };
+                if body[j] == 0 && free(flags, j) && ground[j] < top {
+                    // A notch inside the lake (6 or more of its cells around) joins it instead.
+                    let inside = dims
+                        .neighbours(j)
+                        .filter(|&(_, k)| body[k] == body[i])
+                        .count();
+                    if pass == 0 && inside >= 6 && ground[j] < level {
+                        body[j] = body[i];
+                        joined += 1;
+                        continue;
+                    }
+                    shore += 1;
+                    shore_max = shore_max.max(level + SHORE_M - ground[j]);
+                    ground[j] = level + SHORE_M;
+                }
             }
         }
     }
@@ -258,17 +316,45 @@ pub(super) fn lakes(
         "bed_max_lowering_at_cell": [bed_at % w, bed_at / w],
         "cut_off_cells_left_dry": dropped,
         "leaking_cells_cut_off": removed,
+        "leaks_left": leaks_left,
         "sill_cells_raised": sills,
         "sill_max_raise_m": sill_max,
         "sill_at_cells": sill_at,
         "shore_cells_raised": shore,
+        "notch_cells_joined": joined,
         "shore_max_raise_m": shore_max,
     })
 }
 
+/// Coarse lake cells (basin index above `first`, levels by index − 1) that leak: beside the
+/// sea while above 0 m, beside a lake with a lower level, or at an edge where `edge` holds.
+pub(super) fn leak_cells(
+    dims: Dims,
+    flags: &[u8],
+    body: &[u32],
+    first: u32,
+    levels: &[f32],
+    edge: impl Fn(usize) -> bool,
+) -> Vec<usize> {
+    let level = |b: u32| levels[b as usize - 1];
+    (0..body.len())
+        .filter(|&i| {
+            let b = body[i];
+            b > first
+                && flags[i] & FIXED == 0
+                && ((dims.is_edge(i) && edge(i))
+                    || dims.neighbours(i).any(|(_, j)| {
+                        (flags[j] & SEA != 0 && level(b) > 0.0)
+                            || (body[j] > first && level(body[j]) < level(b))
+                    }))
+        })
+        .collect()
+}
+
 /// Coarse-consistency checks (each must be 0): every coarse lake with fine cells here present
 /// at the same level, every coarse river present and routed, no fine water of a coarse river
-/// above its coarse surface (the highest over its coarse cell and the 8 around it, as the cap) by more than the tolerance.
+/// above its coarse surface (the highest over its coarse cell and the 8 around it, or its
+/// path's cap where higher: the interpolation along the path) by more than the tolerance.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn consistency(
     dims: Dims,
@@ -277,6 +363,7 @@ pub(super) fn consistency(
     basins: &[Basin],
     c: &Coarse,
     unrouted: &[u32],
+    cap: &HashMap<u32, f32>,
     body_id: &dyn Fn(usize) -> u32,
 ) -> (Map<String, Value>, Value) {
     let (w, h) = (dims.w, dims.h);
@@ -298,7 +385,8 @@ pub(super) fn consistency(
             .filter_map(|p| c.at(p))
             .filter(|&q| c.body[q] == id)
             .map(|q| c.surface[q])
-            .fold(f32::NEG_INFINITY, f32::max);
+            .fold(f32::NEG_INFINITY, f32::max)
+            .max(cap.get(&(i as u32)).copied().unwrap_or(f32::NEG_INFINITY));
         if top.is_finite() && surface[i] > top + SURFACE_TOLERANCE_M {
             above += 1;
             above_max = above_max.max(surface[i] - top);
@@ -415,7 +503,9 @@ fn floor(dims: Dims, body: &[u32], basins: &[Basin], source: u32, i: usize) -> f
 }
 
 /// Lower each path to a running minimum from its head and to its surface cap (not below 0 m
-/// or a lake floor beside it).
+/// or a lake floor beside it), then let each cut taper off upstream at the trench side slope
+/// instead of ending in a cliff (still never rising downstream). Returns the cells lowered and
+/// the deepest cut below the ground the path had and where.
 pub(super) fn burn(
     dims: Dims,
     ground: &mut [f32],
@@ -423,9 +513,13 @@ pub(super) fn burn(
     basins: &[Basin],
     paths: &[Path],
     cap: &HashMap<u32, f32>,
+    spacing_m: f64,
 ) -> (Vec<u32>, f32, usize) {
+    let tan = super::erosion::SIDE_SLOPE_DEG.to_radians().tan();
     let (mut cells, mut max, mut at) = (Vec::new(), 0f32, 0usize);
+    let mut seen: HashSet<u32> = HashSet::new();
     for p in paths {
+        let before: Vec<f32> = p.cells.iter().map(|&c| ground[c as usize]).collect();
         let mut g = f32::INFINITY;
         for &c in &p.cells {
             let f = floor(dims, body, basins, p.source, c as usize);
@@ -433,12 +527,26 @@ pub(super) fn burn(
             let c = c as usize;
             // Not below 0 m: channels cut mouths below sea level themselves.
             g = ground[c].min(g.min(top).max(f).max(0.0));
-            if g < ground[c] {
-                cells.push(c as u32);
-                if ground[c] - g > max {
-                    (max, at) = (ground[c] - g, c);
-                }
-                ground[c] = g;
+            ground[c] = g;
+        }
+        // The cut tapers upstream: a cell's cut is at least the next one's less the slope's
+        // rise over the step, without rising above the next cell.
+        for k in (0..p.cells.len().saturating_sub(1)).rev() {
+            let (c, d) = (p.cells[k] as usize, p.cells[k + 1] as usize);
+            let cut = before[k + 1] - ground[d];
+            let step = Dims::step(dims.towards(c, d)) * spacing_m;
+            let target = before[k] - (cut - tan * step as f32);
+            let f = floor(dims, body, basins, p.source, c);
+            let to = ground[c].min(target.max(ground[d]).max(f).max(0.0));
+            ground[c] = ground[c].min(to);
+        }
+        for (k, &c) in p.cells.iter().enumerate() {
+            let cut = before[k] - ground[c as usize];
+            if cut > 0.0 && seen.insert(c) {
+                cells.push(c);
+            }
+            if cut > max {
+                (max, at) = (cut, c as usize);
             }
         }
     }
@@ -478,6 +586,7 @@ pub(super) fn rivers(
     fixed_id: impl Fn(usize) -> u32,
     feeds: impl Fn(usize) -> bool,
     core_rows: [usize; 2],
+    spacing_m: f64,
 ) -> Imprint {
     let (w, h) = (dims.w, dims.h);
     let cd = c.dims();
@@ -862,6 +971,9 @@ pub(super) fn rivers(
                 k = e + 1;
             }
             let mut qmax = inflow.map_or(0f32, |(_, q)| q);
+            // Coarse order of the path's current place on the river.
+            let mut here = rank_of(cells[0] as usize);
+            let mut last_q: Option<usize> = None;
             for (k, &cell) in cells.iter().enumerate() {
                 let q = c.cell(w, cell as usize);
                 if c.body[q] == id {
@@ -879,16 +991,32 @@ pub(super) fn rivers(
                     (None, None) => continue,
                 };
                 // The highest coarse surface of this river over the cell's coarse cell and the
-                // 8 around it; the interpolation only where none is near (an inflow head).
-                // A tighter cap cuts notches where the fine relief sits a cell off the coarse.
+                // 8 around it, from cells not downstream of where the path is along the coarse
+                // river (a downstream cell's surface beside a steep drop would cut a gash), and
+                // never below the interpolation along the path.
+                if c.body[q] == id {
+                    here = corridor_rank.get(&q).copied().unwrap_or(here);
+                } else if Some(q) != last_q {
+                    // Beside the river: abreast of its upstream-most neighbour. (A downstream
+                    // cell's low surface cannot cut: the cap is never below the interpolation.)
+                    let abreast = cd
+                        .neighbours(q)
+                        .filter(|&(_, p)| c.body[p] == id)
+                        .filter_map(|(_, p)| corridor_rank.get(&p).copied())
+                        .max()
+                        .unwrap_or(here);
+                    here = here.min(abreast);
+                }
+                last_q = Some(q);
                 let [qx, qy] = c.abs(q);
                 let local = (-1..=1)
                     .flat_map(|dy| (-1..=1).map(move |dx| [qx as isize + dx, qy as isize + dy]))
                     .filter_map(|p| c.at(p))
                     .filter(|&p| c.body[p] == id)
+                    .filter(|p| corridor_rank.get(p).is_none_or(|&r| r >= here))
                     .map(|p| c.surface[p])
                     .fold(f32::NEG_INFINITY, f32::max);
-                let v = if local.is_finite() { local } else { v };
+                let v = v.max(local);
                 let e = out.cap.entry(cell).or_insert(f32::INFINITY);
                 *e = e.min(v);
             }
@@ -913,7 +1041,7 @@ pub(super) fn rivers(
     }
     out.unrouted.sort_unstable();
     out.unrouted.dedup();
-    let (cells, max, at) = burn(dims, ground, body, basins, &out.paths, &out.cap);
+    let (cells, max, at) = burn(dims, ground, body, basins, &out.paths, &out.cap, spacing_m);
     out.burned = cells;
     out.burn_max_m = max;
     out.burn_max_at = [at % w, at / w];
@@ -1006,12 +1134,36 @@ mod tests {
             &s.basins,
             &coarse(),
             &s.unrouted,
+            &HashMap::new(),
             &|i| s.ids[i],
         );
         m.into_iter()
             .filter(|(_, v)| v.as_u64() != Some(0))
             .map(|(k, _)| k)
             .collect()
+    }
+
+    #[test]
+    fn a_leaking_lake_is_found() {
+        // 3 x 3: sea at the top-left corner, lake 1 beside it, lake 2 in the middle.
+        let dims = Dims { w: 3, h: 3 };
+        let mut flags = vec![0u8; 9];
+        flags[0] = SEA;
+        let mut body = vec![0u32; 9];
+        body[1] = 1;
+        let edge = |_: usize| false;
+        assert!(leak_cells(dims, &flags, &body, 0, &[0.0, 0.0], edge).is_empty());
+        assert_eq!(
+            leak_cells(dims, &flags, &body, 0, &[5.0, 0.0], edge),
+            vec![1]
+        );
+        flags[0] = 0;
+        body[4] = 2;
+        assert_eq!(
+            leak_cells(dims, &flags, &body, 0, &[5.0, 3.0], edge),
+            vec![1]
+        );
+        assert!(leak_cells(dims, &flags, &body, 0, &[3.0, 3.0], edge).is_empty());
     }
 
     #[test]

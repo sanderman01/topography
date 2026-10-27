@@ -730,6 +730,8 @@ pub(super) struct Lips {
     pub cells: u64,
     pub max_m: f32,
     pub volume_m3: f64,
+    /// Notch cells that join a lake (cell, basin index + 1) instead of being raised.
+    pub joins: Vec<(u32, u32)>,
 }
 
 impl Lips {
@@ -803,21 +805,40 @@ pub(super) fn raise_lips(
         }
     }
     // A dry cell beside a lake below its level (left by carving next to a lake grown over
-    // carved ground) becomes a divide at the level.
+    // carved ground) becomes a divide at the level, or joins the lake when 6 or more of its
+    // neighbours are that lake (a notch inside it).
+    let mut joins: Vec<(u32, u32)> = Vec::new();
     for j in 0..ground.len() {
         if !dry(j) {
             continue;
         }
-        let level = dims
+        let lake_at = |k: usize| {
+            (flags[k] & (SEA | RIVER) == 0
+                && body[k] != 0
+                && basins[body[k] as usize - 1].kind == Kind::Lake)
+                .then_some(body[k])
+        };
+        let Some(top) = dims
             .neighbours(j)
-            .filter(|&(_, k)| {
-                flags[k] & (SEA | RIVER) == 0
-                    && body[k] != 0
-                    && basins[body[k] as usize - 1].kind == Kind::Lake
+            .filter_map(|(_, k)| lake_at(k))
+            .max_by(|&a, &b| {
+                basins[a as usize - 1]
+                    .level
+                    .total_cmp(&basins[b as usize - 1].level)
             })
-            .map(|(_, k)| basins[body[k] as usize - 1].level)
-            .fold(f32::NEG_INFINITY, f32::max);
+        else {
+            continue;
+        };
+        let level = basins[top as usize - 1].level;
         if ground[j] < level {
+            let inside = dims
+                .neighbours(j)
+                .filter(|&(_, k)| lake_at(k) == Some(top))
+                .count();
+            if body[j] == 0 && inside >= 6 {
+                joins.push((j as u32, top));
+                continue;
+            }
             raise(ground, j, level, &mut stack);
         }
     }
@@ -830,6 +851,7 @@ pub(super) fn raise_lips(
             }
         }
     }
+    lips.joins = joins;
     lips
 }
 
