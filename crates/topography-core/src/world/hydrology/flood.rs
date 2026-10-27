@@ -471,8 +471,9 @@ pub(super) fn breach(
 /// order picks the lowest neighbour, which is nearly always a diagonal and draws 45° streams
 /// across slopes. Cells with no strictly lower neighbour (flats) keep the flood receiver, so
 /// every cell still drains. Strictly lower steps alone cannot form a cycle, but a flood step
-/// left uphill (a pit lowered after the flood) can close one; cells on cycles get their flood
-/// receivers back. A fixed cell is a receiver only as an outlet. Returns the cells changed.
+/// left uphill (a pit lowered after the flood) can close one: its cells get their flood
+/// receivers back, and a cycle left after that spills (`spill_cycles`).
+/// A fixed cell is a receiver only as an outlet. Returns the cells changed.
 pub(super) fn steepest(
     dims: Dims,
     ground: &[f32],
@@ -516,32 +517,76 @@ pub(super) fn steepest(
             changed += 1;
         }
     }
-    // A pit that later steps lowered below its flood receiver drains uphill, so a neighbour
-    // stepping down into it closes a cycle: such cells go back to their flood receivers.
-    changed - restore_on_cycles(dims, dir, |i| Some(flood_dir[i]))
+    let restored = restore_on_cycles(dims, dir, |_, i| Some(flood_dir[i]));
+    changed.saturating_sub(restored) + spill_cycles(dims, ground, dir)
 }
 
-/// Cells on receiver cycles get back their `old` receiver (None: unchanged cell), until no
-/// cycle is left or none of its cells can go back. Returns the cells restored.
+/// A pit lowered after the flood (a trench end) drains uphill, so a neighbour stepping down
+/// into it closes a cycle. Each cycle then spills like a depression: the member beside the
+/// lowest cell outside it (not draining into it) drains there. Returns the cells redirected.
+fn spill_cycles(dims: Dims, ground: &[f32], dir: &mut [u8]) -> u64 {
+    let mut redirected = 0;
+    for _ in 0..32 {
+        let cycles = on_cycles(dims, dir);
+        if cycles.is_empty() {
+            break;
+        }
+        let mut on = vec![false; dir.len()];
+        for &c in &cycles {
+            on[c] = true;
+        }
+        let mut seen = vec![false; dir.len()];
+        for &start in &cycles {
+            if seen[start] {
+                continue;
+            }
+            let mut members = Vec::new();
+            let mut c = start;
+            while !seen[c] {
+                seen[c] = true;
+                members.push(c);
+                c = receiver(dims, dir, c).unwrap_or(start);
+            }
+            let mut best: Option<(f32, usize, u8)> = None;
+            for &m in &members {
+                for (k, j) in dims.neighbours(m) {
+                    let into = receiver(dims, dir, j).is_some_and(|r| on[r]);
+                    if !on[j] && !into && best.is_none_or(|b| ground[j] < b.0) {
+                        best = Some((ground[j], m, k as u8 + 1));
+                    }
+                }
+            }
+            if let Some((_, m, d)) = best {
+                dir[m] = d;
+                redirected += 1;
+            }
+        }
+    }
+    redirected
+}
+
+/// Cells on receiver cycles take the receiver `pick` gives (None: leave the cell), until no
+/// cycle is left, no cell changes or after 32 rounds. Returns the cells changed.
 pub(super) fn restore_on_cycles(
     dims: Dims,
     dir: &mut [u8],
-    old: impl Fn(usize) -> Option<u8>,
+    pick: impl Fn(&[u8], usize) -> Option<u8>,
 ) -> u64 {
     let mut restored = 0;
-    loop {
+    for _ in 0..32 {
         let mut any = false;
         for i in on_cycles(dims, dir) {
-            if let Some(d) = old(i).filter(|&d| d != dir[i]) {
+            if let Some(d) = pick(dir, i).filter(|&d| d != dir[i]) {
                 dir[i] = d;
                 restored += 1;
                 any = true;
             }
         }
         if !any {
-            return restored;
+            break;
         }
     }
+    restored
 }
 
 /// Cells on receiver cycles (a cycle has no exit, so nothing else stays unpeeled).

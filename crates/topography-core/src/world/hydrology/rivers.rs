@@ -161,6 +161,16 @@ pub(super) fn extract(
             body[i] = r;
         }
     }
+    // A coarse path ending on dry land (its coarse dry basin has no hollow here) continues
+    // down the routing to water, a basin, another river or the edge.
+    for &(i, r) in &given.cells {
+        let mut c = receiver(dims, dir, i as usize);
+        while let Some(j) = c.filter(|&j| free(flags, body, j)) {
+            flags[j] |= RIVER | CENTRE;
+            body[j] = r;
+            c = receiver(dims, dir, j);
+        }
+    }
     for &(i, r) in &given.follow {
         let mut c = Some(i as usize);
         while let Some(i) = c.filter(|&i| free(flags, body, i) && acc[i] >= river_km2) {

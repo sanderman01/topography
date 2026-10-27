@@ -101,6 +101,7 @@ pub(super) fn widen_trenches(
     floor: impl Fn(usize) -> f32,
     cut: impl Fn(usize) -> f32,
     spacing_m: f64,
+    old_receiver: bool,
 ) -> (Value, Vec<u32>) {
     let n = ground.len();
     let tan = SIDE_SLOPE_DEG.to_radians().tan();
@@ -207,9 +208,28 @@ pub(super) fn widen_trenches(
             frontier.push((c, pass, limit));
         }
     }
-    // A wall cell the trench drains into would close a cycle pointing back at the trench: it
-    // keeps its own receiver.
-    flood::restore_on_cycles(dims, dir, |c| old_dir.get(&(c as u32)).copied());
+    // A wall cell the trench drains into, pointed back at the trench, closes a cycle: it takes
+    // its receiver before widening (`old_receiver`, trenches) or its steepest lower neighbour
+    // that does not drain into it (channels, whose old receivers may now lie above it).
+    let ground_now: &[f32] = ground;
+    flood::restore_on_cycles(dims, dir, |dir, c| {
+        let old = *old_dir.get(&(c as u32))?;
+        if old_receiver {
+            return Some(old);
+        }
+        let mut best: Option<(f32, u8)> = None;
+        for (k, j) in dims.neighbours(c) {
+            let d = k as u8 + 1;
+            let slope = (ground_now[c] - ground_now[j]) / Dims::step(d) as f32;
+            if slope > 0.0
+                && receiver(dims, dir, j) != Some(c)
+                && best.is_none_or(|(s, _)| slope > s)
+            {
+                best = Some((slope, d));
+            }
+        }
+        best.map(|b| b.1)
+    });
     drop(old_dir);
     let mut lowered: Vec<u32> = was.keys().copied().collect();
     lowered.sort_unstable();
