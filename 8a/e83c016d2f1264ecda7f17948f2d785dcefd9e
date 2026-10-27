@@ -1,0 +1,28 @@
+configs/hydrology/water-v1.toml
+  s_8c1b40ea9c1e0d::t_e64ae4abe90973 2-3
+docs/plans/fujix-v1.md
+  s_8c1b40ea9c1e0d::t_a0c29634b56364 149,161
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_3b0c25380614fd 362-365
+  s_8c1b40ea9c1e0d::t_eafcb181ecc923 388-401
+  s_8c1b40ea9c1e0d::t_cccfbda244443b 339,383
+  s_8c1b40ea9c1e0d::t_7f83fd984b924f 346-360
+  s_8c1b40ea9c1e0d::t_79b0b8b87b9ed2 418-420
+  s_8c1b40ea9c1e0d::t_6c3a9be1fe5f02 492-493
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ae83c016d2f1264ecda7f17948f2d785dcefd9e",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
