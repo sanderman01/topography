@@ -457,10 +457,11 @@ def refine_mask(mask: np.ndarray, k: int, sigma_cells: float, keep_thin: bool = 
 
 def open_sea(h: np.ndarray) -> np.ndarray:
     """Ground below sea level connected to the field edge: the sea of a generated surface.
-    Closed basins below 0 m stay land (filled as lakes by drainage)."""
+    Closed basins below 0 m stay land (lakes or breached by hydrology). 8-connected, as the
+    Rust hydrology's sea."""
     from scipy import ndimage
 
-    labels, _ = ndimage.label(h < 0)
+    labels, _ = ndimage.label(h < 0, structure=np.ones((3, 3)))
     edge = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
     return np.isin(labels, edge[edge > 0])
 

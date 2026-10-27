@@ -9,10 +9,12 @@ authored L0 from `topography world layout`, with a class per cell, its lakes, an
 snow/ice and vegetation from its snowline, treeline and forest share. L1 and L2 cover the
 whole field; L3 the whole field too, or a central square with `--l3-km` (0 stops after L2). Terrain continues under water: after
 each level the sea is the ground below 0 m connected to the field edge. After L1 the
-land is made to drain (lakes kept, other depressions carved), and streams traced on the
-L2 surface are water for L3.
-Writes l1/l2/l3 hillshades, the real region for comparison, arrays.npz and a 4 m world
-output (manifest.json + layers) for `topography export heightmap`.
+land is made to drain (lakes kept, other depressions carved). After L2 and L3 the Rust
+`topography world hydrology` carves the ground and sets the water surface (32 m, then 4 m
+holding the 32 m network); L3 refines the carved 32 m ground with its water as input.
+Writes l1/l2/l3 hillshades, the real region for comparison, arrays.npz, the hydrology
+outputs (hydrology/32m, hydrology/4m) and a 4 m world output (manifest.json + layers) for
+`topography export heightmap`.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -29,6 +32,7 @@ import numpy as np
 
 from . import cascade, hydrology, layout, legend, paint
 from .cascade_eval import shade
+from .data import smooth
 from .evaluate import _latest
 
 NUM_CLASSES = legend.NUM_CLASSES
@@ -44,17 +48,42 @@ FINE_HOLD_SIGMA_CELLS = 1.0
 CRATER_CLASSES = (4,)
 # L3 learned land only (lidar stops at the shore); deeper than this its seabed is the L2 surface.
 L3_SEABED_M = 5.0
+# Judgment: L1 lakes get a bed sloping down from their shore at L2, so 32 m hydrology keeps
+# them (beds over 30 m deep cannot be breached).
+LAKE_BED_SLOPE = 0.1
+LAKE_BED_MAX_M = 40.0
+# 32 m rivers drawn at 4 m for L3's water channel: blur (4 m cells) and threshold.
+RIVER_SIGMA_4M = 8.0
+RIVER_LEVEL = 0.3
 
 
-def _load(run: Path, device):
+def _lake_bed(lake: np.ndarray, level: np.ndarray, h: np.ndarray, cell_m: float) -> np.ndarray:
+    """Ground under lake cells at least as deep below the level as the shore distance gives."""
+    from scipy import ndimage
+
+    depth = np.clip(ndimage.distance_transform_edt(lake) * cell_m * LAKE_BED_SLOPE, 1.0, LAKE_BED_MAX_M)
+    return np.where(lake, np.minimum(h, level - depth), h).astype(np.float32)
+
+
+def _load(run: Path, device, class_runs: Path | None = None):
+    """A run's model; with `class_runs`, a mixture of its per-class experts (cN subdirs) over it."""
     from safetensors.torch import load_file
 
-    from .model import Denoiser
+    from .model import Denoiser, load_mixture
 
     config = json.loads((run / "config.json").read_text())
+    if class_runs is not None:
+        runs = {c: class_runs / f"c{c}" for c in range(1, NUM_CLASSES) if (class_runs / f"c{c}" / "config.json").exists()}
+        print(f"{run.name}: mixture of {len(runs)} per-class runs from {class_runs}", flush=True)
+        return load_mixture(run, runs, device), config
     model = Denoiser(config["arch"], config["conditioning"]).to(device).eval()
     model.load_state_dict(load_file(str(_latest(run)), device=str(device)))
     return model, config
+
+
+def _class_runs(args) -> dict[str, str]:
+    """Per-class expert directories used, by level."""
+    return {k: str(v.resolve()) for k in ("l1", "l2", "l3") if (v := getattr(args, f"{k}_class_runs")) is not None}
 
 
 def _model_classes(config, classes):
@@ -179,21 +208,16 @@ class Source:
             return None
         return np.isin(self.classes_at(k), CRATER_CLASSES)
 
-    def sinks_at(self, k: int):
-        """Cells whose dry basins swallow streams (karst); None where there are none."""
-        sinks = np.array([hydrology.WATER.get(c, hydrology.WATER[0]).sinks for c in range(NUM_CLASSES)])
-        if isinstance(self.classes, int):
-            return np.True_ if sinks[self.classes] else None
-        return sinks[self.classes_at(k)]
+    @property
+    def wind(self) -> float | None:
+        """Wind direction (degrees from) of an authored layout, for the orographic rain."""
+        wind = self.l0.spec.get("wind_from_deg") if self.l0 is not None else None
+        return float(wind) if wind is not None else None
 
-    def streams_at(self, k: int, water: hydrology.Water):
-        """Stream start area and width: the class profile per cell for authored layouts."""
-        if self.l0 is None or water is not self.water:
-            return water.stream_km2, water.stream_width
-        profiles = [hydrology.WATER.get(c, hydrology.WATER[0]) for c in range(NUM_CLASSES)]
+    def class_grid(self, k: int, sl, shape) -> np.ndarray:
+        """uint8 class per cell of a window of the 128/k m grid (hydrology grids)."""
         c = self.classes_at(k)
-        return (np.array([w.stream_km2 for w in profiles], np.float32)[c],
-                np.array([w.stream_width for w in profiles], np.float32)[c])
+        return np.full(shape, c, np.uint8) if isinstance(c, int) else c[sl].astype(np.uint8)
 
 
 def _region_source(release: Path, region: str) -> Source | None:
@@ -263,6 +287,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     for level in ("l1", "l2", "l3"):
         p.add_argument(f"--{level}-run", type=Path, required=True)
+        p.add_argument(f"--{level}-class-runs", type=Path,
+                       help=f"directory of per-class expert runs (c1, c2, ...) mixed over --{level}-run")
     p.add_argument("--release", type=Path, help="context release with the layout region")
     p.add_argument("--region", help="derive the layout from this real region")
     p.add_argument("--layout", type=Path, help="authored L0 (`topography world layout`) instead of --release/--region")
@@ -274,10 +300,10 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--guidance", type=float, default=1.0, help="class guidance scale (1: off)")
     p.add_argument("--no-exemplars", action="store_true", help="authored layouts: do not hold real exemplars")
-    # Water amounts default to the class profiles (hydrology.WATER).
-    p.add_argument("--lake-share", type=float, help="share of land kept as lakes after L1")
-    p.add_argument("--tarn-share", type=float, help="share of land kept as small lakes after L2")
-    p.add_argument("--stream-km2", type=float, help="drainage area where streams begin")
+    # Water amounts default to the class profiles (configs/hydrology/water-v1.toml).
+    p.add_argument("--lake-share", type=float, help="share of land kept as lakes (every class)")
+    p.add_argument("--tarn-share", type=float, help="share of land kept as tarns at 4 m (every class)")
+    p.add_argument("--stream-km2", type=float, help="drainage area where 32 m rivers begin (default 10)")
     args = p.parse_args(argv)
     if (args.layout is None) == (args.release is None or args.region is None):
         p.error("give --layout, or --release and --region")
@@ -292,16 +318,19 @@ def main(argv=None) -> int:
     if src is None:
         print(f"error: region {args.region} not in the release", file=sys.stderr)
         return 2
-    overrides = {"lake_share": args.lake_share, "tarn_share": args.tarn_share, "stream_km2": args.stream_km2}
+    overrides = {"lake_share": args.lake_share, "tarn_share": args.tarn_share}
     overrides = {k: v for k, v in overrides.items() if v is not None}
     water = dataclasses.replace(src.water, **overrides) if overrides else src.water
     args.out.mkdir(parents=True)
+    hyd = args.out / "hydrology"
+    hyd.mkdir()
+    table = hydrology.write_table(hyd / "water.toml", **overrides) if overrides else None
     times = {}
 
     # L1: the whole field from its layout, then drainage: the biggest depressions become
     # lakes, the rest are carved through like real valleys. Authored lakes are kept.
     t = time.time()
-    model, config = _load(args.l1_run, device)
+    model, config = _load(args.l1_run, device, args.l1_class_runs)
     level = cascade.LEVELS["l1"]
     if config["conditioning"] not in (5, 6, 7):
         print("error: the L1 run uses a retired layout", file=sys.stderr)
@@ -346,7 +375,7 @@ def main(argv=None) -> int:
     # L2: the whole region, seabed included; lakes are the only water it is told about.
     t = time.time()
     level = cascade.LEVELS["l2"]
-    model, config = _load(args.l2_run, device)
+    model, config = _load(args.l2_run, device, args.l2_class_runs)
     coarse = cascade.refine_surface(level, h128)
     lake32 = cascade.refine_mask(lake128, 4, 2.0)
     lake_level32 = _spread(_nearest(np.nan_to_num(level128), 4), _nearest(lake128, 4), 4)
@@ -359,37 +388,39 @@ def main(argv=None) -> int:
                   args.seed + 1, args.batch, guidance=args.guidance)
     if src.l0 is not None:
         h32 = np.minimum(h32, paint.border_limit(h32.shape[0], 32.0)).astype(np.float32)
-    sea32 = cascade.open_sea(h32)
-    lake32 &= ~sea32
-    h32[lake32] = lake_level32[lake32]
+    lake32 &= ~cascade.open_sea(h32)
+    h32 = _lake_bed(lake32, lake_level32, h32, 32.0)
     raw32 = h32.copy()
-    # Small lakes (tarns, kettles) from L2's own hollows; the rest are carved through.
-    h32, tarn32, _, dry32 = hydrology.drain(h32, sea32 | lake32, water.tarn_share, 1.0, tarns=True,
-                                            dry_share=water.dry_share, dry_at=src.dry_at(4),
-                                            dry_keep_at=src.craters_at(4))
-    sea32 = cascade.open_sea(h32)
-    lake32 = (lake32 | tarn32) & ~sea32
+    times["l2_s"] = time.time() - t
+    # Hydrology at 32 m (Rust): lakes, breached depressions, stream power, rivers and channels
+    # from rain under the layout's wind. Its carved ground is what L3 refines.
+    t = time.time()
+    grid = hydrology.write_grid(hyd / "grid-32m", h32, 32.0, src.origin, src.class_grid(4, np.s_[:, :], h32.shape),
+                                wind_from_deg=src.wind)
+    hydrology.run(grid, hyd / "32m", water=table, river_km2=args.stream_km2)
+    shutil.rmtree(grid)
+    w32 = hydrology.read(hyd / "32m")
+    h32 = np.array(w32.ground)
+    sea32, wet32, river32 = w32.kind("sea"), w32.wet, w32.kind("river")
+    lake32 = wet32 & ~sea32 & ~river32
     snow32, veg32 = src.cover(h32, 4)
     snow32, veg32 = snow32 & ~sea32, veg32 & ~sea32
-    # Flow passes through lakes and dry basins to the sea; only karst basins swallow it.
-    sinks = src.sinks_at(4)
-    sinks32 = dry32 & sinks if sinks is not None else np.zeros_like(dry32)
-    stream32, parent32, width32 = hydrology.streams(h32, sea32 | lake32, 32.0, *src.streams_at(4, water),
-                                                    outlet=sea32 | sinks32)
-    pos32 = hydrology.smooth_paths(stream32, parent32, width32)
-    times["l2_s"] = time.time() - t
-    print(f"L2 {h32.shape} in {times['l2_s']:.0f} s; tarns {tarn32.mean():.2%}, dry basins {dry32.mean():.2%}, streams {stream32.sum()} cells", flush=True)
+    times["hydrology_32m_s"] = time.time() - t
+    count = {k: sum(b["kind"] == k for b in w32.bodies) for k in ("lake", "river")}
+    print(f"L2 {h32.shape} in {times['l2_s']:.0f} s, hydrology {times['hydrology_32m_s']:.0f} s; "
+          f"{count['lake']} lakes ({lake32.mean():.2%}), {count['river']} rivers", flush=True)
     _reach(src, h32, 32.0, args.out, "l2")
     ref_name, ref_h, ref_cell, ref_water = src.reference
     _png(args.out / ref_name, ref_h, ref_cell, ref_water)
     if args.l3_km == 0:
         _png(args.out / "l1.png", h128, 128, sea128 | lake128)
-        _png(args.out / "l2.png", h32, 32, sea32 | lake32 | stream32)
+        _png(args.out / "l2.png", h32, 32, wet32)
         np.savez_compressed(args.out / "arrays.npz", l1=h128, l2=h32, l2_raw=raw32)
         (args.out / "manifest.json").write_text(json.dumps({
             "kind": "cascade_chain_l2", "source": src.name, "steps": args.steps, "seed": args.seed,
-            "water": vars(water), "times": times,
-            "runs": {k: str(getattr(args, f"{k}_run").resolve()) for k in ("l1", "l2")}}, indent=1))
+            "water": vars(water), "river_km2": args.stream_km2, "hydrology": {"32m": "hydrology/32m"}, "times": times,
+            "runs": {k: str(getattr(args, f"{k}_run").resolve()) for k in ("l1", "l2")},
+            "class_runs": _class_runs(args)}, indent=1))
         print(f"wrote {args.out}", flush=True)
         return 0
 
@@ -397,7 +428,7 @@ def main(argv=None) -> int:
     # lakes and streams are water, as in its lidar training data.
     t = time.time()
     level = cascade.LEVELS["l3"]
-    model, config = _load(args.l3_run, device)
+    model, config = _load(args.l3_run, device, args.l3_class_runs)
     # Default: the whole world, as the layout specifies; 16 -> 512 cells of 32 m, 4,096 of 4 m.
     n32 = h32.shape[0] if args.l3_km is None else args.l3_km * 1024 // 32
     m = 16
@@ -408,13 +439,12 @@ def main(argv=None) -> int:
     sl = np.s_[y0 : y0 + n32, x0 : x0 + n32]
     sea4 = cascade.refine_mask(sea32[sl], 8, 6.0)
     lake4 = cascade.refine_mask(lake32[sl], 8, 6.0) & ~sea4
-    level4 = _spread(_nearest(h32[sl], 8), _nearest(lake32[sl], 8), 12)
-    stream4 = hydrology.draw_streams(stream32, parent32, width32, 8, 32.0, y0, x0, n32, pos32) & ~sea4 & ~lake4
+    river4 = (smooth(_nearest(river32[sl], 8).astype(np.float32), RIVER_SIGMA_4M) > RIVER_LEVEL) & ~sea4 & ~lake4
     if src.l0 is not None:  # at 4 m from the layout, not 32 m steps
         snow4, veg4 = src.cover(coarse, 32, y0 * 32.0, x0 * 32.0)
     else:
         snow4, veg4 = _nearest(snow32[sl], 8), _nearest(veg32[sl], 8)
-    extra = [np.where(sea4 | lake4 | stream4, 255, 0).astype(np.uint8), cascade.soft_u8(snow4, 1.0),
+    extra = [np.where(sea4 | lake4 | river4, 255, 0).astype(np.uint8), cascade.soft_u8(snow4, 1.0),
              cascade.soft_u8(veg4, 1.0)]
     classes32 = src.classes_at(4)
     classes4 = classes32 if isinstance(classes32, int) else _nearest(classes32[sl], 8)
@@ -426,26 +456,33 @@ def main(argv=None) -> int:
     del field, extra
     w = np.clip(-coarse / L3_SEABED_M, 0, 1)
     h4 = ((1 - w) * h4 + w * coarse).astype(np.float32)
-    sea4 = cascade.open_sea(h4)
-    lake4 &= ~sea4
-    stream4 &= ~sea4
-    h4[lake4] = level4[lake4]
-    # The refined coast can leave mouths on land: continue them, then make every bed descend.
-    sinks4 = _nearest(sinks32[sl], 8)
-    mouths = hydrology.extend_mouths(h4, sea4 | lake4, stream4, sinks4)
-    stream4 |= mouths
-    h4, lowered = hydrology.carve_streams(h4, stream4, sea4 | lake4)
-    print(f"L3 streams: {mouths.sum()} cells added to reach water, {lowered} bed cells lowered", flush=True)
-    water4 = sea4 | lake4 | stream4
+    # L3 learned land only: under lakes and rivers the ground eases down to the carved 32 m
+    # ground, so lake beds stay below their level and channels need little burning.
+    under = smooth((lake4 | river4).astype(np.float32), 2.0)
+    h4 = (h4 - under * np.maximum(h4 - coarse, 0)).astype(np.float32)
+    del under, coarse, w, sea4, lake4, river4
+    times["l3_s"] = time.time() - t
+
+    # Hydrology at 4 m, holding the 32 m network fixed: its carved ground and water are the world's.
+    t = time.time()
+    grid = hydrology.write_grid(hyd / "grid-4m", h4, 4.0, src.origin, src.class_grid(4, sl, (n32, n32)),
+                                offset_m=(x0 * 32.0, y0 * 32.0), classes_cell_m=32.0)
+    hydrology.run(grid, hyd / "4m", coarse=hyd / "32m", water=table)
+    shutil.rmtree(grid)
+    w4 = hydrology.read(hyd / "4m")
+    h4 = np.array(w4.ground)
+    water4 = np.array(w4.wet)
     if src.l0 is not None:  # cover of the final surface
         snow4, veg4 = src.cover(h4, 32, y0 * 32.0, x0 * 32.0)
-    times["l3_s"] = time.time() - t
-    print(f"L3 {h4.shape} in {times['l3_s']:.0f} s", flush=True)
+    times["hydrology_4m_s"] = time.time() - t
+    count = {k: sum(b["kind"] == k for b in w4.bodies) for k in ("lake", "river")}
+    print(f"L3 {h4.shape} in {times['l3_s']:.0f} s, hydrology {times['hydrology_4m_s']:.0f} s; "
+          f"{count['lake']} lakes, {count['river']} rivers, water {water4.mean():.2%}", flush=True)
 
     # Pictures: generated levels and the real region at the same framing.
     _png(args.out / "l1.png", h128, 128, sea128 | lake128)
-    _png(args.out / "l2.png", h32, 32, sea32 | lake32 | stream32)
-    _png(args.out / "l2-l3-area.png", h32[sl], 32, (sea32 | lake32 | stream32)[sl], 1024)
+    _png(args.out / "l2.png", h32, 32, wet32)
+    _png(args.out / "l2-l3-area.png", h32[sl], 32, wet32[sl], 1024)
     _png(args.out / "l3.png", h4, 4, water4, 2048)
     c = h4.shape[0] // 2
     _png(args.out / "l3-detail.png", h4[c - 512 : c + 512, c - 512 : c + 512], 4, water4[c - 512 : c + 512, c - 512 : c + 512], 1024)
@@ -458,8 +495,11 @@ def main(argv=None) -> int:
     world_input.mkdir()
     (world_input / "world.json").write_text(json.dumps(
         {"kind": "cascade_chain_input", "name": f"chain-{src.name}", "crs": src.crs, "origin": [ox, oy]}, indent=1))
+    # Hydrology layers are hard links to its 4 m output (the 128 m moisture to the 32 m one).
+    digests = hydrology.link(hyd / "4m", args.out, hydrology.WORLD_LAYERS)
+    digests |= hydrology.link(hyd / "32m", args.out, ("moisture.f32",))
+    moisture = json.loads((hyd / "32m" / "grid.json").read_text())["moisture"]
     layers = {
-        "elevation.f32": h4.astype("<f4").tobytes(),
         "water.u8": np.where(water4, 255, 0).astype(np.uint8).tobytes(),
         "snow-ice.u8": np.where(snow4, 2, 1).astype(np.uint8).tobytes(),
         "vegetation.u8": np.where(veg4, 2, 1).astype(np.uint8).tobytes(),
@@ -468,17 +508,21 @@ def main(argv=None) -> int:
         layers["classes.u8"] = classes4.astype(np.uint8).tobytes()
     if src.l0 is not None:  # biomes for viewing and export, borders warped like the cover
         layers["biome.u8"] = src.sampler().classes(y0 * 32.0, x0 * 32.0, *h4.shape, 4.0).tobytes()
-    digests = {}
     for name, data in layers.items():
         (args.out / name).write_bytes(data)
         digests[name] = hashlib.sha256(data).hexdigest()
     (args.out / "manifest.json").write_text(json.dumps({
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 4.0, "size": [h4.shape[1], h4.shape[0]],
-        "method": f"cascade chain L1 -> L2 -> L3 from {'an authored' if src.l0 else 'a derived'} layout", "water_fill": "ground continues under the sea; lakes flat at their spill level",
+        "method": f"cascade chain L1 -> L2 -> L3 from {'an authored' if src.l0 else 'a derived'} layout",
+        "water_fill": hydrology.WATER_FILL,
+        "hydrology": {"32m": "hydrology/32m", "4m": "hydrology/4m", "bodies": "bodies.json"},
+        "moisture": moisture | {"file": "moisture.f32"},
         "source": src.name, "layout": str(args.layout.resolve()) if args.layout else None,
-        "class_id": src.classes if isinstance(src.classes, int) else None, "steps": args.steps, "water": vars(water), "times": times,
+        "class_id": src.classes if isinstance(src.classes, int) else None, "steps": args.steps,
+        "water": vars(water), "river_km2": args.stream_km2, "times": times,
         "runs": {k: str(getattr(args, f"{k}_run").resolve()) for k in ("l1", "l2", "l3")},
+        "class_runs": _class_runs(args),
         "layers": digests}, indent=1))
     print(f"wrote {args.out}", flush=True)
     return 0
