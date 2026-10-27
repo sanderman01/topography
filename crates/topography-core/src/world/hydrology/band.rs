@@ -150,9 +150,14 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     };
     let (ga, sa, ba, fa) = load(north, &a, ra)?;
     let (gb, sb, bb, fb) = load(south, &b, rb)?;
-    let (bk, _) = kinds(&serde_json::from_slice(&read_small(
-        &south.join("bodies.json"),
-    )?)?);
+    // Body kinds from both bands (a river may run only in the northern rows).
+    let mut bk = HashMap::new();
+    for dir in [north, south] {
+        let (k, _) = kinds(&serde_json::from_slice(&read_small(
+            &dir.join("bodies.json"),
+        )?)?);
+        bk.extend(k);
+    }
     let mut report = compare(w, t, rows, (&ga, &sa, &ba, &fa), (&gb, &sb, &bb, &fb), &bk);
     if let Value::Object(m) = &mut report {
         m.insert("north".into(), json!(north.display().to_string()));

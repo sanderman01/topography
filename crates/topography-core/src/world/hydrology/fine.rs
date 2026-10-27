@@ -414,8 +414,8 @@ fn floor(dims: Dims, body: &[u32], basins: &[Basin], source: u32, i: usize) -> f
         .fold(f32::NEG_INFINITY, f32::max)
 }
 
-/// Lower each path to a running minimum from its head and to its surface cap (not below a
-/// lake floor beside it).
+/// Lower each path to a running minimum from its head and to its surface cap (not below 0 m
+/// or a lake floor beside it).
 pub(super) fn burn(
     dims: Dims,
     ground: &mut [f32],
@@ -431,7 +431,8 @@ pub(super) fn burn(
             let f = floor(dims, body, basins, p.source, c as usize);
             let top = cap.get(&c).copied().unwrap_or(f32::INFINITY);
             let c = c as usize;
-            g = ground[c].min(g.min(top).max(f));
+            // Not below 0 m: channels cut mouths below sea level themselves.
+            g = ground[c].min(g.min(top).max(f).max(0.0));
             if g < ground[c] {
                 cells.push(c as u32);
                 if ground[c] - g > max {
@@ -462,8 +463,8 @@ pub(super) fn route(dims: Dims, dir: &mut [u8], paths: &[Path]) {
 /// (the sea, its lake, a dry basin cell, or a grid-edge outlet in the corridor); each coarse
 /// head (a centreline cell without a centreline donor in the window) starts its path at the
 /// lowest fine cell it holds, beside the lake when the river leaves one, and follows the flood
-/// down. The surface cap is the coarse surface interpolated along the path between the middles
-/// of its runs through the river's coarse cells.
+/// down. A head the flood cannot reach counts as unrouted only in the core rows (a halo is
+/// made again by the next band). The surface cap is described where it is computed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rivers(
     dims: Dims,
@@ -475,6 +476,7 @@ pub(super) fn rivers(
     inflows: &[Inflow],
     fixed_id: impl Fn(usize) -> u32,
     feeds: impl Fn(usize) -> bool,
+    core_rows: [usize; 2],
 ) -> Imprint {
     let (w, h) = (dims.w, dims.h);
     let cd = c.dims();
@@ -786,7 +788,10 @@ pub(super) fn rivers(
                     heads.push((i as u32, source, None));
                 }
                 None => {
-                    if c.fine_cells(q, w, h).any(|i| flags[i] & (SEA | FIXED) == 0) {
+                    let core = |i: usize| (core_rows[0]..core_rows[1]).contains(&(i / w));
+                    if c.fine_cells(q, w, h)
+                        .any(|i| flags[i] & (SEA | FIXED) == 0 && core(i))
+                    {
                         out.unrouted.push(id);
                     }
                 }

@@ -238,6 +238,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 &inflows,
                 fixed_id,
                 |j| feeds.contains(&j),
+                grid.core_rows,
             );
             (Some(figures), Some(imprint))
         }

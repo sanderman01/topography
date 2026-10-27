@@ -379,7 +379,7 @@ pub(super) fn extract(
                 .map(|(_, j)| basins[body[j] as usize - 1].level)
                 .fold(f32::NEG_INFINITY, f32::max);
             let below = receiver(dims, dir, i)
-                .map(|r| surface[r])
+                .map(|r| if flags[r] & SEA != 0 { 0.0 } else { surface[r] })
                 .filter(|s| !s.is_nan())
                 .unwrap_or(f32::NEG_INFINITY);
             let level = beside.max(below);
@@ -754,7 +754,7 @@ impl Lips {
 /// rock sill), beside channels raised to a lake's level (`raised`) up to their surface, and
 /// any dry cell beside a lake below its level up to it (a divide),
 /// then every dry cell draining into a raised one that is now lower than it, so no ground
-/// drains uphill. Basin cells are left as they are.
+/// drains uphill. Lake cells are left as they are; dry basin cells are raised like dry land.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn raise_lips(
     dims: Dims,
@@ -768,7 +768,11 @@ pub(super) fn raise_lips(
     raised: &[u32],
     spacing_m: f64,
 ) -> Lips {
-    let dry = |i: usize| flags[i] & (SEA | RIVER | FIXED) == 0 && body[i] == 0;
+    // Dry: not water (dry basin cells count).
+    let dry = |i: usize| {
+        flags[i] & (SEA | RIVER | FIXED) == 0
+            && (body[i] == 0 || basins[body[i] as usize - 1].kind != Kind::Lake)
+    };
     let mut lips = Lips::default();
     let mut stack: Vec<u32> = Vec::new();
     let mut raise = |ground: &mut [f32], i: usize, to: f32, stack: &mut Vec<u32>| {

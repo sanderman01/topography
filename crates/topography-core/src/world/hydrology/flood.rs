@@ -369,9 +369,9 @@ pub(super) fn breach(
                     .filter(|_| fine && !blocked)
                 {
                     // Around a lake that must drain: cut past the cap, not below 0 m; ground
-                    // below the lake's level beside it joins the lake.
+                    // below the lake's level connected to it joins the lake.
                     let level = basins[beside as usize - 1].level;
-                    if p < 0.0 {
+                    if p < level {
                         for &a in &region {
                             let a = a as usize;
                             if ground[a] < level
