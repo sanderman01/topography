@@ -115,9 +115,9 @@ fn same_surface(a: f32, b: f32) -> bool {
 /// Compare two adjacent band outputs (`north` then `south`). Rows of the northern core that
 /// the southern grid holds must be identical (ground and surface within 1 mm, body ids
 /// equal); across the seam (the last northern core row against the first southern core row)
-/// no centreline may flow onto dry ground, no dry cell may sit more than 1 cm below adjacent
-/// water (ground ahead of a river along its flow excepted, as in the band checks) and a lake
-/// id keeps one level. Returns the report (JSON text) and whether it passed.
+/// no centreline may flow onto dry ground that is not a basin, no dry cell may sit more than
+/// 1 cm below an adjacent lake or the sea, and a lake id keeps one level (river banks are the
+/// southern band's own checks). Returns the report (JSON text) and whether it passed.
 pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     let (a, _) = manifest(north)?;
     let (b, _) = manifest(south)?;
