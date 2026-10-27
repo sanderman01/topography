@@ -1,0 +1,50 @@
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_1c69738db34fa1 800-805
+  s_8c1b40ea9c1e0d::t_65ea184acb77a0 242,464-472,915-916,918
+  s_8c1b40ea9c1e0d::t_9fc9cc57b3d0fd 571,604
+  s_8c1b40ea9c1e0d::t_96318cd68743b9 702-707,712-719,727-746,750-754
+  s_8c1b40ea9c1e0d::t_a9b611113cf201 839,844
+  s_8c1b40ea9c1e0d::t_c359fd9144348d 835-837
+  s_8c1b40ea9c1e0d::t_52ae0e5fd40cab 675-677
+  s_8c1b40ea9c1e0d::t_25c99c21a9b640 840-843
+  s_8c1b40ea9c1e0d::t_c76410410148e5 917
+  s_8c1b40ea9c1e0d::t_a6fe9b576c80a8 720-726
+  s_8c1b40ea9c1e0d::t_9210233d13dbd8 708-711,747-749
+crates/topography-core/src/world/hydrology/fine.rs
+  s_8c1b40ea9c1e0d::t_8ba36a023b47be 111-121,138-140,142,149-163,166-168,170,174-177,185-186,197-198,202-210,212-226,232-235
+  s_8c1b40ea9c1e0d::t_2db722a5407eb8 286
+  s_8c1b40ea9c1e0d::t_ff95bcf48ad6d5 285,308,324
+  s_8c1b40ea9c1e0d::t_5db5a949f1c34a 506-508,516,518,520,522,530-549
+  s_8c1b40ea9c1e0d::t_c359fd9144348d 356-357,1137
+  s_8c1b40ea9c1e0d::t_1d7335070307a2 1000-1001,1008
+  s_8c1b40ea9c1e0d::t_62b8061cc47441 976,999,1002-1007,1010
+  s_8c1b40ea9c1e0d::t_575216eb641b93 287-307,974-975,994-998,1009,1016,1019
+  s_8c1b40ea9c1e0d::t_65ea184acb77a0 589,1044
+  s_8c1b40ea9c1e0d::t_9f7736660e0bc1 191-196,199-201
+  s_8c1b40ea9c1e0d::t_25c99c21a9b640 1147-1168
+  s_8c1b40ea9c1e0d::t_2be6e7d3718367 319,329-351
+  s_8c1b40ea9c1e0d::t_9fc9cc57b3d0fd 366,388-389
+  s_8c1b40ea9c1e0d::t_ecdd5b456149c7 352-353,1146
+crates/topography-core/src/world/hydrology/rivers.rs
+  s_8c1b40ea9c1e0d::t_ba191028b7bd72 733-734,808-810,815-821,823,829-832,839,854
+  s_8c1b40ea9c1e0d::t_65ea184acb77a0 824-827,834-837
+  s_8c1b40ea9c1e0d::t_72c88be812fa92 838,840-841
+crates/topography-core/src/world/hydrology/report.rs
+  s_8c1b40ea9c1e0d::t_1c69738db34fa1 69,73-74,81-83,387
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d5e5b96755ab2018ff33138ed5902b598e45963",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
