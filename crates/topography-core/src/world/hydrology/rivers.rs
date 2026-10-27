@@ -207,6 +207,12 @@ pub(super) fn extract(
             End::Sink(body[r])
         }
         Some(r) if body[r] != 0 => End::Dry(body[r]),
+        // Back across the seam onto the previous band's ground right beside its river (that
+        // band's halo guess put the river a cell or two over): a confluence.
+        Some(r) if fixed(flags, r) => dims
+            .neighbours(r)
+            .find(|&(_, j)| fixed(flags, j) && flags[j] & RIVER != 0 && body[j] != 0)
+            .map_or(End::Land, |(_, j)| End::Joins(body[j])),
         Some(_) => End::Land,
     };
 
