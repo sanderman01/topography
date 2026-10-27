@@ -9,14 +9,14 @@ generation are GPU workloads: warn before running them.
 Run heavy jobs inside a memory-capped scope so an out-of-memory job cannot take the
 session down: `CAP=(systemd-run --user --scope -q -p MemoryMax=7G)`, then `"${CAP[@]}" $P ...`.
 
-Current models (2026-10-11), all on terrain legend v3 with form channels:
+Current models (2026-10-27), all on terrain legend v3 with form channels:
 
 | Level | Run | Training data | Class gates |
 | --- | --- | --- | --- |
 | L1 128 m | `cascade-l1-run-6` | `context-v5` (GLO-30 + GEBCO) | pass |
 | L2 32 m | `cascade-l2-run-8` | `context-v5` | pass |
-| L3 4 m | `cascade-l3-run-4` | `lidar-v3` (lidar averaged to 4 m) | pass |
-| L4 1 m | `cascade-l4-run-7` | `diffusion-v9` (1 m library tiles) | pass |
+| L3 4 m | `cascade-l3-run-5` | `lidar-v3` (lidar averaged to 4 m), dithered borders | pass, except Grand Canyon (see below) |
+| L4 1 m | `cascade-l4-run-8` | `diffusion-v9` (1 m library tiles), dithered borders | pass, except Grand Canyon (see below) |
 
 ## Training data
 
@@ -148,6 +148,15 @@ COMMON=(--class-embedding --scale-shift --balanced --mix 0.25 --forms --dither-m
 
 The first L3 run after the label change rebuilds the cached 4 m fields of every lidar
 region (`data/cache/cascade-fields/`).
+
+Results (2026-10-27; L3 stopped at step 7,156, L4 at 7,650). Both pass the class swap,
+recognition (L3 own 0.26 vs swapped 0.14; L4 0.38 vs 0.11), roughness (hidden rank 0.83
+and 0.90) and the dithered-border gate. Both fail Grand Canyon vs 13 (L3 0.58 between
+classes vs 0.67 between seeds; L4 0.45 vs 0.59) and L3 fails vs plain (1.30 vs floor 1.56),
+so `class_gates` exits 1. Ruling: the runs become the current L3 and L4 models; class 19
+behaves as its parent 13 at 4 m and 1 m, and the Grand Canyon's character comes from its
+real 32 m surface. The reaches give few 4 m windows (one 4096² region); a retrain that
+oversamples them is the way to a distinct class if wanted.
 
 `cascade_eval` writes a blind review (`review.html`; keep `key.json` and
 `compare.html` closed until the votes are in), terrain statistics, a
