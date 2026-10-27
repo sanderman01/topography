@@ -42,6 +42,14 @@ pub fn default_river_km2(spacing_m: f64) -> f64 {
     }
 }
 
+/// Basin `b` (index + 1) whose cells trench widening may lower: a dry or ice basin of a finer
+/// level that is not a coarse lake and not on a coarse dry basin (`kept`).
+fn open_basin(basins: &[lakes::Basin], kept: &[bool], fine_level: bool, b: u32) -> bool {
+    b != 0
+        && !kept.get(b as usize - 1).copied().unwrap_or(!fine_level)
+        && basins[b as usize - 1].kind != Kind::Lake
+}
+
 pub struct Options {
     pub grid: PathBuf,
     pub out: PathBuf,
@@ -377,6 +385,17 @@ pub fn run(options: &Options) -> Result<Outcome> {
         river_km2_f64,
     );
     basins.extend(selected);
+    // Basins trench widening keeps: all on the trunk level; on finer levels coarse lakes, fine
+    // lakes and basins on a coarse dry basin (such as an ice caldera).
+    let mut kept_basin = vec![true; basins.len()];
+    if coarse.is_some() {
+        for (k, d) in deps.iter().enumerate() {
+            if let Some(b) = map[k + 1].checked_sub(1) {
+                let b = b as usize + coarse_lakes as usize;
+                kept_basin[b] = d.forced.is_some() || basins[b].kind == Kind::Lake;
+            }
+        }
+    }
     for i in 0..n {
         let b = map[label[i] as usize];
         if b != 0 && body[i] == 0 {
@@ -435,9 +454,18 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }
         burn_again = (max, at);
     }
-    // Trenches widen into small valleys, through glacier too (ice is a surface layer); basin
-    // interiors (such as an ice caldera) and cells from the previous band stay as they are.
-    let walls_kept: Vec<bool> = (0..n).map(|i| i < fixed_rows * w).collect();
+    // Trenches widen into small valleys, through glacier too (ice is a surface layer). Kept
+    // basins (such as an ice caldera), the sea and cells from the previous band stay as they
+    // are; other dry and ice basin cells of a finer level may be lowered and leave the basin.
+    let open = |b: u32| open_basin(&basins, &kept_basin, fine_level, b);
+    // Floor: a kept basin's level beside a cell, 0 m (no water surfaces yet).
+    let kept_level =
+        |i: usize| (body[i] != 0 && !open(body[i])).then(|| basins[body[i] as usize - 1].level);
+    let floor = |i: usize| {
+        dims.neighbours(i)
+            .filter_map(|(_, j)| kept_level(j))
+            .fold(0f32, f32::max)
+    };
     let mut breach_cut: HashMap<u32, f32> = HashMap::new();
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
         for (x, &z) in row.iter().enumerate() {
@@ -448,21 +476,29 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }
     })?;
     let trench_depth = breach_cut.values().copied().fold(0f32, f32::max);
-    let mut trenches = erosion::widen_trenches(
+    let (mut trenches, lowered) = erosion::widen_trenches(
         dims,
         &mut ground,
         &mut dir,
-        &flags,
-        &body,
-        &basins,
-        &walls_kept,
+        |i| flags[i] & (flood::BREACHED | SEA | FIXED) == flood::BREACHED && body[i] == 0,
+        |i| flags[i] & (SEA | FIXED) == 0 && (body[i] == 0 || open(body[i])),
+        |_| f32::NAN,
+        floor,
         |i| breach_cut.get(&(i as u32)).copied().unwrap_or(0.0),
         grid.spacing_m,
     );
     drop(breach_cut);
-    drop(walls_kept);
+    let mut left_basins = 0u64;
+    for &c in &lowered {
+        if body[c as usize] != 0 {
+            body[c as usize] = 0;
+            left_basins += 1;
+        }
+    }
+    drop(lowered);
     if let Value::Object(m) = &mut trenches {
         m.insert("max_depth_m".into(), json!(trench_depth));
+        m.insert("basin_cells_lowered".into(), json!(left_basins));
     }
     // Water follows the steepest descent on the final ground (the flood's order only on flats).
     let resteered = flood::steepest(dims, &ground, &flags, &body, &basins, &mut dir);
@@ -667,7 +703,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     if let Some(b) = &north {
         surface[..fixed_rows * w].copy_from_slice(&b.surface);
     }
-    let (rivers, band, channels) = rivers::extract(
+    let (rivers, band, mut channels) = rivers::extract(
         dims,
         &mut ground,
         &dir,
@@ -680,6 +716,61 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &mut surface,
         given,
     );
+    // Channel cuts deeper than one cell's rise widen as trenches do, from the water surface.
+    let cuts = std::mem::take(&mut channels.cuts);
+    let one_rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
+    let deep_cut = |i: usize| cuts.get(&(i as u32)).copied().filter(|&c| c > one_rise);
+    let open = |b: u32| open_basin(&basins, &kept_basin, fine_level, b);
+    // Floor: kept basin levels, the surface of each river a cell is a bank of (not ground
+    // ahead along its flow, as the bank check) and no hole below every river beside it.
+    let flow = dir.clone();
+    let bank_of = |i: usize, j: usize| {
+        rivers::owner(&flags, &band, j).is_none_or(|o| !dims.ahead(flow[o], j, i))
+    };
+    let floor = |i: usize| {
+        let (mut f, mut lowest) = (0f32, f32::INFINITY);
+        for (_, j) in dims.neighbours(i) {
+            if flags[j] & RIVER != 0 {
+                lowest = lowest.min(surface[j]);
+                if bank_of(i, j) {
+                    f = f.max(surface[j]);
+                }
+            } else if flags[j] & SEA == 0 && body[j] != 0 && !open(body[j]) {
+                f = f.max(basins[body[j] as usize - 1].level);
+            }
+        }
+        if lowest.is_finite() {
+            f = f.max(lowest - rivers::HOLE_M);
+        }
+        f
+    };
+    let (mut channel_widening, lowered) = erosion::widen_trenches(
+        dims,
+        &mut ground,
+        &mut dir,
+        |i| flags[i] & (RIVER | FIXED) == RIVER && deep_cut(i).is_some(),
+        |i| flags[i] & (SEA | RIVER | FIXED) == 0 && (body[i] == 0 || open(body[i])),
+        |i| surface[i],
+        floor,
+        |i| deep_cut(i).unwrap_or(0.0),
+        grid.spacing_m,
+    );
+    drop((cuts, flow));
+    let mut left_basins = 0u64;
+    for &c in &lowered {
+        let c = c as usize;
+        if !check_dir.is_empty() {
+            check_dir[c] = dir[c];
+        }
+        if body[c] != 0 {
+            body[c] = 0;
+            left_basins += 1;
+        }
+    }
+    drop(lowered);
+    if let Value::Object(m) = &mut channel_widening {
+        m.insert("basin_cells_lowered".into(), json!(left_basins));
+    }
     let lips = rivers::raise_lips(
         dims,
         &mut ground,
@@ -928,6 +1019,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     );
     figures.insert("stream_power".into(), stream_power);
     figures.insert("trenches".into(), trenches);
+    figures.insert("channel_widening".into(), channel_widening);
     figures.insert("receivers_set_by_steepest_descent".into(), json!(resteered));
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));

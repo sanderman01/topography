@@ -120,6 +120,8 @@ pub(super) struct Channels {
     pub max_cut_m: f32,
     pub max_cut_at: usize,
     pub volume_m3: f64,
+    /// Total carving cut per cell (m).
+    pub cuts: HashMap<u32, f32>,
     /// Largest drop of a centreline surface below its ground forced by a low bank.
     pub max_bank_drop_m: f32,
     pub sea_cells_lowered: u64,
@@ -441,6 +443,7 @@ pub(super) fn extract(
                 (ch.max_cut_m, ch.max_cut_at) = (ground[i] - bed, i);
             }
             ch.volume_m3 += (ground[i] - bed) as f64 * spacing_m * spacing_m;
+            *ch.cuts.entry(i as u32).or_insert(0.0) += ground[i] - bed;
             ground[i] = bed;
         }
     };

@@ -3,9 +3,10 @@
 //! dz/dt = −K A^m S, solved from the outlets upstream so each cell moves towards its already
 //! updated receiver. No uplift. Stream power grades collage seams and cliffs under rivers.
 
-use super::flood::{BREACHED, Dims, SEA, receiver};
+use super::flood::{Dims, SEA, receiver};
 use super::lakes::Basin;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 /// Judgment constants, tuned on fujix-collage-55 (32 m) so real valley floors move a few
 /// metres while steps across seams grade. A is discharge in m² (km² at mean rain × 10⁶), so
@@ -15,10 +16,9 @@ pub(super) const M: f32 = 0.5;
 pub(super) const K_DT: f32 = 7e-4;
 /// Stream power runs on grids at least this coarse only.
 pub(super) const MIN_SPACING_M: f64 = 32.0;
-/// Judgment constants: trench walls are cut back to this side slope, over at most this many
-/// rings of cells beside the trench.
+/// Judgment constant: trench walls are cut back to this side slope, over as many rings of
+/// cells as the deepest cut needs (cut / (tan · spacing) + 1).
 pub(super) const SIDE_SLOPE_DEG: f32 = 35.0;
-pub(super) const WIDEN_RINGS: usize = 16;
 
 pub(super) fn json() -> Value {
     json!({
@@ -37,12 +37,18 @@ pub(super) fn json() -> Value {
 pub(super) fn trench_json() -> Value {
     json!({
         "side_slope_deg": SIDE_SLOPE_DEG,
-        "max_rings": WIDEN_RINGS,
-        "rule": "dry ground beside a breach trench or a burned coarse river path is lowered \
-            to the trench side slope from the lowest neighbour already in the valley, ring by \
-            ring, and drains into it; never below the trench, a basin level beside it or 0 m; \
-            basins (an ice caldera too), the sea and cells from the previous band unchanged; \
-            glacier ground widens like any other (ice is a surface layer)",
+        "max_rings": "ceil(deepest cut / (tan(side slope) · spacing)) + 1",
+        "rule": "ground beside a breach trench or a burned coarse river path (trench cells \
+            too) is lowered to the trench side slope from the lowest neighbour already in the \
+            valley, ring by ring, and drains into it; never below the trench, a kept basin \
+            level beside it or 0 m; coarse lakes, basins on the coarse level's dry basins (an \
+            ice caldera) and every basin on the trunk level, the sea and cells from the \
+            previous band unchanged; on finer levels other dry and ice basin cells may be \
+            lowered and leave their basin; glacier ground widens like any other (ice is a \
+            surface layer); after channel carving, ground beside channel cells cut more than \
+            one cell's rise widens the same way from the water surface, never below the \
+            surface of a river it is a bank of (not ground ahead along the flow), more than \
+            0.5 m below every river beside it, or a kept basin level beside it",
     })
 }
 
@@ -75,52 +81,64 @@ pub(super) fn ice_catchment(
     frozen
 }
 
-/// Widen breach trenches (cells flagged `BREACHED`, cut `cut(i)` m by breaching) into small
-/// valleys: dry ground beside a trench above the side slope from its lowest valley neighbour
-/// is lowered to it, by no more than the trench cut (less the slope's rise per further
-/// ring), and then drains into that neighbour, ring by ring. Heights fall strictly towards
-/// the trench along the new receivers, so no pits or cycles appear. Returns figures with
-/// side slopes before and after (the steepest wall of each slot cell).
+/// Widen trenches (`trench` cells, cut `cut(i)` m) into small valleys: `wall` ground beside
+/// the valley above the side slope from its lowest valley neighbour (a trench cell's water
+/// `surface` when wet, else its ground) is lowered to it, by no more than the trench cut
+/// (less the slope's rise per further ring; a cell reached again keeps that bound from its
+/// ground before widening), never below `floor(i)`, and then drains into that neighbour, ring
+/// by ring. Trench cells can be walls too, so a shallow trench crossing a deep one leaves no
+/// fin. Heights fall strictly towards the trench along the new receivers, so no pits or
+/// cycles appear. Returns figures with side slopes before and after (the steepest wall of
+/// each slot cell) and the lowered cells.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn widen_trenches(
     dims: Dims,
     ground: &mut [f32],
     dir: &mut [u8],
-    flags: &[u8],
-    body: &[u32],
-    basins: &[Basin],
-    frozen: &[bool],
+    trench: impl Fn(usize) -> bool,
+    wall: impl Fn(usize) -> bool,
+    surface: impl Fn(usize) -> f32,
+    floor: impl Fn(usize) -> f32,
     cut: impl Fn(usize) -> f32,
     spacing_m: f64,
-) -> Value {
+) -> (Value, Vec<u32>) {
     let n = ground.len();
     let tan = SIDE_SLOPE_DEG.to_radians().tan();
-    let trench = |i: usize| flags[i] & BREACHED != 0 && flags[i] & SEA == 0 && body[i] == 0;
-    let wall = |i: usize| flags[i] & (SEA | BREACHED) == 0 && body[i] == 0 && !frozen[i];
-    let level = |i: usize| (body[i] != 0).then(|| basins[body[i] as usize - 1].level);
     let rise = |k: usize| tan * (Dims::step(Dims::back(k)) * spacing_m) as f32;
-    // Side slopes where breaching cut a slot: trench cells cut more than one cell's rise.
+    let top = |ground: &[f32], t: usize| ground[t].max(surface(t));
+    // Side slopes where a slot was cut: trench cells cut more than one cell's rise.
     let slot = |t: usize| trench(t) && cut(t) > tan * spacing_m as f32;
     let slopes = |ground: &[f32]| -> Value {
-        let mut v: Vec<f32> = (0..n)
+        let mut v: Vec<(f32, usize)> = (0..n)
             .filter(|&t| slot(t))
             .map(|t| {
-                dims.neighbours(t)
+                let deg = dims
+                    .neighbours(t)
                     .filter(|&(_, k)| wall(k))
                     .map(|(d, k)| {
                         let run = Dims::step(Dims::back(d)) * spacing_m;
-                        ((ground[k] - ground[t]) as f64 / run).atan().to_degrees() as f32
+                        ((ground[k] - top(ground, t)) as f64 / run)
+                            .atan()
+                            .to_degrees() as f32
                     })
-                    .fold(0f32, f32::max)
+                    .fold(0f32, f32::max);
+                (deg, t)
             })
             .collect();
-        v.sort_by(f32::total_cmp);
-        let q = |p: usize| v.get(v.len() * p / 100).copied().unwrap_or(0.0);
-        json!({ "median_deg": q(50), "p90_deg": q(90), "max_deg": v.last() })
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let q = |p: usize| v.get(v.len() * p / 100).map_or(0.0, |s| s.0);
+        let last = v.last().map(|s| (s.0, [s.1 % dims.w, s.1 / dims.w]));
+        json!({
+            "median_deg": q(50),
+            "p90_deg": q(90),
+            "max_deg": last.map(|s| s.0),
+            "max_at_cell": last.map(|s| s.1),
+            "over_60_deg": v.iter().filter(|s| s.0 > 60.0).count(),
+        })
     };
     let before = slopes(ground);
 
-    // Trenches: 8-connected pieces of breached cells.
+    // Trenches: 8-connected pieces of trench cells.
     let mut seen = vec![false; n];
     let (mut trenches, mut trench_cells) = (0u64, 0u64);
     let mut stack: Vec<u32> = Vec::new();
@@ -141,28 +159,32 @@ pub(super) fn widen_trenches(
             }
         }
     }
+    drop(seen);
 
-    // Each frontier cell carries the cut its outer neighbours may take: the trench's breach
-    // depth, less the side-slope rise per ring, so widening dies out within a few cells.
-    let mut frontier: Vec<(u32, f32)> = (0..n)
+    // Each frontier cell carries its height and the cut its outer neighbours may take: the
+    // trench's depth, less the side-slope rise per ring, so widening dies out. Enough rings
+    // for the deepest cut to reach the side slope.
+    let mut frontier: Vec<(u32, f32, f32)> = (0..n)
         .filter(|&i| trench(i))
-        .map(|i| (i as u32, cut(i)))
+        .map(|i| (i as u32, cut(i), top(ground, i)))
         .collect();
-    let (mut lowered, mut volume, mut max, mut rings) = (0u64, 0f64, 0f32, 0usize);
+    let deepest = frontier.iter().map(|f| f.1).fold(0f32, f32::max);
+    let max_rings = (deepest / (tan * spacing_m as f32)).ceil() as usize + 1;
+    let (mut lowerings, mut rings) = (0u64, 0usize);
+    // Ground before widening of each lowered cell: a cell reached again from another side
+    // is bounded by the same total cut.
+    let mut was: HashMap<u32, f32> = HashMap::new();
     let mut candidates: Vec<(u32, f32, u8, f32)> = Vec::new();
-    while !frontier.is_empty() && rings < WIDEN_RINGS {
+    while !frontier.is_empty() && rings < max_rings {
         candidates.clear();
-        for &(j, left) in &frontier {
+        for &(j, left, z) in &frontier {
             let j = j as usize;
             for (k, c) in dims.neighbours(j) {
-                if !wall(c) || left <= 0.0 {
+                if left <= 0.0 || !wall(c) {
                     continue;
                 }
-                let beside = dims
-                    .neighbours(c)
-                    .filter_map(|(_, b)| level(b))
-                    .fold(0f32, f32::max);
-                let limit = (ground[j] + rise(k)).max(ground[c] - left).max(beside);
+                let g0 = was.get(&(c as u32)).copied().unwrap_or(ground[c]);
+                let limit = (z + rise(k)).max(g0 - left).max(floor(c));
                 if ground[c] > limit {
                     candidates.push((c as u32, limit, Dims::back(k), left - rise(k)));
                 }
@@ -176,27 +198,35 @@ pub(super) fn widen_trenches(
         candidates.dedup_by_key(|c| c.0);
         frontier.clear();
         for &(c, limit, d, pass) in &candidates {
-            let c = c as usize;
-            let by = ground[c] - limit;
-            lowered += 1;
-            volume += by as f64 * spacing_m * spacing_m;
-            max = max.max(by);
-            ground[c] = limit;
-            dir[c] = d;
-            frontier.push((c as u32, pass));
+            was.entry(c).or_insert(ground[c as usize]);
+            lowerings += 1;
+            ground[c as usize] = limit;
+            dir[c as usize] = d;
+            frontier.push((c, pass, limit));
         }
     }
-    json!({
+    let mut lowered: Vec<u32> = was.keys().copied().collect();
+    lowered.sort_unstable();
+    let (mut volume, mut max) = (0f64, 0f32);
+    for &c in &lowered {
+        let by = was[&c] - ground[c as usize];
+        volume += by as f64 * spacing_m * spacing_m;
+        max = max.max(by);
+    }
+    let figures = json!({
         "trenches": trenches,
         "trench_cells": trench_cells,
-        "wall_cells_lowered": lowered,
+        "wall_cells_lowered": lowered.len(),
+        "wall_lowerings": lowerings,
         "wall_volume_m3": volume.round(),
         "wall_max_lowering_m": max,
         "rings_used": rings,
+        "max_rings": max_rings,
         "slot_cells": (0..n).filter(|&t| slot(t)).count(),
         "slot_side_slope_before": before,
         "slot_side_slope_after": slopes(ground),
-    })
+    });
+    (figures, lowered)
 }
 
 /// Lowering figures: total and largest, and on river cells (`channel`) split into those
