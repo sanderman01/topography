@@ -3,7 +3,7 @@
 //! dz/dt = −K A^m S, solved from the outlets upstream so each cell moves towards its already
 //! updated receiver. No uplift. Stream power grades collage seams and cliffs under rivers.
 
-use super::flood::{Dims, SEA, receiver};
+use super::flood::{self, Dims, SEA, receiver};
 use super::lakes::Basin;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -174,6 +174,7 @@ pub(super) fn widen_trenches(
     // Ground before widening of each lowered cell: a cell reached again from another side
     // is bounded by the same total cut.
     let mut was: HashMap<u32, f32> = HashMap::new();
+    let mut old_dir: HashMap<u32, u8> = HashMap::new();
     let mut candidates: Vec<(u32, f32, u8, f32)> = Vec::new();
     while !frontier.is_empty() && rings < max_rings {
         candidates.clear();
@@ -199,12 +200,17 @@ pub(super) fn widen_trenches(
         frontier.clear();
         for &(c, limit, d, pass) in &candidates {
             was.entry(c).or_insert(ground[c as usize]);
+            old_dir.entry(c).or_insert(dir[c as usize]);
             lowerings += 1;
             ground[c as usize] = limit;
             dir[c as usize] = d;
             frontier.push((c, pass, limit));
         }
     }
+    // A wall cell the trench drains into would close a cycle pointing back at the trench: it
+    // keeps its own receiver.
+    flood::restore_on_cycles(dims, dir, |c| old_dir.get(&(c as u32)).copied());
+    drop(old_dir);
     let mut lowered: Vec<u32> = was.keys().copied().collect();
     lowered.sort_unstable();
     let (mut volume, mut max) = (0f64, 0f32);

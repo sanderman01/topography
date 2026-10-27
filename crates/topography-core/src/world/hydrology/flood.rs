@@ -470,9 +470,9 @@ pub(super) fn breach(
 /// outside basins, sea, outlets and fixed cells, on the final ground. The flood's discovery
 /// order picks the lowest neighbour, which is nearly always a diagonal and draws 45° streams
 /// across slopes. Cells with no strictly lower neighbour (flats) keep the flood receiver, so
-/// every cell still drains: strictly lower steps cannot form a cycle, and on one height only
-/// flood-tree steps remain. A fixed cell is a receiver only as an outlet. Returns the cells
-/// changed.
+/// every cell still drains. Strictly lower steps alone cannot form a cycle, but a flood step
+/// left uphill (a pit lowered after the flood) can close one; cells on cycles get their flood
+/// receivers back. A fixed cell is a receiver only as an outlet. Returns the cells changed.
 pub(super) fn steepest(
     dims: Dims,
     ground: &[f32],
@@ -481,7 +481,8 @@ pub(super) fn steepest(
     basins: &[Basin],
     dir: &mut [u8],
 ) -> u64 {
-    let mut changed = 0;
+    let mut changed = 0u64;
+    let flood_dir = dir.to_vec();
     for i in 0..ground.len() {
         if flags[i] & (SEA | FIXED | OUTLET) != 0 || body[i] != 0 || dir[i] == 0 {
             continue;
@@ -515,7 +516,55 @@ pub(super) fn steepest(
             changed += 1;
         }
     }
-    changed
+    // A pit that later steps lowered below its flood receiver drains uphill, so a neighbour
+    // stepping down into it closes a cycle: such cells go back to their flood receivers.
+    changed - restore_on_cycles(dims, dir, |i| Some(flood_dir[i]))
+}
+
+/// Cells on receiver cycles get back their `old` receiver (None: unchanged cell), until no
+/// cycle is left or none of its cells can go back. Returns the cells restored.
+pub(super) fn restore_on_cycles(
+    dims: Dims,
+    dir: &mut [u8],
+    old: impl Fn(usize) -> Option<u8>,
+) -> u64 {
+    let mut restored = 0;
+    loop {
+        let mut any = false;
+        for i in on_cycles(dims, dir) {
+            if let Some(d) = old(i).filter(|&d| d != dir[i]) {
+                dir[i] = d;
+                restored += 1;
+                any = true;
+            }
+        }
+        if !any {
+            return restored;
+        }
+    }
+}
+
+/// Cells on receiver cycles (a cycle has no exit, so nothing else stays unpeeled).
+fn on_cycles(dims: Dims, dir: &[u8]) -> Vec<usize> {
+    let n = dir.len();
+    let mut donors = vec![0u32; n];
+    for i in 0..n {
+        if let Some(r) = receiver(dims, dir, i) {
+            donors[r] += 1;
+        }
+    }
+    let mut stack: Vec<usize> = (0..n).filter(|&i| donors[i] == 0).collect();
+    let mut done = vec![false; n];
+    while let Some(c) = stack.pop() {
+        done[c] = true;
+        if let Some(r) = receiver(dims, dir, c) {
+            donors[r] -= 1;
+            if donors[r] == 0 {
+                stack.push(r);
+            }
+        }
+    }
+    (0..n).filter(|&i| !done[i]).collect()
 }
 
 /// Sum of `weight` per cell (itself included) along the receivers: drainage area when the
