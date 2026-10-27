@@ -225,11 +225,15 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
     for i in split {
         note("lakes_in_several_pieces", i);
     }
-    let on_land = c
+    let mut on_land = 0;
+    for r in c
         .rivers
         .iter()
         .filter(|r| r.cells > 0 && r.end == End::Land)
-        .count();
+    {
+        on_land += 1;
+        note("rivers_ending_on_dry_land", r.mouth as usize);
+    }
     let mut m = Map::new();
     m.insert(
         "guard_land_cells_not_draining_to_an_outlet".into(),

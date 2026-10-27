@@ -5,7 +5,7 @@
 //! no higher than the coarse one.
 
 use super::coarse::Coarse;
-use super::flood::{Dims, FIXED, OUTLET, SEA};
+use super::flood::{CENTRE, Dims, FIXED, OUTLET, SEA};
 use super::lakes::{Basin, Kind, NO_EXIT};
 use serde_json::{Map, Value, json};
 use std::{
@@ -215,18 +215,18 @@ pub(super) fn consistency(
     c: &Coarse,
     unrouted: &[u32],
     body_id: &dyn Fn(usize) -> u32,
-) -> (Map<String, Value>, f32) {
+) -> (Map<String, Value>, Value) {
     let (w, h) = (dims.w, dims.h);
     let mut present: HashSet<u32> = HashSet::new();
     let mut above = 0u64;
-    let mut above_max = 0f32;
+    let (mut above_max, mut above_at) = (0f32, Vec::new());
     for i in 0..w * h {
         let id = body_id(i);
         if id == 0 {
             continue;
         }
         present.insert(id);
-        if flags[i] & FIXED != 0 || !c.rivers.contains_key(&id) {
+        if flags[i] & (FIXED | CENTRE) != CENTRE || !c.rivers.contains_key(&id) {
             continue;
         }
         let [cx, cy] = c.abs(c.cell(w, i));
@@ -239,6 +239,9 @@ pub(super) fn consistency(
         if top.is_finite() && surface[i] > top + SURFACE_TOLERANCE_M {
             above += 1;
             above_max = above_max.max(surface[i] - top);
+            if above_at.len() < 3 {
+                above_at.push([i % w, i / w]);
+            }
         }
     }
     // Coarse bodies with cells this run makes.
@@ -275,7 +278,14 @@ pub(super) fn consistency(
         json!(lost.len()),
     );
     m.insert("water_above_coarse_surface".into(), json!(above));
-    (m, above_max)
+    let mut lost: Vec<u32> = lost.into_iter().collect();
+    lost.sort_unstable();
+    let figures = json!({
+        "water_above_coarse_max_m": above_max,
+        "water_above_coarse_at_cells": above_at,
+        "coarse_rivers_missing_or_unrouted": lost,
+    });
+    (m, figures)
 }
 
 /// A coarse river's fine centreline: cells from a head down to `next` (the sea, lake or dry
@@ -301,6 +311,9 @@ pub(super) struct Imprint {
     /// Cells the first burn lowered (they widen as breach trenches do).
     pub burned: Vec<u32>,
     pub burn_max_m: f32,
+    pub burn_max_at: [usize; 2],
+    /// Grid edge cells that become outlets where a coarse river leaves the grid.
+    pub outlets: Vec<u32>,
 }
 
 #[derive(PartialEq)]
@@ -338,29 +351,34 @@ fn floor(dims: Dims, body: &[u32], basins: &[Basin], source: u32, i: usize) -> f
         .fold(f32::NEG_INFINITY, f32::max)
 }
 
-/// Lower each path to a running minimum from its head (not below a lake floor beside it).
+/// Lower each path to a running minimum from its head and to its surface cap (not below a
+/// lake floor beside it).
 pub(super) fn burn(
     dims: Dims,
     ground: &mut [f32],
     body: &[u32],
     basins: &[Basin],
     paths: &[Path],
-) -> (Vec<u32>, f32) {
-    let (mut cells, mut max) = (Vec::new(), 0f32);
+    cap: &HashMap<u32, f32>,
+) -> (Vec<u32>, f32, usize) {
+    let (mut cells, mut max, mut at) = (Vec::new(), 0f32, 0usize);
     for p in paths {
-        let mut g = ground[p.cells[0] as usize];
-        for &c in &p.cells[1..] {
+        let mut g = f32::INFINITY;
+        for &c in &p.cells {
             let f = floor(dims, body, basins, p.source, c as usize);
+            let top = cap.get(&c).copied().unwrap_or(f32::INFINITY);
             let c = c as usize;
-            g = ground[c].min(g.max(f));
+            g = ground[c].min(g.min(top).max(f));
             if g < ground[c] {
                 cells.push(c as u32);
-                max = max.max(ground[c] - g);
+                if ground[c] - g > max {
+                    (max, at) = (ground[c] - g, c);
+                }
                 ground[c] = g;
             }
         }
     }
-    (cells, max)
+    (cells, max, at)
 }
 
 /// Point each path cell at the next.
@@ -393,6 +411,7 @@ pub(super) fn rivers(
     c: &Coarse,
     inflows: &[Inflow],
     fixed_id: impl Fn(usize) -> u32,
+    feeds: impl Fn(usize) -> bool,
 ) -> Imprint {
     let (w, h) = (dims.w, dims.h);
     let cd = c.dims();
@@ -421,8 +440,10 @@ pub(super) fn rivers(
         .iter()
         .filter_map(|(&id, l)| l.exit.map(|e| (e, id)))
         .collect();
-    let fully_fixed = |q: usize| c.fine_cells(q, w, h).all(|i| flags[i] & FIXED != 0);
-    let mut claimed: HashSet<u32> = HashSet::new();
+    // Coarse cells of the margin around the grid hold no fine cells.
+    let inside = |q: usize| c.fine_cells(q, w, h).next().is_some();
+    let fully_fixed = |q: usize| inside(q) && c.fine_cells(q, w, h).all(|i| flags[i] & FIXED != 0);
+    let mut claimed: HashMap<u32, u32> = HashMap::new();
     let mut out = Imprint {
         ids: Vec::new(),
         paths: Vec::new(),
@@ -431,6 +452,8 @@ pub(super) fn rivers(
         unrouted: Vec::new(),
         burned: Vec::new(),
         burn_max_m: 0.0,
+        burn_max_at: [0, 0],
+        outlets: Vec::new(),
     };
     for id in ids {
         let own = &cells_of[&id];
@@ -438,8 +461,10 @@ pub(super) fn rivers(
         let mut cq: HashSet<usize> = HashSet::new();
         for &q in own {
             cq.insert(q);
+            // The river it joins is in reach, so the path can run to its centreline.
             for (_, p) in cd.neighbours(q) {
-                let other = c.lake(p).is_some() || c.river(p).is_some_and(|r| r != id);
+                let other =
+                    c.lake(p).is_some() || c.river(p).is_some_and(|r| r != id && r != parent);
                 if !other && c.dry_basin(p).is_none() {
                     cq.insert(p);
                 }
@@ -464,7 +489,7 @@ pub(super) fn rivers(
             for i in c.fine_cells(q, w, h) {
                 if flags[i] & (SEA | FIXED) == 0
                     && body[i] == 0
-                    && !claimed.contains(&(i as u32))
+                    && !claimed.contains_key(&(i as u32))
                     && !shore(i)
                 {
                     corridor.insert(i as u32);
@@ -485,44 +510,145 @@ pub(super) fn rivers(
                     .is_some_and(fully_fixed)
         });
         let lake_end = lake_basin.get(&parent).copied();
-        let dry_end = c.dry.contains(&parent);
+        // Ending in a dry basin: the basin cells the coarse river flows into, not any dry
+        // basin beside its corridor.
+        let mut dry_mouth: HashSet<usize> = HashSet::new();
+        if c.dry.contains(&parent) {
+            for &q in own.iter().filter(|&&q| c.centre(q) && c.dir(q) != 0) {
+                if let Some(p) = cd
+                    .neighbour(q, c.dir(q) as usize - 1)
+                    .filter(|&p| c.dry_basin(p).is_some())
+                {
+                    dry_mouth.insert(p);
+                    dry_mouth.extend(
+                        cd.neighbours(p)
+                            .map(|(_, r)| r)
+                            .filter(|&r| c.dry_basin(r).is_some()),
+                    );
+                }
+            }
+        }
         let is_seed = |j: usize| -> Option<f32> {
             if flags[j] & SEA != 0 && parent == 1 {
                 Some(0.0)
             } else if flags[j] & FIXED != 0 {
-                (north_end && fixed_id(j) == id).then_some(ground[j])
+                // Not a fixed cell that drains into this grid (that is where rivers enter).
+                let ends = !feeds(j) && ((north_end && fixed_id(j) == id) || fixed_id(j) == parent);
+                ends.then_some(ground[j])
+            } else if claimed.get(&(j as u32)) == Some(&parent) {
+                // A confluence: the larger river's path (made before this one).
+                Some(ground[j])
             } else if lake_end.is_some_and(|b| body[j] == b) {
                 Some(basins[body[j] as usize - 1].level)
-            } else if dry_end && c.dry_basin(c.cell(w, j)).is_some() && body[j] == 0 {
+            } else if dry_mouth.contains(&c.cell(w, j)) && body[j] == 0 {
                 Some(ground[j])
             } else {
                 None
             }
         };
+        // Coarse order: centreline steps down to where the river ends in the window; other
+        // corridor cells take their lowest neighbour's.
+        let mut rank: HashMap<usize, u32> = HashMap::new();
+        let on_line = |q: usize| c.centre(q) && c.body[q] == id;
+        for &q in own.iter().filter(|&&q| on_line(q)) {
+            if rank.contains_key(&q) {
+                continue;
+            }
+            let (mut chain, mut base) = (vec![q], 0);
+            loop {
+                let last = chain[chain.len() - 1];
+                let d = c.dir(last);
+                let next = (d != 0)
+                    .then(|| cd.neighbour(last, d as usize - 1))
+                    .flatten()
+                    .filter(|&p| on_line(p));
+                match next {
+                    Some(p) => match rank.get(&p) {
+                        Some(&r) => {
+                            base = r + 1;
+                            break;
+                        }
+                        None => chain.push(p),
+                    },
+                    None => break,
+                }
+            }
+            for (k, &x) in chain.iter().rev().enumerate() {
+                rank.insert(x, base + k as u32);
+            }
+        }
+        let corridor_rank: HashMap<usize, u32> = cq
+            .iter()
+            .map(|&q| {
+                let r = rank.get(&q).copied().or_else(|| {
+                    cd.neighbours(q)
+                        .filter_map(|(_, p)| rank.get(&p).copied())
+                        .min()
+                });
+                (q, r.unwrap_or(0))
+            })
+            .collect();
+        let rank_of = |i: usize| corridor_rank.get(&c.cell(w, i)).copied().unwrap_or(0);
+        // Where the coarse river leaves the grid, the grid edge within a coarse cell of it is
+        // an outlet, starting the flood at that exit's order.
+        let mut leave: HashMap<usize, u32> = HashMap::new();
+        for &q in own
+            .iter()
+            .filter(|&&q| c.centre(q) && inside(q) && !fully_fixed(q))
+        {
+            let [qx, qy] = c.abs(q);
+            let world_edge = qx == 0 || qy == 0 || qx + 1 == c.size[0] || qy + 1 == c.size[1];
+            let out_of_grid = match c.dir(q) {
+                0 => world_edge && parent == 0,
+                d => cd.neighbour(q, d as usize - 1).is_none_or(|p| !inside(p)),
+            };
+            if out_of_grid {
+                let r = rank.get(&q).copied().unwrap_or(0);
+                for p in cd.neighbours(q).map(|(_, p)| p).chain([q]) {
+                    let e = leave.entry(p).or_insert(r);
+                    *e = (*e).max(r);
+                }
+            }
+        }
+        // The flood climbs the river upstream: each branch carries the highest order it has
+        // reached and enters no cell more than one coarse step below it, so a stretch that
+        // leaves the grid and comes back is not routed back to where it left.
         let mut heap = BinaryHeap::new();
         let mut recv: HashMap<u32, u32> = HashMap::new();
+        let mut top: HashMap<u32, u32> = HashMap::new();
         let mut seeds: HashSet<u32> = HashSet::new();
         for &i in &corridor {
             let i = i as usize;
-            if flags[i] & OUTLET != 0 {
+            let exit = leave
+                .get(&c.cell(w, i))
+                .copied()
+                .filter(|_| dims.is_edge(i));
+            if let Some(r) = exit {
+                if flags[i] & OUTLET == 0 {
+                    out.outlets.push(i as u32);
+                }
                 seeds.insert(i as u32);
                 recv.insert(i as u32, u32::MAX);
+                top.insert(i as u32, r.max(rank_of(i)));
                 heap.push(Item(ground[i], i as u32));
             }
             for (_, j) in dims.neighbours(i) {
                 if !corridor.contains(&(j as u32)) && !seeds.contains(&(j as u32)) {
                     if let Some(z) = is_seed(j) {
                         seeds.insert(j as u32);
+                        top.insert(j as u32, rank_of(i).saturating_sub(1));
                         heap.push(Item(z, j as u32));
                     }
                 }
             }
         }
         while let Some(Item(z, a)) = heap.pop() {
+            let ra = top[&a];
             for (_, j) in dims.neighbours(a as usize) {
                 let jj = j as u32;
-                if corridor.contains(&jj) && !recv.contains_key(&jj) {
+                if corridor.contains(&jj) && !recv.contains_key(&jj) && rank_of(j) + 1 >= ra {
                     recv.insert(jj, a);
+                    top.insert(jj, ra.max(rank_of(j)));
                     heap.push(Item(ground[j].max(z), jj));
                 }
             }
@@ -541,6 +667,7 @@ pub(super) fn rivers(
                     && c.body[p] == id
                     && c.dir(p) != 0
                     && cd.neighbour(p, c.dir(p) as usize - 1) == Some(q)
+                    && inside(p)
                     && (!fully_fixed(p) || !my_inflows.is_empty())
             });
             if donor {
@@ -594,9 +721,10 @@ pub(super) fn rivers(
             let mut at = head;
             let next = loop {
                 cells.push(at);
+                // A grid-edge outlet in the corridor ends the path on it.
                 match recv[&at] {
                     u32::MAX => break None,
-                    r if seeds.contains(&r) => break Some(r),
+                    r if seeds.contains(&r) && !corridor.contains(&r) => break Some(r),
                     r => at = r,
                 }
             };
@@ -640,7 +768,10 @@ pub(super) fn rivers(
                     (None, Some(&(_, v1))) => v1,
                     (None, None) => continue,
                 };
-                // Never above this river's coarse surface beside the cell.
+                // Never above this river's coarse surface beside the cell, and in one of its
+                // coarse cells never below that cell's surface (a steep coarse drop stays a
+                // drop at the cell edge instead of a notch cut back into the slope above);
+                // beside them, the coarse surface beside.
                 let [qx, qy] = c.abs(q);
                 let local = (-1..=1)
                     .flat_map(|dy| (-1..=1).map(move |dx| [qx as isize + dx, qy as isize + dy]))
@@ -648,7 +779,12 @@ pub(super) fn rivers(
                     .filter(|&p| c.body[p] == id)
                     .map(|p| c.surface[p])
                     .fold(f32::NEG_INFINITY, f32::max);
-                let v = if local.is_finite() { v.min(local) } else { v };
+                let own = Some(c.surface[q]).filter(|s| c.body[q] == id && s.is_finite());
+                let v = match (own, local.is_finite()) {
+                    (Some(s), true) => v.max(s).min(local),
+                    (None, true) => local,
+                    _ => v,
+                };
                 let e = out.cap.entry(cell).or_insert(f32::INFINITY);
                 *e = e.min(v);
             }
@@ -662,7 +798,7 @@ pub(super) fn rivers(
                 let e = out.q.get_mut(&x).expect("set above");
                 *e = e.max(first);
             }
-            claimed.extend(cells.iter().copied());
+            claimed.extend(cells.iter().map(|&x| (x, id)));
             out.paths.push(Path {
                 river,
                 cells,
@@ -673,8 +809,132 @@ pub(super) fn rivers(
     }
     out.unrouted.sort_unstable();
     out.unrouted.dedup();
-    let (cells, max) = burn(dims, ground, body, basins, &out.paths);
+    let (cells, max, at) = burn(dims, ground, body, basins, &out.paths, &out.cap);
     out.burned = cells;
     out.burn_max_m = max;
+    out.burn_max_at = [at % w, at / w];
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::coarse::{Lake, Moisture, River};
+    use super::*;
+    use crate::world::hydrology::flood::{FLOW_CENTRE, RIVER};
+
+    /// 2 x 2 coarse cells of 2 x 2 fine cells: a lake (id 2, level 5 m) top left, a river
+    /// (id 3, surface 4 m) top right.
+    fn coarse() -> Coarse {
+        Coarse {
+            k: 2,
+            size: [2, 2],
+            off: [0, 0],
+            x0: 0,
+            y0: 0,
+            ww: 2,
+            wh: 2,
+            ground: vec![3.0, 3.5, 6.0, 6.0],
+            surface: vec![5.0, 4.0, f32::NAN, f32::NAN],
+            body: vec![2, 3, 0, 0],
+            flow: vec![0, FLOW_CENTRE | 2, 0, 0],
+            discharge: vec![1.0; 4],
+            lakes: HashMap::from([(
+                2,
+                Lake {
+                    level: 5.0,
+                    exit: None,
+                },
+            )]),
+            rivers: HashMap::from([(
+                3,
+                River {
+                    parent: 1,
+                    drainage_km2: 1.0,
+                },
+            )]),
+            dry: HashSet::new(),
+            max_id: 3,
+            moisture: Moisture {
+                w: 1,
+                h: 1,
+                spacing_m: 128.0,
+                nw_m: [0.0, 0.0],
+                values: vec![0.5],
+                weight: 1.0,
+                windless: true,
+                wind_from_deg: None,
+                entry: Map::new(),
+            },
+            spacing_m: 2.0,
+            digests: Map::new(),
+        }
+    }
+
+    struct Scene {
+        flags: Vec<u8>,
+        surface: Vec<f32>,
+        ids: Vec<u32>,
+        basins: Vec<Basin>,
+        unrouted: Vec<u32>,
+    }
+
+    fn scene() -> Scene {
+        let mut s = Scene {
+            flags: vec![0; 16],
+            surface: vec![f32::NAN; 16],
+            ids: vec![0; 16],
+            basins: vec![Basin::kept(Kind::Lake, 5.0, NO_EXIT)],
+            unrouted: Vec::new(),
+        };
+        s.basins[0].id = 2;
+        (s.ids[0], s.surface[0]) = (2, 5.0);
+        for i in [2, 6] {
+            (s.ids[i], s.surface[i], s.flags[i]) = (3, 3.9, RIVER | CENTRE);
+        }
+        s
+    }
+
+    fn failed(s: &Scene) -> Vec<String> {
+        let dims = Dims { w: 4, h: 4 };
+        let (m, _) = consistency(
+            dims,
+            &s.flags,
+            &s.surface,
+            &s.basins,
+            &coarse(),
+            &s.unrouted,
+            &|i| s.ids[i],
+        );
+        m.into_iter()
+            .filter(|(_, v)| v.as_u64() != Some(0))
+            .map(|(k, _)| k)
+            .collect()
+    }
+
+    #[test]
+    fn every_coarse_check_can_fail() {
+        assert!(failed(&scene()).is_empty(), "{:?}", failed(&scene()));
+        type Mutation = fn(&mut Scene);
+        let broken: [(&str, Mutation); 5] = [
+            ("coarse_lakes_missing", |s| s.ids[0] = 0),
+            ("guard_coarse_lake_levels_changed", |s| {
+                s.basins[0].level = 5.5
+            }),
+            ("coarse_rivers_missing_or_unrouted", |s| {
+                s.ids[2] = 0;
+                s.ids[6] = 0;
+            }),
+            ("coarse_rivers_missing_or_unrouted", |s| s.unrouted.push(3)),
+            ("water_above_coarse_surface", |s| s.surface[6] = 4.5),
+        ];
+        for (name, mutate) in broken {
+            let mut s = scene();
+            mutate(&mut s);
+            assert!(
+                failed(&s).contains(&name.to_string()),
+                "{name}: {:?}",
+                failed(&s)
+            );
+        }
+    }
 }

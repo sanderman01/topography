@@ -367,18 +367,24 @@ pub(super) fn extract(
     drop(order);
 
     // Beside a lake a river never stands below it: the surface rises to the level there (an
-    // outflow along the shore stays at it), and lower surfaces upstream rise to it too (a
-    // backwater). Dry banks below a raised surface are raised later, as lips are.
+    // outflow along the shore stays at it). Nor below the water it flows into (a sill, a
+    // fixed cell, a raised one). Lower surfaces upstream rise too (a backwater). Dry banks
+    // below a raised surface are raised later, as lips are.
     let mut stack: Vec<usize> = Vec::new();
-    for (i, s) in surface.iter_mut().enumerate() {
+    for i in 0..n {
         if centre(flags, i) && !fixed(flags, i) {
-            let level = dims
+            let beside = dims
                 .neighbours(i)
                 .filter(|&(_, j)| lake(flags, body, j))
                 .map(|(_, j)| basins[body[j] as usize - 1].level)
                 .fold(f32::NEG_INFINITY, f32::max);
-            if *s < level {
-                *s = level;
+            let below = receiver(dims, dir, i)
+                .map(|r| surface[r])
+                .filter(|s| !s.is_nan())
+                .unwrap_or(f32::NEG_INFINITY);
+            let level = beside.max(below);
+            if surface[i] < level {
+                surface[i] = level;
                 ch.raised.push(i as u32);
                 stack.push(i);
             }
@@ -438,6 +444,28 @@ pub(super) fn extract(
             ground[i] = bed;
         }
     };
+    // Upstream of the previous band's channel, beds stay at or above its bed.
+    let mut floor: HashMap<u32, f32> = HashMap::new();
+    let mut stack: Vec<(usize, f32)> = (0..n)
+        .filter(|&i| centre(flags, i) && !fixed(flags, i))
+        .filter_map(|i| {
+            receiver(dims, dir, i)
+                .filter(|&r| fixed(flags, r) && centre(flags, r))
+                .map(|r| (i, ground[r]))
+        })
+        .collect();
+    while let Some((c, f)) = stack.pop() {
+        let e = floor.entry(c as u32).or_insert(f32::NEG_INFINITY);
+        if f <= *e {
+            continue;
+        }
+        *e = f;
+        for (_, d) in dims.neighbours(c) {
+            if centre(flags, d) && !fixed(flags, d) && receiver(dims, dir, d) == Some(c) {
+                stack.push((d, f));
+            }
+        }
+    }
     for i in 0..n {
         if !centre(flags, i) || fixed(flags, i) {
             continue;
@@ -450,6 +478,9 @@ pub(super) fn extract(
         // Only near sea level: rivers off a cliff coast fall into the sea.
         if let Some(k) = cells_to_sea(dims, dir, flags, i).filter(|_| s <= MOUTH_CELLS as f32 * d) {
             bed = bed.min(-d * (MOUTH_CELLS - k) as f32 / MOUTH_CELLS as f32);
+        }
+        if let Some(&f) = floor.get(&(i as u32)) {
+            bed = bed.max(f);
         }
         cut(ground, i, bed, &mut ch);
     }

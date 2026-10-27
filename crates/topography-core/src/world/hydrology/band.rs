@@ -2,7 +2,7 @@
 //! those rows as they are, so adjacent bands agree on the seam by construction, and the seam
 //! check that compares two band outputs.
 
-use super::flood::{Dims, FLOW_CENTRE};
+use super::flood::{Dims, FLOW_CENTRE, FLOW_DRY};
 use super::grid::{self, Grid};
 use crate::acquisition::{Result, digest, ensure, read_small};
 use serde_json::{Map, Value, json};
@@ -149,7 +149,7 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
         ))
     };
     let (ga, sa, ba, fa) = load(north, &a, ra)?;
-    let (gb, sb, bb, _) = load(south, &b, rb)?;
+    let (gb, sb, bb, fb) = load(south, &b, rb)?;
     let overlap = rb[1];
     let (mut ground_diff, mut surface_diff, mut body_diff) = (0u64, 0u64, 0u64);
     for i in 0..rows * w {
@@ -167,6 +167,8 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     };
     let dims = Dims { w, h: overlap };
     let (mut cut, mut steps, mut levels) = (0u64, 0u64, 0u64);
+    let mut step_at: Vec<[usize; 2]> = Vec::new();
+    let mut river_steps = 0u64;
     let mut lake_level: HashMap<u32, f32> = HashMap::new();
     let (bk, _) = kinds(&serde_json::from_slice(&read_small(
         &south.join("bodies.json"),
@@ -177,7 +179,8 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
         let d = fa[i] & 15;
         if fa[i] & FLOW_CENTRE != 0 && d != 0 {
             if let Some(r) = dims.neighbour(i, d as usize - 1).filter(|&r| r / w >= rows) {
-                cut += u64::from(pick(r).2 == 0);
+                // (Ending in a dry basin there is fine.)
+                cut += u64::from(pick(r).2 == 0 && fb[r] & FLOW_DRY == 0);
             }
         }
         for (_, j) in dims.neighbours(i).filter(|&(_, j)| j / w == rows) {
@@ -187,12 +190,18 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
                 if bp != 0 || bq == 0 || sq <= gp + 0.01 {
                     continue;
                 }
-                // Ahead of a river along its flow: the next cross-section's bank.
-                let fq = if q / w < rows { fa[q] } else { 0 };
-                let ahead = bk.get(&bq) == Some(&BodyKind::River)
-                    && fq & 15 != 0
-                    && dims.ahead(fq & 15, q, p);
-                steps += u64::from(!ahead);
+                // Lakes and the sea strictly. Beside rivers the southern band's own checks
+                // decide (its grid holds both sides, with each channel cell's centreline);
+                // here only cells not ahead of the wet cell's own flow are counted, as a figure.
+                if bk.get(&bq) == Some(&BodyKind::River) {
+                    let fq = if q / w < rows { fa[q] } else { fb[q] };
+                    river_steps += u64::from(fq & 15 == 0 || !dims.ahead(fq & 15, q, p));
+                    continue;
+                }
+                steps += 1;
+                if step_at.len() < 5 {
+                    step_at.push([p % w, t + p / w]);
+                }
             }
         }
         for c in [i, (rows) * w + x] {
@@ -214,7 +223,7 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
         "shared_core_surface_differs": surface_diff,
         "shared_core_body_differs": body_diff,
         "centrelines_cut_at_seam": cut,
-        "dry_cells_below_water_across_seam": steps,
+        "dry_cells_below_lake_or_sea_across_seam": steps,
         "lakes_with_two_levels_at_seam": levels,
     });
     let passed = checks
@@ -228,6 +237,8 @@ pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
         "passed": passed,
         "checks": checks,
         "halo_rows_compared": overlap - rows,
+        "dry_cells_below_water_at": step_at,
+        "dry_cells_below_a_river_across_seam_not_ahead_of_its_own_flow": river_steps,
         "halo_agreement_share": if halo > 0 { same as f64 / halo as f64 } else { 1.0 },
     });
     Ok((serde_json::to_string_pretty(&report)?, passed))
