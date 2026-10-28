@@ -425,6 +425,8 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
     """L3 over the n32² square of 32 m cells at (x0, y0), in bands of rows north to south
     into a memory-mapped raw 4 m surface (resumable). Each band has a halo above and below,
     cross-faded into the band above; its starting noise is drawn per block of rows."""
+    import torch
+
     from .model import plan_windows, row_noise, sample_field
 
     level = cascade.LEVELS["l3"]
@@ -516,12 +518,11 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
         del h
         progress["l3_band_s"].append(time.time() - t)
         progress["l3_bands_done"] = k + 1
+        if torch.cuda.is_available():  # the largest of the run's processes (resumed runs have several)
+            progress["times"]["peak_vram_gb"] = max(progress["times"].get("peak_vram_gb", 0.0),
+                                                    round(torch.cuda.max_memory_reserved() / 2**30, 2))
         save()
         print(f"L3 band {k + 1}/{len(bands)} rows {a}-{b} in {progress['l3_band_s'][-1]:.0f} s, {note}", flush=True)
-    import torch
-
-    if torch.cuda.is_available():  # this process only; a resumed run counts its last part
-        progress["times"]["peak_vram_gb"] = round(torch.cuda.max_memory_reserved() / 2**30, 2)
     del model
     return raw
 
