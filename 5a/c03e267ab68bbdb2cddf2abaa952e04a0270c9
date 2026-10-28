@@ -1,0 +1,23 @@
+crates/topography-core/src/world/hydrology/erosion.rs
+  s_8c1b40ea9c1e0d::t_cc72fa3ef11ed2 283-284,287,296
+crates/topography-core/src/world/hydrology/band.rs
+  s_8c1b40ea9c1e0d::t_fc42d535354a67 126-168,174-175,187-188,190,217-219,513-523,543-553,582
+  s_8c1b40ea9c1e0d::t_1a769fffe71f86 558-580
+  s_8c1b40ea9c1e0d::t_719baea8d0de41 581
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ac03e267ab68bbdb2cddf2abaa952e04a0270c9",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
