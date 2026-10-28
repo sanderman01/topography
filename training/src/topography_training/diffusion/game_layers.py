@@ -38,6 +38,7 @@ BIOME_MIX_M = 64.0  # gaussian sigma of each class's share across biome borders
 ALPINE_BAND_M = 400.0  # grass gives way to bare ground over this band above the tree line
 ROCK_RAMP_DEG = (30.0, 40.0)  # bare rock ramps in around 35 degrees
 BARE_CLASS_DEG = (10.0, 20.0)  # bare classes are bare from gentle slopes up
+WATER_WET = 0.25  # land-cover water at this wet share, undithered: keeps 1 m rivers whole at 2 m
 BIOME_SEED, LANDCOVER_SEED = 5, 6  # blue-noise tiles, distinct from training's and the collage's
 TREE, SHRUB, GRASS, BARE, SNOW, WATER = 10, 20, 30, 60, 70, 80  # ESA WorldCover codes
 # Open (non-forest, non-snow) land by terrain class id (0: unlabelled).
@@ -50,7 +51,7 @@ WORLDCOVER_RGB = {10: "006400", 20: "ffbb22", 30: "ffff4c", 40: "f096ff", 50: "f
 DENSITIES = ("vegetation-density", "snow-cover", "talus-density")
 CLASSES = ("biome", "land-cover")
 NAMES = DENSITIES + CLASSES
-ROWS = 256  # about 3.4 GB peak at 65,536² (32,768 game texels wide)
+ROWS = 256  # about 3.7 GB peak at 65,536² (32,768 game texels wide; extrapolated from 2,048² runs)
 LATTICE = "value (i, j) is the area mean of the footprint centred on world sample (i·2^L, j·2^L)"
 
 
@@ -106,7 +107,7 @@ def _fields(sampler, h, wet, moist, y0_m, x0_m, s):
 
 
 def land_cover(biome, h, slope, treeline, veg, snow, wet, u):
-    """WorldCover codes: each density or ramp becomes that share of texels via noise u."""
+    """WorldCover codes: each density or ramp becomes that share of texels via noise u; water is hard."""
     ramp = cover._ramp
     out = OPEN[biome]
     bare_class = np.isin(biome, BARE_CLASSES)
@@ -114,9 +115,10 @@ def land_cover(biome, h, slope, treeline, veg, snow, wet, u):
     alpine = np.where(ramp(h - treeline, 0.0, ALPINE_BAND_M) > u, BARE, GRASS)
     out = np.where(~bare_class & (h > treeline), alpine, out)
     out = np.where(ramp(slope, *ROCK_RAMP_DEG) > u, BARE, out)
-    out = np.where(veg > u, TREE, out)
+    # Trees from the top of the noise and snow from the bottom: veg <= 1 - snow keeps them disjoint.
+    out = np.where(veg > 1 - u, TREE, out)
     out = np.where(snow > u, SNOW, out)
-    return np.where(wet > u, WATER, out).astype(np.uint8)
+    return np.where(wet >= WATER_WET, WATER, out).astype(np.uint8)
 
 
 def _lerp_index(pos: np.ndarray, n: int):
@@ -222,7 +224,8 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
                    "talus_deg": [list(t) for t in TALUS_DEG], "talus_reach_m": TALUS_REACH_M,
                    "biome_mix_m": BIOME_MIX_M, "alpine_band_m": ALPINE_BAND_M,
                    "rock_ramp_deg": list(ROCK_RAMP_DEG), "bare_class_deg": list(BARE_CLASS_DEG),
-                   "blue_noise_seeds": {"biome": BIOME_SEED, "land-cover": LANDCOVER_SEED}, "rows": rows},
+                   "water_wet": WATER_WET, "blue_noise_seeds": {"biome": BIOME_SEED, "land-cover": LANDCOVER_SEED},
+                   "rows": rows},
         "layers": list(NAMES),
     }
     # Replace, not rewrite: world copies may hard-link files of the original.
@@ -232,24 +235,34 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     return manifest["game"]
 
 
+def _area_mean(path: Path, mg: int, k: int, value) -> np.ndarray:
+    """k×k means of value(uint8 rows) over an mg² layer, read in row bands to bound RAM."""
+    a = np.memmap(path, np.uint8, "r", shape=(mg, mg))
+    m = mg // k
+    band = max(1, (1 << 24) // (k * mg))  # output rows per band: about 16 M texels read at once
+    out = []
+    for r in range(0, m, band):
+        b = min(r + band, m)
+        v = value(np.asarray(a[r * k : b * k, : m * k]))
+        out.append(v.reshape(b - r, k, m, k, -1).mean(axis=(1, 3)))
+    return np.concatenate(out)
+
+
 def _png(world: Path, game: dict, out: Path, px: int = 1024) -> None:
     from PIL import Image
 
     mg = game["size"][0]
     k = max(1, mg // px)
-    rgb = []
-    for name in ("snow-cover", "vegetation-density", "talus-density"):
-        a = np.memmap(world / "game" / f"{name}.u8", np.uint8, "r", shape=(mg, mg))
-        a = np.asarray(a[: mg // k * k, : mg // k * k], np.float32)
-        rgb.append(a.reshape(mg // k, k, mg // k, k).mean(axis=(1, 3)))
+    game_dir = world / "game"
+    rgb = [_area_mean(game_dir / f"{name}.u8", mg, k, lambda v: v.astype(np.float32)[..., None])[..., 0]
+           for name in ("snow-cover", "vegetation-density", "talus-density")]
     out.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(np.round(np.stack(rgb, -1)).astype(np.uint8)).save(out)
     # Land cover in WorldCover colours, area-averaged so the dither reads as a blend.
     lut = np.zeros((256, 3), np.float32)
     for code, hexc in WORLDCOVER_RGB.items():
         lut[code] = [int(hexc[i : i + 2], 16) for i in (0, 2, 4)]
-    a = np.memmap(world / "game" / "land-cover.u8", np.uint8, "r", shape=(mg, mg))[: mg // k * k, : mg // k * k]
-    c = lut[np.asarray(a)].reshape(mg // k, k, mg // k, k, 3).mean(axis=(1, 3))
+    c = _area_mean(game_dir / "land-cover.u8", mg, k, lambda v: lut[v])
     Image.fromarray(np.round(c).astype(np.uint8)).save(_landcover_png(out))
 
 

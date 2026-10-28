@@ -63,7 +63,7 @@ def dither_labels(cells: np.ndarray, cell_m: float, band_m: float, noise: np.nda
 
 @lru_cache(maxsize=1)
 def _tile() -> np.ndarray:
-    return blue_noise(NOISE_TILE, seed=2)
+    return _tile_seeded(2)
 
 
 def noise_at(rng: np.random.Generator, shape) -> np.ndarray:
