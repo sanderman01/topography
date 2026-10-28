@@ -1,14 +1,17 @@
 //! Heightmap and game layer texture tiles with area-mean quadtree LOD levels
 //! (master plan §5, §10; manifest v2).
 
+use super::checks::Checks;
 use super::layers::{
     APRON, GAME_CLASSES, GAME_DENSITIES, HEIGHT, LAND_COVER, LayerSpec, MOISTURE, WATER_BODY,
     WATER_COVERAGE, WATER_SURFACE, metadata,
 };
 use super::legends::legends;
 use super::pyramid::{Mean, Mode, Pyramid, Reduce};
-use super::tiles::{Checks, Geometry, RowWindow, TileWriter, cut};
-use super::water::{Bodies, REACH, Terrain, TerrainRow, WaterStats, extended_surface, level0};
+use super::tiles::{Geometry, RowWindow, TileWriter, cut};
+use super::water::{
+    Bodies, Kind, REACH, Terrain, TerrainRow, WaterStats, extended_surface, level0,
+};
 use crate::acquisition::{
     AcquisitionError, Result, digest, ensure, hash_file, io_context, raster, read_small,
 };
@@ -206,10 +209,17 @@ struct TerrainOutput<'a> {
     water: [LayerSpec; 3],
     windows: Vec<RowWindow<TerrainRow>>,
     code: &'a dyn Fn(f32) -> u16,
+    bodies: &'a Bodies,
 }
 
 impl<'a> TerrainOutput<'a> {
-    fn new(height: LayerSpec, last: u32, ctx: &Ctx, code: &'a dyn Fn(f32) -> u16) -> Self {
+    fn new(
+        height: LayerSpec,
+        last: u32,
+        ctx: &Ctx,
+        code: &'a dyn Fn(f32) -> u16,
+        bodies: &'a Bodies,
+    ) -> Self {
         let surface = LayerSpec {
             scale: height.scale,
             offset: height.offset,
@@ -225,10 +235,17 @@ impl<'a> TerrainOutput<'a> {
             water,
             windows,
             code,
+            bodies,
         }
     }
 
     fn row(&mut self, ctx: &mut Ctx, level: u32, y: usize, row: &TerrainRow) -> Result<()> {
+        if level > 0 {
+            let below = (0..row.body.len())
+                .filter(|&x| row.coverage[x] >= 0.5 && row.surface[x] < row.ground[x])
+                .count() as u64;
+            ctx.checks.coarse_wet_below_ground[level as usize - 1] += below;
+        }
         let Some((ty, first, rows)) = self.windows[level as usize].push(y, row.clone()) else {
             return Ok(());
         };
@@ -242,6 +259,7 @@ impl<'a> TerrainOutput<'a> {
         let surface: Vec<&[f32]> = picked.iter().map(|&i| surface[i].as_slice()).collect();
         let coverage: Vec<&[f32]> = picked.iter().map(|&i| &rows[i].coverage[..]).collect();
         let body: Vec<&[u16]> = picked.iter().map(|&i| &rows[i].body[..]).collect();
+        let ground: Vec<&[f32]> = picked.iter().map(|&i| &rows[i].ground[..]).collect();
         let (g, samples) = (ctx.geometry, ctx.world >> level);
         for tx in 0..g.count(samples) {
             let c = cut(&coverage, g, samples, tx, APRON);
@@ -260,17 +278,63 @@ impl<'a> TerrainOutput<'a> {
                 .collect();
             let w = c.len() / h;
             let [ss, cs, bs] = &self.water;
-            let texels = [
-                (ss, encode(ss, &s, self.code)),
-                (cs, c),
-                (bs, encode(bs, &b, &|id| id)),
-            ];
+            let st = encode(ss, &s, self.code);
+            let codes: Vec<u16> = st
+                .chunks_exact(2)
+                .map(|p| u16::from_be_bytes([p[0], p[1]]))
+                .collect();
+            self.check_tile(ctx, level, (tx, ty), w, &codes, &c, &b, &ground);
+            let texels = [(ss, st), (cs, c), (bs, encode(bs, &b, &|id| id))];
             for (spec, t) in texels {
                 ctx.writer
                     .write(spec, level, tx, ty, w, h, &t, &mut ctx.checks)?;
             }
         }
         Ok(())
+    }
+
+    /// Records lake and sea surface codes of a water tile and, at level 0, compares its
+    /// interior coverage with surface code ≥ ground code.
+    #[allow(clippy::too_many_arguments)]
+    fn check_tile(
+        &self,
+        ctx: &mut Ctx,
+        level: u32,
+        (tx, ty): (usize, usize),
+        w: usize,
+        surface: &[u16],
+        coverage: &[u8],
+        body: &[u16],
+        ground: &[&[f32]],
+    ) {
+        let mut last = (0u16, 0u16);
+        for (&id, &code) in body.iter().zip(surface) {
+            if id > 0 && (id, code) != last {
+                last = (id, code);
+                if self.bodies.kind[usize::from(id)] != Kind::River {
+                    ctx.checks.record_lake(level, id, code);
+                }
+            }
+        }
+        if level > 0 {
+            return;
+        }
+        let (g, samples) = (ctx.geometry, ctx.world);
+        let (x0, tw) = g.span(tx, samples);
+        let (y0, th) = g.span(ty, samples);
+        for (r, row) in ground.iter().enumerate().skip(APRON).take(th) {
+            for k in APRON..APRON + tw {
+                let i = r * w + k;
+                let wet = body[i] > 0 && surface[i] >= (self.code)(row[x0 + k - APRON]);
+                if wet != (coverage[i] == 255) {
+                    ctx.checks.coverage_mismatch += 1;
+                    let (x, y) = (x0 + k - APRON, y0 + r - APRON);
+                    ctx.checks.example("coverage_mismatch", || {
+                        format!("at ({x}, {y}): coverage {}, body {}", coverage[i], body[i])
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -470,8 +534,10 @@ pub fn heightmap(
     }
     let moisture = moisture(world, &manifest, origin, (w, spacing), last)?;
 
-    // Range from ground and finite water surfaces: terrain continues under water.
+    // Range from ground, finite water surfaces and the levels of lakes and seas with cells:
+    // terrain continues under water.
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    let mut present = vec![false; bodies.len()];
     let mut buf = Vec::new();
     for y in (0..h).step_by(CHUNK_ROWS) {
         let count = CHUNK_ROWS.min(h - y);
@@ -486,6 +552,26 @@ pub fn heightmap(
             lo = lo.min(s);
             hi = hi.max(s);
         }
+        body.rows(y, count, &mut buf)?;
+        let mut previous = 0;
+        for b in buf.chunks_exact(4) {
+            let b = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            if b != 0 && b != previous {
+                previous = b;
+                if let Some(id) = bodies.export_id(b) {
+                    present[usize::from(id)] = true;
+                }
+            }
+        }
+    }
+    // Lakes and seas are written at their level, which must not be clamped.
+    for (_, &level) in present
+        .iter()
+        .zip(&bodies.level_m)
+        .filter(|(p, l)| **p && l.is_finite())
+    {
+        lo = lo.min(level);
+        hi = hi.max(level);
     }
     ensure(hi > lo, "world needs a positive height range")?;
     let (h_min, h_max) = (f64::from(lo), f64::from(hi));
@@ -508,7 +594,7 @@ pub fn heightmap(
     };
     let mut ctx = Ctx {
         writer: TileWriter::new(stage.path(), geometry.shared),
-        checks: Checks::default(),
+        checks: Checks::new(last),
         geometry,
         world: w,
     };
@@ -520,7 +606,7 @@ pub fn heightmap(
     };
     let mut terrain = (
         Pyramid::new(Terrain { bodies: &bodies }, 0, last),
-        TerrainOutput::new(height_spec, last, &ctx, &height_code),
+        TerrainOutput::new(height_spec, last, &ctx, &height_code, &bodies),
     );
     let mut stats = WaterStats::new(&bodies);
     let (game_level, mut classes, mut densities) = match &mut game {
@@ -639,13 +725,15 @@ pub fn heightmap(
         }
         layer_meta.insert(spec.name.into(), metadata(&spec, spacing, last));
     }
+    // A failed check drops the stage unpublished.
     ensure(
-        ctx.checks.shared_edge_mismatches == 0,
-        format!(
-            "tile edges differ from their neighbours: {} texels ({})",
-            ctx.checks.shared_edge_mismatches,
-            ctx.checks.examples.join("; ")
-        ),
+        ctx.checks.passed(),
+        format!("export checks failed: {}", ctx.checks.failures()),
+    )?;
+    let validation = ctx.checks.report();
+    crate::acquisition::write_new(
+        &stage.path().join("report.json"),
+        &serde_json::to_vec_pretty(&validation)?,
     )?;
     ctx.writer.finish()?;
 
@@ -689,7 +777,7 @@ pub fn heightmap(
         "lod": "area mean pyramid: level k+1 texel i is the [1/4, 1/2, 1/4]² footprint mean of level k samples 2i-1..2i+1 (mode for classes); texel i of level k sits at level-0 sample i·2^k",
         "apron_texels": APRON,
         "encoding": {"format": "PNG grayscale 16-bit", "h_min_m": h_min, "h_max_m": h_max, "step_m": step,
-            "decode": "height_m = h_min_m + code * step_m", "range_from": "ground and water surface",
+            "decode": "height_m = h_min_m + code * step_m", "range_from": "ground, water surface and lake and sea levels",
             "max_quantization_error_m": max_error},
         "layers": layer_meta,
         "legends": legends,
@@ -697,6 +785,7 @@ pub fn heightmap(
         "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix in layers.{layer}.prefix; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), aprons beyond the world edge repeat the edge texel",
         "levels": levels,
         "masters": master_files,
+        "validation": validation,
         "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
         "checksums": "checksums.txt: SHA-256 of every tile, `sha256sum -c checksums.txt`",
     });

@@ -1,5 +1,6 @@
 //! Tile geometry, row windows, apron cutting, PNG writing and the shared-edge check.
 
+use super::checks::Checks;
 use super::layers::LayerSpec;
 use crate::acquisition::{AcquisitionError, Result, digest, write_new};
 use std::{
@@ -26,27 +27,6 @@ impl Geometry {
     pub fn span(self, t: usize, samples: usize) -> (usize, usize) {
         let first = t * self.intervals;
         (first, self.per_tile().min(samples - first))
-    }
-}
-
-/// Export checks gathered while writing (extended by the validation task).
-#[derive(Default)]
-pub(super) struct Checks {
-    /// Level 0: body > 0 with a finite surface at or below the ground.
-    pub wet_not_above_ground: u64,
-    pub wet_without_surface: u64,
-    pub surface_without_body: u64,
-    /// Level 0: a lake or sea cell whose raster surface does not encode to its level's code.
-    pub lake_levels_off: u64,
-    pub shared_edge_mismatches: u64,
-    pub examples: Vec<String>,
-}
-
-impl Checks {
-    pub fn example(&mut self, text: String) {
-        if self.examples.len() < 3 {
-            self.examples.push(text);
-        }
     }
 }
 
@@ -185,7 +165,9 @@ impl TileWriter {
                 .count() as u64;
             if bad > 0 || kept.len() != now.len() {
                 checks.shared_edge_mismatches += bad.max(1);
-                checks.example(format!("{path}: {bad} texels differ from the {side} tile"));
+                checks.example("shared_edge_mismatches", || {
+                    format!("{path}: {bad} texels differ from the {side} tile")
+                });
             }
         };
         if k > 0 && tx > 0 {

@@ -1,8 +1,8 @@
 //! Water bodies, level-0 terrain rows, the coupled terrain and water reducer, and the
 //! water-surface extension past the shore.
 
+use super::checks::Checks;
 use super::pyramid::{Reduce, W, mean_at, taps};
-use super::tiles::Checks;
 use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
 use serde_json::Value;
 use std::{collections::HashMap, fs, io::Read, path::Path};
@@ -208,14 +208,9 @@ impl Reduce for Terrain<'_> {
     }
 }
 
-fn note(checks: &mut Checks, check: &str, x: usize, y: usize) {
-    if checks.examples.len() < 3 {
-        checks.example(format!("{check} at ({x}, {y})"));
-    }
-}
-
-/// Level-0 row; counts world inconsistencies into `checks`. Inconsistent cells are dry.
-/// `code` is the height encoding, used to compare lake and sea surfaces with their level.
+/// Level-0 row; counts world inconsistencies into `checks`, which fail the export.
+/// Inconsistent cells are dry. `code` is the height encoding, used to compare lake and sea
+/// surfaces with their level.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn level0(
     ground: &[f32],
@@ -239,7 +234,9 @@ pub(super) fn level0(
         if b == 0 {
             if s.is_finite() {
                 checks.surface_without_body += 1;
-                note(checks, "surface_without_body", x, y);
+                checks.example("surface_without_body", || {
+                    format!("at ({x}, {y}): surface {s} m")
+                });
             }
             continue;
         }
@@ -254,7 +251,9 @@ pub(super) fn level0(
                 let level = bodies.level_m[i];
                 if code(s) != code(level) {
                     checks.lake_levels_off += 1;
-                    note(checks, "lake_levels_off", x, y);
+                    checks.example("lake_levels_off", || {
+                        format!("at ({x}, {y}): body {b} surface {s} m, level {level} m")
+                    });
                 }
                 level
             }
@@ -262,10 +261,12 @@ pub(super) fn level0(
         };
         if !s.is_finite() {
             checks.wet_without_surface += 1;
-            note(checks, "wet_without_surface", x, y);
+            checks.example("wet_without_surface", || format!("at ({x}, {y}): body {b}"));
         } else if s <= g {
             checks.wet_not_above_ground += 1;
-            note(checks, "wet_not_above_ground", x, y);
+            checks.example("wet_not_above_ground", || {
+                format!("at ({x}, {y}): body {b} surface {s} m, ground {g} m")
+            });
         } else {
             row.coverage[x] = 1.0;
             row.surface[x] = s;

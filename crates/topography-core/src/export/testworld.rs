@@ -25,7 +25,8 @@ fn save(world: &Path, manifest: &Value) {
 
 /// Writes an `n`² world at `spacing` m into `dir/world` and returns that directory.
 /// `cell(x, y)` gives (ground, surface, body); body 1 is sea at level 0, 2..=9 lakes at the
-/// ground maximum of their cells + 1 (both set their surface), others rivers. Body 0 is dry.
+/// ground maximum of their cells + 1 (both set their surface; a finite lake surface is kept),
+/// others rivers. Body 0 is dry.
 pub(crate) fn write(
     dir: &Path,
     n: usize,
@@ -46,7 +47,7 @@ pub(crate) fn write(
     let surface = |&(_, s, b): &(f32, f32, u32)| match b {
         0 => f32::NAN,
         1 => 0.0,
-        2..=9 => lake_level[&b],
+        2..=9 if s.is_nan() => lake_level[&b],
         _ => s,
     };
     let f32s =
