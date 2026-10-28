@@ -151,7 +151,8 @@ class Sampler:
         # Forest share sets how much is wooded; it thins toward the tree line and on steep ground.
         share = forest * _ramp(treeline - h, 0.0, TREE_FADE_M) * (1 - _ramp(slope, *TREE_STEEP_DEG))
         veg = land & ~snow & (share + 0.25 * patchy > 0.5) & (share > 0.05)
-        return {"snow": snow, "vegetation": veg, "treeline": treeline, "slope": slope}
+        return {"snow": snow, "vegetation": veg, "treeline": treeline, "slope": slope,
+                "share": share.astype(np.float32), "snowline": line.astype(np.float32)}
 
     def cover(self, h: np.ndarray, y0_m: float, x0_m: float, cell_m: float) -> tuple[np.ndarray, np.ndarray]:
         f = self.fields(h, y0_m, x0_m, cell_m)
