@@ -463,6 +463,31 @@ fn moisture(
     Ok(Some((level, rows)))
 }
 
+/// Bytes available to this user on the file system of `dir` (POSIX `df`).
+fn free_bytes(dir: &Path) -> Result<u64> {
+    let out = io_context(
+        "run df",
+        std::process::Command::new("df")
+            .args(["-Pk"])
+            .arg(dir)
+            .output(),
+    )?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let kb = text
+        .lines()
+        .nth(1)
+        .and_then(|l| l.split_whitespace().nth(3))
+        .and_then(|v| v.parse::<u64>().ok());
+    match kb {
+        Some(kb) if out.status.success() => Ok(kb * 1024),
+        _ => Err(AcquisitionError::Invalid(format!(
+            "cannot read free space of {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))),
+    }
+}
+
 /// Dirs 0755 and files 0644 below `dir`: staged tempfiles are 0700/0600, and the game reads
 /// exports as another user.
 fn world_readable(dir: &Path) -> Result<()> {
@@ -540,27 +565,31 @@ pub fn heightmap(
     let moisture = moisture(world, &manifest, origin, (w, spacing), last)?;
 
     // Range from ground, finite water surfaces and the levels of lakes and seas with cells:
-    // terrain continues under water.
+    // terrain continues under water. Level-0 water problems fail here, before the long pass.
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     let mut present = vec![false; bodies.len()];
-    let mut buf = Vec::new();
-    for y in (0..h).step_by(CHUNK_ROWS) {
-        let count = CHUNK_ROWS.min(h - y);
-        elevation.rows(y, count, &mut buf)?;
+    let mut early = Checks::new(0);
+    let (mut buf, mut surface_buf, mut body_buf) = (Vec::new(), Vec::new(), Vec::new());
+    for y0 in (0..h).step_by(CHUNK_ROWS) {
+        let count = CHUNK_ROWS.min(h - y0);
+        elevation.rows(y0, count, &mut buf)?;
+        surface.rows(y0, count, &mut surface_buf)?;
+        body.rows(y0, count, &mut body_buf)?;
         for e in floats(&buf) {
             ensure(e.is_finite(), "non-finite elevation")?;
             lo = lo.min(e);
             hi = hi.max(e);
         }
-        surface.rows(y, count, &mut buf)?;
-        for s in floats(&buf).filter(|s| s.is_finite()) {
+        for s in floats(&surface_buf).filter(|s| s.is_finite()) {
             lo = lo.min(s);
             hi = hi.max(s);
         }
-        body.rows(y, count, &mut buf)?;
+        let ids: Vec<u32> = body_buf
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
         let mut previous = 0;
-        for b in buf.chunks_exact(4) {
-            let b = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+        for &b in &ids {
             if b != 0 && b != previous {
                 previous = b;
                 if let Some(id) = bodies.export_id(b) {
@@ -568,7 +597,19 @@ pub fn heightmap(
                 }
             }
         }
+        for r in 0..count {
+            let line = 4 * w * r..4 * w * (r + 1);
+            let ground: Vec<f32> = floats(&buf[line.clone()]).collect();
+            let water: Vec<f32> = floats(&surface_buf[line]).collect();
+            // Lake levels need the encoding; they are checked in the main pass.
+            let ids = &ids[w * r..w * (r + 1)];
+            level0(&ground, &water, ids, &bodies, &|_| 0, &mut early, y0 + r)?;
+        }
     }
+    ensure(
+        early.passed(),
+        format!("world checks failed: {}", early.failures()),
+    )?;
     // Lakes and seas are written at their level, which must not be clamped.
     for (_, &level) in present
         .iter()
@@ -592,7 +633,25 @@ pub fn heightmap(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     io_context("create export parent", fs::create_dir_all(parent))?;
-    let stage = io_context("stage export", tempfile::tempdir_in(parent))?;
+    // Measured exports take about 1.3 B per level-0 sample; masters add a raw and a COG copy.
+    let need = (w * h) as u64 * if masters { 10 } else { 2 };
+    let free = free_bytes(parent)?;
+    ensure(
+        free >= need,
+        format!(
+            "export needs about {:.1} GB free beside the output, {:.1} GB available",
+            need as f64 / 1e9,
+            free as f64 / 1e9
+        ),
+    )?;
+    // A killed export leaves this stage behind; remove it by hand.
+    let name = output.file_name().unwrap_or_default().to_string_lossy();
+    let stage = io_context(
+        "stage export",
+        tempfile::Builder::new()
+            .prefix(&format!(".{name}.stage-"))
+            .tempdir_in(parent),
+    )?;
     let geometry = Geometry {
         intervals,
         shared: layout == Layout::SharedEdge,
@@ -640,7 +699,7 @@ pub fn heightmap(
         None => (0, Vec::new(), Vec::new()),
     };
 
-    let (mut game_buf, mut surface_buf, mut body_buf) = (Vec::new(), Vec::new(), Vec::new());
+    let mut game_buf = Vec::new();
     for y0 in (0..h).step_by(CHUNK_ROWS) {
         let count = CHUNK_ROWS.min(h - y0);
         elevation.rows(y0, count, &mut buf)?;
