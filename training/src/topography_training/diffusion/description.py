@@ -42,7 +42,11 @@ def rim_crests(h: np.ndarray, cell_m: float, at, diameter_m: float):
     radii = np.arange(0.0, 0.8 * diameter_m, cell_m / 2)
     t = np.radians(az)
     px, py = at[0] + np.outer(np.sin(t), radii), at[1] - np.outer(np.cos(t), radii)
-    prof = ndimage.map_coordinates(h.astype(np.float64), [py / cell_m - 0.5, px / cell_m - 0.5], order=1)
+    # Only the rays' window is read (h may be a whole-map memmap); beyond h reads 0, as before.
+    r = 0.8 * diameter_m + 2 * cell_m
+    i0, j0 = max(0, int((at[0] - r) / cell_m)), max(0, int((at[1] - r) / cell_m))
+    win = h[j0 : int((at[1] + r) / cell_m) + 2, i0 : int((at[0] + r) / cell_m) + 2].astype(np.float64)
+    prof = ndimage.map_coordinates(win, [py / cell_m - 0.5 - j0, px / cell_m - 0.5 - i0], order=1)
     k = np.argmax(prof, 1)
     return az, prof[np.arange(RIM_RAYS), k], radii[k]
 
@@ -163,9 +167,16 @@ def measure_window(spec: dict, h: np.ndarray, cell_m: float, origin_m) -> dict:
             got = _feature(f | {"at": local(f["at"])}, h, cell_m).get("measured", {})
             if got.get("caldera_at_m"):  # back to map metres
                 got["caldera_at_m"] = [round(got["caldera_at_m"][0] + ox), round(got["caldera_at_m"][1] + oy)]
+            # Its summit window or caldera rays reach past the window: values are clipped.
+            r = max(float(f.get("radius_m", 0.0)), 1.5 * float(f.get("caldera_diameter_m", 0.0)))
+            x, y = local(f["at"])
+            if min(x, y, cols * cell_m - x, rows * cell_m - y) < r:
+                got["partial"] = True
             features[f["id"]] = got
         elif "path" in f and (path := [local(p) for p in f["path"] if inside(p)]):
             features[f["id"]] = _feature(f | {"path": path}, h, cell_m).get("measured", {})
+            if len(path) < len(f["path"]):  # measured on the points inside only
+                features[f["id"]]["partial"] = True
     return {"cell_m": cell_m, "window_m": [ox, oy, cols * cell_m, rows * cell_m], "passes": passes,
             "features": features}
 
