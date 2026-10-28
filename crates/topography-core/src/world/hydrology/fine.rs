@@ -656,6 +656,14 @@ pub(super) fn rivers(
         // exit cell. Elsewhere a river beside a lake would stand below its level, and shores
         // hold ground above it, which would dam the burned path.
         let end_lake = lake_basin.get(&parent).copied();
+        // The lake this river leaves (its exit is one of the river's cells): the fine lake may
+        // reach past the exit cell, beside another of its heads.
+        let left_lake = own.iter().find_map(|&q| {
+            exits
+                .get(&c.abs(q))
+                .and_then(|l| lake_basin.get(l))
+                .copied()
+        });
         let shore = |i: usize| {
             let q = c.abs(c.cell(w, i));
             let leaves = exits.get(&q).and_then(|l| lake_basin.get(l)).copied();
@@ -664,6 +672,7 @@ pub(super) fn rivers(
                     && basins[body[j] as usize - 1].kind == Kind::Lake
                     && Some(body[j]) != end_lake
                     && Some(body[j]) != leaves
+                    && Some(body[j]) != left_lake
             })
         };
         let mut corridor: HashSet<u32> = HashSet::new();
@@ -1195,5 +1204,67 @@ mod tests {
                 failed(&s)
             );
         }
+    }
+
+    #[test]
+    fn a_head_beside_the_lake_its_river_leaves_is_routed() {
+        // 3 x 3 coarse cells of 2 x 2 fine cells. Lake 2 (level 20 m) in the top-right cell
+        // drains into river 3 at (2, 1); the river's other head (1, 0) lies where the fine
+        // lake reaches past its exit cell. Both heads route west to the world edge.
+        let mut c = coarse();
+        (c.size, c.ww, c.wh) = ([3, 3], 3, 3);
+        c.body = vec![0, 3, 2, 3, 3, 3, 0, 0, 0];
+        let line = |d: u8| FLOW_CENTRE | d;
+        c.flow = vec![0, line(2), 0, line(3), line(3), line(3), 0, 0, 0];
+        c.surface = vec![
+            f32::NAN,
+            19.0,
+            20.0,
+            15.0,
+            17.0,
+            19.5,
+            f32::NAN,
+            f32::NAN,
+            f32::NAN,
+        ];
+        c.discharge = vec![1.0; 9];
+        c.lakes = HashMap::from([(
+            2,
+            Lake {
+                level: 20.0,
+                exit: Some([2, 1]),
+            },
+        )]);
+        c.rivers = HashMap::from([(
+            3,
+            River {
+                parent: 0,
+                drainage_km2: 1.0,
+            },
+        )]);
+        let dims = Dims { w: 6, h: 6 };
+        let mut ground: Vec<f32> = (0..36).map(|i| 10.0 + (i % 6) as f32).collect();
+        let mut body = vec![0u32; 36];
+        for y in 0..2 {
+            for x in 3..6 {
+                (ground[y * 6 + x], body[y * 6 + x]) = (15.0, 1);
+            }
+        }
+        let mut lake = Basin::kept(Kind::Lake, 20.0, NO_EXIT);
+        lake.id = 2;
+        let im = rivers(
+            dims,
+            &mut ground,
+            &[0; 36],
+            &body,
+            &[lake],
+            &c,
+            &[],
+            |_| 0,
+            |_| false,
+            [0, 6],
+            2.0,
+        );
+        assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
     }
 }
