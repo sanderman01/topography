@@ -7,7 +7,8 @@ Sub-project 2 (hydrology v2) is done: `topography world hydrology` gives water a
 and 1 m, and the cascade chain and the L4 bands use it (verified on a Fujion 8 km crop and a
 synthetic 64 km grid); a full world is not yet generated with it. Sub-project 4 is not
 started. Sub-project 5: the chain runs from the collage and the central and Grand Canyon
-checks pass (section 5); the full run needs a banded L3 and the owner's go. Fujix is a new
+checks pass (section 5); L3 runs in bands and both levels skip deep-sea windows, so the
+full run fits this machine and waits for the owner's go. Fujix is a new
 64 km world that replaces Fujion (32 km) as the game's map. It follows the
 [layout spec process](world-layout-spec-v1.md), except that the agent authors the layout as
 a collage of real DEMs and the owner neither writes nor paints it.
@@ -233,22 +234,24 @@ only a re-export. From the game's vegetation requests, `hollow`, `treeline-margi
 
 ## 5. Generation and cost
 
-Measured on 8 and 16 km L3 squares and 4 km L4 squares from `fujix-collage-55` (2026-10-28,
+Measured on 8 and 16 km L3 squares, a whole-map L3 with two of its eight bands diffused and
+4 km L4 squares from `fujix-collage-55` (2026-10-28,
 [the cascade workflow](../workflows/terrain-cascade.md#generating-fujix-from-the-collage)),
-scaled by area to 64 km.
+scaled to 64 km by window counts on the collage: deep-sea windows are not diffused, and class
+guidance 2 applies to class-19 (Grand Canyon) windows only.
 
 | Resource | Estimate | Notes |
 | --- | --- | --- |
 | Export | 4 to 6 GB | Height about 2.6 GB. 7 to 10 GB if every layer were dense at 1 m |
-| Workspace | About 95 GB | Chain about 11 GB (40 B a 4 m cell); L4 82 GB (19 B a 1 m cell) plus two band directories |
-| GPU, generation | L3 about 5 to 6 h, L4 about 55 h | L3 4.7 s a km²; a 64 km L4 band about 56 min, 8 of 64 bands deep sea and not diffused (62 h without that); hydrology 2.4 min a band |
+| Workspace | About 95 GB | Chain about 12 GB (44 B a 4 m cell while running); L4 82 GB (19 B a 1 m cell) plus two band directories |
+| GPU, generation | L3 about 5 to 6 h, L4 about 44 h | L3: 12,274 of 18,796 windows diffused, 1.0 to 2.1 s each, guidance about 0.6 h. L4: 101,313 of 173,910 windows, about 1.25 s each, 35 h, guidance about 6 h, band hydrology 2.6 h (55 h before the window skip, without guidance) |
 | GPU, training | About 15 h | L3 about 6 h, L4 about 8 h, more if a gate fails |
 | VRAM | About 6 GB peak | Windows only; the field stays in host memory |
-| RAM | L4 about 9.4 GB (12 GB cap); L3 about 25 GB as one field | L3 holds about 95 B a 4 m cell, so it must run in bands before the full run. 4 m hydrology 5.3 GB |
+| RAM | L3 about 8 GB, L4 about 9.4 GB | L3 bands about 4.6 GB; its 4 m hydrology 5.5 GB in Rust while Python holds 2.5 GB (measured in a 10 GB cap). L4 from an earlier 64 km band measurement (hydrology v2, 12 GB cap). Run both in a 12 GB cap |
 | CPU | Collage minutes, hydrology about 3 h, export a few hours | |
 
-The central 4 km L4 check took 14 min. Every long run waits for the owner's go. Old Fujion
-worlds can be pruned afterwards, with the owner's say-so.
+The central 4 km L4 check took 14 min, the canyon one with guidance 27 min. Every long run
+waits for the owner's go. Old Fujion worlds can be pruned afterwards, with the owner's say-so.
 
 ## Not in scope
 

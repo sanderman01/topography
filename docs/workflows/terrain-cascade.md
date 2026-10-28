@@ -347,6 +347,23 @@ L3 covers the whole field by default, the size the layout specifies; `--l3-km N`
 limits it to a central N × 1,024 m square (a derived region is 48 km, so use it there).
 The chain writes the class per 4 m cell (`classes.u8`) for L4 and the cover.
 
+L3 runs in bands of rows across the field, north to south (`--l3-band-m`, default 8,192 m,
+with a `--l3-halo-m` of 1,024 m above and below; both multiples of 512 m), like L4: the
+starting noise is drawn per block of rows in field coordinates and the halo is cross-faded
+into the band above, so the result hardly depends on the band height (a 16 km square in two
+bands and in one differ by 3 mm on average). Each band's 4 m inputs (coarse surface, water,
+cover, classes, form channels) are computed with a 512 m margin and cropped, and the raw
+surface goes to a memory-mapped `l3-raw.f32`; layers, hillshades and the description are
+then written in blocks of rows. Rerunning the same command resumes after the last finished
+band, or at the 4 m hydrology; `l3-raw.f32`, `l2.npz` and `progress.json` hold that state
+until the manifest is written. Windows whose coarse ground is all below −50 m are not
+diffused: L3 learned land only and its output is the coarse ground there anyway (a coastal
+8 km square: 115 of 225 windows skipped, half the time, deep sea identical and land within
+3 mm of a run without the skip). `--guidance-classes 19` limits `--guidance` to windows
+holding class 19. `--l3-bands A:B` diffuses only bands A to B−1 and leaves the others
+coarse (memory and speed checks). `arrays.npz` holds `l1`, `l2` and `l2_raw`; the 4 m
+surface is the world's `elevation.f32`.
+
 After L1 the land is made to drain in Python (`hydrology.drain`: largest depressions kept
 as lakes, others carved; hollows of crater, karst and dune cells stay dry basins). Water
 after L2 and L3 comes from [Hydrology v2](#hydrology-v2) (`topography world hydrology`, the
@@ -370,7 +387,7 @@ across file systems). A world's `bodies.json` lists the sea, lakes, rivers and d
 at least 1 ha (a 1 m glacier holds thousands of tiny ice basins); a parent left out becomes 0.
 At 1 m it is merged from the bands: water areas count delivered cells, a dry basin keeps its
 largest band area, and each body's parent comes from the band whose core holds its end. A 32 km L3 takes about an hour. `--guidance w` applies class
-guidance at every level (1: off). L1 runs trained on 128-cell crops are sampled in
+guidance at every level (1: off); it evaluates the model a second time in each guided window. L1 runs trained on 128-cell crops are sampled in
 overlapping local windows, and generation takes the form channels from the run's
 per-class table (`python -m topography_training.diffusion.forms --run-dir <run>`
 recomputes it without retraining).
@@ -397,7 +414,10 @@ band. Once the band below is generated, a band's rows are final and it gets its 
 from `topography world hydrology` with `--coarse` the world's `hydrology/4m` and `--north`
 the previous band ([Bands and seams](#bands-and-seams---north)), over its rows plus a halo as
 wide as `--halo-m`; it keeps the core rows, and `hydrology-seam` checks each pair (a failure
-stops the run). Under water the ground is the refined 4 m ground (L4 learned land only).
+stops the run). Under water the ground is the refined 4 m ground (L4 learned land only), so
+bands, and windows inside a band, whose 4 m ground is all deep water (below −50 m) are not
+diffused (the manifest's `deep_sea_bands` and `windows`). `--guidance-classes` limits
+`--guidance` to windows holding those classes, as in the chain.
 The output adds `water-surface.f32`, `water-body.u32`, `bodies.json` and the world's 128 m
 `moisture.f32`; band reports stay in `hydrology/`. Rerunning the same command resumes after
 the last finished band (diffusion or hydrology), and after a failure while finishing.
@@ -415,8 +435,10 @@ bands roughly double the Python share. The
 output takes 15 bytes a 1 m cell (elevation, water surface and body, and three masks: 64 GB
 at 64 km), plus 4 bytes a cell for `elevation-raw.f32` until the run finishes (17 GB) and two
 band directories (about 4 GB); `cascade_l4` checks the free space before it starts. The
-chain needs about 40 bytes a 4 m cell (11 GB at 64 km); its 4 m hydrology at 64 km takes
-5.3 GB, with the large Python arrays released while it runs.
+chain needs about 44 bytes a 4 m cell while it runs (12 GB at 64 km). Its L3 bands hold
+about 4.6 GB at 64 km width (8,192 m bands); the 4 m hydrology at 64 km takes 5.5 GB in Rust
+while Python holds about 2.5 GB, so a whole-map chain peaks at about 8 GB (measured in a
+10 GB cap).
 
 Then redraw the cover at 1 m from the layout and add land cover:
 
@@ -432,48 +454,68 @@ models: L2 is the collage's 32 m `l2` (seabed included), L1 its `l1`, and the cl
 dithered `class32.u8` (class 19 on the canyon plateau), read nearest at 4 m for L3 and
 written as the world's `classes.u8` and `biome.u8`, so L4 gets them too. Wind, snowline,
 treeline and forest come from the collage's `layout.json`. Then the usual 32 m hydrology,
-L3, 4 m hydrology and world output follow. The world also holds `description.json` and
-`description.md`: the collage's description measured on the carved 32 m surface (level
-`l2`) plus `finer`, pass ground and feature values on the L3 square;
-`cascade_l4` copies it. `--l3-km` with `--l3-centre X,Y` (map metres from the north-west
-corner, y south) puts the L3 square anywhere; `cascade_l4 --km` with `--centre X,Y` does
-the same for L4, whose default is the 4 m world's centre. L4 bands whose 4 m ground,
-margin included, lies all below −50 m keep the refined 4 m ground without diffusion (the
-manifest's `deep_sea_bands`; 8 of 64 bands at 64 km).
+banded L3, 4 m hydrology and world output follow. The world also holds `description.json`
+and `description.md`: for a whole-map L3 the collage's description measured on the carved
+4 m surface (level `l3`: regions, passes and their bands, summit and caldera); for an L3
+square, measured on the carved 32 m surface (level `l2`) plus `finer`, pass ground and
+feature values on the square (`partial` where a feature reaches past it). `cascade_l4`
+copies it. `--l3-km` with `--l3-centre X,Y` (map metres from the north-west corner, y south)
+puts the L3 square anywhere; `cascade_l4 --km` with `--centre X,Y` does the same for L4,
+whose default is the 4 m world's centre. Windows (and L4 bands) of deep sea only are not
+diffused at L3 or L4.
 
-Checks (2026-10-28, 10 GB cap):
+Full run (not yet started; it needs the owner's go). Class guidance 2 on the Grand Canyon
+windows only:
 
 ```sh
-CAP=(systemd-run --user --scope -q -p MemoryMax=10G)
-# Central: 8 km L3 around the volcano, then 4 km L4.
+CAP=(systemd-run --user --scope -q -p MemoryMax=12G)
 "${CAP[@]}" $P -m topography_training.diffusion.cascade_chain --collage data/worlds/fujix-collage-55 \
     --l3-run data/models/cascade-l3-run-5 --l3-class-runs data/models/cascade-l3-run-5-experts \
-    --l3-km 8 --l3-centre 31500,33500 --out scratch/fujix-run/central-l3
+    --guidance 2 --guidance-classes 19 --out data/worlds/fujix-55-chain
 "${CAP[@]}" $P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
-    --class-runs data/models/cascade-l4-run-8-experts --world scratch/fujix-run/central-l3 \
-    --out scratch/fujix-run/central-l4 --km 4
-# Grand Canyon: the same with --l3-centre 36800,14000 (canyon walls, about 1,750 m of relief);
-# leave out --l3-class-runs and --class-runs for the base models.
+    --class-runs data/models/cascade-l4-run-8-experts --guidance 2 --guidance-classes 19 \
+    --world data/worlds/fujix-55-chain --out data/worlds/fujix-55-l4
 ```
 
-| Run | Time | Peak RAM (cgroup) | Peak VRAM (torch reserved) |
+Either command, rerun unchanged after a crash or kill, resumes where it stopped. Run them as
+background jobs with a log and an exit-code file ([AGENTS.md](../../AGENTS.md)).
+
+Checks (2026-10-28; RAM is the cgroup's anonymous memory plus swap, as page cache from the
+memory-mapped layers fills any cap; VRAM is torch's peak reservation):
+
+| Run | Time | RAM | VRAM |
 | --- | --- | --- | --- |
-| L3 8 km (2,048²), volcano, experts | 233 s, hydrology 7 + 6 s | 2.3 GB | 2.8 GB |
-| L3 8 km, canyon, experts / base | 298 s / 218 s | 2.6 / 2.1 GB | 3.8 / 4.2 GB |
-| L3 16 km (4,096²), centre, experts | 1,197 s, 4 m hydrology 34 s | 3.5 GB | 4.4 GB |
-| L4 4 km, four 1,024 m bands, experts | 14 min (bands 194-223 s, hydrology 6-7 s) | 3.6 GB | 5.8 GB |
-| L4 4 km, canyon, experts / base | 15 / 14 min | 2.6 / 2.7 GB | 5.9 / 5.3 GB |
+| L3 8 km (2,048²), volcano, experts (Task 1, one field) | 233 s, hydrology 7 + 6 s | 2.3 GB | 2.8 GB |
+| L3 8 km, canyon, experts / base (Task 1) | 298 s / 218 s | 2.6 / 2.1 GB | 3.8 / 4.2 GB |
+| L3 16 km (4,096²), centre, experts, two 8 km bands | 1,455 s (907 s, 548 s), 4 m hydrology 26 s | 2.6 GB | 6.2 GB system |
+| The same as one band | 1,246 s | 2.8 GB | 6.1 GB system |
+| L3 whole map, full width, bands 2 and 3 of 8 diffused | 2,819 s and 3,080 s a band; others 90-140 s | 4.6 GB | 6.0 GB system |
+| The same: 16,384² 4 m hydrology, layers, 4 m description (resumed, 10 GB cap) | 397 s hydrology, 737 s in all | 8.1 GB | |
+| L3 8 km volcano, guidance 1 / 2 | 278 s / 435 s | 2.4 / 2.3 GB | |
+| L4 4 km, four 1,024 m bands, experts (Task 1) | 14 min (bands 194-223 s, hydrology 6-7 s) | 3.6 GB | 5.8 GB |
+| L4 4 km canyon, experts, guidance 2 on class 19 | 27 min (bands 372-425 s) | 2.2 GB | 7.8 GB system |
 
-Every hydrology report and band seam passed. On the canyon the c19 experts change L3 by
-1.3 m (standard deviation) and give layered ledges at 1 m where the base model gives
-generic rough texture; the walls' shape comes from the collage's 32 m Grand Canyon.
+Every hydrology report and band seam passed (after the fix of a cell widened out of a sink
+basin without a receiver, found by the whole-map run). Two bands against one differ by 3 mm
+on average over the 16 km square, the same near the seam as elsewhere. Guidance 2 leaves the
+volcano as it was (0.2 m standard deviation at its summit, no artefacts) and gives the canyon
+clear strata ledges at 4 m and 1 m. It evaluates the model twice in a guided window: about
+1.6 times the time where it applies everywhere, about twice in a class-19 window at L4.
 
-Full 64 km run, scaled from these: L3 about 5 to 6 h of GPU (4.7 s a km² at 16 km); L4
-about 55 h (a 64 km band about 56 min, 56 of 64 bands diffused, hydrology 2.4 min a band);
-disk about 11 GB for the chain and 82 GB for L4 (19 bytes a 1 m cell). L3 holds the whole
-field in host memory, about 95 bytes a 4 m cell (2.3 GB at 8 km, 3.5 GB at 16 km), so a
-whole-map 64 km L3 needs about 25 GB: more than this machine has. It must run in bands
-like L4 before the full run.
+Full 64 km run. From the collage's 32 m surface: L3 has 18,796 windows in 8,192 m bands
+(16,129 as one field), 6,522 of them deep sea and skipped, 2,288 holding class 19; L4 has
+173,910 windows, 72,597 skipped and 16,136 holding class 19. A window took 1.0 to 1.4 s
+(L3 without class 19), about 2.1 s (L3 with the class-19 expert) and about 1.25 s (L4),
+and about 1.0 s (L3) and 1.3 s (L4) more where guided. So:
+
+- L3: about 4 to 5.5 h (5 to 6 h with guidance), plus about 15 min of band preparation,
+  7 min of 4 m hydrology and 5 min of layers.
+- L4: about 35 h of diffusion (41 h with guidance) and 2.6 h of band hydrology: about
+  38 h (44 h with guidance), against 55 h before the window skip.
+- RAM: L3 peaks at about 8 GB (bands about 4.6 GB; the 4 m hydrology 5.5 GB in Rust while
+  Python holds about 2.5 GB); L4 about 9.4 GB (earlier 64 km band measurement, 12 GB cap).
+  Run both in a 12 GB cap.
+- Disk: about 12 GB for the chain (44 bytes a 4 m cell while it runs), 82 GB for L4.
 
 ## Hydrology v2
 
