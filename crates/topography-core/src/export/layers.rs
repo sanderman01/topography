@@ -153,8 +153,9 @@ pub(super) fn metadata(spec: &LayerSpec, level0_spacing_m: f64, last_level: u32)
         m["legend"] = json!(legend);
     }
     if spec.name == WATER_SURFACE.name {
-        m["extended_texels"] = json!(APRON);
-        m["beyond_extension"] = json!("beyond the extension the surface is the ground height");
+        m["extended_texels"] = json!(super::water::REACH);
+        m["beyond_extension"] =
+            json!("code 0: no surface beyond the extension; a water surface is at least code 1");
     }
     m
 }

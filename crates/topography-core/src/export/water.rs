@@ -9,7 +9,7 @@ use std::{collections::HashMap, fs, io::Read, path::Path};
 
 /// Texels past the shore that carry the nearest water's surface.
 pub(super) const REACH: usize = 4;
-// Missing water tiles mean surface = ground only while the extension fits in the apron.
+// Missing water tiles mean no surface only while the extension fits in the apron.
 const _: () = assert!(REACH <= super::layers::APRON);
 
 #[derive(Clone, Copy, PartialEq)]
@@ -208,7 +208,6 @@ impl Reduce for Terrain<'_> {
 /// Level-0 row; counts world inconsistencies into `checks`, which fail the export.
 /// Inconsistent cells are dry. `code` is the height encoding, used to compare lake and sea
 /// surfaces with their level.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn level0(
     ground: &[f32],
     surface: &[f32],
@@ -277,7 +276,7 @@ pub(super) fn level0(
 
 /// Output surface for a window of rows (rows y0..y0+n): wet texels keep theirs; dry texels
 /// take the nearest wet texel's within `reach` (Chebyshev rings, then smallest squared
-/// distance, then scan order), else their ground.
+/// distance, then scan order), else NaN (no surface).
 pub(super) fn extended_surface(rows: &[&TerrainRow], reach: usize) -> Vec<Vec<f32>> {
     let n = rows.len();
     let w = rows.first().map_or(0, |r| r.body.len());
@@ -312,9 +311,9 @@ pub(super) fn extended_surface(rows: &[&TerrainRow], reach: usize) -> Vec<Vec<f3
                     return row.surface[x];
                 }
                 if prefix[(x + reach + 1).min(w)] == prefix[x.saturating_sub(reach)] {
-                    return row.ground[x];
+                    return f32::NAN;
                 }
-                nearest(rows, x, y, reach).unwrap_or(row.ground[x])
+                nearest(rows, x, y, reach).unwrap_or(f32::NAN)
             })
             .collect();
         out.push(surface);
@@ -488,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_extends_four_texels_then_holds_ground() {
+    fn surface_extends_four_texels_then_has_no_surface() {
         // A lake west of column 100 (level 6 m), dry ground at 20 m east of it.
         let dir = tempfile::tempdir().unwrap();
         let world = testworld::write(dir.path(), 256, 1.0, |x, _| {
@@ -509,8 +508,27 @@ mod tests {
         for x in 100..=103 {
             assert_eq!(at(&s, x), water, "column {x}");
         }
-        assert_eq!(at(&s, 104), at(&g, 104));
-        assert_eq!(at(&s, 110), at(&g, 110));
+        assert_eq!(at(&s, 104), 0);
+        assert_eq!(at(&s, 110), 0);
+    }
+
+    #[test]
+    fn surface_at_the_range_minimum_never_encodes_as_no_surface() {
+        // A river 0.1 mm above the lowest ground (5 m): its height code would round to 0.
+        let dir = tempfile::tempdir().unwrap();
+        let world = testworld::write(dir.path(), 256, 1.0, |x, _| {
+            if x == 0 {
+                (5.0, 5.0001, 10)
+            } else {
+                (20.0, f32::NAN, 0)
+            }
+        });
+        let out = dir.path().join("x");
+        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        let (side, s) = codes(&out, "water-surface", 0, 0, 0);
+        let (_, g) = codes(&out, "height", 0, 0, 0);
+        assert_eq!((g[0], s[0]), (0, 1));
+        assert_eq!(s[side - 1], 0);
     }
 
     #[test]
@@ -564,6 +582,6 @@ mod tests {
         // (0, 0): ring 3 holds (3, 1) at distance² 10, ring 4 is not reached.
         assert_eq!(s[0][0], 7.0);
         let s = extended_surface(&[&a, &b], 2);
-        assert_eq!(s[0][0], 0.0);
+        assert!(s[0][0].is_nan());
     }
 }

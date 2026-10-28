@@ -108,11 +108,12 @@ them). Level *k* has spacing 2^*k* times level 0, and its texel *i* sits at leve
   body when that sample is wet, else the wet body with the largest footprint weight, 0 only
   when the footprint is dry. Ids are never averaged, and coverage above 0 always has a body.
   River surfaces are the weighted mean over footprint samples of the same body.
-- **Extension.** A dry texel within 4 texels of water carries the nearest wet texel's surface;
-  further out the surface is the ground height (depth 0), and coverage marks it dry.
+- **Extension.** A dry texel within 4 texels of water (`extended_texels`) carries the nearest
+  wet texel's surface; further out `water-surface` is code 0, no surface, and coverage marks
+  it dry. A water surface always encodes as at least 1: one that would round to 0 (within
+  half a step of `h_min_m`) is written as 1.
 - **Files.** The three water tiles of a tile exist only where a texel of the tile or its apron
-  has coverage above 0. A missing file means coverage 0, body 0 and surface equal to the
-  ground.
+  has coverage above 0. A missing file means coverage 0, body 0 and no surface.
 
 ## Legends
 

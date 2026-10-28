@@ -180,7 +180,7 @@
     },
     "water-surface": {
       "apron_texels": 4,
-      "beyond_extension": "beyond the extension the surface is the ground height",
+      "beyond_extension": "code 0: no surface beyond the extension; a water surface is at least code 1",
       "decode": "value = offset + code · scale",
       "extended_texels": 4,
       "filter": "area mean within one body; lakes and sea at their level",
@@ -301,7 +301,7 @@
     },
     "passed": true
   },
-  "water_files": "water-surface, water-coverage and water-body tiles exist only where a tile or its apron holds water; a missing file means coverage 0, body 0 and surface = ground",
+  "water_files": "water-surface, water-coverage and water-body tiles exist only where a tile or its apron holds water; a missing file means coverage 0, body 0 and no surface (code 0)",
   "world_output": "data/worlds/example-l4",
   "world_output_manifest_sha256": "ead006902dcf66288b690ff1b4b656f5e270cb8f921dbfb254d7fc735b26f223"
 }

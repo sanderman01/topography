@@ -172,7 +172,6 @@ fn encode<T: Copy>(spec: &LayerSpec, values: &[T], code: &dyn Fn(T) -> u16) -> V
 }
 
 /// Cuts, encodes and writes tile row `ty` of one level; `rows` start at world row `first`.
-#[allow(clippy::too_many_arguments)]
 fn write_tiles<T: Copy>(
     ctx: &mut Ctx,
     spec: &LayerSpec,
@@ -279,7 +278,9 @@ impl<'a> TerrainOutput<'a> {
                 .collect();
             let w = c.len() / h;
             let [ss, cs, bs] = &self.water;
-            let st = encode(ss, &s, self.code);
+            // Code 0 is no surface, so a surface at h_min is written one step up.
+            let surface_code = |v: f32| if v.is_nan() { 0 } else { (self.code)(v).max(1) };
+            let st = encode(ss, &s, &surface_code);
             let codes: Vec<u16> = st
                 .chunks_exact(2)
                 .map(|p| u16::from_be_bytes([p[0], p[1]]))
@@ -791,7 +792,7 @@ pub fn heightmap(
             "max_quantization_error_m": max_error},
         "layers": layer_meta,
         "legends": legends,
-        "water_files": "water-surface, water-coverage and water-body tiles exist only where a tile or its apron holds water; a missing file means coverage 0, body 0 and surface = ground",
+        "water_files": "water-surface, water-coverage and water-body tiles exist only where a tile or its apron holds water; a missing file means coverage 0, body 0 and no surface (code 0)",
         "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix in layers.{layer}.prefix; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), aprons beyond the world edge repeat the edge texel",
         "levels": levels,
         "masters": master_files,
