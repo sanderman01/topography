@@ -1,0 +1,33 @@
+crates/topography-core/src/export/layers.rs
+  s_8c1b40ea9c1e0d::t_5a1bc8d9b43a99 1-159
+crates/topography-core/src/export/heightmap.rs
+  s_8c1b40ea9c1e0d::t_e22207b34ed441 198,200
+  s_8c1b40ea9c1e0d::t_fdbd0303284e76 1-2,5-6,8,10,40,49,62,83-86,105,111,126-127,138-197,199,201-306,329,336-347,349-357,361-363,368-372,374,379-381,390-416,423-444,446-458,463-467,470-503,505,507-515,517-526,530-538,543,554-555,557,559-561,566,573-589,592-621,624-636
+  s_8c1b40ea9c1e0d::t_81a4cc70b364b3 4,378,417-422,460-462,590-591,622-623
+crates/topography-core/src/export/tiles.rs
+  s_8c1b40ea9c1e0d::t_4417a5981263c6 261-263,276-277
+  s_8c1b40ea9c1e0d::t_81a4cc70b364b3 166-170,197-198,264-269,271-273
+  s_8c1b40ea9c1e0d::t_6a121f380f7e51 1-76,78-126,128-132,134-135,137-161,163-165,171-196,199-253,281-290
+  s_8c1b40ea9c1e0d::t_41f3a0684e264d 77,127,133,136,162
+  s_8c1b40ea9c1e0d::t_350b4dfe35f020 254-260,270,274-275,278-280
+crates/topography-core/src/export/mod.rs
+  s_8c1b40ea9c1e0d::t_f90360d50727ed 1,4,8,22
+crates/topography-core/src/export/view.rs
+  s_8c1b40ea9c1e0d::t_c26c8b1fca5a21 164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "004a4084fcd48f7a2e1c84824b39aff11bdf823f",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
