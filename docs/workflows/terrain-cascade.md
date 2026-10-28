@@ -740,7 +740,8 @@ layer name unless noted):
 - `height`: 16-bit, 257² `shared_edge` tiles from level 0, no apron;
 - `water-surface` (16-bit, the height encoding), `water-coverage` (8-bit fraction) and
   `water-body` (16-bit export ids matching `description.json`): from level 0, written only
-  for tiles that hold water; a missing file means no water;
+  for tiles that hold water; a missing file means no water. Beyond 4 texels past the shore
+  `water-surface` is code 0 (no surface);
 - `biome`, `land-cover` (prefix `landcover`), `vegetation-density`, `snow-cover`,
   `talus-density`: from 2 m, from the world's `game/`;
 - `moisture`: from about 128 m (on small test worlds the coarsest level only).
@@ -759,22 +760,26 @@ The export holds the tiles, `manifest.json`, `description.json` and `.md`, and
 export). Add `--masters` to also write a full-world Float32 `elevation.tif`; it duplicates
 the world output, so it is only needed when the export travels without it.
 
+The export is staged in `.{output name}.stage-*` beside the output and renamed into place
+once every check passes. It first checks for about 2 bytes free per level-0 sample (10 with
+`--masters`; 8.6 GB at 64 km) and scans the world once, failing in minutes on water that
+does not sit above its ground. A killed export (Ctrl-C, OOM) leaves its stage behind:
+remove it by hand.
+
 The viewer shows heights, water from `water-coverage`, snow from `snow-cover`, and land cover
 or biome colours with a legend of the overview's shares; double-click loads 1 m detail.
 
 Export streams the world row by row through the pyramids, so memory grows with the world's
-width, not its area. Measured 2026-10-28 on the `t6` Fujion test worlds (a GPU job was running
-and the host was swapping, so wall times are pessimistic):
+width, not its area. Measured 2026-10-28 on the `t6` Fujion test worlds (a GPU job was running,
+so wall times are pessimistic):
 
 | World | Tiles | Size | Wall | CPU | Peak RSS |
 | --- | --- | --- | --- | --- | --- |
-| 8 km chain, 4 m (2,048²) | 700 | 13.7 MB | 4.9 s | 4.4 s | 50 MB |
-| 4 km L4, 1 m (4,096²) | 1,379 | 33.0 MB | 19.5 s | 18.3 s | 71 MB |
+| 8 km chain, 4 m (2,048²) | 700 | 9.0 MB | 4.1 s | 3.6 s | 49 MB |
+| 4 km L4, 1 m (4,096²) | 1,379 | 21.8 MB | 14.4 s | 13.3 s | 71 MB |
 
-Scaled to 64 km at 1 m (256 times the 4 km L4's cells): about 8.5 GB (height 4.9 GB, water
-surface 3.1 GB, the rest 0.45 GB), about 80 minutes of one core, and a peak well under 1 GB
+Scaled to 64 km at 1 m (256 times the 4 km L4's cells): about 5.6 GB (height 4.9 GB, water
+surface 0.2 GB, the rest 0.5 GB), about an hour of one core, and a peak well under 1 GB
 (linear in width: about 0.7 GB, not measured). The test crop is all steep glaciated summit,
-the worst case for PNG size; Fujix is about 40% deep sea, which compresses far better, so
-the 4 to 6 GB estimate of [fujix v1](../plans/fujix-v1.md) §5 may still hold. Water-surface
-tiles cost almost as much as height because beyond the 4-texel extension they repeat the
-ground height.
+the worst case for PNG size; Fujix is about 40% deep sea, which compresses far better, so it
+should land inside the 4 to 6 GB of [fujix v1](../plans/fujix-v1.md) §5.

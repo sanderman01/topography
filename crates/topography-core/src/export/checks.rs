@@ -139,7 +139,11 @@ mod tests {
         let err = heightmap(&world, &dir.path().join("x"), 16, Layout::SharedEdge, false)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("wet_not_above_ground 1 (at (5, 5)"), "{err}");
+        // Caught by the range scan, before any tile is written.
+        assert!(
+            err.contains("world checks failed: wet_not_above_ground 1 (at (5, 5)"),
+            "{err}"
+        );
         assert!(!dir.path().join("x").exists());
     }
 
