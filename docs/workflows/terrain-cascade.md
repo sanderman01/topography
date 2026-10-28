@@ -558,7 +558,11 @@ Steps:
   end) can close a cycle with a neighbour stepping down into it: those cells get their flood
   receivers back, and a cycle left after that spills like a depression (over the lowest
   receiving neighbour, reversing the flow from there when every neighbour drains into it).
-  The same spill follows channel widening; the guard counts cycles on the final routing.
+  The same spill follows channel widening, and never reverses a coarse path or fixed cell.
+  `receivers_spilled` counts the cells redirected in steepest descent and coarse routing. The
+  dithering threshold uses the world column and row (from `origin`, `offset_m` and the
+  spacing), so overlapping bands and windows route the rows they share alike. The guard counts
+  cycles on the final routing and on the routing stitched with the previous band's.
   `receivers_set_by_steepest_descent` counts the cells the fall-line step changed. The
   fujix, Fujion and band figures in this section predate fall-line receivers; those grids
   still pass every check with them.
@@ -947,13 +951,12 @@ and seam passed:
 
 | Step | Time | Peak RAM (capped 7 GB) | Result |
 | --- | --- | --- | --- |
-| Chain (L1, L2, 32 m, L3 8 km, 4 m) | 5.7 min (4 m hydrology 8 s) | 3.5 GB | 66 lakes and 39 rivers (85 km) at 32 m; 8 lakes and 68 rivers (33 km) at 4 m, 1.5 % water |
-| L4, 4 km at 1 m | 14.5 min (hydrology 6-7 s a band) | 3.9 GB | 41 to 287 rivers a band, 0.15-0.30 % water |
+| Chain (L1, L2, 32 m, L3 8 km, 4 m) | 5.2 min (4 m hydrology 8 s) | 4.0 GB | 65 lakes and 41 rivers (84 km) at 32 m; 8 lakes and 79 rivers (34 km) at 4 m, 1.5 % water |
+| L4, 4 km at 1 m | 14.5 min (hydrology 6-7 s a band) | 3.1 GB | 46 to 281 rivers a band, 0.15-0.27 % water |
 
 Generating each level from the carved level above shrinks the cuts: on this 8 km crop at 4 m
-all steps together lower ground by at most 12 m (31 m on the uncarved test world above), with
-28 cells cut more than 10 m and trench walls lowered at most 6.8 m (28 m); at 1 m at most
-7.0 m and none over 10 m (11 m and 31 m before). Compared with the old Python water on the
+all steps together lower ground by at most 9 m (31 m on the uncarved test world above), with no
+cell cut more than 10 m; at 1 m at most 7.0 m and none over 10 m (11 m and 31 m before). Compared with the old Python water on the
 same layout (`fujion-v3-chain-14`), lakes now have beds below a level surface (no flat
 128 m terraces), the Fuji summit crater keeps its lake with an outflow, and the 4 m world has
 a branching river network where the old one drew a single stream. With fall-line receivers,
@@ -972,9 +975,12 @@ cycle and seam fixes geometric, with unit tests for each):
 - A coarse path ending in a coarse dry basin with no hollow at the finer level continues down
   the routing; coarse paths run over dry basin floors (at 1 m a glacier is a field of thousands
   of small ice basins, which had left a coarse river missing).
-- Seams: a stream in a band's first row draining back onto the previous band's dry ground,
-  with that band's river up to three cells away, is routed along the first rows into the river
-  on ground lowered to a running minimum (never climbing; `band.streams_joined_across_seam`).
+- Seams: a previous band's cell whose flow there comes back into this band is no outlet, no
+  join target and no end for a coarse path (each would close a loop across the seam). A stream
+  in a band's first row draining back onto the previous band's dry ground, with that band's
+  river up to three cells away, is routed along the first rows (not through water or basins)
+  into the river on ground lowered to a running minimum (never climbing;
+  `band.streams_joined_across_seam`).
   A new stream that would join the previous band's river beside that band's dry ground lower
   than the river's surface is dropped like one running onto dry ground, and this band's dry
   cells beside the previous band's rivers are raised to their surface (as lips).
