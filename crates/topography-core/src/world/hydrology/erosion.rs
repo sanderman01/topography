@@ -44,7 +44,8 @@ pub(super) fn trench_json() -> Value {
             level beside it or 0 m; coarse lakes, basins on the coarse level's dry basins (an \
             ice caldera) and every basin on the trunk level, the sea and cells from the \
             previous band unchanged; on finer levels other dry and ice basin cells may be \
-            lowered and leave their basin; glacier ground widens like any other (ice is a \
+            lowered and leave their basin, but not a cell lower ground drains into (a basin \
+            entry a trench ends at); glacier ground widens like any other (ice is a \
             surface layer); after channel carving, ground beside channel cells cut more than \
             one cell's rise widens the same way from the water surface, never below the \
             surface of a river it is a bank of (not ground ahead along the flow), more than \
@@ -209,6 +210,15 @@ pub(super) fn widen_trenches(
             // sill all its lower neighbours drain across) it is not lowered. Trench cycles
             // get their old receivers back below, and steepest descent follows.
             let i = c as usize;
+            // A cell that lower dry ground drains into (a basin's entry, as a breach trench
+            // ends at a sink) would leave its basin with that ground draining uphill: kept.
+            // River cells may: their water surface carries the flow.
+            if dims.neighbours(i).any(|(_, j)| {
+                surface(j).is_nan() && ground[j] < limit && receiver(dims, dir, j) == Some(i)
+            }) {
+                refused += 1;
+                continue;
+            }
             let mut to = d;
             let into = dims.neighbour(i, d as usize - 1);
             if !old_receiver && into.is_some_and(|j| flows_into(dims, dir, j, i)) {
@@ -419,8 +429,8 @@ pub(super) fn stream_power(
 mod tests {
     use super::*;
 
-    /// A trench along row 2 (cut 5 m) whose end (2, 2) drains east into the wall cell (2, 3);
-    /// widening that wall points it back at the trench end.
+    /// A trench along row 2 (cut 5 m) whose end (2, 2) drains east into (2, 3), the entry of
+    /// a sink basin above it (no receiver), as a breach trench ends at a sink.
     fn trench_end_scene() -> (Dims, Vec<f32>, Vec<u8>) {
         let dims = Dims { w: 6, h: 5 };
         let mut ground = vec![10.0f32; 30];
@@ -433,16 +443,16 @@ mod tests {
                 *d = 1;
             }
         }
-        (dir[12], dir[13], dir[14], dir[15], dir[16]) = (0, 3, 4, 4, 4);
+        (dir[12], dir[13], dir[14], dir[15], dir[16]) = (0, 3, 4, 0, 4);
         (dims, ground, dir)
     }
 
     #[test]
-    fn widening_never_leaves_a_cycle_at_a_trench_end() {
+    fn widening_keeps_the_cell_a_trench_end_drains_into() {
         for old_receiver in [true, false] {
             let (dims, mut ground, mut dir) = trench_end_scene();
             let trench = |i: usize| (12..15).contains(&i);
-            widen_trenches(
+            let (_, lowered) = widen_trenches(
                 dims,
                 &mut ground,
                 &mut dir,
@@ -455,19 +465,23 @@ mod tests {
                 old_receiver,
                 |_| false,
             );
-            // No cycle straight after widening: trench walls get their old receivers back,
-            // and a channel wall never points back at a cell draining through it.
-            assert_eq!(
-                flood::cycle_cells(dims, &dir),
-                0,
-                "old_receiver {old_receiver}"
+            let mode = format!("old_receiver {old_receiver}");
+            assert_eq!(flood::cycle_cells(dims, &dir), 0, "{mode}");
+            assert!(
+                ground[8] < 10.0,
+                "a wall beside the trench is lowered, {mode}"
             );
-            if old_receiver {
-                assert!(
-                    ground[15] < 10.0,
-                    "the wall beyond the trench end is lowered"
-                );
-                assert_eq!(receiver(dims, &dir, 15), Some(16), "keeps its old receiver");
+            // Lowered, the sink entry would leave its basin with the trench draining uphill.
+            assert_eq!(ground[15], 10.0, "{mode}");
+            assert_eq!(receiver(dims, &dir, 14), Some(15), "{mode}");
+            assert_eq!(dir[15], 0, "{mode}");
+            for &c in &lowered {
+                let c = c as usize;
+                assert!(receiver(dims, &dir, c).is_some(), "{c} drains, {mode}");
+                for (_, j) in dims.neighbours(c) {
+                    let uphill = receiver(dims, &dir, j) == Some(c) && ground[j] < ground[c];
+                    assert!(!uphill, "{j} drains uphill into {c}, {mode}");
+                }
             }
         }
     }
