@@ -41,8 +41,6 @@ pub(super) const HEIGHT: LayerSpec = LayerSpec {
     legend: None,
 };
 
-// Written once the water reducers land; the table is kept whole here.
-#[allow(dead_code)]
 pub(super) const WATER_SURFACE: LayerSpec = LayerSpec {
     name: "water-surface",
     prefix: "water-surface",
@@ -53,7 +51,6 @@ pub(super) const WATER_SURFACE: LayerSpec = LayerSpec {
     ..HEIGHT
 };
 
-#[allow(dead_code)]
 pub(super) const WATER_COVERAGE: LayerSpec = LayerSpec {
     name: "water-coverage",
     prefix: "water-coverage",
@@ -65,7 +62,6 @@ pub(super) const WATER_COVERAGE: LayerSpec = LayerSpec {
     ..WATER_SURFACE
 };
 
-#[allow(dead_code)]
 pub(super) const WATER_BODY: LayerSpec = LayerSpec {
     name: "water-body",
     prefix: "water-body",

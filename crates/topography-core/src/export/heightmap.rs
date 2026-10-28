@@ -2,11 +2,13 @@
 //! (master plan §5, §10; manifest v2).
 
 use super::layers::{
-    APRON, GAME_CLASSES, GAME_DENSITIES, HEIGHT, LAND_COVER, LayerSpec, MOISTURE, metadata,
+    APRON, GAME_CLASSES, GAME_DENSITIES, HEIGHT, LAND_COVER, LayerSpec, MOISTURE, WATER_BODY,
+    WATER_COVERAGE, WATER_SURFACE, metadata,
 };
 use super::legends::legends;
 use super::pyramid::{Mean, Mode, Pyramid, Reduce};
 use super::tiles::{Checks, Geometry, RowWindow, TileWriter, cut};
+use super::water::{Bodies, REACH, Terrain, TerrainRow, WaterStats, extended_surface, level0};
 use crate::acquisition::{
     AcquisitionError, Result, digest, ensure, hash_file, io_context, raster, read_small,
 };
@@ -147,6 +149,24 @@ struct Ctx {
     world: usize,
 }
 
+/// Window indices of the rows of tile row `ty` with `apron` (clamped); the window starts at
+/// world row `first`.
+fn tile_rows(ctx: &Ctx, level: u32, ty: usize, first: usize, apron: usize) -> Vec<usize> {
+    let samples = ctx.world >> level;
+    let (y0, th) = ctx.geometry.span(ty, samples);
+    (0..th + 2 * apron)
+        .map(|r| (y0 + r).saturating_sub(apron).min(samples - 1) - first)
+        .collect()
+}
+
+fn encode<T: Copy>(spec: &LayerSpec, values: &[T], code: &dyn Fn(T) -> u16) -> Vec<u8> {
+    if spec.sixteen_bit {
+        values.iter().flat_map(|&v| code(v).to_be_bytes()).collect()
+    } else {
+        values.iter().map(|&v| code(v) as u8).collect()
+    }
+}
+
 /// Cuts, encodes and writes tile row `ty` of one level; `rows` start at world row `first`.
 #[allow(clippy::too_many_arguments)]
 fn write_tiles<T: Copy>(
@@ -155,23 +175,16 @@ fn write_tiles<T: Copy>(
     level: u32,
     ty: usize,
     first: usize,
-    rows: &[Vec<T>],
+    rows: &[&[T]],
     code: &dyn Fn(T) -> u16,
 ) -> Result<()> {
-    let (g, a) = (ctx.geometry, spec.apron);
     let samples = ctx.world >> level;
-    let (y0, th) = g.span(ty, samples);
-    let h = th + 2 * a;
-    let tile_rows: Vec<&[T]> = (0..h)
-        .map(|r| rows[(y0 + r).saturating_sub(a).min(samples - 1) - first].as_slice())
-        .collect();
-    for tx in 0..g.count(samples) {
-        let values = cut(&tile_rows, g, samples, tx, a);
-        let texels: Vec<u8> = if spec.sixteen_bit {
-            values.iter().flat_map(|&v| code(v).to_be_bytes()).collect()
-        } else {
-            values.iter().map(|&v| code(v) as u8).collect()
-        };
+    let picked = tile_rows(ctx, level, ty, first, spec.apron);
+    let h = picked.len();
+    let tile_rows: Vec<&[T]> = picked.iter().map(|&i| rows[i]).collect();
+    for tx in 0..ctx.geometry.count(samples) {
+        let values = cut(&tile_rows, ctx.geometry, samples, tx, spec.apron);
+        let texels = encode(spec, &values, code);
         let w = values.len() / h;
         ctx.writer
             .write(spec, level, tx, ty, w, h, &texels, &mut ctx.checks)?;
@@ -184,6 +197,81 @@ struct Output<'a, T: Clone> {
     spec: LayerSpec,
     windows: Vec<RowWindow<Vec<T>>>,
     code: &'a dyn Fn(T) -> u16,
+}
+
+/// Height and the three water layers, cut from terrain row windows.
+struct TerrainOutput<'a> {
+    height: LayerSpec,
+    /// Surface, coverage, body.
+    water: [LayerSpec; 3],
+    windows: Vec<RowWindow<TerrainRow>>,
+    code: &'a dyn Fn(f32) -> u16,
+}
+
+impl<'a> TerrainOutput<'a> {
+    fn new(height: LayerSpec, last: u32, ctx: &Ctx, code: &'a dyn Fn(f32) -> u16) -> Self {
+        let surface = LayerSpec {
+            scale: height.scale,
+            offset: height.offset,
+            ..WATER_SURFACE
+        };
+        let water = [surface, WATER_COVERAGE, WATER_BODY];
+        // The surface extension looks REACH rows past each apron.
+        let windows = (0..=last)
+            .map(|l| RowWindow::new(ctx.geometry, ctx.world >> l, APRON + REACH))
+            .collect();
+        Self {
+            height,
+            water,
+            windows,
+            code,
+        }
+    }
+
+    fn row(&mut self, ctx: &mut Ctx, level: u32, y: usize, row: &TerrainRow) -> Result<()> {
+        let Some((ty, first, rows)) = self.windows[level as usize].push(y, row.clone()) else {
+            return Ok(());
+        };
+        let ground: Vec<&[f32]> = rows.iter().map(|r| r.ground.as_slice()).collect();
+        write_tiles(ctx, &self.height, level, ty, first, &ground, self.code)?;
+
+        let refs: Vec<&TerrainRow> = rows.iter().collect();
+        let surface = extended_surface(&refs, REACH);
+        let picked = tile_rows(ctx, level, ty, first, APRON);
+        let h = picked.len();
+        let surface: Vec<&[f32]> = picked.iter().map(|&i| surface[i].as_slice()).collect();
+        let coverage: Vec<&[f32]> = picked.iter().map(|&i| &rows[i].coverage[..]).collect();
+        let body: Vec<&[u16]> = picked.iter().map(|&i| &rows[i].body[..]).collect();
+        let (g, samples) = (ctx.geometry, ctx.world >> level);
+        for tx in 0..g.count(samples) {
+            let c = cut(&coverage, g, samples, tx, APRON);
+            if !c.iter().any(|&v| v > 0.0) {
+                continue;
+            }
+            let b = cut(&body, g, samples, tx, APRON);
+            let s = cut(&surface, g, samples, tx, APRON);
+            // A share that rounds to 0 is written as 1, so coverage > 0 ⇔ body > 0.
+            let c: Vec<u8> = c
+                .iter()
+                .zip(&b)
+                .map(|(&v, &id)| {
+                    ((v * 255.0).round().clamp(0.0, 255.0) as u8).max(u8::from(id > 0))
+                })
+                .collect();
+            let w = c.len() / h;
+            let [ss, cs, bs] = &self.water;
+            let texels = [
+                (ss, encode(ss, &s, self.code)),
+                (cs, c),
+                (bs, encode(bs, &b, &|id| id)),
+            ];
+            for (spec, t) in texels {
+                ctx.writer
+                    .write(spec, level, tx, ty, w, h, &t, &mut ctx.checks)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'a, T: Copy> Output<'a, T> {
@@ -202,6 +290,7 @@ impl<'a, T: Copy> Output<'a, T> {
         let window = &mut self.windows[(level - self.spec.finest_level) as usize];
         match window.push(y, row.to_vec()) {
             Some((ty, first, rows)) => {
+                let rows: Vec<&[T]> = rows.iter().map(Vec::as_slice).collect();
                 write_tiles(ctx, &self.spec, level, ty, first, &rows, self.code)
             }
             None => Ok(()),
@@ -366,6 +455,8 @@ pub fn heightmap(
     )?;
     let mut elevation = Layer::open(world, "elevation.f32", layers, (w, h), 4)?;
     let mut surface = Layer::open(world, "water-surface.f32", layers, (w, h), 4)?;
+    let mut body = Layer::open(world, "water-body.u32", layers, (w, h), 4)?;
+    let bodies = Bodies::load(world)?;
     let mut game = open_game(world, &manifest, w)?;
     let mut last = 0u32;
     while (w >> last) > intervals {
@@ -396,7 +487,6 @@ pub fn heightmap(
             hi = hi.max(s);
         }
     }
-    drop(surface);
     ensure(hi > lo, "world needs a positive height range")?;
     let (h_min, h_max) = (f64::from(lo), f64::from(hi));
     let step = (h_max - h_min) / 65535.0;
@@ -428,10 +518,11 @@ pub fn heightmap(
         offset: h_min,
         ..HEIGHT
     };
-    let mut height = (
-        Pyramid::new(Mean, 0, last),
-        Output::new(height_spec, last, &ctx, &height_code),
+    let mut terrain = (
+        Pyramid::new(Terrain { bodies: &bodies }, 0, last),
+        TerrainOutput::new(height_spec, last, &ctx, &height_code),
     );
+    let mut stats = WaterStats::new(&bodies);
     let (game_level, mut classes, mut densities) = match &mut game {
         Some(g) => (
             g.level,
@@ -458,20 +549,38 @@ pub fn heightmap(
         None => (0, Vec::new(), Vec::new()),
     };
 
-    let mut game_buf = Vec::new();
+    let (mut game_buf, mut surface_buf, mut body_buf) = (Vec::new(), Vec::new(), Vec::new());
     for y0 in (0..h).step_by(CHUNK_ROWS) {
         let count = CHUNK_ROWS.min(h - y0);
         elevation.rows(y0, count, &mut buf)?;
-        for (r, bytes) in buf.chunks_exact(4 * w).enumerate() {
-            let row: Vec<f32> = floats(bytes).collect();
-            for &e in &row {
+        surface.rows(y0, count, &mut surface_buf)?;
+        body.rows(y0, count, &mut body_buf)?;
+        for r in 0..count {
+            let y = y0 + r;
+            let line = 4 * w * r..4 * w * (r + 1);
+            let ground: Vec<f32> = floats(&buf[line.clone()]).collect();
+            let water: Vec<f32> = floats(&surface_buf[line.clone()]).collect();
+            let ids: Vec<u32> = body_buf[line]
+                .chunks_exact(4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            for &e in &ground {
                 let decoded = h_min + f64::from(height_code(e)) * step;
                 max_error = max_error.max((decoded - f64::from(e)).abs());
             }
-            let (p, out) = &mut height;
+            let row = level0(
+                &ground,
+                &water,
+                &ids,
+                &bodies,
+                &height_code,
+                &mut ctx.checks,
+                y,
+            )?;
+            stats.add(&row, y);
+            let (p, out) = &mut terrain;
             p.push(row, &mut |l, y, row| out.row(&mut ctx, l, y, row))?;
             // A level-1 game row is complete once its level-0 rows 2i-1..2i+1 are.
-            let y = y0 + r;
             let game_y = match game_level {
                 0 => Some(y),
                 _ => (y % 2 == 1).then_some(y / 2),
@@ -495,10 +604,9 @@ pub fn heightmap(
     }
 
     let mut layer_meta = Map::new();
-    layer_meta.insert(
-        height_spec.name.into(),
-        metadata(&height_spec, spacing, last),
-    );
+    for spec in std::iter::once(&height_spec).chain(&terrain.1.water) {
+        layer_meta.insert(spec.name.into(), metadata(spec, spacing, last));
+    }
     let mut class_counts = [[0u64; 256]; 2];
     for (_, out, _, counts) in &classes {
         let i = usize::from(out.spec.name == LAND_COVER.name);
@@ -524,8 +632,9 @@ pub fn heightmap(
                     })
                     .collect();
             }
+            let refs: Vec<&[f32]> = rows.iter().map(Vec::as_slice).collect();
             for ty in 0..geometry.count(rows.len()) {
-                write_tiles(&mut ctx, &spec, level, ty, 0, &rows, &fraction_code)?;
+                write_tiles(&mut ctx, &spec, level, ty, 0, &refs, &fraction_code)?;
             }
         }
         layer_meta.insert(spec.name.into(), metadata(&spec, spacing, last));
@@ -584,6 +693,7 @@ pub fn heightmap(
             "max_quantization_error_m": max_error},
         "layers": layer_meta,
         "legends": legends,
+        "water_files": "water-surface, water-coverage and water-body tiles exist only where a tile or its apron holds water; a missing file means coverage 0, body 0 and surface = ground",
         "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix in layers.{layer}.prefix; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), aprons beyond the world edge repeat the edge texel",
         "levels": levels,
         "masters": master_files,

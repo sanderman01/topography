@@ -8,6 +8,7 @@ mod pyramid;
 pub(crate) mod testworld;
 mod tiles;
 mod view;
+mod water;
 pub use heightmap::{Layout, heightmap};
 pub use view::view;
 

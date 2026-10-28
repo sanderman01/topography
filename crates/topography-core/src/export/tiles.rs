@@ -32,12 +32,18 @@ impl Geometry {
 /// Export checks gathered while writing (extended by the validation task).
 #[derive(Default)]
 pub(super) struct Checks {
+    /// Level 0: body > 0 with a finite surface at or below the ground.
+    pub wet_not_above_ground: u64,
+    pub wet_without_surface: u64,
+    pub surface_without_body: u64,
+    /// Level 0: a lake or sea cell whose raster surface does not encode to its level's code.
+    pub lake_levels_off: u64,
     pub shared_edge_mismatches: u64,
     pub examples: Vec<String>,
 }
 
 impl Checks {
-    fn example(&mut self, text: String) {
+    pub fn example(&mut self, text: String) {
         if self.examples.len() < 3 {
             self.examples.push(text);
         }

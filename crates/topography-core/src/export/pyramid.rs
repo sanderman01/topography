@@ -10,6 +10,15 @@ pub(super) fn taps(i: usize) -> [usize; 3] {
     [(2 * i).saturating_sub(1), 2 * i, 2 * i + 1]
 }
 
+/// Footprint mean of coarse texel `i` over level-k rows 2i-1, 2i, 2i+1.
+pub(super) fn mean_at(rows: [&[f32]; 3], i: usize) -> f32 {
+    let t = taps(i);
+    rows.iter()
+        .zip(W)
+        .map(|(r, wy)| wy * t.iter().zip(W).map(|(&x, wx)| wx * r[x]).sum::<f32>())
+        .sum()
+}
+
 /// Builds a level k+1 row from level-k rows 2i-1, 2i, 2i+1.
 pub(super) trait Reduce {
     type Row: Clone;
@@ -23,16 +32,7 @@ impl Reduce for Mean {
     type Row = Vec<f32>;
     fn reduce(&self, [a, b, c]: [&Vec<f32>; 3]) -> Vec<f32> {
         debug_assert!(a.len() == b.len() && c.len() == b.len() && b.len() % 2 == 0);
-        (0..b.len() / 2)
-            .map(|i| {
-                let t = taps(i);
-                [a, b, c]
-                    .iter()
-                    .zip(W)
-                    .map(|(r, wy)| wy * t.iter().zip(W).map(|(&x, wx)| wx * r[x]).sum::<f32>())
-                    .sum()
-            })
-            .collect()
+        (0..b.len() / 2).map(|i| mean_at([a, b, c], i)).collect()
     }
 }
 
