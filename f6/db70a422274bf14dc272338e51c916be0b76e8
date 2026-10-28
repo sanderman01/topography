@@ -1,0 +1,29 @@
+crates/topography-core/src/export/heightmap.rs
+  s_8c1b40ea9c1e0d::t_d77f954b2ca7c1 623-627,631-638
+  s_8c1b40ea9c1e0d::t_5f587a758f962d 502,504-506
+  s_8c1b40ea9c1e0d::t_041be8bcd36024 586
+  s_8c1b40ea9c1e0d::t_3484b94dacfccd 4-7,508
+  s_8c1b40ea9c1e0d::t_eba90911ffe2b6 622,628-630
+catalog/labels/terrain-v3.toml
+  s_8c1b40ea9c1e0d::t_7299977bb4a220 10,17,24,31,38,45,52,59,66,73,80,87,97,104,111,118,125,132
+crates/topography-core/src/export/legends.rs
+  s_8c1b40ea9c1e0d::t_65d2bb002c03cb 1-102
+crates/topography-core/src/export/mod.rs
+  s_8c1b40ea9c1e0d::t_ccfc798ebf4ce0 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6db70a422274bf14dc272338e51c916be0b76e8",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
