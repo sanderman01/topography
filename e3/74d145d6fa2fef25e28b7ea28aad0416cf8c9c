@@ -1,0 +1,29 @@
+training/src/topography_training/diffusion/cascade_l4.py
+  s_8c1b40ea9c1e0d::t_93f9472f5f3254 312
+  s_8c1b40ea9c1e0d::t_8a00362117d296 112-122
+  s_8c1b40ea9c1e0d::t_85b568e2d1e175 254-258,273-275,282-291
+  s_8c1b40ea9c1e0d::t_0796de0a9dfcb0 42
+  s_8c1b40ea9c1e0d::t_c91928941e1191 70-72
+  s_8c1b40ea9c1e0d::t_d6415eda178456 356-363
+  s_8c1b40ea9c1e0d::t_31bfd986734a1d 130-131
+  s_8c1b40ea9c1e0d::t_4c31943f9e5b97 170,344
+  s_8c1b40ea9c1e0d::t_f798c4b1431053 12-13
+  s_8c1b40ea9c1e0d::t_9d5f223415dd47 193
+  s_8c1b40ea9c1e0d::t_4e03889c26ed60 309-310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e374d145d6fa2fef25e28b7ea28aad0416cf8c9c",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
