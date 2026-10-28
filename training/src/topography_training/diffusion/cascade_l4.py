@@ -67,7 +67,7 @@ def main(argv=None) -> int:
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--km", type=int, help="central square side in units of 1,024 m (power of two); default whole world")
     p.add_argument("--class-id", type=int, help="terrain class when the world manifest has none")
-    p.add_argument("--band-m", type=int, default=2048)
+    p.add_argument("--band-m", type=int, default=1024, help="band height; 1,024 m keeps a 64 km run under about 10 GB")
     p.add_argument("--halo-m", type=int, default=256)
     p.add_argument("--steps", type=int, default=12)
     p.add_argument("--stride", type=int, default=192)
