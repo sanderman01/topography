@@ -8,7 +8,7 @@ mod coarse;
 mod erosion;
 mod fine;
 mod flood;
-mod grid;
+pub(crate) mod grid;
 mod lakes;
 mod moisture;
 mod report;

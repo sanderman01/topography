@@ -21,14 +21,11 @@ pub(super) enum Kind {
 
 /// Water bodies by export id (index 0 unused): sea first, then lakes and rivers by world id.
 pub(super) struct Bodies {
-    // World ids and parents are read by the export description.
-    #[allow(dead_code)]
     pub world_id: Vec<u32>,
     pub kind: Vec<Kind>,
     /// Lakes and sea; NaN for rivers.
     pub level_m: Vec<f32>,
     /// Export id of the body the water flows into, 0 for none or a dry basin.
-    #[allow(dead_code)]
     pub parent: Vec<u16>,
     by_world: HashMap<u32, u16>,
 }
@@ -358,8 +355,6 @@ fn nearest(rows: &[&TerrainRow], x: usize, y: usize, reach: usize) -> Option<f32
 
 /// Per export id at level 0: texel count and [x0, y0, x1, y1] sample bounds (x1 and y1
 /// exclusive; empty bodies keep [MAX, MAX, 0, 0]).
-// Read by the export description.
-#[allow(dead_code)]
 pub(super) struct WaterStats {
     pub cells: Vec<u64>,
     pub bounds: Vec<[usize; 4]>,

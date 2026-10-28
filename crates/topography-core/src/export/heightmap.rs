@@ -2,6 +2,7 @@
 //! (master plan §5, §10; manifest v2).
 
 use super::checks::Checks;
+use super::description::{self, Frame};
 use super::layers::{
     APRON, GAME_CLASSES, GAME_DENSITIES, HEIGHT, LAND_COVER, LayerSpec, MOISTURE, WATER_BODY,
     WATER_COVERAGE, WATER_SURFACE, metadata,
@@ -739,6 +740,12 @@ pub fn heightmap(
         &serde_json::to_vec_pretty(&validation)?,
     )?;
     ctx.writer.finish()?;
+    let frame = Frame {
+        origin,
+        spacing_m: spacing,
+        size: w,
+    };
+    let description = description::write(stage.path(), world, &manifest, &frame, &bodies, &stats)?;
 
     let levels: Vec<Value> = (0..=last)
         .map(|level| {
@@ -789,6 +796,7 @@ pub fn heightmap(
         "levels": levels,
         "masters": master_files,
         "validation": validation,
+        "description": {"file": "description.json", "sha256": description, "schema": "world-description-v1"},
         "attribution": [&input["base"]["attribution"], &input["cover"]["attribution"]],
         "checksums": "checksums.txt: SHA-256 of every tile, `sha256sum -c checksums.txt`",
     });

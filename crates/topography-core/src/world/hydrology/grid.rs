@@ -11,7 +11,7 @@ use std::{
 };
 
 /// Grid shape and the input manifest, passed through to the output.
-pub(super) struct Grid {
+pub(crate) struct Grid {
     pub w: usize,
     pub h: usize,
     pub spacing_m: f64,
@@ -24,7 +24,7 @@ pub(super) struct Grid {
 }
 
 /// `grid.json` fields: size, spacing, origin, offset and core rows.
-pub(super) fn shape(manifest: &Map<String, Value>) -> Result<Grid> {
+pub(crate) fn shape(manifest: &Map<String, Value>) -> Result<Grid> {
     let size: [usize; 2] =
         serde_json::from_value(manifest.get("size").cloned().unwrap_or_default())
             .map_err(|_| AcquisitionError::Invalid("grid.json size must be [w, h]".into()))?;
@@ -151,7 +151,7 @@ pub(super) fn read(dir: &Path) -> Result<Input> {
 }
 
 /// A body list (`bodies.json`): thousands of basins in a 1 m band pass the 1 MiB metadata limit.
-pub(super) fn read_bodies(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_bodies(path: &Path) -> Result<Vec<u8>> {
     const LIMIT: u64 = 256 << 20;
     let file = io_context(format!("open {}", path.display()), fs::File::open(path))?;
     let mut bytes = Vec::new();
@@ -209,7 +209,7 @@ pub(super) fn for_each_input_row(
 }
 
 /// Rows `y0..y1`, columns `x0..x1` of a `w` x `h` raster of `B`-byte little-endian cells.
-pub(super) fn read_window<const B: usize, T>(
+pub(crate) fn read_window<const B: usize, T>(
     path: &Path,
     [w, h]: [usize; 2],
     [x0, x1]: [usize; 2],

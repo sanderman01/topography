@@ -1,6 +1,7 @@
 //! Heightmap and game layer texture tiles, height encoding, and export validation.
 
 mod checks;
+mod description;
 mod heightmap;
 mod layers;
 mod legends;
