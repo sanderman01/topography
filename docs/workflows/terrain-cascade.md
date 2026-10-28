@@ -386,7 +386,7 @@ the region class (`configs/hydrology/water-v1.toml`, which Rust and Python both 
 start (default 10 km²). `--l1-class-runs`, `--l2-class-runs` and `--l3-class-runs` mix
 per-class expert runs (`cN` subdirectories) over a level's run. The output is a 4 m world
 (`manifest.json`, layers, hillshades of each level) that
-exports directly. Beside `water.u8` (kept until export v2) it holds `water-surface.f32`
+exports directly. Beside `water.u8` (the 4 m mask L4 conditions on; the export ignores it) it holds `water-surface.f32`
 (NaN dry, sea 0), `water-body.u32`, `bodies.json` and the 128 m `moisture.f32` (placed by
 the manifest's `moisture` entry); the rasters are hard links into `hydrology/4m` (copies
 across file systems). A world's `bodies.json` lists the sea, lakes, rivers and dry basins of
@@ -440,18 +440,53 @@ hydrology takes 2.8 GB in Rust while Python holds 1.6 GB. So run it in a 12 GB c
 bands roughly double the Python share. The
 output takes 15 bytes a 1 m cell (elevation, water surface and body, and three masks: 64 GB
 at 64 km), plus 4 bytes a cell for `elevation-raw.f32` until the run finishes (17 GB) and two
-band directories (about 4 GB); `cascade_l4` checks the free space before it starts. The
+band directories (about 4 GB); `cascade_l4` checks the free space before it starts. L4 still
+writes the 1 m binary `water.u8`, `snow-ice.u8` and `vegetation.u8` (12.9 GB at 64 km), which
+the export ignores; dropping them is left to sub-project 5. The
 chain needs about 44 bytes a 4 m cell while it runs (12 GB at 64 km). Its L3 bands hold
 about 4.6 GB at 64 km width (8,192 m bands); the 4 m hydrology at 64 km takes 5.5 GB in Rust
 while Python holds about 2.5 GB, so a whole-map chain peaks at about 8 GB (measured in a
 10 GB cap).
 
-Then redraw the cover at 1 m from the layout and add land cover:
+Then add the game layers the export needs (the chain still draws its 4 m cover internally;
+a chain world takes the same command before a 4 m export):
 
 ```sh
-$P -m topography_training.diffusion.cover --world data/worlds/fujion-v3-chain-14-l4 --layout data/worlds/fujion-painted-l0-5
-$P -m topography_training.diffusion.landcover --world data/worlds/fujion-v3-chain-14-l4
+$P -m topography_training.diffusion.game_layers --world data/worlds/fujion-v3-chain-14-l4 --layout data/worlds/fujion-painted-l0-5
 ```
+
+`game_layers` writes `game/` at 2 m (at the world's spacing when coarser): vegetation, snow
+and talus densities (0 to 1) and dithered biome and land cover, and records them in the
+world manifest's `game` entry; rerunning replaces them. `--layout` defaults to the layout
+the world records. It refuses worlds without a `moisture` entry. `--rows` (default 256)
+bounds memory, about 3.7 GB at 64 km (extrapolated); `--png out.png` also writes area-mean
+previews (snow, vegetation, talus as RGB, and `out-landcover.png`). On the 8 km chain test
+and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
+
+- The cover reads the layout's forest share and snowline bilinearly and its class map by
+  nearest cell, at positions warped by about 150 m, so cover has no 128 m grid steps. Snow
+  and tree lines follow the ground: snow lies lower on pole-facing slopes (`hemisphere` in
+  the paint settings) and in gullies and sheds from faces steeper than 40–55°; trees reach
+  higher in gullies and on sun-facing slopes and thin out near their limit and on steep
+  ground.
+- `vegetation-density` is the layout's forest share times a moisture ramp (`MOIST_DRY` 0.15
+  to `MOIST_WET` 0.45), a tree-line fade, a steep-slope fade, (1 − snow) and (1 − wet). The
+  cover's `patchy` noise is not folded in.
+- `biome` is the layout's terrain class as the cover reads it (warped by about 150 m), each
+  class's share smoothed over about 64 m and dithered with blue noise. It does not come
+  from the model's `classes.u8`.
+- `land-cover` holds ESA WorldCover codes, a recorded judgment call, not observed cover.
+  Each rule is a ramp: trees (10) take the top of a shared blue-noise value by
+  `vegetation-density` and snow/ice (70) the bottom by `snow-cover`, so the two never
+  overlap and keep their exact shares; bare rock (60) ramps in around 35°; above the tree
+  line grassland (30) gives way to bare ground over 400 m; dunes, badlands, glacier ground,
+  volcanoes and lava are bare from gentle slopes up; other open land takes its class's
+  typical cover. Water (80) is a hard rule at a wet share of at least 0.25 (`WATER_WET`),
+  not dithered, so 1 m rivers stay whole at 2 m. The blue-noise tile is 256 texels (512 m
+  at 2 m); no lattice shows in the 8 km test pictures.
+- Known tuning point: hydrology moisture sits low (Fujion median 0.11 to 0.14,
+  `fujix-55-chain` 0.20 over the whole map, about 40% of it below 0.15), so forest below the
+  tree line may be thin. Lower `MOIST_DRY` if the owner wants more trees.
 
 ### Generating fujix from the collage
 
@@ -689,31 +724,55 @@ target/release/topography export heightmap data/worlds/fujion-v3-chain-14-l4 dat
 target/release/topography export view data/exports/fujion-v3-chain-14-l4
 ```
 
+Run `game_layers` first (above); without `game/` the export has height, water and moisture
+only. Worlds without the hydrology v2 water layers (`water-surface.f32`, `water-body.u32`,
+`bodies.json`) are refused: regenerate them. A world whose manifest names a 4 m hydrology
+that is missing or does not overlap the export fails; a world without a `moisture` entry
+exports without moisture and prints a line. The contract is
+[heightmap export v2](../../schemas/heightmap-export-v2.md).
+
 Tiles are written as `{layer}/L{level}/{prefix}_L{level}_{tx}_{ty}.png`, for example
-`height/L0/height_L0_0_0.png` and `vegetation/L0/veg_L0_0_0.png` (prefixes `height`,
-`water`, `snow`, `veg`, `landcover`, `biome`). `biome` holds the terrain class id per
-cell (authored layouts; written by the chain and by `cover`), and the viewer's Colours
-menu shows it with a legend. For authored layouts the chain reads the layout's forest share and snowline
-bilinearly, and its class map by nearest cell, at positions warped by about 150 m, so
-cover has no 128 m grid steps. Snow and tree lines then follow the ground: snow lies
-lower on pole-facing slopes (set `hemisphere` in the paint settings) and in gullies and
-sheds from faces steeper than 40–55°; trees reach higher in gullies and on sun-facing
-slopes, thin out near their limit and on steep ground, and leave patchy edges.
+`height/L0/height_L0_0_0.png` and `land-cover/L1/landcover_L1_0_0.png`. Layers (prefix =
+layer name unless noted):
 
-`landcover` (run after L4, above; `--treeline-m` sets the tree line) adds `land-cover.u8` with ESA WorldCover codes derived by rule (a recorded
-judgment call, not observed cover):
-- water 80, snow/ice 70 and forest 10, taken from the world's own masks;
-- bare 60 above 35° or more than 400 m above the local tree line, grassland 30 just
-  above it (bare classes stay bare);
-- dunes, badlands, lava and glacier forelands bare, canyons and badlands shrub 20,
-  other open land grassland;
-- class borders warped by about 150 m.
+- `height`: 16-bit, 257² `shared_edge` tiles from level 0, no apron;
+- `water-surface` (16-bit, the height encoding), `water-coverage` (8-bit fraction) and
+  `water-body` (16-bit export ids matching `description.json`): from level 0, written only
+  for tiles that hold water; a missing file means no water;
+- `biome`, `land-cover` (prefix `landcover`), `vegetation-density`, `snow-cover`,
+  `talus-density`: from 2 m, from the world's `game/`;
+- `moisture`: from about 128 m (on small test worlds the coarsest level only).
 
-The export holds the tiles, `manifest.json` and `checksums.txt` (SHA-256 of every
-tile; verify with `sha256sum -c checksums.txt` in the export). Add `--masters` to also write
-full-world COGs (Float32 `elevation.tif` and the mask layers). They duplicate the
-world output, so they are only needed when the export travels without it.
+Every level comes from a global area-mean pyramid (mode for classes), and every layer but
+height has a 4-texel apron. The last tile of a row or column is one sample short (256²
+heights at the far corner). The manifest carries per-layer metadata, the `biome` and
+`land-cover` legends with `present` flags, and `validation`: surface at or above ground where
+wet, one level per lake, coverage matching surface over ground and identical shared edges
+and aprons; a failing check stops the export before it is published. `description.json`
+adds water bodies, river lines and lake outlines ([world description
+v1](../../schemas/world-description-v1.md)).
 
-Export streams the world layers row by row: a 32 km world at 1 m exports in
-about 13 minutes with a peak under 200 MB. The 4 m chain output exports the same
-way for a quick 3D look before L4.
+The export holds the tiles, `manifest.json`, `description.json` and `.md`, and
+`checksums.txt` (SHA-256 of every tile; verify with `sha256sum -c checksums.txt` in the
+export). Add `--masters` to also write a full-world Float32 `elevation.tif`; it duplicates
+the world output, so it is only needed when the export travels without it.
+
+The viewer shows heights, water from `water-coverage`, snow from `snow-cover`, and land cover
+or biome colours with a legend of the overview's shares; double-click loads 1 m detail.
+
+Export streams the world row by row through the pyramids, so memory grows with the world's
+width, not its area. Measured 2026-10-28 on the `t6` Fujion test worlds (a GPU job was running
+and the host was swapping, so wall times are pessimistic):
+
+| World | Tiles | Size | Wall | CPU | Peak RSS |
+| --- | --- | --- | --- | --- | --- |
+| 8 km chain, 4 m (2,048²) | 700 | 13.7 MB | 4.9 s | 4.4 s | 50 MB |
+| 4 km L4, 1 m (4,096²) | 1,379 | 33.0 MB | 19.5 s | 18.3 s | 71 MB |
+
+Scaled to 64 km at 1 m (256 times the 4 km L4's cells): about 8.5 GB (height 4.9 GB, water
+surface 3.1 GB, the rest 0.45 GB), about 80 minutes of one core, and a peak well under 1 GB
+(linear in width: about 0.7 GB, not measured). The test crop is all steep glaciated summit,
+the worst case for PNG size; Fujix is about 40% deep sea, which compresses far better, so
+the 4 to 6 GB estimate of [fujix v1](../plans/fujix-v1.md) §5 may still hold. Water-surface
+tiles cost almost as much as height because beyond the 4-texel extension they repeat the
+ground height.

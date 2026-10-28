@@ -34,9 +34,11 @@ The [master plan](docs/plans/terrain-design-master-plan.md) defines the project;
   from the generated terrain; terrain continues under the sea. Snow and tree lines
   follow aspect, slope and gullies. A 32 km world generates at 4 m in about an hour
   and at 1 m in about 17 hours of bands.
-- **Export:** 16-bit heightmap tiles (default 257² `shared_edge`) with quadtree LOD
-  levels, mask, land-cover and biome tiles, SHA-256 checksums and optional Float32
-  COG masters, plus a local 3D viewer.
+- **Export:** 16-bit heightmap tiles (default 257² `shared_edge`) with an area-mean
+  quadtree of LOD levels, water surface, coverage and body tiles, 2 m biome, land-cover
+  and density tiles with legends, a world description with rivers and lakes, export
+  checks, SHA-256 checksums and an optional Float32 COG master, plus a local 3D viewer
+  ([contract](schemas/heightmap-export-v2.md)).
 
 Processing success never approves terrain: source tiles, regions, models and worlds
 each pass an explicit human review. The latest 32 km world at 1 m (Fujion, from the

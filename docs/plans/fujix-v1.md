@@ -5,8 +5,10 @@ built as `data/worlds/fujix-collage-54` (55 with class 19) and accepted by the o
 Sub-project 3 is done: L3 run 5 and L4 run 8 with class-19 experts pass their gates.
 Sub-project 2 (hydrology v2) is done: `topography world hydrology` gives water at 32 m, 4 m
 and 1 m, and the cascade chain and the L4 bands use it (verified on a Fujion 8 km crop and a
-synthetic 64 km grid); a full world is not yet generated with it. Sub-project 4 is not
-started. Sub-project 5: the chain runs from the collage and the central and Grand Canyon
+synthetic 64 km grid); a full world is not yet generated with it. Sub-project 4 (export
+v2) is done: `game_layers` and `topography export heightmap` write the layers of section 4
+([heightmap export v2](../../schemas/heightmap-export-v2.md)), checked on 8 km and 4 km test
+worlds. Sub-project 5: the chain runs from the collage and the central and Grand Canyon
 checks pass (section 5); L3 runs in bands and both levels skip deep-sea windows, so the
 full run fits this machine and waits for the owner's go. Fujix is a new
 64 km world that replaces Fujion (32 km) as the game's map. It follows the

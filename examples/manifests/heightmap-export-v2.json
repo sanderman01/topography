@@ -1,0 +1,307 @@
+{
+  "apron_texels": 4,
+  "attribution": [
+    null,
+    null
+  ],
+  "checksums": "checksums.txt: SHA-256 of every tile, `sha256sum -c checksums.txt`",
+  "crs": "ENGCRS[\"Topography sketch plane\",EDATUM[\"Topography sketch\"],CS[Cartesian,2],AXIS[\"easting (X)\",east,ORDER[1],LENGTHUNIT[\"metre\",1]],AXIS[\"northing (Y)\",north,ORDER[2],LENGTHUNIT[\"metre\",1]]]",
+  "description": {
+    "file": "description.json",
+    "schema": "world-description-v1",
+    "sha256": "929edb4be24223f1db29471029fab739ede30dd21ceaec1e931e009a757711bb"
+  },
+  "encoding": {
+    "decode": "height_m = h_min_m + code * step_m",
+    "format": "PNG grayscale 16-bit",
+    "h_max_m": 3705.550048828125,
+    "h_min_m": 1634.794921875,
+    "max_quantization_error_m": 0.01579884332477377,
+    "range_from": "ground, water surface and lake and sea levels",
+    "step_m": 0.031597697824874114
+  },
+  "intervals": 256,
+  "kind": "heightmap_export",
+  "layers": {
+    "biome": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "area mode",
+      "finest_spacing_m": 2.0,
+      "format": "PNG grayscale 8-bit",
+      "legend": "biome",
+      "levels": [
+        1,
+        4
+      ],
+      "missing": "never missing",
+      "offset": 0.0,
+      "prefix": "biome",
+      "scale": 1.0,
+      "source": "procedural",
+      "unit": "class id"
+    },
+    "height": {
+      "apron_texels": 0,
+      "decode": "value = offset + code · scale",
+      "filter": "area mean",
+      "finest_spacing_m": 1.0,
+      "format": "PNG grayscale 16-bit",
+      "levels": [
+        0,
+        4
+      ],
+      "missing": "never missing",
+      "offset": 1634.794921875,
+      "prefix": "height",
+      "scale": 0.031597697824874114,
+      "source": "generated",
+      "unit": "m"
+    },
+    "land-cover": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "area mode",
+      "finest_spacing_m": 2.0,
+      "format": "PNG grayscale 8-bit",
+      "legend": "land-cover",
+      "levels": [
+        1,
+        4
+      ],
+      "missing": "never missing",
+      "offset": 0.0,
+      "prefix": "landcover",
+      "scale": 1.0,
+      "source": "procedural",
+      "unit": "WorldCover code"
+    },
+    "moisture": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "area mean",
+      "finest_spacing_m": 16.0,
+      "format": "PNG grayscale 8-bit",
+      "levels": [
+        4,
+        4
+      ],
+      "missing": "never missing",
+      "offset": 0.0,
+      "prefix": "moisture",
+      "scale": 0.00392156862745098,
+      "source": "procedural",
+      "unit": "fraction"
+    },
+    "snow-cover": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "area mean",
+      "finest_spacing_m": 2.0,
+      "format": "PNG grayscale 8-bit",
+      "levels": [
+        1,
+        4
+      ],
+      "missing": "never missing",
+      "offset": 0.0,
+      "prefix": "snow-cover",
+      "scale": 0.00392156862745098,
+      "source": "procedural",
+      "unit": "fraction"
+    },
+    "talus-density": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "area mean",
+      "finest_spacing_m": 2.0,
+      "format": "PNG grayscale 8-bit",
+      "levels": [
+        1,
+        4
+      ],
+      "missing": "never missing",
+      "offset": 0.0,
+      "prefix": "talus-density",
+      "scale": 0.00392156862745098,
+      "source": "procedural",
+      "unit": "fraction"
+    },
+    "vegetation-density": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "area mean",
+      "finest_spacing_m": 2.0,
+      "format": "PNG grayscale 8-bit",
+      "levels": [
+        1,
+        4
+      ],
+      "missing": "never missing",
+      "offset": 0.0,
+      "prefix": "vegetation-density",
+      "scale": 0.00392156862745098,
+      "source": "procedural",
+      "unit": "fraction"
+    },
+    "water-body": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "none: centre body if wet, else the main wet body",
+      "finest_spacing_m": 1.0,
+      "format": "PNG grayscale 16-bit",
+      "levels": [
+        0,
+        4
+      ],
+      "missing": "no water in this tile",
+      "offset": 0.0,
+      "prefix": "water-body",
+      "scale": 1.0,
+      "source": "hydrology",
+      "unit": "id"
+    },
+    "water-coverage": {
+      "apron_texels": 4,
+      "decode": "value = offset + code · scale",
+      "filter": "area mean",
+      "finest_spacing_m": 1.0,
+      "format": "PNG grayscale 8-bit",
+      "levels": [
+        0,
+        4
+      ],
+      "missing": "no water in this tile",
+      "offset": 0.0,
+      "prefix": "water-coverage",
+      "scale": 0.00392156862745098,
+      "source": "hydrology",
+      "unit": "fraction"
+    },
+    "water-surface": {
+      "apron_texels": 4,
+      "beyond_extension": "beyond the extension the surface is the ground height",
+      "decode": "value = offset + code · scale",
+      "extended_texels": 4,
+      "filter": "area mean within one body; lakes and sea at their level",
+      "finest_spacing_m": 1.0,
+      "format": "PNG grayscale 16-bit",
+      "levels": [
+        0,
+        4
+      ],
+      "missing": "no water in this tile",
+      "offset": 1634.794921875,
+      "prefix": "water-surface",
+      "scale": 0.031597697824874114,
+      "source": "hydrology",
+      "unit": "m"
+    }
+  },
+  "layout": "shared_edge",
+  "legends": {
+    "biome": {
+      "classes": [
+        {
+          "id": 0,
+          "key": "unknown",
+          "name": "Unlabelled",
+          "present": false
+        },
+        {
+          "id": 4,
+          "key": "calderas",
+          "name": "Volcanic calderas and craters",
+          "present": true
+        },
+        {
+          "id": 10,
+          "key": "glaciers",
+          "name": "Glaciers and ice fields",
+          "present": true
+        }
+      ],
+      "legend": "topography terrain-v3"
+    },
+    "land-cover": {
+      "classes": [
+        {
+          "id": 0,
+          "key": "unknown",
+          "name": "Unlabelled",
+          "present": false
+        },
+        {
+          "id": 60,
+          "key": "bare_sparse",
+          "name": "Bare / sparse vegetation",
+          "present": true
+        },
+        {
+          "id": 70,
+          "key": "snow_ice",
+          "name": "Snow and ice",
+          "present": true
+        }
+      ],
+      "legend": "ESA WorldCover v200"
+    }
+  },
+  "levels": [
+    {
+      "last_tile_texels": 256,
+      "level": 0,
+      "samples_per_side": 4096,
+      "spacing_m": 1.0,
+      "tile_texels": 257,
+      "tiles_per_side": 16
+    },
+    {
+      "last_tile_texels": 256,
+      "level": 1,
+      "samples_per_side": 2048,
+      "spacing_m": 2.0,
+      "tile_texels": 257,
+      "tiles_per_side": 8
+    }
+  ],
+  "lod": "area mean pyramid: level k+1 texel i is the [1/4, 1/2, 1/4]² footprint mean of level k samples 2i-1..2i+1 (mode for classes); texel i of level k sits at level-0 sample i·2^k",
+  "masters": [],
+  "origin_nw_corner": [
+    14336.0,
+    18432.0
+  ],
+  "row_order": "north to south; texel (0,0) is the north-west cell centre",
+  "schema_version": 2,
+  "size": [
+    4096,
+    4096
+  ],
+  "spacing_m": 1.0,
+  "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix in layers.{layer}.prefix; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), aprons beyond the world edge repeat the edge texel",
+  "validation": {
+    "checks": {
+      "coverage_mismatch": 0,
+      "lake_levels": 0,
+      "lake_levels_off": 0,
+      "shared_edge_mismatches": 0,
+      "surface_without_body": 0,
+      "wet_not_above_ground": 0,
+      "wet_without_surface": 0
+    },
+    "examples": {},
+    "figures": {
+      "coarse_wet_below_ground": {
+        "L1": 1911,
+        "L2": 56,
+        "L3": 0,
+        "L4": 0
+      },
+      "lake_levels_checked": 0
+    },
+    "passed": true
+  },
+  "water_files": "water-surface, water-coverage and water-body tiles exist only where a tile or its apron holds water; a missing file means coverage 0, body 0 and surface = ground",
+  "world_output": "data/worlds/example-l4",
+  "world_output_manifest_sha256": "ead006902dcf66288b690ff1b4b656f5e270cb8f921dbfb254d7fc735b26f223"
+}

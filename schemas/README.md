@@ -20,6 +20,7 @@ checks, instead of a second schema engine. Their first consumer is
 - [Numeric evaluation v1](numeric-evaluation-v1.md): scoped releases, geographic separation and the Rust/Python scalar job boundary.
 - [Numeric evaluation v2](numeric-evaluation-v2.md): surface-cover propagation and ground-only metrics, with explicit legacy compatibility.
 - [World description v1](world-description-v1.md): a generated world's regions, passes and features with layout targets and measured values.
+- [Heightmap export v2](heightmap-export-v2.md): tile geometry, height encoding, area-mean pyramid, water, game layers, legends and export checks.
 
 The `validate` commands read metadata only. Acquisition/import additionally inspect
 GeoTIFF metadata and preserve raw bytes; `verify` rehashes stored receipts/objects.
@@ -40,8 +41,6 @@ The broader contract coverage still planned includes:
   memory, runtime, and numeric/structural evaluations.
 - World revisions, source transforms, water surfaces, editable layers, locks,
   dependencies, and approvals.
-- Export coordinates, orientation, texture layout and dimensions, shared borders,
-  global height offset/scale, validity masks, and attribution.
 
 Keep tiny examples in `examples/manifests/`. Version contracts explicitly;
 dataset, model, and world manifests must pin compatible versions. Changing the

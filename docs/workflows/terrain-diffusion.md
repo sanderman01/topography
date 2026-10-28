@@ -91,8 +91,8 @@ as brush strokes (rejected 2026-09-29); the [terrain cascade](../plans/terrain-c
 plans real-data levels above 1 m instead.
 
 `world preview` interpolates any world input's 32 m surface to a few metres and
-samples its masks, so `export heightmap` and `export view` can show the layout
-before GPU generation.
+samples its masks. It has no hydrology v2 water layers, so heightmap export v2
+refuses it.
 
 ## 5. Export and viewing
 
@@ -104,4 +104,6 @@ topography export view <export-dir> [port]
 `export view` serves a loopback WebGL2 viewer (default port 8766) that reads only
 the exported tiles: an overview from the finest LOD level of at most 1,025
 samples per side, with double-click loading 1 or 2 km of level 0 around the
-picked point. Cover colours come from the land-cover, water and snow/ice masks.
+picked point. Colours come from the land-cover, water-coverage and snow-cover
+layers, or the biome layer. The viewer reads only
+[export v2](../../schemas/heightmap-export-v2.md).
