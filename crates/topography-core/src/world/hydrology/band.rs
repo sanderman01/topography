@@ -123,11 +123,56 @@ fn same_surface(a: f32, b: f32) -> bool {
 /// (its halo guess put the stream there): route them along the first rows into the river, on
 /// ground lowered to a running minimum so the route never climbs. A river cell above the
 /// stream's own ground is not joined. Returns the streams joined.
+/// Per fixed cell (the first `fixed_rows` rows): whether its flow in the previous band
+/// (`flow` there) comes back into this grid's free rows.
+pub(super) fn reenters(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<bool> {
+    const UNKNOWN: u8 = 0;
+    const NO: u8 = 1;
+    const YES: u8 = 2;
+    const OPEN: u8 = 3;
+    let m = (fixed_rows * dims.w).min(flow.len());
+    let mut state = vec![UNKNOWN; m];
+    let mut chain = Vec::new();
+    for start in 0..m {
+        if state[start] != UNKNOWN {
+            continue;
+        }
+        let mut c = start;
+        let back = loop {
+            if c >= m {
+                break true;
+            }
+            match state[c] {
+                UNKNOWN => {}
+                OPEN => break false,
+                s => break s == YES,
+            }
+            state[c] = OPEN;
+            chain.push(c);
+            let d = flow[c] & 15;
+            match (d != 0)
+                .then(|| dims.neighbour(c, d as usize - 1))
+                .flatten()
+            {
+                Some(r) => c = r,
+                None => break false,
+            }
+        };
+        for x in chain.drain(..) {
+            state[x] = if back { YES } else { NO };
+        }
+    }
+    state.into_iter().map(|s| s == YES).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn join_seam_rivers(
     dims: Dims,
     fixed_rows: usize,
     ground: &mut [f32],
     flags: &[u8],
+    body: &[u32],
+    reenters: &[bool],
     dir: &mut [u8],
     acc: &[f32],
     river_km2: f32,
@@ -139,10 +184,10 @@ pub(super) fn join_seam_rivers(
         return 0;
     }
     let taken = |j: usize| j < first;
-    // A taken river cell ends the route: it has no receiver here (one draining into this
-    // band would close a loop).
+    // A taken river cell ends the route if its flow in the previous band never comes back
+    // into this band (a loop across the seam, or the stream joining itself).
     let last_row: Vec<bool> = (first - w..first)
-        .map(|j| flags[j] & RIVER != 0 && receiver(dims, dir, j).is_none())
+        .map(|j| flags[j] & RIVER != 0 && !reenters.get(j).copied().unwrap_or(true))
         .collect();
     let river = |j: usize| j < first && j + w >= first && last_row[j + w - first];
     let mut joined = 0;
@@ -169,7 +214,9 @@ pub(super) fn join_seam_rivers(
                 }
                 for (_, j) in dims.neighbours(c) {
                     let near = j >= first && j < first + REACH * w;
-                    if near && flags[j] & (SEA | RIVER) == 0 && !from.contains_key(&j) {
+                    // Not through water or basins (their exits route them).
+                    let open = flags[j] & (SEA | RIVER) == 0 && body[j] == 0;
+                    if near && open && !from.contains_key(&j) {
                         from.insert(j, c);
                         next.push(j);
                     }
@@ -463,7 +510,17 @@ mod tests {
     fn a_stream_turning_back_across_the_seam_is_led_into_the_river() {
         let (dims, mut ground, flags, mut dir, acc) = seam_scene(-1.0);
         assert_eq!(
-            join_seam_rivers(dims, 1, &mut ground, &flags, &mut dir, &acc, 0.5),
+            join_seam_rivers(
+                dims,
+                1,
+                &mut ground,
+                &flags,
+                &[0; 18],
+                &[false; 6],
+                &mut dir,
+                &acc,
+                0.5
+            ),
             1
         );
         // (1, 1) -> (2, 1) -> (3, 0), the route lowered so it never climbs.
@@ -483,9 +540,44 @@ mod tests {
         let (dims, mut ground, flags, mut dir, acc) = seam_scene(0.2);
         let before = dir.clone();
         assert_eq!(
-            join_seam_rivers(dims, 1, &mut ground, &flags, &mut dir, &acc, 0.5),
+            join_seam_rivers(
+                dims,
+                1,
+                &mut ground,
+                &flags,
+                &[0; 18],
+                &[false; 6],
+                &mut dir,
+                &acc,
+                0.5
+            ),
             0
         );
+        assert_eq!(dir, before);
+    }
+
+    #[test]
+    fn a_taken_river_whose_flow_comes_back_is_no_join_target() {
+        // The taken river cell (3, 0) drains south into this band at (3, 1): joining it
+        // would close a loop across the seam.
+        let (dims, mut ground, flags, mut dir, acc) = seam_scene(-1.0);
+        let mut flow = vec![0u8; 6];
+        flow[3] = 2;
+        let back = reenters(dims, &flow, 1);
+        assert!(back[3] && !back[1]);
+        let before = dir.clone();
+        let joined = join_seam_rivers(
+            dims,
+            1,
+            &mut ground,
+            &flags,
+            &[0; 18],
+            &back,
+            &mut dir,
+            &acc,
+            0.5,
+        );
+        assert_eq!(joined, 0);
         assert_eq!(dir, before);
     }
 }

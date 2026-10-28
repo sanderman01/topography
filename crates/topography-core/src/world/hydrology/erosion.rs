@@ -280,10 +280,11 @@ pub(super) fn widen_trenches(
     (figures, lowered)
 }
 
-/// Whether the flow from `from` reaches `to` within a few hundred cells.
+/// Whether the flow from `from` may reach `to`: it does, or it runs longer than a few
+/// thousand cells (treated as unsafe; the spill and the cycle guard stay behind it).
 fn flows_into(dims: Dims, dir: &[u8], from: usize, to: usize) -> bool {
     let mut c = from;
-    for _ in 0..512 {
+    for _ in 0..4096 {
         if c == to {
             return true;
         }
@@ -292,7 +293,7 @@ fn flows_into(dims: Dims, dir: &[u8], from: usize, to: usize) -> bool {
             None => return false,
         }
     }
-    false
+    true
 }
 
 /// Lowering figures: total and largest, and on river cells (`channel`) split into those
