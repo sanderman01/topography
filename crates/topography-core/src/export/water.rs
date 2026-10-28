@@ -9,6 +9,8 @@ use std::{collections::HashMap, fs, io::Read, path::Path};
 
 /// Texels past the shore that carry the nearest water's surface.
 pub(super) const REACH: usize = 4;
+// Missing water tiles mean surface = ground only while the extension fits in the apron.
+const _: () = assert!(REACH <= super::layers::APRON);
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Kind {
@@ -53,7 +55,7 @@ impl Bodies {
             .as_array()
             .ok_or_else(|| AcquisitionError::Invalid("bodies.json has no bodies".into()))?;
         // The sea is world id 1 even when a world without coast leaves it out.
-        let mut sea = (1u32, 0.0f32, 0u32);
+        let (mut sea, mut seas) = ((1u32, 0.0f32, 0u32), 0);
         let mut water = Vec::new();
         for e in entries {
             let id = e["id"].as_u64().and_then(|v| u32::try_from(v).ok());
@@ -63,6 +65,8 @@ impl Bodies {
             match e["kind"].as_str() {
                 Some("sea") => {
                     ensure(level.is_finite(), "sea without level_m")?;
+                    seas += 1;
+                    ensure(seas == 1, "bodies.json lists more than one sea")?;
                     sea = (id, level, parent);
                 }
                 Some("lake") => {
@@ -182,16 +186,19 @@ impl Reduce for Terrain<'_> {
                     .0
             };
             let id = usize::from(body);
-            let surface = match self.bodies.kind[id] {
-                _ if body == 0 => f32::NAN,
-                Kind::Sea | Kind::Lake => self.bodies.level_m[id],
-                Kind::River => {
-                    let (mut sum, mut weight) = (0.0, 0.0);
-                    for (r, x, w) in samples().filter(|(r, x, _)| r.body[*x] == body) {
-                        sum += w * r.surface[x];
-                        weight += w;
+            let surface = if body == 0 {
+                f32::NAN
+            } else {
+                match self.bodies.kind[id] {
+                    Kind::Sea | Kind::Lake => self.bodies.level_m[id],
+                    Kind::River => {
+                        let (mut sum, mut weight) = (0.0, 0.0);
+                        for (r, x, w) in samples().filter(|(r, x, _)| r.body[*x] == body) {
+                            sum += w * r.surface[x];
+                            weight += w;
+                        }
+                        sum / weight
                     }
-                    sum / weight
                 }
             };
             out.body.push(body);
