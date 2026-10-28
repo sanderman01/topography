@@ -32,9 +32,12 @@ from .data import smooth, soft_cover
 NOISE_ROWS = 256  # starting noise is drawn per block of rows, so overlapping bands agree
 MARGIN_4M = 16  # 4 m context cells around a band for the smoothing
 WATER_SIGMA_M = 3.0  # rounds 4 m water corners at 1 m
-# Fields of water bodies that hold for the whole world (the rest are per band grid). Dry
-# basins are not water (and not in the raster); they stay in the band reports' bodies.
-BODY_FIELDS = ("id", "kind", "level_m", "coarse", "parent", "over_budget")
+# Body fields that hold for the whole world (the rest are per band grid). Dry basins (not in
+# the raster) keep their largest band area; tiny ones stay out (hydrology.world_bodies).
+BODY_FIELDS = ("id", "kind", "level_m", "coarse", "parent", "over_budget", "endorheic", "ice")
+# Disk per 1 m cell: elevation, the raw surface while running, water surface and body (4 B
+# each), water, snow and vegetation (1 B each).
+DISK_BYTES = 19
 
 
 def _noise(seed: int, g0: int, g1: int, cols: int):
@@ -124,6 +127,9 @@ def main(argv=None) -> int:
         progress = json.loads(progress_path.read_text())
         mode = "r+"
     else:
+        # Plus two band directories of about 22 B a cell while the run goes.
+        band_cells = n * (args.band_m + 2 * args.halo_m)
+        hydrology.check_disk(args.out, DISK_BYTES * n * n + 2 * 22 * band_cells, "the L4 run")
         args.out.mkdir(parents=True)
         hyd.mkdir()
         progress = {"params": params, "bands_done": 0, "band_s": [], "hydrology_done": 0, "hydrology_s": [],
@@ -133,18 +139,21 @@ def main(argv=None) -> int:
     def layer(name, dtype):
         return np.memmap(args.out / name, dtype=dtype, mode=mode, shape=(n, n))
 
-    # Diffusion writes the raw surface (cross-faded between bands); hydrology carves it.
-    raw = layer("elevation-raw.f32", "<f4")
+    # Diffusion writes the raw surface (cross-faded between bands); hydrology carves it. It is
+    # removed last, once the manifest is written.
+    raw_path = args.out / "elevation-raw.f32"
+    raw = layer(raw_path.name, "<f4") if mode == "w+" or raw_path.exists() else None
     elev, water_out = layer("elevation.f32", "<f4"), layer("water.u8", np.uint8)
     surface_out, body_out = layer("water-surface.f32", "<f4"), layer("water-body.u32", "<u4")
     snow_out, veg_out = layer("snow-ice.u8", np.uint8), layer("vegetation.u8", np.uint8)
 
     def read4(name, dtype):
-        return np.fromfile(args.world / name, dtype=dtype).reshape(n4, n4)[off4 : off4 + c4, off4 : off4 + c4]
+        # Memory-mapped: a band reads only its rows.
+        mm = np.memmap(args.world / name, dtype=dtype, mode="r", shape=(n4, n4))
+        return mm[off4 : off4 + c4, off4 : off4 + c4]
 
     h4 = read4("elevation.f32", "<f4")
-    water4 = read4("water.u8", np.uint8) == 255
-    snow4, veg4 = read4("snow-ice.u8", np.uint8) == 2, read4("vegetation.u8", np.uint8) == 2
+    water4, snow4, veg4 = read4("water.u8", np.uint8), read4("snow-ice.u8", np.uint8), read4("vegetation.u8", np.uint8)
     classes4 = read4("classes.u8", np.uint8) if per_cell else None
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -193,14 +202,18 @@ def main(argv=None) -> int:
         # A body's parent is where it really ends: the band whose core holds its mouth or exit.
         core = range(a - top, b - top)
         for entry in o.bodies:
-            if entry["kind"] == "dry":
+            fields = {k: entry[k] for k in BODY_FIELDS if k in entry}
+            key = str(entry["id"])
+            if entry["kind"] == "dry":  # areas count the band grid; keep the largest
+                area = max(entry.get("area_km2", 0.0), bodies.get(key, {}).get("area_km2", 0.0))
+                if area >= hydrology.WORLD_DRY_MIN_KM2:
+                    bodies[key] = fields | {"area_km2": area}
                 continue
             end = entry.get("mouth_cell") or entry.get("exit_cell")
-            fields = {k: entry[k] for k in BODY_FIELDS if k in entry}
             if end is not None and end[1] in core:
-                bodies[str(entry["id"])] = fields
+                bodies[key] = fields
             else:
-                bodies.setdefault(str(entry["id"]), fields)
+                bodies.setdefault(key, fields)
         progress["hydrology_done"] = j + 1
         progress["hydrology_s"].append(time.time() - t)
         save()
@@ -224,10 +237,12 @@ def main(argv=None) -> int:
         r0, r1 = g0 // 4 - m, g1 // 4 + m
         crop = np.s_[m * 4 : -m * 4, m * 4 : -m * 4]
         coarse = cascade.refine_surface(level, _rows_4m(h4, r0, r1, -m, c4 + m))[crop]
-        water = cascade.refine_mask(_rows_4m(water4, r0, r1, -m, c4 + m), 4, WATER_SIGMA_M, keep_thin=True)[crop]
+        water = cascade.refine_mask(_rows_4m(water4, r0, r1, -m, c4 + m) == 255, 4, WATER_SIGMA_M,
+                                    keep_thin=True)[crop]
 
         def cover(mask):
-            return soft_cover(np.repeat(np.repeat(_rows_4m(mask, r0, r1, -m, c4 + m), 4, 0), 4, 1))[crop]
+            rows = _rows_4m(mask, r0, r1, -m, c4 + m) == 2
+            return soft_cover(np.repeat(np.repeat(rows, 4, 0), 4, 1))[crop]
 
         snow, veg = cover(snow4), cover(veg4)
         classes = class_id
@@ -242,6 +257,7 @@ def main(argv=None) -> int:
             cmap = np.full(coarse.shape, classes, np.uint8) if np.ndim(classes) == 0 else classes.astype(np.uint8)
             extra += list(forms.from_classes(cmap, config["forms"]["table"], None,
                                              config["forms"]["sigma"] * window).astype(np.float16))
+            del cmap
         field = cascade.LazyField(level, coarse, extra, classes, n_classes)
         res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
                            noise=_noise(args.seed, g0, g1, n), guidance=args.guidance)[0, 0].numpy()
@@ -267,7 +283,8 @@ def main(argv=None) -> int:
         progress["bands_done"] = k + 1
         save()
         print(f"band {k + 1}/{len(bands)} rows {a}-{b} in {progress['band_s'][-1]:.0f} s", flush=True)
-        # The band above is now final down to its hydrology halo.
+        # Free the band's fields before Rust runs; the band above is now final down to its halo.
+        del coarse, water, snow, veg, classes, extra, land, h
         hydro_until(k)
     hydro_until(len(bands))
 
@@ -279,14 +296,15 @@ def main(argv=None) -> int:
         count[: len(c)] += c
     listed = []
     for entry in bodies.values():
+        if entry["kind"] == "dry":
+            listed.append(entry)
+            continue
         cells = int(count[entry["id"]]) if entry["id"] < len(count) else 0
         if cells:
             listed.append(entry | {"area_km2": cells / 1e6})
-    listed.sort(key=lambda e: e["id"])
-    (args.out / "bodies.json").write_text(json.dumps({
-        "schema_version": 1, "kind": "water_bodies",
-        "note": "water bodies merged from the 1 m bands; areas count delivered cells; parents from the band holding each end",
-        "bodies": listed}, indent=1))
+    (args.out / "bodies.json").write_text(json.dumps(hydrology.world_bodies(
+        listed, "merged from the 1 m bands: water areas count delivered cells, dry basin areas their "
+        "largest band grid; parents from the band holding each end"), indent=1))
 
     # Pictures: the whole area averaged to 8 m and a 1,024 m square at 1 m in the middle.
     over = np.concatenate([cascade.block_mean(np.asarray(elev[y : y + 1024]), 8) for y in range(0, n, 1024)])
@@ -303,10 +321,6 @@ def main(argv=None) -> int:
     world_input.mkdir(exist_ok=True)
     (world_input / "world.json").write_text(json.dumps(
         src | {"name": f"{src.get('name', 'world')}-l4", "origin": [ox, oy]}, indent=1))
-    del raw
-    (args.out / "elevation-raw.f32").unlink()
-    for d in (hyd / f"band-{len(bands) - 1:03d}", hyd / "grid"):  # band reports stay
-        shutil.rmtree(d, ignore_errors=True)
     names = ("elevation.f32", "water.u8", "water-surface.f32", "water-body.u32", "bodies.json",
              "snow-ice.u8", "vegetation.u8")
     digests = {name: hydrology.sha256(args.out / name) for name in names}
@@ -321,6 +335,11 @@ def main(argv=None) -> int:
         "water_fill": hydrology.WATER_FILL, **extra,
         "source_world": str(args.world.resolve()), "params": params, "band_s": progress["band_s"],
         "hydrology_s": progress["hydrology_s"], "layers": digests}, indent=1))
+    # Only now the run cannot be resumed any more: drop the raw surface and the last band.
+    del raw
+    raw_path.unlink(missing_ok=True)
+    for d in (hyd / f"band-{len(bands) - 1:03d}", hyd / "grid"):  # band reports stay
+        shutil.rmtree(d, ignore_errors=True)
     print(f"done: wrote {args.out} in {(sum(progress['band_s']) + sum(progress['hydrology_s'])) / 60:.0f} min",
           flush=True)
     return 0

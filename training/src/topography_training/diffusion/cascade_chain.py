@@ -243,7 +243,7 @@ def _layout_source(l0: layout.L0) -> Source:
     share = np.bincount(l0.cls[land], minlength=NUM_CLASSES) / max(int(land.sum()), 1)
     profiles = [hydrology.WATER.get(c, hydrology.WATER[0]) for c in range(NUM_CLASSES)]
     mean = {f: float(sum(share[c] * getattr(profiles[c], f) for c in range(NUM_CLASSES)))
-            for f in ("lake_share", "tarn_share", "stream_km2", "stream_width", "dry_share")}
+            for f in ("lake_share", "tarn_share", "dry_share")}
     extent = l0.cell_m * l0.mid.shape[0]
     return Source(l0.spec["name"], ((lo + hi) / 2).astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)],
                   l0.cls, hydrology.Water(**mean), None, None,
@@ -322,6 +322,10 @@ def main(argv=None) -> int:
     overrides = {"lake_share": args.lake_share, "tarn_share": args.tarn_share}
     overrides = {k: v for k, v in overrides.items() if v is not None}
     water = dataclasses.replace(src.water, **overrides) if overrides else src.water
+    # Disk: about 40 bytes a 4 m cell (world layers, hydrology outputs, the staged grid).
+    n4 = (src.coarse.shape[0] * 4 if args.l3_km is None else args.l3_km * 32) * 8
+    if args.l3_km != 0:
+        hydrology.check_disk(args.out, 40.0 * n4 * n4, "the chain")
     args.out.mkdir(parents=True)
     hyd = args.out / "hydrology"
     hyd.mkdir()
@@ -468,6 +472,10 @@ def main(argv=None) -> int:
     t = time.time()
     grid = hydrology.write_grid(hyd / "grid-4m", h4, 4.0, src.origin, src.class_grid(4, sl, (n32, n32)),
                                 offset_m=(x0 * 32.0, y0 * 32.0), classes_cell_m=32.0)
+    # Free the big arrays while Rust runs (5 GB at 16,384²): the carved ground replaces h4.
+    del h4, model, config
+    if src.l0 is not None:
+        del snow4, veg4
     hydrology.run(grid, hyd / "4m", coarse=hyd / "32m", water=table)
     shutil.rmtree(grid)
     w4 = hydrology.read(hyd / "4m")
@@ -498,6 +506,10 @@ def main(argv=None) -> int:
         {"kind": "cascade_chain_input", "name": f"chain-{src.name}", "crs": src.crs, "origin": [ox, oy]}, indent=1))
     # Hydrology layers are hard links to its 4 m output (the 128 m moisture to the 32 m one).
     digests = hydrology.link(hyd / "4m", args.out, hydrology.WORLD_LAYERS)
+    listing = hydrology.world_bodies(json.loads((hyd / "4m" / "bodies.json").read_text())["bodies"],
+                                     "the 4 m hydrology's bodies; dry basins from dry_min_km2")
+    (args.out / "bodies.json").write_text(json.dumps(listing, indent=1))
+    digests["bodies.json"] = hydrology.sha256(args.out / "bodies.json")
     digests |= hydrology.link(hyd / "32m", args.out, ("moisture.f32",))
     moisture = json.loads((hyd / "32m" / "grid.json").read_text())["moisture"]
     layers = {
