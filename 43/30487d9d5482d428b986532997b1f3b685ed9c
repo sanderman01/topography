@@ -1,0 +1,29 @@
+crates/topography-core/src/export/heightmap.rs
+  s_8c1b40ea9c1e0d::t_a5510cf717d2eb 267
+  s_8c1b40ea9c1e0d::t_bddaa541716db3 592
+  s_8c1b40ea9c1e0d::t_026bd88e383cd1 201
+  s_8c1b40ea9c1e0d::t_b77b47c7199b2f 305-326
+crates/topography-core/src/export/tiles.rs
+  s_8c1b40ea9c1e0d::t_4350edbb60260a 59-60
+  s_8c1b40ea9c1e0d::t_8a894261f0a78b 96
+  s_8c1b40ea9c1e0d::t_4fea3b2e02d240 75-77
+  s_8c1b40ea9c1e0d::t_2618ef594b7e7b 246-247
+crates/topography-core/src/export/layers.rs
+  s_8c1b40ea9c1e0d::t_694cf2839d4d6a 137-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4330487d9d5482d428b986532997b1f3b685ed9c",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
