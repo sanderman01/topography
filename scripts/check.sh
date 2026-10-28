@@ -7,6 +7,7 @@ cd -- "$project_root"
 cargo fmt --all --check
 cargo build --workspace --locked --offline
 cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+cargo test --locked --offline -p topography-core --quiet hydrology
 cargo run --quiet --locked --offline -p topography-cli -- --help
 cargo run --quiet --locked --offline -p topography-cli -- --version
 
