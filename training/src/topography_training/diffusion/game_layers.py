@@ -2,6 +2,15 @@
 densities, and dithered biome and land cover, written to <world>/game/.
 
 python -m topography_training.diffusion.game_layers --world <world output> [--layout <L0>]
+
+Biome is the layout's terrain class (warped as cover reads it), each class's share smoothed
+over about 64 m and dithered with blue noise. Land cover holds ESA WorldCover codes, a
+recorded judgment call, not observed cover: water 80, snow/ice 70 and forest 10 follow the
+water, snow and vegetation densities; bare rock (60) ramps in around 35 degrees; above the
+tree line grassland (30) gives way to bare ground over 400 m; dunes, badlands, glacier
+ground, volcanoes and lava are bare from gentle slopes up and stay bare above the tree line;
+other open land takes its class's typical cover. One blue-noise value per texel turns each ramp
+into that share of texels, so edges read as a fine mix.
 """
 
 from __future__ import annotations
@@ -15,16 +24,32 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage
 
-from . import cover, layout
+from . import borders, cover, layout
 
-METHOD = "game layers v1: cover v2 fields at 2 m, moisture-weighted forest, soft snow, talus below rock"
+METHOD = ("game layers v1: cover v2 fields at 2 m, moisture-weighted forest, soft snow, talus below rock; "
+          "biome and land cover dithered from smoothed shares and ramps")
 MOIST_DRY, MOIST_WET = 0.15, 0.45  # forest density ramps in over this moisture range
 SNOW_SOFT_M = 80.0  # snow cover ramps from 0 to 1 across the bent snow line ± this
 SNOW_SHED_DEG = (40.0, 55.0)  # as cover.SNOW_STEEP_DEG
 ROCK_DEG = 40.0  # cliff faces that shed scree
 TALUS_DEG = ((22.0, 30.0), (38.0, 45.0))  # scree lies on slopes rising over the first band, gone by the second
 TALUS_REACH_M = 20.0  # gaussian sigma of rock share spreading onto the slopes below
-NAMES = ("vegetation-density", "snow-cover", "talus-density")
+BIOME_MIX_M = 64.0  # gaussian sigma of each class's share across biome borders
+ALPINE_BAND_M = 400.0  # grass gives way to bare ground over this band above the tree line
+ROCK_RAMP_DEG = (30.0, 40.0)  # bare rock ramps in around 35 degrees
+BARE_CLASS_DEG = (10.0, 20.0)  # bare classes are bare from gentle slopes up
+BIOME_SEED, LANDCOVER_SEED = 5, 6  # blue-noise tiles, distinct from training's and the collage's
+TREE, SHRUB, GRASS, BARE, SNOW, WATER = 10, 20, 30, 60, 70, 80  # ESA WorldCover codes
+# Open (non-forest, non-snow) land by terrain class id (0: unlabelled).
+OPEN = np.full(256, GRASS, np.uint8)
+OPEN[[2, 7, 13, 19]] = SHRUB  # gorges, badlands, canyons: scrub between bare slopes
+OPEN[[8, 10, 11, 16, 17]] = BARE  # dunes, glacier ground, stratovolcanoes, lava fields
+BARE_CLASSES = (7, 8, 10, 11, 16, 17)
+WORLDCOVER_RGB = {10: "006400", 20: "ffbb22", 30: "ffff4c", 40: "f096ff", 50: "fa0000", 60: "b4b4b4",
+                  70: "f0f0f0", 80: "0064c8", 90: "0096a0", 95: "00cf75", 100: "fae6a0"}
+DENSITIES = ("vegetation-density", "snow-cover", "talus-density")
+CLASSES = ("biome", "land-cover")
+NAMES = DENSITIES + CLASSES
 ROWS = 256  # about 3.4 GB peak at 65,536² (32,768 game texels wide)
 LATTICE = "value (i, j) is the area mean of the footprint centred on world sample (i·2^L, j·2^L)"
 
@@ -76,12 +101,54 @@ def _fields(sampler, h, wet, moist, y0_m, x0_m, s):
     near = np.clip(ndimage.gaussian_filter(rock, TALUS_REACH_M / s) / 0.25, 0, 1)
     (a, b), (c, d) = TALUS_DEG
     talus = near * cover._ramp(slope2, a, b) * (1 - cover._ramp(slope2, c, d)) * (1 - snow) * (1 - wet)
-    return {"vegetation-density": veg, "snow-cover": snow, "talus-density": talus}
+    return {"vegetation-density": veg, "snow-cover": snow, "talus-density": talus, "slope2": slope2,
+            "treeline": f["treeline"]}
+
+
+def land_cover(biome, h, slope, treeline, veg, snow, wet, u):
+    """WorldCover codes: each density or ramp becomes that share of texels via noise u."""
+    ramp = cover._ramp
+    out = OPEN[biome]
+    bare_class = np.isin(biome, BARE_CLASSES)
+    out = np.where(bare_class & (ramp(slope, *BARE_CLASS_DEG) > u), BARE, out)
+    alpine = np.where(ramp(h - treeline, 0.0, ALPINE_BAND_M) > u, BARE, GRASS)
+    out = np.where(~bare_class & (h > treeline), alpine, out)
+    out = np.where(ramp(slope, *ROCK_RAMP_DEG) > u, BARE, out)
+    out = np.where(veg > u, TREE, out)
+    out = np.where(snow > u, SNOW, out)
+    return np.where(wet > u, WATER, out).astype(np.uint8)
+
+
+def _lerp_index(pos: np.ndarray, n: int):
+    """Indices and weights of linear interpolation at grid positions, clamped at the edges."""
+    pos = np.clip(pos, 0, n - 1)
+    i0 = np.minimum(np.floor(pos).astype(np.intp), n - 1)
+    return i0, np.minimum(i0 + 1, n - 1), (pos - i0).astype(np.float32)
+
+
+def _biome(shares, rows: np.ndarray, cols, u: np.ndarray) -> np.ndarray:
+    """Dithered classes at game texel rows: shares read bilinearly (separably), accumulated
+    class by class, as borders.dither does but holding one share at a time."""
+    n32 = shares[0][1].shape[0]
+    r0, r1, tr = _lerp_index(rows, n32)
+    c0, c1, tc = cols
+    acc = np.zeros(u.shape, np.float32)
+    out = np.zeros(u.shape, np.uint8)
+    done = np.zeros(u.shape, bool)
+    for k, share in shares:
+        s = share[r0] * (1 - tr)[:, None] + share[r1] * tr[:, None]
+        acc += s[:, c0] * (1 - tc) + s[:, c1] * tc
+        pick = ~done & (u < acc)
+        out[pick] = k
+        done |= pick
+    out[~done] = shares[-1][0]  # rounding at acc ≈ 1
+    return out
 
 
 def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict:
-    """Write game/<name>.u8 (round(255 × fraction)) at 2 m (the world's spacing if coarser) and
-    record them in the manifest; returns manifest["game"]."""
+    """Write game/<name>.u8 at 2 m (the world's spacing if coarser): densities as round(255 × fraction),
+    biome as terrain-v3 ids (0 unlabelled), land cover as WorldCover codes. Records them in
+    the manifest; returns manifest["game"]."""
     manifest_path = world / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     n, c0 = manifest["size"][0], float(manifest["spacing_m"])
@@ -107,6 +174,17 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     m = int(np.ceil(cover.MARGIN_M / s))
     align = max(1, int(round(cover.FEATURE_M / s)))  # cover.terrain_features block size
     cols = np.arange(mg)
+    # Biome shares on a 32 m grid over the world; texels read them at their centres.
+    n32 = int(np.ceil(n * c0 / 32.0))
+    c32 = sampler.classes(off, off, n32, n32, 32.0)
+    shares = [(int(k), ndimage.gaussian_filter((c32 == k).astype(np.float32), BIOME_MIX_M / 32.0))
+              for k in np.unique(c32)]
+    del c32
+
+    def to32(i):  # texel index to 32 m grid position (cell centre i at i)
+        return (i * step + 0.5) * c0 / 32.0 - 0.5
+
+    lerp_cols = _lerp_index(to32(cols), n32)
     for y in range(0, mg, rows):
         b = min(y + rows, mg)
         # Start on the feature grid so it stays put across blocks.
@@ -123,8 +201,14 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
             h = g
         moist = _moisture(world, manifest, origin, np.arange(g0, g1), cols, step, c0)
         f = _fields(sampler, h, wet, moist, off + g0 * s, off, s)
-        for k in NAMES:
-            outs[k][y:b] = np.round(255 * np.clip(f[k][y - g0 : b - g0], 0, 1)).astype(np.uint8)
+        sl = slice(y - g0, b - g0)
+        for k in DENSITIES:
+            outs[k][y:b] = np.round(255 * np.clip(f[k][sl], 0, 1)).astype(np.uint8)
+        biome = _biome(shares, to32(np.arange(y, b)), lerp_cols, borders.noise_window(y, 0, b - y, mg, BIOME_SEED))
+        outs["biome"][y:b] = biome
+        outs["land-cover"][y:b] = land_cover(
+            biome, h[sl], f["slope2"][sl], f["treeline"][sl], f["vegetation-density"][sl], f["snow-cover"][sl],
+            wet[sl], borders.noise_window(y, 0, b - y, mg, LANDCOVER_SEED))
     for a in outs.values():
         a.flush()
     del outs
@@ -135,7 +219,10 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         "spacing_m": s, "size": [mg, mg], "level": level, "lattice": LATTICE, "method": METHOD,
         "params": {"layout": str(Path(layout_dir).resolve()), "moist_dry": MOIST_DRY, "moist_wet": MOIST_WET,
                    "snow_soft_m": SNOW_SOFT_M, "snow_shed_deg": list(SNOW_SHED_DEG), "rock_deg": ROCK_DEG,
-                   "talus_deg": [list(t) for t in TALUS_DEG], "talus_reach_m": TALUS_REACH_M, "rows": rows},
+                   "talus_deg": [list(t) for t in TALUS_DEG], "talus_reach_m": TALUS_REACH_M,
+                   "biome_mix_m": BIOME_MIX_M, "alpine_band_m": ALPINE_BAND_M,
+                   "rock_ramp_deg": list(ROCK_RAMP_DEG), "bare_class_deg": list(BARE_CLASS_DEG),
+                   "blue_noise_seeds": {"biome": BIOME_SEED, "land-cover": LANDCOVER_SEED}, "rows": rows},
         "layers": list(NAMES),
     }
     # Replace, not rewrite: world copies may hard-link files of the original.
@@ -157,6 +244,17 @@ def _png(world: Path, game: dict, out: Path, px: int = 1024) -> None:
         rgb.append(a.reshape(mg // k, k, mg // k, k).mean(axis=(1, 3)))
     out.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(np.round(np.stack(rgb, -1)).astype(np.uint8)).save(out)
+    # Land cover in WorldCover colours, area-averaged so the dither reads as a blend.
+    lut = np.zeros((256, 3), np.float32)
+    for code, hexc in WORLDCOVER_RGB.items():
+        lut[code] = [int(hexc[i : i + 2], 16) for i in (0, 2, 4)]
+    a = np.memmap(world / "game" / "land-cover.u8", np.uint8, "r", shape=(mg, mg))[: mg // k * k, : mg // k * k]
+    c = lut[np.asarray(a)].reshape(mg // k, k, mg // k, k, 3).mean(axis=(1, 3))
+    Image.fromarray(np.round(c).astype(np.uint8)).save(_landcover_png(out))
+
+
+def _landcover_png(out: Path) -> Path:
+    return out.with_name(f"{out.stem}-landcover{out.suffix}")
 
 
 def main(argv=None) -> int:
@@ -164,7 +262,8 @@ def main(argv=None) -> int:
     p.add_argument("--world", type=Path, required=True, help="world output (cascade_chain or cascade_l4)")
     p.add_argument("--layout", type=Path, help="L0 directory; default the one the world records")
     p.add_argument("--rows", type=int, default=ROWS, help="output rows per block (bounds RAM)")
-    p.add_argument("--png", type=Path, help="also write an RGB picture (snow R, vegetation G, talus B)")
+    p.add_argument("--png", type=Path,
+                   help="also write an RGB picture (snow R, vegetation G, talus B) and <stem>-landcover.png")
     args = p.parse_args(argv)
     if not (args.world / "manifest.json").exists():
         print("error: --world has no manifest.json", file=sys.stderr)
@@ -175,12 +274,16 @@ def main(argv=None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     print(f"wrote game layers in {args.world}: {game['size']} at {game['spacing_m']} m, level {game['level']}")
-    for name in NAMES:
+    for name in DENSITIES:
         v = np.memmap(args.world / "game" / f"{name}.u8", np.uint8, "r")[::97].astype(np.float32) / 255
         print(f"  {name}: mean {v.mean():.3f}, share > 0.5 {(v > 0.5).mean():.3f}")
+    for name in CLASSES:
+        counts = np.bincount(np.memmap(args.world / "game" / f"{name}.u8", np.uint8, "r")[::97], minlength=256)
+        share = {int(c): round(float(counts[c] / counts.sum()), 3) for c in np.nonzero(counts)[0]}
+        print(f"  {name}: share by code (sampled) {share}")
     if args.png:
         _png(args.world, game, args.png)
-        print(f"wrote {args.png}")
+        print(f"wrote {args.png} and {_landcover_png(args.png)}")
     return 0
 
 

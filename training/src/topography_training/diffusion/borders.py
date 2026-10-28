@@ -80,3 +80,14 @@ def train_band(rng: np.random.Generator, max_m: float) -> float:
     if max_m <= 0 or rng.random() < TRAIN_HARD_SHARE:
         return 0.0
     return float(rng.uniform(0.0, max_m))
+
+
+@lru_cache(maxsize=4)
+def _tile_seeded(seed: int) -> np.ndarray:
+    return blue_noise(NOISE_TILE, seed=seed)
+
+
+def noise_window(y0: int, x0: int, rows: int, cols: int, seed: int) -> np.ndarray:
+    """Blue noise at world cell indices: the same cell always gets the same value."""
+    t = _tile_seeded(seed)
+    return t[np.ix_((y0 + np.arange(rows)) % NOISE_TILE, (x0 + np.arange(cols)) % NOISE_TILE)]
