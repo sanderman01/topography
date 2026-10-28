@@ -70,6 +70,7 @@ const BIOMES = [
   [13, "Layered canyons", [.70, .42, .16]], [14, "Cone and tower karst", [.62, .30, .70]],
   [15, "Drowned tower karst", [.30, .70, .62]], [16, "Crest-train dunes", [.98, .90, .60]],
   [17, "Cinder cones and lava", [.18, .12, .12]], [18, "Plain", [.55, .68, .40]],
+  [19, "Grand Canyon", [.75, .35, .25]],
 ];
 const vec3 = c => `vec3(${c.map(v => v.toFixed(2)).join(", ")})`;
 const FS = `#version 300 es
@@ -165,7 +166,10 @@ function indices(w, h) {
   return indexCache.get(key);
 }
 
-let manifest, spacing0, maskIndex = {};
+// Order of the 8-bit layers after the heights in a /region response.
+const SERVED = ["water-coverage", "snow-cover", "vegetation-density", "land-cover", "biome"];
+const maskIndex = Object.fromEntries(SERVED.map((name, i) => [name, i]));
+let manifest, spacing0;
 let overview = null, detail = null;
 const camera = { target: [0, 0, 0], dist: 5000, yaw: 0.6, pitch: 0.55 };
 let dirty = true;
@@ -186,7 +190,7 @@ async function loadRegion(level, x, y, side) {
   const w = view.getUint32(0, true), h = view.getUint32(4, true), n = w * h;
   const heights = new Float32Array(buffer, 8, n);
   const layer = name => maskIndex[name] === undefined ? null : new Uint8Array(buffer, 8 + 4 * n + maskIndex[name] * n, n);
-  const water = layer("water"), snow = layer("snow-ice"), veg = layer("vegetation"), cover = layer("land-cover");
+  const water = layer("water-coverage"), snow = layer("snow-cover"), veg = layer("vegetation-density"), cover = layer("land-cover");
   const biome = layer("biome") ?? new Uint8Array(n);
   const rgba = new Uint8Array(4 * n);
   for (let i = 0; i < n; i++) {
@@ -382,8 +386,7 @@ addEventListener("resize", () => { dirty = true; });
 (async () => {
   manifest = await (await fetch("/manifest.json")).json();
   spacing0 = manifest.spacing_m;
-  (manifest.masks?.layers ?? []).forEach((name, i) => { maskIndex[name] = i; });
-  if (maskIndex.biome === undefined) byId("colours").querySelector('[value="2"]').disabled = true;
+  if (!manifest.layers.biome) byId("colours").querySelector('[value="2"]').disabled = true;
   byId("title").textContent = manifest.world_output.split("/").pop();
   // Overview: the finest level that fits in one region.
   const level = manifest.levels.findIndex(l => l.samples_per_side <= 1025);

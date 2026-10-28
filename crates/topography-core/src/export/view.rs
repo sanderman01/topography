@@ -14,13 +14,34 @@ const PAGE: &str = include_str!("view.html");
 /// Largest region side served at once (about 1 km at 1 m plus a shared edge).
 const MAX_SIDE: usize = 2049;
 
+/// 8-bit layers served after the heights, in this order; absent layers are zeros.
+const SERVED: [&str; 5] = [
+    "water-coverage",
+    "snow-cover",
+    "vegetation-density",
+    "land-cover",
+    "biome",
+];
+
+/// One layer's tile naming and level range from the manifest.
+struct Layer {
+    name: String,
+    prefix: String,
+    finest: usize,
+    last: usize,
+    apron: usize,
+    /// Tiles may be absent (water layers); absent texels read as zero.
+    sparse: bool,
+}
+
 struct Export {
     root: PathBuf,
     manifest: Value,
     intervals: usize,
     h_min: f64,
     step: f64,
-    masks: Vec<String>,
+    height: Layer,
+    served: Vec<Option<Layer>>,
     /// Samples per side for each level.
     levels: Vec<usize>,
 }
@@ -36,6 +57,10 @@ impl Export {
             manifest["kind"] == "heightmap_export",
             "not a heightmap export manifest",
         )?;
+        ensure(
+            manifest["schema_version"] == 2,
+            "export manifest is not schema version 2: re-export with this version to view",
+        )?;
         let number = |v: &Value, what: &str| {
             v.as_f64()
                 .ok_or_else(|| AcquisitionError::Invalid(format!("export manifest lacks {what}")))
@@ -43,14 +68,31 @@ impl Export {
         let intervals = number(&manifest["intervals"], "intervals")? as usize;
         let h_min = number(&manifest["encoding"]["h_min_m"], "h_min_m")?;
         let step = number(&manifest["encoding"]["step_m"], "step_m")?;
-        let masks = manifest["masks"]["layers"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let layer = |name: &str| -> Result<Option<Layer>> {
+            let m = &manifest["layers"][name];
+            if m.is_null() {
+                return Ok(None);
+            }
+            let level = |i: usize| {
+                m["levels"][i].as_u64().map(|n| n as usize).ok_or_else(|| {
+                    AcquisitionError::Invalid(format!("export layer {name} lacks levels"))
+                })
+            };
+            let prefix = m["prefix"].as_str().ok_or_else(|| {
+                AcquisitionError::Invalid(format!("export layer {name} lacks prefix"))
+            })?;
+            Ok(Some(Layer {
+                name: name.into(),
+                prefix: prefix.into(),
+                finest: level(0)?,
+                last: level(1)?,
+                apron: m["apron_texels"].as_u64().unwrap_or(0) as usize,
+                sparse: m["missing"] != "never missing",
+            }))
+        };
+        let height = layer("height")?
+            .ok_or_else(|| AcquisitionError::Invalid("export lacks the height layer".into()))?;
+        let served = SERVED.iter().map(|n| layer(n)).collect::<Result<_>>()?;
         let levels = manifest["levels"]
             .as_array()
             .map(|a| {
@@ -66,12 +108,64 @@ impl Export {
             intervals,
             h_min,
             step,
-            masks,
+            height,
+            served,
             levels,
         })
     }
 
-    /// Heights (f32 m) and masks for samples [x, x+w) × [y, y+h) of one level.
+    /// Codes of `layer` for samples [x, x+w) × [y, y+h) of `level`, read at the layer's
+    /// finest level when that is coarser (nearest texel). Absent texels are zero.
+    fn read(
+        &self,
+        layer: &Layer,
+        level: usize,
+        (x, y, w, h): (usize, usize, usize, usize),
+    ) -> Result<Vec<u16>> {
+        let mut out = vec![0u16; w * h];
+        if level > layer.last {
+            return Ok(out);
+        }
+        let src = level.max(layer.finest);
+        let samples = self.levels[src];
+        // Texel i of level k sits at level-0 sample i·2^k.
+        let shift = src - level;
+        let map = |s: usize| ((s + ((1 << shift) >> 1)) >> shift).min(samples - 1);
+        let (xs, ys): (Vec<_>, Vec<_>) =
+            ((x..x + w).map(map).collect(), (y..y + h).map(map).collect());
+        let n = self.intervals;
+        let last = samples.div_ceil(n) - 1;
+        let tile = |s: usize| (s / n).min(last);
+        let a = layer.apron;
+        for ty in tile(ys[0])..=tile(ys[h - 1]) {
+            for tx in tile(xs[0])..=tile(xs[w - 1]) {
+                let path = self.root.join(format!(
+                    "{}/L{src}/{}_L{src}_{tx}_{ty}.png",
+                    layer.name, layer.prefix
+                ));
+                if layer.sparse && !path.exists() {
+                    continue;
+                }
+                let (tw, th, pixels) = read_png(&path)?;
+                let bytes = pixels.len() / (tw * th);
+                let (ox, oy) = (tx * n, ty * n);
+                for (dy, &sy) in ys.iter().enumerate().filter(|(_, s)| tile(**s) == ty) {
+                    for (dx, &sx) in xs.iter().enumerate().filter(|(_, s)| tile(**s) == tx) {
+                        let i = (sy - oy + a) * tw + sx - ox + a;
+                        out[dy * w + dx] = if bytes == 2 {
+                            u16::from_be_bytes([pixels[2 * i], pixels[2 * i + 1]])
+                        } else {
+                            u16::from(pixels[i])
+                        };
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Heights (f32 m) then the `SERVED` layers (u8 each) for samples [x, x+w) × [y, y+h)
+    /// of one level.
     fn region(&self, level: usize, x: usize, y: usize, side: usize) -> Result<Vec<u8>> {
         let samples = *self
             .levels
@@ -79,52 +173,24 @@ impl Export {
             .ok_or_else(|| AcquisitionError::Invalid("unknown level".into()))?;
         ensure(side > 0 && side <= MAX_SIDE, "region too large")?;
         ensure(x < samples && y < samples, "region outside the export")?;
-        let (w, h) = (side.min(samples - x), side.min(samples - y));
-        let mut heights = vec![0f32; w * h];
-        let mut masks = vec![vec![0u8; w * h]; self.masks.len()];
-        let last = samples.div_ceil(self.intervals) - 1;
-        let (t0x, t1x) = (
-            (x / self.intervals).min(last),
-            ((x + w - 1) / self.intervals).min(last),
-        );
-        let (t0y, t1y) = (
-            (y / self.intervals).min(last),
-            ((y + h - 1) / self.intervals).min(last),
-        );
-        for ty in t0y..=t1y {
-            for tx in t0x..=t1x {
-                let layers = std::iter::once("height")
-                    .chain(self.masks.iter().map(String::as_str))
-                    .enumerate();
-                for (index, layer) in layers {
-                    let (tw, th, pixels) =
-                        read_png(&self.root.join(super::tile_path(layer, level, tx, ty)))?;
-                    let (ox, oy) = (tx * self.intervals, ty * self.intervals);
-                    // A sample belongs to the tile its index falls in; shared edges repeat.
-                    let rows = oy.max(y)..(oy + th).min(y + h);
-                    for sy in rows.filter(|s| (s / self.intervals).min(last) == ty) {
-                        let cols = ox.max(x)..(ox + tw).min(x + w);
-                        for sx in cols.filter(|s| (s / self.intervals).min(last) == tx) {
-                            let (src, dst) = ((sy - oy) * tw + sx - ox, (sy - y) * w + sx - x);
-                            if index == 0 {
-                                let code =
-                                    u16::from_be_bytes([pixels[2 * src], pixels[2 * src + 1]]);
-                                heights[dst] = (self.h_min + f64::from(code) * self.step) as f32;
-                            } else {
-                                masks[index - 1][dst] = pixels[src];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let mut out = Vec::with_capacity(8 + w * h * (4 + self.masks.len()));
+        let rect = (x, y, side.min(samples - x), side.min(samples - y));
+        let (w, h) = (rect.2, rect.3);
+        let mut out = Vec::with_capacity(8 + w * h * (4 + SERVED.len()));
         out.extend_from_slice(&(w as u32).to_le_bytes());
         out.extend_from_slice(&(h as u32).to_le_bytes());
-        heights
-            .iter()
-            .for_each(|v| out.extend_from_slice(&v.to_le_bytes()));
-        masks.iter().for_each(|m| out.extend_from_slice(m));
+        for code in self.read(&self.height, level, rect)? {
+            let metres = (self.h_min + f64::from(code) * self.step) as f32;
+            out.extend_from_slice(&metres.to_le_bytes());
+        }
+        for layer in &self.served {
+            match layer {
+                Some(layer) => {
+                    let codes = self.read(layer, level, rect)?;
+                    out.extend(codes.iter().map(|&c| c.min(255) as u8));
+                }
+                None => out.resize(out.len() + w * h, 0),
+            }
+        }
         Ok(out)
     }
 
