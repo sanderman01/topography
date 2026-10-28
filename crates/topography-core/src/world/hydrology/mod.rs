@@ -217,9 +217,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
             dims,
             &ground,
             |i| c.world_edge(w, h, i) || c.body[c.cell(w, i)] == 1,
+            |i| c.lake(c.cell(w, i)).is_some(),
             &mut flags,
         ),
-        None => flood::open_sea(dims, &ground, |i| dims.is_edge(i), &mut flags),
+        None => flood::open_sea(dims, &ground, |i| dims.is_edge(i), |_| false, &mut flags),
     }
 
     // The coarse network on the fine ground: lakes at their level, river paths burned in.
@@ -628,7 +629,19 @@ pub fn run(options: &Options) -> Result<Outcome> {
             basin.filled_by_river = true;
         }
     }
-    let extended = lakes::extend(dims, &ground, &dir, &flags, &mut body, &basins);
+    // Coarse river paths keep their course: a lake does not grow over a burned path cell.
+    let mut on_path = vec![false; n];
+    if let Some(im) = &imprint {
+        for p in &im.paths {
+            for &c in &p.cells {
+                on_path[c as usize] = true;
+            }
+        }
+    }
+    let extended = lakes::extend(dims, &ground, &dir, &flags, &mut body, &basins, |i| {
+        on_path[i]
+    });
+    drop(on_path);
     // Where routed flow leaves each basin: the exit with the most flow.
     let mut exit_acc = vec![-1f32; basins.len() + 1];
     for i in 0..n {

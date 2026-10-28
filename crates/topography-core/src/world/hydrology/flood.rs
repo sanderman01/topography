@@ -124,8 +124,15 @@ impl PartialOrd for Item {
 }
 
 /// Mark ground below 0 connected (8-way) to a `seed` cell below 0 (the world edge, coarse
-/// sea) or to fixed sea as sea. Fixed cells keep their flags.
-pub(super) fn open_sea(dims: Dims, ground: &[f32], seed: impl Fn(usize) -> bool, flags: &mut [u8]) {
+/// sea) or to fixed sea as sea, never into a `barrier` cell (a coarse lake's: a lagoon the
+/// coarse level kept apart from the sea stays apart). Fixed cells keep their flags.
+pub(super) fn open_sea(
+    dims: Dims,
+    ground: &[f32],
+    seed: impl Fn(usize) -> bool,
+    barrier: impl Fn(usize) -> bool,
+    flags: &mut [u8],
+) {
     let mut stack: Vec<u32> = Vec::new();
     for i in 0..ground.len() {
         if flags[i] & FIXED != 0 {
@@ -135,14 +142,14 @@ pub(super) fn open_sea(dims: Dims, ground: &[f32], seed: impl Fn(usize) -> bool,
             continue;
         }
         flags[i] &= !SEA;
-        if ground[i] < 0.0 && seed(i) {
+        if ground[i] < 0.0 && seed(i) && !barrier(i) {
             flags[i] |= SEA;
             stack.push(i as u32);
         }
     }
     while let Some(i) = stack.pop() {
         for (_, j) in dims.neighbours(i as usize) {
-            if flags[j] & (SEA | FIXED) == 0 && ground[j] < 0.0 {
+            if flags[j] & (SEA | FIXED) == 0 && ground[j] < 0.0 && !barrier(j) {
                 flags[j] |= SEA;
                 stack.push(j as u32);
             }
@@ -391,6 +398,31 @@ pub(super) fn breach(
                                     && ground[m] < level
                                 {
                                     body[m] = beside;
+                                    stack.push(m as u32);
+                                }
+                            }
+                        }
+                    }
+                    // Pockets below 0 m it did not take stay below the cut, as a shallow
+                    // depression below 0 m would: kept, never breached below sea level.
+                    for &a in &region {
+                        let a = a as usize;
+                        if body[a] != 0 || ground[a] >= 0.0 {
+                            continue;
+                        }
+                        let kind = keep_kind(a, false);
+                        let level = if kind == Kind::Sink { z } else { 0.0 };
+                        basins.push(Basin::kept(kind, level, c as u32));
+                        let id = basins.len() as u32;
+                        body[a] = id;
+                        stack.push(a as u32);
+                        while let Some(b) = stack.pop() {
+                            for (_, m) in dims.neighbours(b as usize) {
+                                if flags[m] & (SEEN | CHECKED) == CHECKED
+                                    && body[m] == 0
+                                    && ground[m] < 0.0
+                                {
+                                    body[m] = id;
                                     stack.push(m as u32);
                                 }
                             }
@@ -791,7 +823,7 @@ mod tests {
         let mut flags = vec![0u8; 25];
         let mut dir = vec![0u8; 25];
         edge_outlets(dims, &mut flags);
-        open_sea(dims, &ground, |i| dims.is_edge(i), &mut flags);
+        open_sea(dims, &ground, |i| dims.is_edge(i), |_| false, &mut flags);
         let filled = fill(dims, &ground, &mut flags, &mut dir);
         assert_eq!(filled[12], 5.0);
         let (mut body, mut basins) = (vec![0u32; 25], Vec::new());
@@ -839,7 +871,7 @@ mod tests {
             let (mut flags, mut dir) = (vec![0u8; 25], vec![0u8; 25]);
             let (mut body, mut basins) = (vec![0u32; 25], Vec::new());
             edge_outlets(dims, &mut flags);
-            open_sea(dims, &ground, |i| dims.is_edge(i), &mut flags);
+            open_sea(dims, &ground, |i| dims.is_edge(i), |_| false, &mut flags);
             breach(
                 dims,
                 &mut ground,
@@ -1000,5 +1032,68 @@ mod tests {
         assert_eq!(before, 2);
         assert!(spill_cycles(dims, &ground, &flags, &mut dir, |_| true) > 0);
         assert!(drains(dims, &dir));
+    }
+
+    #[test]
+    fn the_sea_does_not_flood_a_coarse_lake() {
+        // Ground below 0 m from the edge (column 0) to column 4; columns 2 and 3 are a coarse
+        // lake's cells, so the sea stops at column 1.
+        let dims = Dims { w: 5, h: 3 };
+        let ground = vec![-1.0f32; 15];
+        let mut flags = vec![0u8; 15];
+        open_sea(
+            dims,
+            &ground,
+            |i| i % 5 == 0,
+            |i| (2..4).contains(&(i % 5)),
+            &mut flags,
+        );
+        let sea: Vec<usize> = (0..15)
+            .filter(|&i| flags[i] & SEA != 0)
+            .map(|i| i % 5)
+            .collect();
+        assert!(sea.iter().all(|&x| x < 2), "sea in columns {sea:?}");
+    }
+
+    #[test]
+    fn breaching_beside_a_lake_never_cuts_below_sea_level() {
+        // A lake cell (1, 1) at level 1.5 m, a hollow behind a 2 m rim above the sea row, and
+        // a pocket at -0.5 m inside it that the lake does not reach: the pocket is kept, and
+        // no breached cell ends up below 0 m.
+        let dims = Dims { w: 6, h: 6 };
+        #[rustfmt::skip]
+        let mut ground = vec![
+            3.0, 3.0, 3.0, 3.0, 3.0, 3.0,
+            3.0, 0.5, 1.8, 1.8, 1.8, 3.0,
+            3.0, 1.8, 1.8, 1.8, 1.8, 3.0,
+            3.0, 1.8, 1.8, -0.5, 1.8, 3.0,
+            3.0, 3.0, 2.0, 3.0, 3.0, 3.0,
+            -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,
+        ];
+        let mut flags = vec![0u8; 36];
+        let mut dir = vec![0u8; 36];
+        edge_outlets(dims, &mut flags);
+        open_sea(dims, &ground, |i| dims.is_edge(i), |_| false, &mut flags);
+        let mut body = vec![0u32; 36];
+        body[7] = 1;
+        let mut basins = vec![Basin::kept(Kind::Lake, 1.5, 0)];
+        basins[0].id = 2;
+        breach(
+            dims,
+            &mut ground,
+            &mut body,
+            &mut basins,
+            &mut flags,
+            &mut dir,
+            30.0,
+            true,
+            |_, _| Kind::Sink,
+        );
+        for i in 0..36 {
+            if flags[i] & SEA == 0 && body[i] == 0 {
+                assert!(ground[i] >= 0.0, "cell {i} at {} m", ground[i]);
+            }
+        }
+        assert_ne!(body[21], 0, "the pocket is kept");
     }
 }

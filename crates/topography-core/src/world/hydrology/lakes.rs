@@ -235,7 +235,8 @@ pub(super) fn select(
 }
 
 /// Grow each lake over ground below its level that drains into it (cut by breaching next
-/// to the lake). Returns the cells added.
+/// to the lake), but not over `keep_out` cells (coarse river paths keep their course).
+/// Returns the cells added.
 pub(super) fn extend(
     dims: Dims,
     ground: &[f32],
@@ -243,6 +244,7 @@ pub(super) fn extend(
     flags: &[u8],
     basin: &mut [u32],
     basins: &[Basin],
+    keep_out: impl Fn(usize) -> bool,
 ) -> u64 {
     let lake = |b: u32| b != 0 && basins[b as usize - 1].kind == Kind::Lake;
     let mut stack: Vec<u32> = (0..basin.len())
@@ -257,6 +259,7 @@ pub(super) fn extend(
         for (_, n) in dims.neighbours(c) {
             if basin[n] == 0
                 && flags[n] & (SEA | FIXED) == 0
+                && !keep_out(n)
                 && ground[n] < level
                 && receiver(dims, dir, n).is_some_and(|r| basin[r] == id)
             {
@@ -267,4 +270,29 @@ pub(super) fn extend(
         }
     }
     added
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lake_does_not_grow_over_a_coarse_river_path() {
+        // Cells 1 and 2 lie below the lake's level (cell 0) and drain into it; cell 1 is on a
+        // coarse river path and stays out, which also keeps cell 2 out.
+        let dims = Dims { w: 3, h: 1 };
+        let ground = [0.0f32, 0.5, 0.6];
+        let dir = [0u8, 3, 3];
+        let mut basin = [1u32, 0, 0];
+        let lakes = [Basin::kept(Kind::Lake, 1.0, 0)];
+        assert_eq!(
+            extend(dims, &ground, &dir, &[0; 3], &mut basin, &lakes, |i| i == 1),
+            0
+        );
+        let mut basin = [1u32, 0, 0];
+        assert_eq!(
+            extend(dims, &ground, &dir, &[0; 3], &mut basin, &lakes, |_| false),
+            2
+        );
+    }
 }
