@@ -176,6 +176,8 @@ pub(super) fn widen_trenches(
     // is bounded by the same total cut.
     let mut was: HashMap<u32, f32> = HashMap::new();
     let mut old_dir: HashMap<u32, u8> = HashMap::new();
+    // Walls left unlowered: every lower neighbour drains through them.
+    let mut refused = 0u64;
     let mut candidates: Vec<(u32, f32, u8, f32)> = Vec::new();
     while !frontier.is_empty() && rings < max_rings {
         candidates.clear();
@@ -222,7 +224,10 @@ pub(super) fn widen_trenches(
                 }
                 match best {
                     Some((_, e)) => to = e,
-                    None => continue,
+                    None => {
+                        refused += 1;
+                        continue;
+                    }
                 }
             }
             was.entry(c).or_insert(ground[i]);
@@ -269,6 +274,7 @@ pub(super) fn widen_trenches(
         "trench_cells": trench_cells,
         "wall_cells_lowered": lowered.len(),
         "wall_lowerings": lowerings,
+        "wall_cells_refused": refused,
         "wall_volume_m3": volume.round(),
         "wall_max_lowering_m": max,
         "rings_used": rings,
@@ -280,8 +286,9 @@ pub(super) fn widen_trenches(
     (figures, lowered)
 }
 
-/// Whether the flow from `from` may reach `to`: it does, or it runs longer than a few
-/// thousand cells (treated as unsafe; the spill and the cycle guard stay behind it).
+/// Whether the flow from `from` reaches `to` within 4,096 cells. A loop through a longer
+/// chain is left to the cycle spill after widening and to the cycle guard; refusing every long
+/// chain left 1 m slots unwidened.
 fn flows_into(dims: Dims, dir: &[u8], from: usize, to: usize) -> bool {
     let mut c = from;
     for _ in 0..4096 {
@@ -293,7 +300,7 @@ fn flows_into(dims: Dims, dir: &[u8], from: usize, to: usize) -> bool {
             None => return false,
         }
     }
-    true
+    false
 }
 
 /// Lowering figures: total and largest, and on river cells (`channel`) split into those

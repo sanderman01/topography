@@ -74,6 +74,8 @@ pub(super) fn lakes(
         }
     }
     let (mut restored, mut bed_max, mut bed_at) = (0u64, 0f32, 0usize);
+    let mut lowest: Vec<(u32, usize)> = lowest.into_iter().collect();
+    lowest.sort_unstable();
     for (id, i) in lowest {
         if !seeded.contains(&id) {
             let to = c.lakes[&id].level - LAKE_BED_M;

@@ -648,17 +648,21 @@ pub(super) fn spill_cycles(
             // Every neighbour drains into the cycle: spill the whole region draining into it
             // over its lowest receiving neighbour, reversing the flow from there to the cycle.
             let mut region: HashSet<usize> = members.iter().copied().collect();
-            let mut stack = members.clone();
-            while let Some(c) = stack.pop() {
+            // Cells in visiting order, so ties break the same way every run.
+            let mut order = members.clone();
+            let mut k = 0;
+            while k < order.len() {
+                let c = order[k];
+                k += 1;
                 for (_, j) in dims.neighbours(c) {
                     if !region.contains(&j) && receiver(dims, dir, j) == Some(c) {
                         region.insert(j);
-                        stack.push(j);
+                        order.push(j);
                     }
                 }
             }
             let mut out: Option<(f32, usize, usize)> = None;
-            for &u in &region {
+            for &u in &order {
                 for (_, v) in dims.neighbours(u) {
                     if !region.contains(&v) && receives(v) && out.is_none_or(|b| ground[v] < b.0) {
                         out = Some((ground[v], u, v));
