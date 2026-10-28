@@ -30,6 +30,8 @@ NUM_CLASSES = legend.NUM_CLASSES  # legend v3 runs; older runs have 13 (see lege
 # valleys and coastlines.
 ENVELOPE_M = 2048
 MIN_RANGE_M = 1.0  # unit-range shape channel floor for flat windows
+# L3 and L4 windows (and L4 bands) whose coarse ground is all deep sea are not diffused.
+DEEP_SEA_M = -50.0
 # Seabed join: GEBCO (~450 m) is not trusted this near the coast; there the land slope
 # continues down until it meets the deepest GEBCO nearby, then GEBCO takes over.
 NEARSHORE_M = 1000.0

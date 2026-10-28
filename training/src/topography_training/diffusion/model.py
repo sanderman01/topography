@@ -153,6 +153,37 @@ def _starts(length: int, window: int, stride: int) -> list[int]:
     return s if s[-1] == length - window else s + [length - window]
 
 
+NOISE_ROWS = 256  # starting noise is drawn per block of rows, so overlapping bands agree
+
+
+def row_noise(seed: int, g0: int, g1: int, cols: int) -> torch.Tensor:
+    """Unit starting noise [1, 1, g1 - g0, cols] for rows g0..g1 of a field, the same for
+    those rows whatever band they are drawn in."""
+    parts = []
+    for block in range(g0 // NOISE_ROWS, -(-g1 // NOISE_ROWS)):
+        gen = torch.Generator(device="cpu").manual_seed(seed * 1_000_003 + block)
+        parts.append(torch.randn((NOISE_ROWS, cols), generator=gen))
+    rows = torch.cat(parts)
+    off = g0 - g0 // NOISE_ROWS * NOISE_ROWS
+    return rows[off : off + g1 - g0][None, None]
+
+
+def plan_windows(h: int, w: int, window: int, stride: int, skip=None, guide=None):
+    """Window size, boxes, the boxes not diffused (every cell in `skip`) and the guided boxes
+    (some cell in `guide`; None: all) of a field. Masks are [h, w] bool arrays."""
+    import numpy as np
+
+    size = min(window, h, w)
+    boxes = [(y, x) for y in _starts(h, window, stride) for x in _starts(w, window, stride)]
+
+    def which(mask, test):
+        return {b for b in boxes if test(np.asarray(mask[b[0] : b[0] + size, b[1] : b[1] + size]))}
+
+    skipped = set() if skip is None else which(skip, np.all)
+    guided = None if guide is None else which(guide, np.any)
+    return size, boxes, skipped, guided
+
+
 class TensorField:
     """Conditioning held as one [1, C, H, W] tensor; the field lives on its device."""
 
@@ -181,28 +212,29 @@ def _shape(cs: torch.Tensor, conditioning: int) -> torch.Tensor:
 
 
 @torch.no_grad()
-def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, negative=None, direction=None):
+def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, negative=None, direction=None,
+                  plan=None):
     """One MultiDiffusion evaluation: average window predictions over the field.
 
     `cond` and `negative` provide conditioning windows (see TensorField); only a batch of
     windows is on the model's device at a time, so the field may stay in host memory.
     Guidance pushes away from `negative` or, without it, from the class-dropped condition.
     `direction` = (weight, channels): adds weight * [D(hidden) - D(hidden, no class)], the
-    class effect the model learned with those (coarse) channels hidden."""
+    class effect the model learned with those (coarse) channels hidden. `plan`: from
+    plan_windows; skipped windows predict 0 (the coarse input), guidance only in guided ones."""
     _, _, h, w = x.shape
     device = next(model.parameters()).device
     out = torch.zeros_like(x)
-    size = min(window, h, w)
+    size, boxes, skipped, guided = plan or plan_windows(h, w, window, stride)
     wt = _weights(size, x.device)
-    ys, xs_ = _starts(h, window, stride), _starts(w, window, stride)
     # The window grid is regular and the weights separable, so their sum is an outer product.
     ramp = wt[0, 0, :, 0] / wt[0, 0, :, 0].max()
     rows, cols = torch.zeros(h, device=x.device), torch.zeros(w, device=x.device)
-    for y in ys:
+    for y in _starts(h, window, stride):
         rows[y : y + size] += ramp
-    for xx in xs_:
+    for xx in _starts(w, window, stride):
         cols[xx : xx + size] += ramp
-    boxes = [(y, xx) for y in ys for xx in xs_]
+    boxes = [b for b in boxes if b not in skipped]
     for i in range(0, len(boxes), batch):
         part = boxes[i : i + batch]
         xs = torch.cat([x[:, :, y : y + size, xx : xx + size] for y, xx in part]).to(device)
@@ -217,15 +249,17 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
         sig = torch.full((len(part),), sigma, device=device)
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             d = model(xs, sig, cs).float()
-            if guidance != 1.0:
+            g = [j for j, b in enumerate(part) if guided is None or b in guided] if guidance != 1.0 else []
+            if g:
+                g = torch.tensor(g, device=device)
                 if negative is not None:
-                    uncond = ns
+                    uncond = ns[g]
                 else:
-                    uncond, k = cs.clone(), class_start(cs, model.num_classes)
+                    uncond, k = cs[g], class_start(cs, model.num_classes)
                     uncond[:, k:] = 0
                     uncond[:, k] = 1
-                du = model(xs, sig, uncond).float()
-                d = du + guidance * (d - du)
+                du = model(xs[g], sig[g], uncond).float()
+                d[g] = du + guidance * (d[g] - du)
             if direction is not None:
                 hu, k = hs.clone(), class_start(hs, model.num_classes)
                 hu[:, k:] = 0
@@ -241,7 +275,7 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
 
 @torch.no_grad()
 def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None,
-                 noise=None, hold=None, direction=None):
+                 noise=None, hold=None, direction=None, skip=None, guide=None):
     """Heun EDM sampling over a field of any size.
 
     cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`.
@@ -250,12 +284,18 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     them: low-frequency guidance (ILVR, Choi et al. 2021). After every step the Gaussian
     low-pass of the sample is moved toward that of the known target, noised to the step's
     level, by the weight; detail finer than sigma_cells stays the model's own.
-    direction: optional (weight, hidden channels), see denoise_field."""
+    direction: optional (weight, hidden channels), see denoise_field.
+    skip: optional [H, W] bool, cells needing no detail: windows lying wholly in it are not
+    evaluated and predict 0, so the result there is the coarse input, cross-faded by the
+    window weights. guide: optional [H, W] bool, guidance only in windows touching it."""
     if isinstance(cond, torch.Tensor):
         cond = TensorField(cond)
     if isinstance(negative, torch.Tensor):
         negative = TensorField(negative)
     h, w = cond.shape
+    plan = plan_windows(h, w, window, stride, skip, guide)
+    if len(plan[2]) == len(plan[1]):
+        return torch.zeros((1, model.target_channels, h, w))
     sigmas = sigma_schedule(steps)
     if noise is None:
         gen = torch.Generator(device="cpu").manual_seed(seed)
@@ -267,11 +307,12 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     # In-place updates keep at most four field-sized tensors alive.
     for i in range(steps):
         s, s_next = sigmas[i], sigmas[i + 1]
-        d = denoise_field(model, x, s, cond, window, stride, batch, guidance, negative, direction)
+        d = denoise_field(model, x, s, cond, window, stride, batch, guidance, negative, direction, plan)
         d.sub_(x).div_(-s)  # d = (x - D) / s
         if s_next > 0:
             x_next = x + (s_next - s) * d
-            d2 = denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance, negative, direction)
+            d2 = denoise_field(model, x_next, s_next, cond, window, stride, batch, guidance, negative, direction,
+                               plan)
             d2.sub_(x_next).div_(-s_next)
             del x_next
             d.add_(d2)

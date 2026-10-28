@@ -9,9 +9,11 @@ and are cross-faded over the halo. Each band then gets its water from the Rust
 `topography world hydrology` at 1 m, north to south: it holds the world's 4 m network fixed
 (`--coarse`) and takes the previous band's rows (`--north`); the seam between them is
 checked and a failure stops the run. Water cells keep the refined 4 m ground (L4 learned
-land only) under the hydrology surface, and a band whose 4 m ground is all deep sea keeps it
-without diffusion. `--km` with `--centre` places the square anywhere. Output layers are memory-mapped and filled band by
-band; rerunning with the same arguments resumes after the last finished band.
+land only) under the hydrology surface; bands and windows whose 4 m ground is all deep sea
+water keep it without diffusion. `--guidance-classes` limits class guidance to windows
+holding those classes. `--km` with `--centre` places the square anywhere. Output layers are
+memory-mapped and filled band by band; rerunning with the same arguments resumes after the
+last finished band.
 Writes a 1 m world output (manifest.json + layers, water-surface.f32, water-body.u32 and
 bodies.json) for `topography export heightmap`, plus overview.png and detail.png hillshades.
 """
@@ -30,7 +32,6 @@ import numpy as np
 from . import cascade, hydrology
 from .data import smooth, soft_cover
 
-NOISE_ROWS = 256  # starting noise is drawn per block of rows, so overlapping bands agree
 MARGIN_4M = 16  # 4 m context cells around a band for the smoothing
 WATER_SIGMA_M = 3.0  # rounds 4 m water corners at 1 m
 # Body fields that hold for the whole world (the rest are per band grid). Dry basins (not in
@@ -39,19 +40,6 @@ BODY_FIELDS = ("id", "kind", "level_m", "coarse", "parent", "over_budget", "endo
 # Disk per 1 m cell: elevation, the raw surface while running, water surface and body (4 B
 # each), water, snow and vegetation (1 B each).
 DISK_BYTES = 19
-DEEP_SEA_M = -50.0  # bands whose 4 m ground is all below this are not diffused
-
-
-def _noise(seed: int, g0: int, g1: int, cols: int):
-    import torch
-
-    parts = []
-    for block in range(g0 // NOISE_ROWS, -(-g1 // NOISE_ROWS)):
-        gen = torch.Generator(device="cpu").manual_seed(seed * 1_000_003 + block)
-        parts.append(torch.randn((NOISE_ROWS, cols), generator=gen))
-    rows = torch.cat(parts)
-    off = g0 - g0 // NOISE_ROWS * NOISE_ROWS
-    return rows[off : off + g1 - g0][None, None]
 
 
 def _rows_4m(a: np.ndarray, r0: int, r1: int, c0: int, c1: int) -> np.ndarray:
@@ -78,12 +66,16 @@ def main(argv=None) -> int:
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--guidance", type=float, default=1.0, help="class guidance scale (1: off)")
+    p.add_argument("--guidance-classes", type=int, nargs="+",
+                   help="legend classes whose windows get --guidance; other windows none (default: all)")
     args = p.parse_args(argv)
+    if args.centre is not None and args.km is None:
+        p.error("--centre needs --km")
 
     import torch
 
     from .cascade_chain import _load, _png
-    from .model import sample_field
+    from .model import plan_windows, row_noise, sample_field
 
     world = json.loads((args.world / "manifest.json").read_text())
     if world.get("kind") != "world_preview" or world.get("spacing_m") != 4.0:
@@ -127,6 +119,8 @@ def main(argv=None) -> int:
               "stride": args.stride, "seed": args.seed}
     if args.guidance != 1.0:
         params["guidance"] = args.guidance
+        if args.guidance_classes:
+            params["guidance_classes"] = sorted(args.guidance_classes)
     if args.centre is not None:
         params["window_4m"] = [col4, row4]
     if args.class_runs is not None:
@@ -253,7 +247,7 @@ def main(argv=None) -> int:
         crop = np.s_[m * 4 : -m * 4, m * 4 : -m * 4]
         ground4 = _rows_4m(h4, r0, r1, -m, c4 + m)
         # A band of deep sea only (with its margin) keeps the refined 4 m ground: L4 learned land only.
-        deep = bool((ground4 < DEEP_SEA_M).all())
+        deep = bool((ground4 < cascade.DEEP_SEA_M).all())
         coarse = cascade.refine_surface(level, ground4)[crop]
         del ground4
         water = cascade.refine_mask(_rows_4m(water4, r0, r1, -m, c4 + m) == 255, 4, WATER_SIGMA_M,
@@ -266,9 +260,13 @@ def main(argv=None) -> int:
         snow, veg = cover(snow4), cover(veg4)
         classes = class_id
         if per_cell:
-            classes = np.repeat(np.repeat(_rows_4m(classes4, r0, r1, -m, c4 + m), 4, 0), 4, 1)[crop].astype(np.int64)
+            classes = np.repeat(np.repeat(_rows_4m(classes4, r0, r1, -m, c4 + m), 4, 0), 4, 1)[crop]
+        guide = None
+        if args.guidance != 1.0 and args.guidance_classes:
+            guide = np.isin(classes, args.guidance_classes)
+            guide = (None if guide else False) if guide.ndim == 0 else guide
         # Legend v3 classes as the run's model classes (older runs see subclasses as parents).
-        classes = int(lut[classes]) if isinstance(classes, (int, np.integer)) else lut[classes].astype(np.int64)
+        classes = int(lut[classes]) if isinstance(classes, (int, np.integer)) else lut[classes]
         extra = [np.where(water, 255, 0).astype(np.uint8), snow, veg]
         if deep:
             h = coarse
@@ -279,14 +277,25 @@ def main(argv=None) -> int:
             extra += list(forms.from_classes(cmap, config["forms"]["table"], None,
                                              config["forms"]["sigma"] * window).astype(np.float16))
             del cmap
+        note = " (deep sea, not diffused)"
         if not deep:
+            # L4 learned land only: water keeps the refined 4 m ground, with a soft shore; windows
+            # of deep water only are not diffused.
+            land = 1.0 - np.clip(smooth(water.astype(np.float32), 2.0), 0, 1)
+            skip = (coarse < cascade.DEEP_SEA_M) & (land < 1e-3)
+            plan = plan_windows(*coarse.shape, window, args.stride, skip, guide if guide is not False else None)
+            stats = progress.setdefault("windows", {"total": 0, "skipped": 0, "guided": 0})
+            stats["total"] += len(plan[1])
+            stats["skipped"] += len(plan[2])
+            g = 1.0 if guide is False else args.guidance
+            stats["guided"] += 0 if g == 1.0 else len(plan[1]) if plan[3] is None else len(plan[3] - plan[2])
+            note = f" ({len(plan[2])}/{len(plan[1])} windows deep sea)"
             field = cascade.LazyField(level, coarse, extra, classes, n_classes)
             res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
-                               noise=_noise(args.seed, g0, g1, n), guidance=args.guidance)[0, 0].numpy()
-            # L4 learned land only: water keeps the refined 4 m ground, with a soft shore.
-            land = 1.0 - np.clip(smooth(water.astype(np.float32), 2.0), 0, 1)
+                               noise=row_noise(args.seed, g0, g1, n), guidance=g, skip=skip,
+                               guide=None if guide is False else guide)[0, 0].numpy()
             h = (coarse + res * scale * land).astype(np.float32)
-            del res, field, land
+            del res, field, land, skip
         else:
             progress.setdefault("deep_sea_bands", []).append(k)
 
@@ -306,10 +315,9 @@ def main(argv=None) -> int:
         progress["band_s"].append(time.time() - t)
         progress["bands_done"] = k + 1
         save()
-        print(f"band {k + 1}/{len(bands)} rows {a}-{b} in {progress['band_s'][-1]:.0f} s"
-              + (" (deep sea, not diffused)" if deep else ""), flush=True)
+        print(f"band {k + 1}/{len(bands)} rows {a}-{b} in {progress['band_s'][-1]:.0f} s{note}", flush=True)
         # Free the band's fields before Rust runs; the band above is now final down to its halo.
-        del coarse, water, snow, veg, classes, extra, h
+        del coarse, water, snow, veg, classes, extra, h, guide
         hydro_until(k)
     hydro_until(len(bands))
 
@@ -361,6 +369,7 @@ def main(argv=None) -> int:
     if torch.cuda.is_available():  # this process only; a resumed run counts its last part
         extra["peak_vram_gb"] = round(torch.cuda.max_memory_reserved() / 2**30, 2)
     extra["deep_sea_bands"] = progress.get("deep_sea_bands", [])
+    extra["windows"] = progress.get("windows", {})  # of diffused bands: deep-sea skipped, guided
     (args.out / "manifest.json").write_text(json.dumps({
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 1.0, "size": [n, n], "class_id": class_id,
