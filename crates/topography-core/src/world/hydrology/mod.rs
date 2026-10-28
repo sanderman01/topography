@@ -1004,7 +1004,15 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut figures = report::figures(&ctx, &carve, extended);
     if let Some(c) = &coarse {
         let (consistency, consistency_figures) = fine::consistency(
-            dims, &flags, &surface, &basins, c, &unrouted, &path_cap, &body_id,
+            dims,
+            &flags,
+            &surface,
+            &basins,
+            c,
+            &unrouted,
+            grid.core_rows,
+            &path_cap,
+            &body_id,
         );
         checks.extend(consistency);
         // Coarse lakes still leaking after the sill rounds.

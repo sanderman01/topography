@@ -354,6 +354,7 @@ pub(super) fn consistency(
     basins: &[Basin],
     c: &Coarse,
     unrouted: &[u32],
+    core_rows: [usize; 2],
     cap: &HashMap<u32, f32>,
     body_id: &dyn Fn(usize) -> u32,
 ) -> (Map<String, Value>, Value) {
@@ -397,7 +398,14 @@ pub(super) fn consistency(
         if let Some(id) = c.lake(q) {
             lakes_here.insert(id);
         }
-        if let Some(id) = c.river(q).filter(|_| c.centre(q)) {
+        // A river is due only where it has free cells in the core rows, as for unrouted
+        // heads: a halo is made again by the next band.
+        let in_core = || {
+            c.fine_cells(q, w, h).any(|i| {
+                flags[i] & (FIXED | SEA) == 0 && (core_rows[0]..core_rows[1]).contains(&(i / w))
+            })
+        };
+        if let Some(id) = c.river(q).filter(|_| c.centre(q) && in_core()) {
             rivers_here.insert(id);
         }
     }
@@ -1147,6 +1155,7 @@ mod tests {
             &s.basins,
             &coarse(),
             &s.unrouted,
+            [0, 4],
             &HashMap::new(),
             &|i| s.ids[i],
         );
