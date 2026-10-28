@@ -1,7 +1,10 @@
 //! Sea, priority flood (Barnes et al. 2014), breaching by priority-flood carving and flow
 //! accumulation. Receivers are stored as one D8 direction byte per cell.
 
-use std::{cmp::Ordering, collections::BinaryHeap, collections::VecDeque};
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, HashSet, VecDeque},
+};
 
 use super::lakes::{Basin, Kind};
 
@@ -466,14 +469,20 @@ pub(super) fn breach(
     lowered
 }
 
-/// Receivers by steepest descent (drop over distance, a diagonal √2 long) for every land cell
-/// outside basins, sea, outlets and fixed cells, on the final ground. The flood's discovery
-/// order picks the lowest neighbour, which is nearly always a diagonal and draws 45° streams
-/// across slopes. Cells with no strictly lower neighbour (flats) keep the flood receiver, so
-/// every cell still drains. Strictly lower steps alone cannot form a cycle, but a flood step
-/// left uphill (a pit lowered after the flood) can close one: its cells get their flood
-/// receivers back, and a cycle left after that spills (`spill_cycles`).
-/// A fixed cell is a receiver only as an outlet. Returns the cells changed.
+/// Receivers along the fall line for every land cell outside basins, sea, outlets and fixed
+/// cells, on the final ground. The flood's discovery order picks the lowest neighbour, which is
+/// nearly always a diagonal and draws 45° streams across slopes, and plain steepest descent
+/// draws parallel straight lines on smooth slopes whose fall line lies between two of the
+/// eight directions. So each cell takes the two neighbours bracketing its gradient direction
+/// (Horn's 3 x 3 slope) and picks one with a share equal to the angle between them, against a
+/// low-discrepancy threshold of its position: paths follow the fall line on average, and the
+/// result is deterministic. Where the picked neighbour is not lower (or at an edge) it takes
+/// the steepest descent (drop over distance, a diagonal √2 long). Cells with no strictly
+/// lower neighbour (flats) keep the flood receiver, so every cell still drains. Strictly lower
+/// steps alone cannot form a cycle, but a flood step left uphill (a pit lowered after the
+/// flood) can close one: its cells get their flood receivers back, and a cycle left after that
+/// spills (`spill_cycles`). A fixed cell is a receiver only as an outlet. Returns the cells the
+/// fall-line step changed.
 pub(super) fn steepest(
     dims: Dims,
     ground: &[f32],
@@ -482,52 +491,96 @@ pub(super) fn steepest(
     basins: &[Basin],
     dir: &mut [u8],
 ) -> u64 {
+    // Directions (index + 1 is the byte) at 0°, 45°, ... from east turning south.
+    const AROUND: [usize; 8] = [3, 7, 1, 6, 2, 4, 0, 5];
     let mut changed = 0u64;
     let flood_dir = dir.to_vec();
+    let receives = |j: usize| flags[j] & FIXED == 0 || flags[j] & OUTLET != 0;
+    // A basin counts at its level, as in the flood (its cells route to its exit).
+    let height = |j: usize| match body[j] {
+        0 => ground[j],
+        b => basins[b as usize - 1].level,
+    };
     for i in 0..ground.len() {
         if flags[i] & (SEA | FIXED | OUTLET) != 0 || body[i] != 0 || dir[i] == 0 {
             continue;
         }
         let mut best: Option<(f32, u8)> = None;
         for (k, j) in dims.neighbours(i) {
-            if flags[j] & FIXED != 0 && flags[j] & OUTLET == 0 {
+            if !receives(j) {
                 continue;
             }
-            // A basin counts at its level, as in the flood (its cells route to its exit).
-            let to = match body[j] {
-                0 => ground[j],
-                b => basins[b as usize - 1].level,
-            };
-            let drop = ground[i] - to;
+            let drop = ground[i] - height(j);
             if drop <= 0.0 {
                 continue;
             }
-            let slope = drop
-                / if k >= 4 {
-                    std::f32::consts::SQRT_2
-                } else {
-                    1.0
-                };
+            let slope = drop / Dims::step(k as u8 + 1) as f32;
             if best.is_none_or(|(s, _)| slope > s) {
                 best = Some((slope, k as u8 + 1));
             }
         }
-        if let Some((_, d)) = best.filter(|&(_, d)| d != dir[i]) {
+        let Some((_, mut d)) = best else { continue };
+        if let Some(k) = fall_line(dims, ground, i, &AROUND) {
+            let ok = dims
+                .neighbour(i, k)
+                .is_some_and(|j| receives(j) && height(j) < ground[i]);
+            if ok {
+                d = k as u8 + 1;
+            }
+        }
+        if d != dir[i] {
             dir[i] = d;
             changed += 1;
         }
     }
-    let restored = restore_on_cycles(dims, dir, |_, i| Some(flood_dir[i]));
-    changed.saturating_sub(restored) + spill_cycles(dims, ground, dir, |_| true)
+    restore_on_cycles(dims, dir, |_, i| Some(flood_dir[i]));
+    spill_cycles(dims, ground, flags, dir, |_| true);
+    changed
+}
+
+/// The neighbour (index) on the fall line of cell `i`, dithered between the two directions
+/// bracketing its gradient; None at the grid edge or on a flat.
+fn fall_line(dims: Dims, ground: &[f32], i: usize, around: &[usize; 8]) -> Option<usize> {
+    let (y, x) = (i / dims.w, i % dims.w);
+    if y == 0 || x == 0 || y + 1 == dims.h || x + 1 == dims.w {
+        return None;
+    }
+    let z = |dy: isize, dx: isize| {
+        f64::from(ground[(y as isize + dy) as usize * dims.w + (x as isize + dx) as usize])
+    };
+    // Horn: east and south rises; the water goes the other way.
+    let east = (z(-1, 1) + 2.0 * z(0, 1) + z(1, 1)) - (z(-1, -1) + 2.0 * z(0, -1) + z(1, -1));
+    let south = (z(1, -1) + 2.0 * z(1, 0) + z(1, 1)) - (z(-1, -1) + 2.0 * z(-1, 0) + z(-1, 1));
+    if east == 0.0 && south == 0.0 {
+        return None;
+    }
+    let turns =
+        (-south).atan2(-east).rem_euclid(std::f64::consts::TAU) / std::f64::consts::FRAC_PI_4;
+    let sector = turns.floor() as usize % 8;
+    // R2 low-discrepancy threshold: spread along rows, columns and diagonals.
+    let t = (x as f64 * 0.754_877_666_2 + y as f64 * 0.569_840_290_9).fract();
+    let k = if turns.fract() > t {
+        (sector + 1) % 8
+    } else {
+        sector
+    };
+    Some(around[k])
+}
+
+/// Cells on receiver cycles, counted (0 for a proper drainage tree).
+pub(super) fn cycle_cells(dims: Dims, dir: &[u8]) -> u64 {
+    on_cycles(dims, dir).len() as u64
 }
 
 /// A pit lowered after the flood (a trench end) drains uphill, so a neighbour stepping down
 /// into it closes a cycle. Each cycle then spills like a depression: the member beside the
-/// lowest cell outside it (not draining into it) drains there; only members `may` allows
-/// are redirected. Returns the cells redirected.
+/// lowest cell outside it whose flow does not reach a cycle (and that may receive: no fixed
+/// cell but an outlet) drains there; members `may` allows go first. Returns the cells
+/// redirected.
 pub(super) fn spill_cycles(
     dims: Dims,
     ground: &[f32],
+    flags: &[u8],
     dir: &mut [u8],
     may: impl Fn(usize) -> bool,
 ) -> u64 {
@@ -563,11 +616,13 @@ pub(super) fn spill_cycles(
                     None => return false,
                 }
             };
+            let receives = |j: usize| flags[j] & FIXED == 0 || flags[j] & OUTLET != 0;
             let spill = |allowed: &dyn Fn(usize) -> bool| {
                 let mut best: Option<(f32, usize, u8)> = None;
                 for &m in members.iter().filter(|&&m| allowed(m)) {
                     for (k, j) in dims.neighbours(m) {
-                        if best.is_none_or(|b| ground[j] < b.0) && !reaches_cycle(j) {
+                        if best.is_none_or(|b| ground[j] < b.0) && receives(j) && !reaches_cycle(j)
+                        {
                             best = Some((ground[j], m, k as u8 + 1));
                         }
                     }
@@ -578,7 +633,41 @@ pub(super) fn spill_cycles(
             if let Some((_, m, d)) = best {
                 dir[m] = d;
                 redirected += 1;
+                continue;
             }
+            // Every neighbour drains into the cycle: spill the whole region draining into it
+            // over its lowest receiving neighbour, reversing the flow from there to the cycle.
+            let mut region: HashSet<usize> = members.iter().copied().collect();
+            let mut stack = members.clone();
+            while let Some(c) = stack.pop() {
+                for (_, j) in dims.neighbours(c) {
+                    if !region.contains(&j) && receiver(dims, dir, j) == Some(c) {
+                        region.insert(j);
+                        stack.push(j);
+                    }
+                }
+            }
+            let mut out: Option<(f32, usize, usize)> = None;
+            for &u in &region {
+                for (_, v) in dims.neighbours(u) {
+                    if !region.contains(&v) && receives(v) && out.is_none_or(|b| ground[v] < b.0) {
+                        out = Some((ground[v], u, v));
+                    }
+                }
+            }
+            let Some((_, u, v)) = out else { continue };
+            let mut path = vec![u];
+            while !on[*path.last().unwrap_or(&u)] {
+                match receiver(dims, dir, path[path.len() - 1]) {
+                    Some(r) => path.push(r),
+                    None => break,
+                }
+            }
+            for k in (1..path.len()).rev() {
+                dir[path[k]] = dims.towards(path[k], path[k - 1]);
+            }
+            dir[u] = dims.towards(u, v);
+            redirected += path.len() as u64;
         }
     }
     redirected
@@ -756,5 +845,75 @@ mod tests {
                 assert_eq!(ground.iter().filter(|&&g| g == 3.0).count(), 0);
             }
         }
+    }
+
+    /// Every cell's receivers reach a cell without one (no cycle).
+    fn drains(dims: Dims, dir: &[u8]) -> bool {
+        cycle_cells(dims, dir) == 0
+    }
+
+    #[test]
+    fn steepest_gives_a_pit_its_flood_receiver_back() {
+        // A trench end (2, 2) lowered after the flood drains uphill east into (2, 3), whose
+        // steepest step is back into the pit: the cycle goes, the flood receiver returns.
+        let dims = Dims { w: 5, h: 5 };
+        let mut ground = vec![10.0f32; 25];
+        ground[12] = 1.0;
+        ground[13] = 5.0;
+        let mut flags = vec![0u8; 25];
+        edge_outlets(dims, &mut flags);
+        // North, towards the edge.
+        let mut dir: Vec<u8> = (0..25).map(|i| u8::from(!dims.is_edge(i))).collect();
+        dir[12] = 4; // east, uphill
+        dir[13] = 4;
+        let basins: Vec<Basin> = Vec::new();
+        steepest(dims, &ground, &flags, &[0; 25], &basins, &mut dir);
+        assert!(drains(dims, &dir));
+        assert_eq!(receiver(dims, &dir, 12), Some(13));
+    }
+
+    #[test]
+    fn a_cycle_spills_to_its_lowest_receiving_neighbour() {
+        // Cells 6 and 7 point at each other. The lowest neighbour (2, fixed, not an outlet)
+        // may not receive; the next lowest (11) does.
+        let dims = Dims { w: 4, h: 4 };
+        let mut ground = vec![9.0f32; 16];
+        (ground[6], ground[7], ground[2], ground[11]) = (5.0, 5.0, 0.0, 3.0);
+        let mut flags = vec![0u8; 16];
+        flags[2] = FIXED;
+        let mut dir = vec![0u8; 16];
+        (dir[6], dir[7]) = (4, 3);
+        assert_eq!(cycle_cells(dims, &dir), 2);
+        assert_eq!(spill_cycles(dims, &ground, &flags, &mut dir, |_| true), 1);
+        assert!(drains(dims, &dir));
+        assert!([6, 7].iter().any(|&m| receiver(dims, &dir, m) == Some(11)));
+    }
+
+    #[test]
+    fn routing_follows_the_fall_line_on_a_plane() {
+        // A plane falling 20° south of east: paths alternate east and south-east steps
+        // instead of running straight east.
+        let dims = Dims { w: 60, h: 60 };
+        let a = 20f32.to_radians();
+        let ground: Vec<f32> = (0..3600)
+            .map(|i| {
+                let (y, x) = ((i / 60) as f32, (i % 60) as f32);
+                100.0 - x * a.cos() - y * a.sin()
+            })
+            .collect();
+        let mut flags = vec![0u8; 3600];
+        edge_outlets(dims, &mut flags);
+        let mut dir: Vec<u8> = (0..3600)
+            .map(|i| if dims.is_edge(i) { 0 } else { 4 })
+            .collect();
+        let basins: Vec<Basin> = Vec::new();
+        steepest(dims, &ground, &flags, &[0; 3600], &basins, &mut dir);
+        let (mut c, mut steps) = (10 * 60 + 1, 0);
+        while let Some(r) = receiver(dims, &dir, c) {
+            (c, steps) = (r, steps + 1);
+        }
+        let (dy, dx) = ((c / 60) as f32 - 10.0, (c % 60) as f32 - 1.0);
+        assert!(steps > 20);
+        assert!((dy / dx - a.tan()).abs() < 0.1, "path slope {}", dy / dx);
     }
 }

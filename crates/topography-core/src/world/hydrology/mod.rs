@@ -512,7 +512,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     // Coarse river paths keep their own course, descending (widening may have lowered cells).
     if let Some(im) = &imprint {
-        fine::route(dims, &ground, &mut dir, &im.paths);
+        fine::route(dims, &ground, &flags, &mut dir, &im.paths);
         let (_, max, at) = fine::burn(
             dims,
             &mut ground,
@@ -540,7 +540,20 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     lap("trenches", &mut t);
     let mut acc = vec![0f32; n];
-    let cycles = flood::accumulate(dims, &dir, weight, &mut acc);
+    let mut cycles = flood::accumulate(dims, &dir, weight, &mut acc);
+    // Streams turning back across the seam beside the previous band's river are led into it.
+    let seam_joins = band::join_seam_rivers(
+        dims,
+        fixed_rows,
+        &mut ground,
+        &flags,
+        &mut dir,
+        &acc,
+        river_km2,
+    );
+    if seam_joins > 0 {
+        cycles = flood::accumulate(dims, &dir, weight, &mut acc);
+    }
     lap("accumulate", &mut t);
 
     // Stream power at the trunk-network level only, before lakes take river inflow.
@@ -774,8 +787,14 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }
     }
     drop(lowered);
+    // Channel widening may leave a cycle its own repair could not break: spill it.
+    let spilled = flood::spill_cycles(dims, &ground, &flags, &mut dir, |_| true);
+    if !check_dir.is_empty() {
+        check_dir[fixed_rows * w..].copy_from_slice(&dir[fixed_rows * w..]);
+    }
     if let Value::Object(m) = &mut channel_widening {
         m.insert("basin_cells_lowered".into(), json!(left_basins));
+        m.insert("cycle_cells_spilled".into(), json!(spilled));
     }
     let lips = rivers::raise_lips(
         dims,
@@ -945,6 +964,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
         spacing_m: grid.spacing_m,
         open_rows,
     };
+    // Cycles on this run's final routing (taken cells end it), or before accumulation.
+    let cycles = cycles.max(flood::cycle_cells(dims, &dir));
     let (mut checks, examples) = report::checks(&ctx, cycles);
     let bodies = report::bodies(&ctx, &body_id);
     let mut figures = report::figures(&ctx, &carve, extended);
@@ -1001,6 +1022,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 "inflow_cells": inflow.len(),
                 "river_inflow_cells": seam_inflow,
                 "streams_pruned_at_seam": channels.streams_pruned,
+                "streams_joined_across_seam": seam_joins,
             }),
         );
     }

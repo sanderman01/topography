@@ -200,11 +200,36 @@ pub(super) fn widen_trenches(
         candidates.dedup_by_key(|c| c.0);
         frontier.clear();
         for &(c, limit, d, pass) in &candidates {
-            was.entry(c).or_insert(ground[c as usize]);
-            old_dir.entry(c).or_insert(dir[c as usize]);
+            // The lowered cell drains to the cell it was lowered from. Beside channels (no
+            // re-routing follows), not where that cell's flow runs through it (a cycle): it
+            // then takes its steepest lower neighbour whose flow does not, and with none (a
+            // sill all its lower neighbours drain across) it is not lowered. Trench cycles
+            // get their old receivers back below, and steepest descent follows.
+            let i = c as usize;
+            let mut to = d;
+            let into = dims.neighbour(i, d as usize - 1);
+            if !old_receiver && into.is_some_and(|j| flows_into(dims, dir, j, i)) {
+                let mut best: Option<(f32, u8)> = None;
+                for (k, j) in dims.neighbours(i) {
+                    let e = k as u8 + 1;
+                    let slope = (limit - ground[j]) / Dims::step(e) as f32;
+                    if slope > 0.0
+                        && best.is_none_or(|(s, _)| slope > s)
+                        && !flows_into(dims, dir, j, i)
+                    {
+                        best = Some((slope, e));
+                    }
+                }
+                match best {
+                    Some((_, e)) => to = e,
+                    None => continue,
+                }
+            }
+            was.entry(c).or_insert(ground[i]);
+            old_dir.entry(c).or_insert(dir[i]);
             lowerings += 1;
-            ground[c as usize] = limit;
-            dir[c as usize] = d;
+            ground[i] = limit;
+            dir[i] = to;
             frontier.push((c, pass, limit));
         }
     }
@@ -253,6 +278,21 @@ pub(super) fn widen_trenches(
         "slot_side_slope_after": slopes(ground),
     });
     (figures, lowered)
+}
+
+/// Whether the flow from `from` reaches `to` within a few hundred cells.
+fn flows_into(dims: Dims, dir: &[u8], from: usize, to: usize) -> bool {
+    let mut c = from;
+    for _ in 0..512 {
+        if c == to {
+            return true;
+        }
+        match receiver(dims, dir, c) {
+            Some(r) => c = r,
+            None => return false,
+        }
+    }
+    false
 }
 
 /// Lowering figures: total and largest, and on river cells (`channel`) split into those
@@ -360,6 +400,63 @@ pub(super) fn stream_power(
             // Rounding must neither raise a cell nor put it below its receiver.
             let z = ((ground[i] + f * base) / (1.0 + f)).clamp(base, ground[i]);
             ground[i] = z.max(low);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A trench along row 2 (cut 5 m) whose end (2, 2) drains east into the wall cell (2, 3);
+    /// widening that wall points it back at the trench end.
+    fn trench_end_scene() -> (Dims, Vec<f32>, Vec<u8>) {
+        let dims = Dims { w: 6, h: 5 };
+        let mut ground = vec![10.0f32; 30];
+        for x in 0..3 {
+            ground[12 + x] = 0.0;
+        }
+        let mut dir = vec![0u8; 30];
+        for (i, d) in dir.iter_mut().enumerate() {
+            if !dims.is_edge(i) {
+                *d = 1;
+            }
+        }
+        (dir[12], dir[13], dir[14], dir[15], dir[16]) = (0, 3, 4, 4, 4);
+        (dims, ground, dir)
+    }
+
+    #[test]
+    fn widening_never_leaves_a_cycle_at_a_trench_end() {
+        for old_receiver in [true, false] {
+            let (dims, mut ground, mut dir) = trench_end_scene();
+            let trench = |i: usize| (12..15).contains(&i);
+            widen_trenches(
+                dims,
+                &mut ground,
+                &mut dir,
+                trench,
+                |i| !trench(i),
+                |_| f32::NAN,
+                |_| 0.0,
+                |i| if trench(i) { 5.0 } else { 0.0 },
+                4.0,
+                old_receiver,
+            );
+            // No cycle straight after widening: trench walls get their old receivers back,
+            // and a channel wall never points back at a cell draining through it.
+            assert_eq!(
+                flood::cycle_cells(dims, &dir),
+                0,
+                "old_receiver {old_receiver}"
+            );
+            if old_receiver {
+                assert!(
+                    ground[15] < 10.0,
+                    "the wall beyond the trench end is lowered"
+                );
+                assert_eq!(receiver(dims, &dir, 15), Some(16), "keeps its old receiver");
+            }
         }
     }
 }
