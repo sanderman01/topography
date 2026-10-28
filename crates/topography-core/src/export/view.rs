@@ -161,7 +161,7 @@ impl Export {
 }
 
 /// Width, height and raw big-endian samples of a grayscale tile.
-fn read_png(path: &Path) -> Result<(usize, usize, Vec<u8>)> {
+pub(super) fn read_png(path: &Path) -> Result<(usize, usize, Vec<u8>)> {
     let file = io_context("open tile", fs::File::open(path))?;
     let mut reader = png::Decoder::new(std::io::BufReader::new(file))
         .read_info()
