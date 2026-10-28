@@ -153,19 +153,22 @@ def _starts(length: int, window: int, stride: int) -> list[int]:
     return s if s[-1] == length - window else s + [length - window]
 
 
-NOISE_ROWS = 256  # starting noise is drawn per block of rows, so overlapping bands agree
+NOISE_TILE = 256  # starting noise is drawn per tile of the world grid, so overlaps agree
 
 
-def row_noise(seed: int, g0: int, g1: int, cols: int) -> torch.Tensor:
-    """Unit starting noise [1, 1, g1 - g0, cols] for rows g0..g1 of a field, the same for
-    those rows whatever band they are drawn in."""
-    parts = []
-    for block in range(g0 // NOISE_ROWS, -(-g1 // NOISE_ROWS)):
-        gen = torch.Generator(device="cpu").manual_seed(seed * 1_000_003 + block)
-        parts.append(torch.randn((NOISE_ROWS, cols), generator=gen))
-    rows = torch.cat(parts)
-    off = g0 - g0 // NOISE_ROWS * NOISE_ROWS
-    return rows[off : off + g1 - g0][None, None]
+def world_noise(seed: int, r0: int, r1: int, c0: int, c1: int) -> torch.Tensor:
+    """Unit starting noise [1, 1, r1 - r0, c1 - c0] for rows r0..r1 and columns c0..c1 of the
+    world grid at a level's spacing: the same at a place whatever band or square draws it."""
+    t = NOISE_TILE
+    rows = []
+    for by in range(r0 // t, -(-r1 // t)):
+        tiles = []
+        for bx in range(c0 // t, -(-c1 // t)):
+            gen = torch.Generator(device="cpu").manual_seed((seed * 1_000_003 + by) * 1_000_033 + bx)
+            tiles.append(torch.randn((t, t), generator=gen))
+        rows.append(torch.cat(tiles, 1))
+    y, x = r0 - r0 // t * t, c0 - c0 // t * t
+    return torch.cat(rows)[y : y + r1 - r0, x : x + c1 - c0][None, None]
 
 
 def plan_windows(h: int, w: int, window: int, stride: int, skip=None, guide=None):
@@ -275,7 +278,7 @@ def denoise_field(model, x, sigma, cond, window, stride, batch, guidance=1.0, ne
 
 @torch.no_grad()
 def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0, guidance=1.0, negative=None,
-                 noise=None, hold=None, direction=None, skip=None, guide=None):
+                 noise=None, hold=None, direction=None, skip=None, guide=None, plan=None):
     """Heun EDM sampling over a field of any size.
 
     cond: [1, C, H, W] tensor or a field with `shape`, `device` and `windows()`.
@@ -287,13 +290,14 @@ def sample_field(model, cond, steps=32, window=256, stride=128, batch=8, seed=0,
     direction: optional (weight, hidden channels), see denoise_field.
     skip: optional [H, W] bool, cells needing no detail: windows lying wholly in it are not
     evaluated and predict 0, so the result there is the coarse input, cross-faded by the
-    window weights. guide: optional [H, W] bool, guidance only in windows touching it."""
+    window weights. guide: optional [H, W] bool, guidance only in windows touching it.
+    plan: plan_windows of the same field, skip and guide, when the caller has it."""
     if isinstance(cond, torch.Tensor):
         cond = TensorField(cond)
     if isinstance(negative, torch.Tensor):
         negative = TensorField(negative)
     h, w = cond.shape
-    plan = plan_windows(h, w, window, stride, skip, guide)
+    plan = plan or plan_windows(h, w, window, stride, skip, guide)
     if len(plan[2]) == len(plan[1]):
         return torch.zeros((1, model.target_channels, h, w))
     sigmas = sigma_schedule(steps)

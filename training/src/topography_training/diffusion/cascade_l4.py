@@ -75,7 +75,7 @@ def main(argv=None) -> int:
     import torch
 
     from .cascade_chain import _load, _png
-    from .model import plan_windows, row_noise, sample_field
+    from .model import plan_windows, sample_field, world_noise
 
     world = json.loads((args.world / "manifest.json").read_text())
     if world.get("kind") != "world_preview" or world.get("spacing_m") != 4.0:
@@ -177,8 +177,8 @@ def main(argv=None) -> int:
     from . import legend
 
     n_classes, lut = legend.model_lut(config)
-    m, half = MARGIN_4M, args.halo_m // 2
-    bands = list(range(0, n, args.band_m))
+    m = MARGIN_4M
+    bands = cascade.bands(n, args.band_m, args.halo_m)
     done = progress["bands_done"]
     print(f"{n} x {n} at 1 m in {len(bands)} bands; resuming after band {done}" if done else
           f"{n} x {n} at 1 m in {len(bands)} bands", flush=True)
@@ -188,12 +188,12 @@ def main(argv=None) -> int:
     bodies = progress["bodies"]
 
     def save():
-        progress_path.write_text(json.dumps(progress))
+        cascade.save_json(progress_path, progress)
 
     def hydro(j: int):
         """1 m hydrology of band j (its raw rows and halos are final), checked against band j - 1."""
         t = time.time()
-        a, b = bands[j], min(bands[j] + args.band_m, n)
+        a, b = bands[j]
         top, bot = max(a - args.halo_m, 0), min(b + args.halo_m, n)
         cls = classes4[top // 4 : bot // 4] if per_cell else np.full(((bot - top) // 4, c4), class_id, np.uint8)
         grid = hydrology.write_grid(hyd / "grid", np.asarray(raw[top:bot]), 1.0, origin, cls,
@@ -239,8 +239,7 @@ def main(argv=None) -> int:
     hydro_until(done - 1)
     for k in range(done, len(bands)):
         t = time.time()
-        a = bands[k]
-        b = min(a + args.band_m, n)
+        a, b = bands[k]
         g0, g1 = max(a - args.halo_m, 0), min(b + args.halo_m, n)
         # 4 m rows covering the band with a margin; the 1 m fields are cropped back to it.
         r0, r1 = g0 // 4 - m, g1 // 4 + m
@@ -291,30 +290,25 @@ def main(argv=None) -> int:
             stats["guided"] += 0 if g == 1.0 else len(plan[1]) if plan[3] is None else len(plan[3] - plan[2])
             note = f" ({len(plan[2])}/{len(plan[1])} windows deep sea)"
             field = cascade.LazyField(level, coarse, extra, classes, n_classes)
+            # Noise of the map's 1 m grid, so a square previews the whole map at its place.
+            wy, wx = int(south) + g0, int(east)
             res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
-                               noise=row_noise(args.seed, g0, g1, n), guidance=g, skip=skip,
-                               guide=None if guide is False else guide)[0, 0].numpy()
+                               noise=world_noise(args.seed, wy, wy + g1 - g0, wx, wx + n), guidance=g,
+                               plan=plan)[0, 0].numpy()
             h = (coarse + res * scale * land).astype(np.float32)
             del res, field, land, skip
         else:
             progress.setdefault("deep_sea_bands", []).append(k)
 
-        # Rows this band owns; the first `halo` rows are cross-faded with the band above.
-        w0, w1 = (a - half if k else 0), (b + half if b < n else n)
-        if k:
-            rows = np.arange(w0, a + half)
-            fade = ((rows - w0 + 0.5) / args.halo_m)[:, None].astype(np.float32)
-            raw[w0 : a + half] = (1 - fade) * raw[w0 : a + half] + fade * h[w0 - g0 : a + half - g0]
-            raw[a + half : w1] = h[a + half - g0 : w1 - g0]
-        else:
-            raw[w0:w1] = h[w0 - g0 : w1 - g0]
+        cascade.write_band(raw, h, bands, k, g0, args.halo_m, args.out)
         snow_out[a:b] = np.where(snow[a - g0 : b - g0] >= 128, 2, 1)
         veg_out[a:b] = np.where(veg[a - g0 : b - g0] >= 128, 2, 1)
-        for mm in (raw, snow_out, veg_out):
+        for mm in (snow_out, veg_out):
             mm.flush()
         progress["band_s"].append(time.time() - t)
         progress["bands_done"] = k + 1
         save()
+        cascade.drop_overlaps(args.out, k)
         print(f"band {k + 1}/{len(bands)} rows {a}-{b} in {progress['band_s'][-1]:.0f} s{note}", flush=True)
         # Free the band's fields before Rust runs; the band above is now final down to its halo.
         del coarse, water, snow, veg, classes, extra, h, guide
@@ -380,6 +374,7 @@ def main(argv=None) -> int:
     # Only now the run cannot be resumed any more: drop the raw surface and the last band.
     del raw
     raw_path.unlink(missing_ok=True)
+    cascade.drop_overlaps(args.out, 1 << 30)
     for d in (hyd / f"band-{len(bands) - 1:03d}", hyd / "grid"):  # band reports stay
         shutil.rmtree(d, ignore_errors=True)
     print(f"done: wrote {args.out} in {(sum(progress['band_s']) + sum(progress['hydrology_s'])) / 60:.0f} min",

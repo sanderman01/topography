@@ -416,25 +416,21 @@ def _l1_l2(args, src: Source, device, water, table, hyd: Path, times: dict):
     return h128, sea128, lake128, raw32
 
 
-def _bands(n: int, band: int) -> list[tuple[int, int]]:
-    return [(a, min(a + band, n)) for a in range(0, n, band)]
-
-
 def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, device, out: Path, progress: dict,
         save) -> np.memmap:
     """L3 over the n32² square of 32 m cells at (x0, y0), in bands of rows north to south
     into a memory-mapped raw 4 m surface (resumable). Each band has a halo above and below,
-    cross-faded into the band above; its starting noise is drawn per block of rows."""
+    cross-faded into the band above; its starting noise is drawn per tile of the map grid."""
     import torch
 
-    from .model import plan_windows, row_noise, sample_field
+    from .model import plan_windows, sample_field, world_noise
 
     level = cascade.LEVELS["l3"]
     model, config = _load(args.l3_run, device, args.l3_class_runs)
     window, scale = config["crop"], config["residual_scale_m"]
     stride = window // 2
     n4, band, halo = n32 * 8, args.l3_band_m // 4, args.l3_halo_m // 4
-    half, m = halo // 2, L3_MARGIN
+    m = L3_MARGIN
     first, last = args.l3_bands
     # 32 m inputs with a margin repeating the field's edge, read per band.
     h32, sea32, wet32, river32 = np.array(w32.ground), w32.kind("sea"), w32.wet, w32.kind("river")
@@ -450,7 +446,7 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
     n_classes, lut = legend.model_lut(config)
     path = out / "l3-raw.f32"
     raw = np.memmap(path, dtype="<f4", mode="r+" if path.exists() else "w+", shape=(n4, n4))
-    bands = _bands(n4, band)
+    bands = cascade.bands(n4, band, halo)
     win = progress.setdefault("l3_windows", {"total": 0, "skipped": 0, "guided": 0})
     for k in range(progress["l3_bands_done"], len(bands)):
         t = time.time()
@@ -494,10 +490,13 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
             note = f"{len(plan[2])}/{len(plan[1])} windows deep sea"
             _, model4 = _model_classes(config, classes4)
             field = cascade.LazyField(level, coarse, extra, model4, n_classes)
+            # Noise of the map's 4 m grid, so a square previews the whole map at its place.
+            wy, wx = y0 * 8 + g0, x0 * 8
+            noise = world_noise(args.seed + 2, wy, wy + g1 - g0, wx, wx + n4)
             res = sample_field(model, field, steps=args.steps, window=window, stride=stride, batch=args.batch,
-                               noise=row_noise(args.seed + 2, g0, g1, n4), guidance=g, skip=skip, guide=guide)
+                               noise=noise, guidance=g, plan=plan)
             h += res[0, 0].numpy() * scale
-            del field, res, skip, guide, model4
+            del field, res, skip, guide, model4, noise
         del extra
         w = np.clip(-coarse / L3_SEABED_M, 0, 1)
         h = (1 - w) * h + w * coarse
@@ -506,15 +505,7 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
         under = smooth((lake4 | river4).astype(np.float32), 2.0)
         h = (h - under * np.maximum(h - coarse, 0)).astype(np.float32)
         del under, w, coarse, sea4, lake4, river4
-        # Rows this band owns; the first `halo` rows are cross-faded with the band above.
-        w0, w1 = (a - half if k else 0), (b + half if b < n4 else n4)
-        if k:
-            fade = ((np.arange(w0, a + half) - w0 + 0.5) / halo)[:, None].astype(np.float32)
-            raw[w0 : a + half] = (1 - fade) * raw[w0 : a + half] + fade * h[w0 - g0 : a + half - g0]
-            raw[a + half : w1] = h[a + half - g0 : w1 - g0]
-        else:
-            raw[w0:w1] = h[w0 - g0 : w1 - g0]
-        raw.flush()
+        cascade.write_band(raw, h, bands, k, g0, halo, out)
         del h
         progress["l3_band_s"].append(time.time() - t)
         progress["l3_bands_done"] = k + 1
@@ -522,6 +513,7 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
             progress["times"]["peak_vram_gb"] = max(progress["times"].get("peak_vram_gb", 0.0),
                                                     round(torch.cuda.max_memory_reserved() / 2**30, 2))
         save()
+        cascade.drop_overlaps(out, k)
         print(f"L3 band {k + 1}/{len(bands)} rows {a}-{b} in {progress['l3_band_s'][-1]:.0f} s, {note}", flush=True)
     del model
     return raw
@@ -632,7 +624,7 @@ def main(argv=None) -> int:
     table = hyd / "water.toml" if overrides else None
 
     def save():
-        progress_path.write_text(json.dumps(progress))
+        cascade.save_json(progress_path, progress)
 
     if progress is None:
         # Disk: about 44 bytes a 4 m cell (world layers, hydrology outputs, the staged grid, raw L3).
@@ -789,7 +781,8 @@ def main(argv=None) -> int:
         "moisture": moisture | {"file": "moisture.f32"}, **desc,
         "source": src.name, "layout": str((args.layout or args.collage).resolve()) if src.l0 else None,
         "l3_window_m": [x0 * 32.0, y0 * 32.0, n32 * 32.0, n32 * 32.0],
-        "l3_bands": {"band_m": args.l3_band_m, "halo_m": args.l3_halo_m, "count": len(_bands(n4, args.l3_band_m // 4)),
+        "l3_bands": {"band_m": args.l3_band_m, "halo_m": args.l3_halo_m,
+                     "count": len(cascade.bands(n4, args.l3_band_m // 4, args.l3_halo_m // 4)),
                      "windows": progress.get("l3_windows", {})},
         "class_id": src.classes if isinstance(src.classes, int) else None, "steps": args.steps,
         "guidance": args.guidance, "guidance_classes": args.guidance_classes,
@@ -800,6 +793,7 @@ def main(argv=None) -> int:
     # Only now the run cannot be resumed any more.
     for name in ("l3-raw.f32", "l2.npz"):
         (args.out / name).unlink(missing_ok=True)
+    cascade.drop_overlaps(args.out, 1 << 30)
     print(f"wrote {args.out}", flush=True)
     return 0
 

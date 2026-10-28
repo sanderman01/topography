@@ -267,6 +267,52 @@ def join_seabed(height: np.ndarray, water: np.ndarray, seabed: np.ndarray, cell_
     return np.where(sea, bed, height).astype(np.float32), sea
 
 
+def save_json(path: Path, value) -> None:
+    """Write JSON atomically, so a kill leaves the old file or the new one."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(value))
+    tmp.replace(path)
+
+
+def bands(n: int, band: int, halo: int) -> list[tuple[int, int]]:
+    """Rows [a, b) of the bands of a field of n rows; a last band shorter than the halo joins
+    the one above, so every cross-fade lies inside the field."""
+    out = [(a, min(a + band, n)) for a in range(0, n, band)]
+    if len(out) > 1 and out[-1][1] - out[-1][0] < halo:
+        out[-2:] = [(out[-2][0], n)]
+    return out
+
+
+def write_band(raw: np.ndarray, h: np.ndarray, rows: list[tuple[int, int]], k: int, g0: int, halo: int,
+               keep: Path) -> None:
+    """Write band k's rows of `h` (field rows from g0) into the memory-mapped `raw`. Its first
+    `halo` rows are cross-faded with band k-1's bottom rows, which that band kept in
+    keep/overlap-{k-1}.f32, so a rerun after a kill blends the same values again; this band's
+    bottom rows are kept for band k+1."""
+    n, half = raw.shape[0], halo // 2
+    a, b = rows[k]
+    w0, w1 = (a - half if k else 0), (b + half if k + 1 < len(rows) else n)
+    if k:
+        above = np.fromfile(keep / f"overlap-{k - 1}.f32", "<f4").reshape(halo, raw.shape[1])
+        fade = ((np.arange(halo) + 0.5) / halo)[:, None].astype(np.float32)
+        raw[w0 : a + half] = (1 - fade) * above + fade * h[w0 - g0 : a + half - g0]
+        raw[a + half : w1] = h[a + half - g0 : w1 - g0]
+    else:
+        raw[w0:w1] = h[w0 - g0 : w1 - g0]
+    raw.flush()
+    if k + 1 < len(rows):
+        tmp = keep / f"overlap-{k}.f32.tmp"
+        np.ascontiguousarray(h[b - half - g0 : b + half - g0], "<f4").tofile(tmp)
+        tmp.replace(keep / f"overlap-{k}.f32")
+
+
+def drop_overlaps(keep: Path, below: int) -> None:
+    """Remove kept band overlaps of bands before `below`."""
+    for p in keep.glob("overlap-*.f32"):
+        if int(p.stem.split("-")[1]) < below:
+            p.unlink()
+
+
 def block_mean(a: np.ndarray, k: int) -> np.ndarray:
     h, w = a.shape[0] // k * k, a.shape[1] // k * k
     return a[:h, :w].reshape(h // k, k, w // k, k).mean(axis=(1, 3), dtype=np.float64).astype(np.float32)
