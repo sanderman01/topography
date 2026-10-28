@@ -134,6 +134,11 @@ pub(super) const GAME_CLASSES: [LayerSpec; 2] = [BIOME, LAND_COVER];
 pub(super) const GAME_DENSITIES: [LayerSpec; 3] = [VEGETATION_DENSITY, SNOW_COVER, TALUS_DENSITY];
 
 pub(super) fn metadata(spec: &LayerSpec, level0_spacing_m: f64, last_level: u32) -> Value {
+    debug_assert!(
+        spec.scale.is_finite() && spec.offset.is_finite(),
+        "{}",
+        spec.name
+    );
     let mut m = json!({
         "prefix": spec.prefix,
         "format": if spec.sixteen_bit { "PNG grayscale 16-bit" } else { "PNG grayscale 8-bit" },

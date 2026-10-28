@@ -56,6 +56,8 @@ pub(super) struct RowWindow<T: Clone> {
 
 impl<T: Clone> RowWindow<T> {
     pub fn new(geometry: Geometry, samples: usize, margin: usize) -> Self {
+        // Each pushed row completes at most one tile row.
+        debug_assert!(margin < geometry.intervals);
         Self {
             geometry,
             samples,
@@ -70,8 +72,9 @@ impl<T: Clone> RowWindow<T> {
         (ty * self.geometry.intervals).saturating_sub(self.margin)
     }
 
-    /// Push row y; returns (ty, rows from ty·N − margin, clamped, oldest first) once complete.
-    pub fn push(&mut self, y: usize, row: T) -> Option<(usize, Vec<T>)> {
+    /// Push row y; once complete, returns (ty, first row = ty·N − margin clamped, rows from
+    /// there oldest first).
+    pub fn push(&mut self, y: usize, row: T) -> Option<(usize, usize, Vec<T>)> {
         debug_assert!(self.rows.back().is_none_or(|(last, _)| *last + 1 == y));
         let ty = self.next_ty;
         if ty >= self.geometry.count(self.samples) {
@@ -90,7 +93,7 @@ impl<T: Clone> RowWindow<T> {
             out.push(self.rows.pop_front().expect("front exists").1);
         }
         out.extend(self.rows.iter().map(|(_, r)| r.clone()));
-        Some((ty, out))
+        Some((ty, self.start(ty), out))
     }
 }
 
@@ -240,7 +243,8 @@ mod tests {
         let mut w = RowWindow::new(g, 12, 2);
         let mut got = Vec::new();
         for y in 0..12 {
-            if let Some((ty, rows)) = w.push(y, y) {
+            if let Some((ty, first, rows)) = w.push(y, y) {
+                assert_eq!(rows[0], first);
                 got.push((y, ty, rows));
             }
         }

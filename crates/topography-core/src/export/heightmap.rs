@@ -198,8 +198,7 @@ impl<'a, T: Copy> Output<'a, T> {
     fn row(&mut self, ctx: &mut Ctx, level: u32, y: usize, row: &[T]) -> Result<()> {
         let window = &mut self.windows[(level - self.spec.finest_level) as usize];
         match window.push(y, row.to_vec()) {
-            Some((ty, rows)) => {
-                let first = (ty * ctx.geometry.intervals).saturating_sub(self.spec.apron);
+            Some((ty, first, rows)) => {
                 write_tiles(ctx, &self.spec, level, ty, first, &rows, self.code)
             }
             None => Ok(()),
@@ -265,6 +264,7 @@ fn moisture(
     last: u32,
 ) -> Result<Option<(u32, Vec<Vec<f32>>)>> {
     let Some(entry) = manifest.get("moisture") else {
+        eprintln!("world has no moisture entry; moisture tiles skipped");
         return Ok(None);
     };
     let [mw, mh]: [usize; 2] = serde_json::from_value(entry["size"].clone())?;
@@ -300,6 +300,28 @@ fn moisture(
         })
         .collect();
     Ok(Some((level, rows)))
+}
+
+/// Dirs 0755 and files 0644 below `dir`: staged tempfiles are 0700/0600, and the game reads
+/// exports as another user.
+fn world_readable(dir: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    io_context(
+        "set export permissions",
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)),
+    )?;
+    for entry in io_context("list export", fs::read_dir(dir))? {
+        let path = io_context("list export", entry)?.path();
+        if path.is_dir() {
+            world_readable(&path)?;
+        } else {
+            io_context(
+                "set export permissions",
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o644)),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Export a generated world as 16-bit height tiles, game layer and moisture tiles with
@@ -567,6 +589,7 @@ pub fn heightmap(
         &stage.path().join("manifest.json"),
         &serde_json::to_vec_pretty(&result)?,
     )?;
+    world_readable(stage.path())?;
     io_context("publish export", fs::rename(stage.path(), output))?;
     Ok(output.join("manifest.json"))
 }
