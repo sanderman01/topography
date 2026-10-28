@@ -252,7 +252,7 @@ pub(super) fn level0(
                 if code(s) != code(level) {
                     checks.lake_levels_off += 1;
                     checks.example("lake_levels_off", || {
-                        format!("at ({x}, {y}): body {b} surface {s} m, level {level} m")
+                        format!("at ({x}, {y}): world body {b} surface {s} m, level {level} m")
                     });
                 }
                 level
@@ -261,11 +261,13 @@ pub(super) fn level0(
         };
         if !s.is_finite() {
             checks.wet_without_surface += 1;
-            checks.example("wet_without_surface", || format!("at ({x}, {y}): body {b}"));
+            checks.example("wet_without_surface", || {
+                format!("at ({x}, {y}): world body {b}")
+            });
         } else if s <= g {
             checks.wet_not_above_ground += 1;
             checks.example("wet_not_above_ground", || {
-                format!("at ({x}, {y}): body {b} surface {s} m, ground {g} m")
+                format!("at ({x}, {y}): world body {b} surface {s} m, ground {g} m")
             });
         } else {
             row.coverage[x] = 1.0;

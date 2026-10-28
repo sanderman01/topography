@@ -330,7 +330,10 @@ impl<'a> TerrainOutput<'a> {
                     ctx.checks.coverage_mismatch += 1;
                     let (x, y) = (x0 + k - APRON, y0 + r - APRON);
                     ctx.checks.example("coverage_mismatch", || {
-                        format!("at ({x}, {y}): coverage {}, body {}", coverage[i], body[i])
+                        format!(
+                            "at ({x}, {y}): coverage {}, export id {}",
+                            coverage[i], body[i]
+                        )
                     });
                 }
             }

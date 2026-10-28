@@ -58,6 +58,7 @@ impl Checks {
             ("wet_without_surface", self.wet_without_surface),
             ("surface_without_body", self.surface_without_body),
             ("lake_levels_off", self.lake_levels_off),
+            // Guard: the reducer writes level_m for every lake texel, so this stays 0 today.
             ("lake_levels", self.split_lakes().count() as u64),
             ("coverage_mismatch", self.coverage_mismatch),
             ("shared_edge_mismatches", self.shared_edge_mismatches),
@@ -69,7 +70,7 @@ impl Checks {
             return self
                 .split_lakes()
                 .take(EXAMPLES)
-                .map(|((l, id), (lo, hi))| format!("L{l} body {id}: codes {lo} to {hi}"))
+                .map(|((l, id), (lo, hi))| format!("L{l} export id {id}: codes {lo} to {hi}"))
                 .collect();
         }
         self.examples.get(check).cloned().unwrap_or_default()
@@ -143,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lake_with_two_levels_fails() {
+    fn a_lake_surface_off_its_level_fails() {
         // Lake 2 over a 10 m bed has level 11 m; its raster surface says 13 and 13.5 m.
         let dir = tempfile::tempdir().unwrap();
         let world = testworld::write(dir.path(), 64, 1.0, |x, y| match (x, y) {
@@ -153,7 +154,12 @@ mod tests {
         let err = heightmap(&world, &dir.path().join("x"), 16, Layout::SharedEdge, false)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("lake_levels_off 100"), "{err}");
+        assert!(
+            err.contains(
+                "lake_levels_off 100 (at (10, 10): world body 2 surface 13 m, level 11 m;"
+            ),
+            "{err}"
+        );
         assert!(!dir.path().join("x").exists());
     }
 
@@ -165,7 +171,10 @@ mod tests {
         assert!(checks.passed());
         checks.record_lake(1, 2, 8);
         assert!(!checks.passed());
-        assert_eq!(checks.failures(), "lake_levels 1 (L1 body 2: codes 7 to 8)");
+        assert_eq!(
+            checks.failures(),
+            "lake_levels 1 (L1 export id 2: codes 7 to 8)"
+        );
     }
 
     #[test]
