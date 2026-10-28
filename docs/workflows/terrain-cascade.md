@@ -348,15 +348,21 @@ limits it to a central N × 1,024 m square (a derived region is 48 km, so use it
 The chain writes the class per 4 m cell (`classes.u8`) for L4 and the cover.
 
 L3 runs in bands of rows across the field, north to south (`--l3-band-m`, default 8,192 m,
-with a `--l3-halo-m` of 1,024 m above and below; both multiples of 512 m), like L4: the
-starting noise is drawn per block of rows in field coordinates and the halo is cross-faded
-into the band above, so the result hardly depends on the band height (a 16 km square in two
-bands and in one differ by 3 mm on average). Each band's 4 m inputs (coarse surface, water,
-cover, classes, form channels) are computed with a 512 m margin and cropped, and the raw
-surface goes to a memory-mapped `l3-raw.f32`; layers, hillshades and the description are
-then written in blocks of rows. Rerunning the same command resumes after the last finished
-band, or at the 4 m hydrology; `l3-raw.f32`, `l2.npz` and `progress.json` hold that state
-until the manifest is written. Windows whose coarse ground is all below −50 m are not
+with a `--l3-halo-m` of 1,024 m above and below; both multiples of 512 m; a last band
+shorter than the halo joins the one above), like L4: the starting noise is drawn per
+256-cell tile of the map's 4 m grid, so a check square gets the noise the whole map gets at
+that place, and the halo is cross-faded into the band above, so the result hardly depends on
+the band height (a 16 km square in two bands and in one differ by 3 mm on average). Each
+band's 4 m inputs (coarse surface, water, cover, classes, form channels) are computed with
+a 512 m margin and cropped, and the raw surface goes to a memory-mapped `l3-raw.f32`;
+layers and hillshades are then written in blocks of rows. The whole-map 4 m description is
+the exception: it measures the memory-mapped surface but holds whole-map masks and labels
+(about 3 to 4 GB at 64 km), within the 8 GB peak of the 4 m stage. Rerunning the same
+command resumes after the last finished band, or at the 4 m hydrology, exactly as an
+uninterrupted run would end, even after a kill in the middle of a band's write:
+`l3-raw.f32`, `l2.npz`, `progress.json` (written atomically) and each band's bottom halo
+rows (`overlap-N.f32`, which the next band cross-fades with) hold that state until the
+manifest is written. Windows whose coarse ground is all below −50 m are not
 diffused: L3 learned land only and its output is the coarse ground there anyway (a coastal
 8 km square: 115 of 225 windows skipped, half the time, deep sea identical and land within
 3 mm of a run without the skip). `--guidance-classes 19` limits `--guidance` to windows
@@ -409,8 +415,8 @@ $P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-
 ```
 
 Bands default to 1,024 m with a 256 m halo (`--band-m`, `--halo-m`); overlapping bands
-share their starting noise and are cross-faded; the halo may be at most two thirds of a
-band. Once the band below is generated, a band's rows are final and it gets its 1 m water
+share their starting noise (drawn per tile of the map's 1 m grid, as in L3) and are
+cross-faded, resuming exactly as in L3; the halo may be at most two thirds of a band. Once the band below is generated, a band's rows are final and it gets its 1 m water
 from `topography world hydrology` with `--coarse` the world's `hydrology/4m` and `--north`
 the previous band ([Bands and seams](#bands-and-seams---north)), over its rows plus a halo as
 wide as `--halo-m`; it keeps the core rows, and `hydrology-seam` checks each pair (a failure
@@ -493,14 +499,23 @@ memory-mapped layers fills any cap; VRAM is torch's peak reservation):
 | The same: 16,384² 4 m hydrology, layers, 4 m description (resumed, 10 GB cap) | 397 s hydrology, 737 s in all | 8.1 GB | |
 | L3 8 km volcano, guidance 1 / 2 | 278 s / 435 s | 2.4 / 2.3 GB | |
 | L4 4 km, four 1,024 m bands, experts (Task 1) | 14 min (bands 194-223 s, hydrology 6-7 s) | 3.6 GB | 5.8 GB |
-| L4 4 km canyon, experts, guidance 2 on class 19 | 27 min (bands 372-425 s) | 2.2 GB | 7.8 GB system |
+| L3 4 km canyon, guidance 1 / 2 on class 19 | 68 s / 114 s | | |
+| L4 4 km canyon on each, guidance 1 / 2 on class 19 | 15 / 27 min (bands 195-238 s / 374-426 s) | 2.2 GB | 7.8 GB system |
+| L4 2 km on the class-19 zone's edge, guidance 1 / 2 (93 of 154 windows guided) | 6 / 16 min | | |
 
 Every hydrology report and band seam passed (after the fix of a cell widened out of a sink
 basin without a receiver, found by the whole-map run). Two bands against one differ by 3 mm
-on average over the 16 km square, the same near the seam as elsewhere. Guidance 2 leaves the
-volcano as it was (0.2 m standard deviation at its summit, no artefacts) and gives the canyon
-clear strata ledges at 4 m and 1 m. It evaluates the model twice in a guided window: about
-1.6 times the time where it applies everywhere, about twice in a class-19 window at L4.
+on average over the 16 km square, the same near the seam as elsewhere. Guidance, compared on
+one world at the same place and seed (`--guidance 2 --guidance-classes 19` at L3 and then
+L4, against guidance 1 at both): on the canyon (36800,14000) the walls get continuous strata
+ledges at 1 m where guidance 1 gives broken ones (1.1 m standard deviation, slopes alike;
+`scratch/fujix-run/t2/canyon-l4-detail-g1-vs-g2c19.png`). Across the edge of the dithered
+class-19 zone (a 2 km L4 at 32000,26000 with 93 of 154 windows guided) the difference fades
+from 0.14 m inside to 0.05 m outside, which is the run-to-run noise, with no seam
+(`edge-l4-g1-vs-g2c19.png`); on the volcano, guidance 2 everywhere changed nothing visible
+(0.2 m at the summit). A guided window evaluates the model twice: about twice the time in
+a class-19 window at L4. The first band of a run with class-limited guidance also pays a
+one-off kernel search for the uneven batch sizes (several minutes on this GPU).
 
 Full 64 km run. From the collage's 32 m surface: L3 has 18,796 windows in 8,192 m bands
 (16,129 as one field), 6,522 of them deep sea and skipped, 2,288 holding class 19; L4 has
