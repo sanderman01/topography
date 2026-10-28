@@ -492,6 +492,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         |i| breach_cut.get(&(i as u32)).copied().unwrap_or(0.0),
         grid.spacing_m,
         true,
+        |i| flags[i] & OUTLET != 0,
     );
     drop(breach_cut);
     let mut left_basins = 0u64;
@@ -798,6 +799,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         |i| deep_cut(i).unwrap_or(0.0),
         grid.spacing_m,
         false,
+        |i| flags[i] & OUTLET != 0,
     );
     drop((cuts, flow));
     let mut left_basins = 0u64;

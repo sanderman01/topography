@@ -102,6 +102,7 @@ pub(super) fn widen_trenches(
     cut: impl Fn(usize) -> f32,
     spacing_m: f64,
     old_receiver: bool,
+    outlet: impl Fn(usize) -> bool,
 ) -> (Value, Vec<u32>) {
     let n = ground.len();
     let tan = SIDE_SLOPE_DEG.to_radians().tan();
@@ -241,11 +242,12 @@ pub(super) fn widen_trenches(
     // A wall cell the trench drains into, pointed back at the trench, closes a cycle: it takes
     // its receiver before widening (`old_receiver`, trenches) or its steepest lower neighbour
     // that does not drain into it (channels, whose old receivers may now lie above it). A cell
-    // lowered out of a sink basin had none, so it takes the steepest neighbour too.
+    // lowered out of a sink basin had none, so it takes the steepest neighbour too, keeping
+    // none only without one; an outlet keeps none.
     let ground_now: &[f32] = ground;
     flood::restore_on_cycles(dims, dir, |dir, c| {
         let old = *old_dir.get(&(c as u32))?;
-        if old_receiver && old != 0 {
+        if old_receiver && (old != 0 || outlet(c)) {
             return Some(old);
         }
         let mut best: Option<(f32, u8)> = None;
@@ -259,7 +261,7 @@ pub(super) fn widen_trenches(
                 best = Some((slope, d));
             }
         }
-        best.map(|b| b.1)
+        best.map(|b| b.1).or(old_receiver.then_some(old))
     });
     drop(old_dir);
     let mut lowered: Vec<u32> = was.keys().copied().collect();
@@ -451,6 +453,7 @@ mod tests {
                 |i| if trench(i) { 5.0 } else { 0.0 },
                 4.0,
                 old_receiver,
+                |_| false,
             );
             // No cycle straight after widening: trench walls get their old receivers back,
             // and a channel wall never points back at a cell draining through it.
