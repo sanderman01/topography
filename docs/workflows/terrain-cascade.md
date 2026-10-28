@@ -311,9 +311,8 @@ $P -m topography_training.diffusion.layout reach data/worlds/fujix-collage-54 \
     --arrays data/worlds/fujix-collage-54/arrays.npz
 ```
 
-The collage's `l2` is meant to replace the L1 and L2 models for fujix (`l1` is its 128 m
-mean), with L3 and L4 adding detail. That is planned for sub-project 5: no chain entry
-point reads the collage's `l2`, `class32.u8` or `region32.u8` yet.
+The collage's `l2` replaces the L1 and L2 models for fujix (`l1` is its 128 m mean), with
+L3 and L4 adding detail: see [Generating fujix from the collage](#generating-fujix-from-the-collage).
 
 ### Layout v2 fields
 
@@ -425,6 +424,56 @@ Then redraw the cover at 1 m from the layout and add land cover:
 $P -m topography_training.diffusion.cover --world data/worlds/fujion-v3-chain-14-l4 --layout data/worlds/fujion-painted-l0-5
 $P -m topography_training.diffusion.landcover --world data/worlds/fujion-v3-chain-14-l4
 ```
+
+### Generating fujix from the collage
+
+`cascade_chain --collage` starts from a [collage](#collage-layouts) instead of the L1 and L2
+models: L2 is the collage's 32 m `l2` (seabed included), L1 its `l1`, and the classes are the
+dithered `class32.u8` (class 19 on the canyon plateau), read nearest at 4 m for L3 and
+written as the world's `classes.u8` and `biome.u8`, so L4 gets them too. Wind, snowline,
+treeline and forest come from the collage's `layout.json`. Then the usual 32 m hydrology,
+L3, 4 m hydrology and world output follow. The world also holds `description.json` and
+`description.md`: the collage's description measured on the carved 32 m surface (level
+`l2`) plus `finer`, pass ground and feature values on the L3 square;
+`cascade_l4` copies it. `--l3-km` with `--l3-centre X,Y` (map metres from the north-west
+corner, y south) puts the L3 square anywhere; `cascade_l4 --km` with `--centre X,Y` does
+the same for L4, whose default is the 4 m world's centre. L4 bands whose 4 m ground,
+margin included, lies all below −50 m keep the refined 4 m ground without diffusion (the
+manifest's `deep_sea_bands`; 8 of 64 bands at 64 km).
+
+Checks (2026-10-28, 10 GB cap):
+
+```sh
+CAP=(systemd-run --user --scope -q -p MemoryMax=10G)
+# Central: 8 km L3 around the volcano, then 4 km L4.
+"${CAP[@]}" $P -m topography_training.diffusion.cascade_chain --collage data/worlds/fujix-collage-55 \
+    --l3-run data/models/cascade-l3-run-5 --l3-class-runs data/models/cascade-l3-run-5-experts \
+    --l3-km 8 --l3-centre 31500,33500 --out scratch/fujix-run/central-l3
+"${CAP[@]}" $P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
+    --class-runs data/models/cascade-l4-run-8-experts --world scratch/fujix-run/central-l3 \
+    --out scratch/fujix-run/central-l4 --km 4
+# Grand Canyon: the same with --l3-centre 36800,14000 (canyon walls, about 1,750 m of relief);
+# leave out --l3-class-runs and --class-runs for the base models.
+```
+
+| Run | Time | Peak RAM (cgroup) | Peak VRAM (torch reserved) |
+| --- | --- | --- | --- |
+| L3 8 km (2,048²), volcano, experts | 233 s, hydrology 7 + 6 s | 2.3 GB | 2.8 GB |
+| L3 8 km, canyon, experts / base | 298 s / 218 s | 2.6 / 2.1 GB | 3.8 / 4.2 GB |
+| L3 16 km (4,096²), centre, experts | 1,197 s, 4 m hydrology 34 s | 3.5 GB | 4.4 GB |
+| L4 4 km, four 1,024 m bands, experts | 14 min (bands 194-223 s, hydrology 6-7 s) | 3.6 GB | 5.8 GB |
+| L4 4 km, canyon, experts / base | 15 / 14 min | 2.6 / 2.7 GB | 5.9 / 5.3 GB |
+
+Every hydrology report and band seam passed. On the canyon the c19 experts change L3 by
+1.3 m (standard deviation) and give layered ledges at 1 m where the base model gives
+generic rough texture; the walls' shape comes from the collage's 32 m Grand Canyon.
+
+Full 64 km run, scaled from these: L3 about 5 to 6 h of GPU (4.7 s a km² at 16 km); L4
+about 55 h (a 64 km band about 56 min, 56 of 64 bands diffused, hydrology 2.4 min a band);
+disk about 11 GB for the chain and 82 GB for L4 (19 bytes a 1 m cell). L3 holds the whole
+field in host memory, about 95 bytes a 4 m cell (2.3 GB at 8 km, 3.5 GB at 16 km), so a
+whole-map 64 km L3 needs about 25 GB: more than this machine has. It must run in bands
+like L4 before the full run.
 
 ## Hydrology v2
 
