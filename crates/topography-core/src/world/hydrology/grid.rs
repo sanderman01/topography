@@ -325,3 +325,17 @@ impl Stage {
         Ok(self.out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_body_list_over_1_mib_is_read() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("bodies.json");
+        let big = format!("{{\"bodies\": [], \"pad\": \"{}\"}}", "x".repeat(3 << 20));
+        fs::write(&path, &big).expect("write");
+        assert_eq!(read_bodies(&path).expect("read").len(), big.len());
+    }
+}

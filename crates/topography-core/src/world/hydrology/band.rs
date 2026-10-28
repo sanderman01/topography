@@ -2,7 +2,7 @@
 //! those rows as they are, so adjacent bands agree on the seam by construction, and the seam
 //! check that compares two band outputs.
 
-use super::flood::{CENTRE, Dims, FLOW_CENTRE, FLOW_DRY, RIVER, SEA};
+use super::flood::{CENTRE, Dims, FLOW_CENTRE, FLOW_DRY, RIVER, SEA, receiver};
 use super::grid::{self, Grid};
 use crate::acquisition::{Result, digest, ensure, read_small};
 use serde_json::{Map, Value, json};
@@ -118,6 +118,90 @@ fn same_surface(a: f32, b: f32) -> bool {
 /// no centreline may flow onto dry ground that is not a basin, no dry cell may sit more than
 /// 1 cm below an adjacent lake or the sea, and a lake id keeps one level (river banks are the
 /// southern band's own checks). Returns the report (JSON text) and whether it passed.
+/// Streams (discharge from `river_km2`) in this band's first row that drain back across the
+/// seam onto the previous band's dry ground, where that band's river runs a cell or two over
+/// (its halo guess put the stream there): route them along the first rows into the river, on
+/// ground lowered to a running minimum so the route never climbs. A river cell above the
+/// stream's own ground is not joined. Returns the streams joined.
+pub(super) fn join_seam_rivers(
+    dims: Dims,
+    fixed_rows: usize,
+    ground: &mut [f32],
+    flags: &[u8],
+    dir: &mut [u8],
+    acc: &[f32],
+    river_km2: f32,
+) -> u64 {
+    const REACH: usize = 3;
+    let w = dims.w;
+    let first = fixed_rows * w;
+    if fixed_rows == 0 || first + w > ground.len() {
+        return 0;
+    }
+    let taken = |j: usize| j < first;
+    // A taken river cell ends the route: it has no receiver here (one draining into this
+    // band would close a loop).
+    let last_row: Vec<bool> = (first - w..first)
+        .map(|j| flags[j] & RIVER != 0 && receiver(dims, dir, j).is_none())
+        .collect();
+    let river = |j: usize| j < first && j + w >= first && last_row[j + w - first];
+    let mut joined = 0;
+    for i in first..first + w {
+        let onto_dry =
+            receiver(dims, dir, i).is_some_and(|r| taken(r) && flags[r] & (RIVER | SEA) == 0);
+        if acc[i] < river_km2 || !onto_dry {
+            continue;
+        }
+        // Breadth first along this band's first rows to a cell beside the taken river.
+        let mut from: HashMap<usize, usize> = HashMap::from([(i, i)]);
+        let mut layer = vec![i];
+        let mut end = None;
+        'search: for _ in 0..=REACH {
+            let mut next = Vec::new();
+            for &c in &layer {
+                let target = dims
+                    .neighbours(c)
+                    .filter(|&(_, j)| river(j) && ground[j] <= ground[i])
+                    .min_by(|a, b| ground[a.1].total_cmp(&ground[b.1]));
+                if let Some((k, _)) = target {
+                    end = Some((c, k));
+                    break 'search;
+                }
+                for (_, j) in dims.neighbours(c) {
+                    let near = j >= first && j < first + REACH * w;
+                    if near && flags[j] & (SEA | RIVER) == 0 && !from.contains_key(&j) {
+                        from.insert(j, c);
+                        next.push(j);
+                    }
+                }
+            }
+            layer = next;
+        }
+        let Some((last, k)) = end else { continue };
+        let mut route = vec![last];
+        while *route.last().unwrap_or(&i) != i {
+            let c = route[route.len() - 1];
+            route.push(from[&c]);
+        }
+        route.reverse();
+        let low = route
+            .iter()
+            .map(|&c| ground[c])
+            .fold(f32::INFINITY, f32::min);
+        let into = dims.neighbour(last, k).map_or(f32::INFINITY, |j| ground[j]);
+        if into > low {
+            continue;
+        }
+        dir[last] = k as u8 + 1;
+        for p in route.windows(2) {
+            dir[p[0]] = dims.towards(p[0], p[1]);
+            ground[p[1]] = ground[p[1]].min(ground[p[0]]);
+        }
+        joined += 1;
+    }
+    joined
+}
+
 pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     let (a, _) = manifest(north)?;
     let (b, _) = manifest(south)?;
@@ -355,5 +439,53 @@ mod tests {
         assert!(cut_at_seam(&[(0, 1)], &flags, &body).is_empty());
         (flags[1], body[1]) = (0, 0);
         assert_eq!(cut_at_seam(&[(0, 1)], &flags, &body), vec![0]);
+    }
+
+    /// A 6 x 3 grid whose first row is the previous band's: its river at (3, 0). A stream at
+    /// (1, 1) drains back north onto that band's dry ground at (1, 0).
+    fn seam_scene(river_ground: f32) -> (Dims, Vec<f32>, Vec<u8>, Vec<u8>, Vec<f32>) {
+        let dims = Dims { w: 6, h: 3 };
+        let mut ground = vec![0.5f32; 18];
+        (ground[3], ground[7], ground[8]) = (river_ground, 0.0, 0.3);
+        let mut flags = vec![0u8; 18];
+        for f in flags.iter_mut().take(6) {
+            *f = super::super::flood::FIXED;
+        }
+        flags[3] |= RIVER | CENTRE;
+        let mut dir = vec![0u8; 18];
+        dir[7] = 1; // north, onto taken dry ground
+        let mut acc = vec![0.0f32; 18];
+        acc[7] = 1.0;
+        (dims, ground, flags, dir, acc)
+    }
+
+    #[test]
+    fn a_stream_turning_back_across_the_seam_is_led_into_the_river() {
+        let (dims, mut ground, flags, mut dir, acc) = seam_scene(-1.0);
+        assert_eq!(
+            join_seam_rivers(dims, 1, &mut ground, &flags, &mut dir, &acc, 0.5),
+            1
+        );
+        // (1, 1) -> (2, 1) -> (3, 0), the route lowered so it never climbs.
+        let mut c = 7;
+        let mut path = vec![c];
+        while let Some(r) = receiver(dims, &dir, c) {
+            assert!(ground[r] <= ground[c], "{c} -> {r} climbs");
+            path.push(r);
+            c = r;
+        }
+        assert_eq!(c, 3);
+        assert_eq!(path.len(), 3);
+    }
+
+    #[test]
+    fn a_river_above_the_stream_is_not_joined() {
+        let (dims, mut ground, flags, mut dir, acc) = seam_scene(0.2);
+        let before = dir.clone();
+        assert_eq!(
+            join_seam_rivers(dims, 1, &mut ground, &flags, &mut dir, &acc, 0.5),
+            0
+        );
+        assert_eq!(dir, before);
     }
 }

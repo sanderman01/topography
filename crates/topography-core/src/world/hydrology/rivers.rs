@@ -16,6 +16,8 @@ pub(super) const DEPTH_B: f32 = 0.5;
 const BAND_MIN_SHARE: f32 = 0.1;
 /// Sea mouths: the bed reaches below 0 m over this many cells and continues into the seabed.
 pub(super) const MOUTH_CELLS: usize = 4;
+/// The previous band's ground may sit this far below a river surface beside it (f32 rounding).
+const SEAM_BANK_TOLERANCE_M: f32 = 0.01;
 /// Judgment constant: a surface drop forced by a low bank tapers upstream by this slope.
 pub(super) const GRADE_SLOPE: f32 = 0.05;
 /// Shallowest centreline water, so the surface stays above the bed in f32.
@@ -207,12 +209,6 @@ pub(super) fn extract(
             End::Sink(body[r])
         }
         Some(r) if body[r] != 0 => End::Dry(body[r]),
-        // Back across the seam onto the previous band's ground right beside its river (that
-        // band's halo guess put the river a cell or two over): a confluence.
-        Some(r) if fixed(flags, r) => dims
-            .neighbours(r)
-            .find(|&(_, j)| fixed(flags, j) && flags[j] & RIVER != 0 && body[j] != 0)
-            .map_or(End::Land, |(_, j)| End::Joins(body[j])),
         Some(_) => End::Land,
     };
 
@@ -276,11 +272,26 @@ pub(super) fn extract(
         }
     }
     // A new stream that runs onto dry ground copied from the previous band (which did not
-    // see enough discharge for it there) is dropped: it would end on dry land.
+    // see enough discharge for it there) is dropped: it would end on dry land. So is one
+    // joining that band's river beside its dry ground lower than the river's surface: its
+    // water would stand above ground that cannot be raised.
+    let below_taken_bank = |m: usize, x: usize| {
+        let s = surface[x];
+        s.is_finite()
+            && dims.neighbours(m).any(|(_, y)| {
+                fixed(flags, y)
+                    && flags[y] & (SEA | RIVER) == 0
+                    && !lake(flags, body, y)
+                    && ground[y] + SEAM_BANK_TOLERANCE_M < s
+            })
+    };
     let mut pruned = vec![false; rivers.len()];
     for (k, r) in rivers.iter().enumerate().skip(given_count as usize) {
         let m = r.mouth as usize;
-        pruned[k] = r.end == End::Land && receiver(dims, dir, m).is_some_and(|x| fixed(flags, x));
+        let into_taken = receiver(dims, dir, m).filter(|&x| fixed(flags, x));
+        pruned[k] = into_taken.is_some_and(|x| {
+            r.end == End::Land || (flags[x] & RIVER != 0 && below_taken_bank(m, x))
+        });
     }
     for i in 0..n {
         if centre(flags, i) && !fixed(flags, i) && pruned[body[i] as usize - 1] {
@@ -830,6 +841,18 @@ pub(super) fn raise_lips(
             }
         }
     }
+    // The previous band's river cells hold their surface: dry cells of this band beside one
+    // stand at least at it (that band's halo saw them as its banks).
+    for x in (0..ground.len()).filter(|&x| flags[x] & (FIXED | RIVER) == FIXED | RIVER) {
+        if surface[x].is_nan() {
+            continue;
+        }
+        for (_, j) in dims.neighbours(x) {
+            if dry(j) && ground[j] < surface[x] {
+                raise(ground, j, surface[x], &mut stack);
+            }
+        }
+    }
     // A dry cell beside a lake below its level (left by carving next to a lake grown over
     // carved ground) becomes a divide at the level, or joins the lake when 6 or more of its
     // neighbours are that lake (a notch inside it).
@@ -909,5 +932,128 @@ pub(super) fn entered_basin(dims: Dims, dir: &[u8], flags: &[u8], body: &[u32], 
     match receiver(dims, dir, i) {
         Some(r) if flags[r] & (SEA | RIVER) == 0 => body[r],
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::lakes::NO_EXIT;
+    use super::*;
+
+    #[test]
+    fn a_coarse_path_crosses_a_dry_basin_and_continues_off_dry_land() {
+        // Column 1 of a 3 x 6 grid drains south to the sea row. The coarse path holds rows 1
+        // and 2; row 2 is a dry (ice) basin floor. It continues down to the sea.
+        let dims = Dims { w: 3, h: 6 };
+        let n = 18;
+        let mut ground: Vec<f32> = (0..n).map(|i| 10.0 - (i / 3) as f32).collect();
+        let mut flags = vec![0u8; n];
+        for f in flags.iter_mut().skip(15) {
+            *f = SEA;
+        }
+        let mut dir = vec![0u8; n];
+        for (i, d) in dir.iter_mut().enumerate().take(15) {
+            *d = 2;
+            if i % 3 != 1 {
+                *d = 0;
+            }
+        }
+        let mut body = vec![0u32; n];
+        body[7] = 1;
+        let basins = vec![Basin {
+            kind: Kind::Dry,
+            level: 8.5,
+            exit: NO_EXIT,
+            filled_by_river: false,
+            over_budget: false,
+            ice: true,
+            id: 50,
+        }];
+        let acc = vec![0.01f32; n];
+        let river = River {
+            id: 9,
+            coarse: true,
+            mouth: 0,
+            end: End::Edge,
+            cells: 0,
+            wet_cells: 0,
+            length_m: 0.0,
+            drainage_km2: 0.0,
+        };
+        let given = Given {
+            rivers: vec![river],
+            cells: vec![(4, 1), (7, 1)],
+            ..Default::default()
+        };
+        let mut surface = vec![f32::NAN; n];
+        let (rivers, _, _) = extract(
+            dims,
+            &mut ground,
+            &dir,
+            &acc,
+            &mut flags,
+            &mut body,
+            &basins,
+            1.0,
+            1.0,
+            &mut surface,
+            given,
+        );
+        for i in [4, 7, 10, 13] {
+            assert!(flags[i] & CENTRE != 0, "cell {i} is on the river");
+            assert_eq!(body[i], 1);
+        }
+        assert!(rivers[0].end == End::Sea);
+    }
+
+    #[test]
+    fn a_new_stream_joining_beside_low_taken_ground_is_dropped() {
+        // Row 0 is the previous band's: its river at (2, 0) stands at 2 m beside its dry
+        // ground at (1, 0), 1 m. A new stream down column 1 would join it at (1, 1).
+        let dims = Dims { w: 4, h: 4 };
+        let n = 16;
+        let mut ground = vec![3.0f32; n];
+        (ground[1], ground[2], ground[5], ground[9], ground[13]) = (1.0, 1.5, 2.2, 2.5, 3.0);
+        let mut flags = vec![0u8; n];
+        for f in flags.iter_mut().take(4) {
+            *f = FIXED;
+        }
+        flags[2] |= RIVER | CENTRE;
+        let mut body = vec![0u32; n];
+        body[2] = 1;
+        let mut dir = vec![0u8; n];
+        (dir[13], dir[9], dir[5]) = (1, 1, 6);
+        let mut acc = vec![0.0f32; n];
+        (acc[13], acc[9], acc[5]) = (2.0, 2.0, 2.0);
+        let mut surface = vec![f32::NAN; n];
+        surface[2] = 2.0;
+        let given = Given {
+            rivers: vec![River {
+                id: 7,
+                coarse: false,
+                mouth: 2,
+                end: End::Edge,
+                cells: 0,
+                wet_cells: 0,
+                length_m: 0.0,
+                drainage_km2: 0.0,
+            }],
+            ..Default::default()
+        };
+        let (_, _, ch) = extract(
+            dims,
+            &mut ground,
+            &dir,
+            &acc,
+            &mut flags,
+            &mut body,
+            &[],
+            1.0,
+            1.0,
+            &mut surface,
+            given,
+        );
+        assert_eq!(ch.streams_pruned, 1);
+        assert!([5, 9, 13].iter().all(|&i| flags[i] & RIVER == 0));
     }
 }
