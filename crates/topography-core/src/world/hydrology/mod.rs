@@ -156,6 +156,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
             .and_then(|b| b.kinds.get(&b.body[i]).copied())
     };
     let mut inflow = Vec::new();
+    // Fixed cells whose flow in the previous band comes back into this run's cells.
+    let reenters = north
+        .as_ref()
+        .map_or_else(Vec::new, |b| band::reenters(dims, &b.flow, fixed_rows));
     if let Some(b) = &north {
         for i in 0..fixed_rows * w {
             ground[i] = b.ground[i];
@@ -172,7 +176,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             }
         }
         // Fixed cells draining into this run's cells feed it; the others beside them are
-        // outlets.
+        // outlets, unless their flow in the previous band comes back here (a loop).
         for (i, f) in flags.iter_mut().enumerate().take(fixed_rows * w) {
             let d = b.flow[i] & 15;
             let to = (d != 0)
@@ -180,7 +184,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 .flatten();
             if let Some(r) = to.filter(|&r| r >= fixed_rows * w) {
                 inflow.push((i, r));
-            } else if dims.neighbours(i).any(|(_, j)| j >= fixed_rows * w) {
+            } else if !reenters[i] && dims.neighbours(i).any(|(_, j)| j >= fixed_rows * w) {
                 *f |= OUTLET;
             }
         }
@@ -245,7 +249,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 c,
                 &inflows,
                 fixed_id,
-                |j| feeds.contains(&j),
+                |j| feeds.contains(&j) || reenters.get(j).copied().unwrap_or(false),
                 grid.core_rows,
                 grid.spacing_m,
             );
@@ -502,7 +506,13 @@ pub fn run(options: &Options) -> Result<Outcome> {
         m.insert("basin_cells_lowered".into(), json!(left_basins));
     }
     // Water follows the steepest descent on the final ground (the flood's order only on flats).
-    let resteered = flood::steepest(dims, &ground, &flags, &body, &basins, &mut dir);
+    // World column and row of the first cell: overlapping bands route their rows alike.
+    let origin = [
+        (grid.nw_m[0] / grid.spacing_m).round() as i64,
+        (-grid.nw_m[1] / grid.spacing_m).round() as i64,
+    ];
+    let (resteered, mut receivers_spilled) =
+        flood::steepest(dims, origin, &ground, &flags, &body, &basins, &mut dir);
     // Stream power leaves ice, ice basins and the ground draining onto them as they are.
     let mut frozen = erosion::ice_catchment(dims, &dir, &body, &basins, |i| {
         class_at(i) == lakes::GLACIER
@@ -512,7 +522,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     // Coarse river paths keep their own course, descending (widening may have lowered cells).
     if let Some(im) = &imprint {
-        fine::route(dims, &ground, &flags, &mut dir, &im.paths);
+        receivers_spilled += fine::route(dims, &ground, &flags, &mut dir, &im.paths);
         let (_, max, at) = fine::burn(
             dims,
             &mut ground,
@@ -547,6 +557,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
         fixed_rows,
         &mut ground,
         &flags,
+        &body,
+        &reenters,
         &mut dir,
         &acc,
         river_km2,
@@ -964,8 +976,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
         spacing_m: grid.spacing_m,
         open_rows,
     };
-    // Cycles on this run's final routing (taken cells end it), or before accumulation.
-    let cycles = cycles.max(flood::cycle_cells(dims, &dir));
+    // Cycles on this run's final routing (taken cells end it), before accumulation, or in
+    // the routing stitched with the previous band's (a loop across the seam: the previous band
+    // has none of its own, so each holds a cell of this run).
+    let cycles = cycles
+        .max(flood::cycle_cells(dims, &dir))
+        .max(flood::cycle_cells(dims, &check_dir));
     let (mut checks, examples) = report::checks(&ctx, cycles);
     let bodies = report::bodies(&ctx, &body_id);
     let mut figures = report::figures(&ctx, &carve, extended);
@@ -1049,6 +1065,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("trenches".into(), trenches);
     figures.insert("channel_widening".into(), channel_widening);
     figures.insert("receivers_set_by_steepest_descent".into(), json!(resteered));
+    figures.insert("receivers_spilled".into(), json!(receivers_spilled));
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));

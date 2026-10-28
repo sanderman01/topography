@@ -544,8 +544,14 @@ pub(super) fn burn(
 
 /// Point each path cell at the next. A path ending where its flow comes back (a dry basin
 /// whose exit is the path's last cell) would close a cycle: that cell outside the path spills
-/// elsewhere.
-pub(super) fn route(dims: Dims, ground: &[f32], flags: &[u8], dir: &mut [u8], paths: &[Path]) {
+/// elsewhere. Returns the cells spilled.
+pub(super) fn route(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    dir: &mut [u8],
+    paths: &[Path],
+) -> u64 {
     let mut on_path = vec![false; dir.len()];
     for p in paths {
         for (k, &c) in p.cells.iter().enumerate() {
@@ -556,7 +562,7 @@ pub(super) fn route(dims: Dims, ground: &[f32], flags: &[u8], dir: &mut [u8], pa
             }
         }
     }
-    flood::spill_cycles(dims, ground, flags, dir, |i| !on_path[i]);
+    flood::spill_cycles(dims, ground, flags, dir, |i| !on_path[i])
 }
 
 /// Fine centrelines of the coarse rivers (largest first). A river's corridor is the fine cells

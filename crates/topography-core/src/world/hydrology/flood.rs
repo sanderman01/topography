@@ -482,15 +482,17 @@ pub(super) fn breach(
 /// steps alone cannot form a cycle, but a flood step left uphill (a pit lowered after the
 /// flood) can close one: its cells get their flood receivers back, and a cycle left after that
 /// spills (`spill_cycles`). A fixed cell is a receiver only as an outlet. Returns the cells the
-/// fall-line step changed.
+/// fall-line step changed and the cells the spill redirected.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn steepest(
     dims: Dims,
+    origin: [i64; 2],
     ground: &[f32],
     flags: &[u8],
     body: &[u32],
     basins: &[Basin],
     dir: &mut [u8],
-) -> u64 {
+) -> (u64, u64) {
     // Directions (index + 1 is the byte) at 0°, 45°, ... from east turning south.
     const AROUND: [usize; 8] = [3, 7, 1, 6, 2, 4, 0, 5];
     let mut changed = 0u64;
@@ -520,7 +522,7 @@ pub(super) fn steepest(
             }
         }
         let Some((_, mut d)) = best else { continue };
-        if let Some(k) = fall_line(dims, ground, i, &AROUND) {
+        if let Some(k) = fall_line(dims, origin, ground, i, &AROUND) {
             let ok = dims
                 .neighbour(i, k)
                 .is_some_and(|j| receives(j) && height(j) < ground[i]);
@@ -534,13 +536,20 @@ pub(super) fn steepest(
         }
     }
     restore_on_cycles(dims, dir, |_, i| Some(flood_dir[i]));
-    spill_cycles(dims, ground, flags, dir, |_| true);
-    changed
+    let spilled = spill_cycles(dims, ground, flags, dir, |_| true);
+    (changed, spilled)
 }
 
 /// The neighbour (index) on the fall line of cell `i`, dithered between the two directions
-/// bracketing its gradient; None at the grid edge or on a flat.
-fn fall_line(dims: Dims, ground: &[f32], i: usize, around: &[usize; 8]) -> Option<usize> {
+/// bracketing its gradient; None at the grid edge or on a flat. `origin` is the world column
+/// and row of the grid's first cell, so overlapping bands and windows pick alike.
+fn fall_line(
+    dims: Dims,
+    origin: [i64; 2],
+    ground: &[f32],
+    i: usize,
+    around: &[usize; 8],
+) -> Option<usize> {
     let (y, x) = (i / dims.w, i % dims.w);
     if y == 0 || x == 0 || y + 1 == dims.h || x + 1 == dims.w {
         return None;
@@ -558,7 +567,8 @@ fn fall_line(dims: Dims, ground: &[f32], i: usize, around: &[usize; 8]) -> Optio
         (-south).atan2(-east).rem_euclid(std::f64::consts::TAU) / std::f64::consts::FRAC_PI_4;
     let sector = turns.floor() as usize % 8;
     // R2 low-discrepancy threshold: spread along rows, columns and diagonals.
-    let t = (x as f64 * 0.754_877_666_2 + y as f64 * 0.569_840_290_9).fract();
+    let (wx, wy) = (origin[0] + x as i64, origin[1] + y as i64);
+    let t = (wx as f64 * 0.754_877_666_2 + wy as f64 * 0.569_840_290_9).rem_euclid(1.0);
     let k = if turns.fract() > t {
         (sector + 1) % 8
     } else {
@@ -662,6 +672,10 @@ pub(super) fn spill_cycles(
                     Some(r) => path.push(r),
                     None => break,
                 }
+            }
+            // Only cells `may` allows are reversed, never fixed ones: else the guard sees it.
+            if path.iter().any(|&c| !may(c) || flags[c] & FIXED != 0) {
+                continue;
             }
             for k in (1..path.len()).rev() {
                 dir[path[k]] = dims.towards(path[k], path[k - 1]);
@@ -867,7 +881,7 @@ mod tests {
         dir[12] = 4; // east, uphill
         dir[13] = 4;
         let basins: Vec<Basin> = Vec::new();
-        steepest(dims, &ground, &flags, &[0; 25], &basins, &mut dir);
+        steepest(dims, [0, 0], &ground, &flags, &[0; 25], &basins, &mut dir);
         assert!(drains(dims, &dir));
         assert_eq!(receiver(dims, &dir, 12), Some(13));
     }
@@ -907,7 +921,7 @@ mod tests {
             .map(|i| if dims.is_edge(i) { 0 } else { 4 })
             .collect();
         let basins: Vec<Basin> = Vec::new();
-        steepest(dims, &ground, &flags, &[0; 3600], &basins, &mut dir);
+        steepest(dims, [0, 0], &ground, &flags, &[0; 3600], &basins, &mut dir);
         let (mut c, mut steps) = (10 * 60 + 1, 0);
         while let Some(r) = receiver(dims, &dir, c) {
             (c, steps) = (r, steps + 1);
@@ -915,5 +929,72 @@ mod tests {
         let (dy, dx) = ((c / 60) as f32 - 10.0, (c % 60) as f32 - 1.0);
         assert!(steps > 20);
         assert!((dy / dx - a.tan()).abs() < 0.1, "path slope {}", dy / dx);
+    }
+
+    #[test]
+    fn overlapping_bands_route_shared_rows_alike() {
+        // One rough slope; band B starts 20 rows below band A. The rows both hold (away from
+        // their grid edges) get the same receivers.
+        let height = |x: i64, y: i64| {
+            100.0 - x as f32 * 0.9 - y as f32 * 0.4 + ((x * 7 + y * 13) % 5) as f32 * 0.05
+        };
+        let band = |row0: i64| {
+            let dims = Dims { w: 40, h: 40 };
+            let ground: Vec<f32> = (0..1600)
+                .map(|i| height((i % 40) as i64, row0 + (i / 40) as i64))
+                .collect();
+            let mut flags = vec![0u8; 1600];
+            edge_outlets(dims, &mut flags);
+            let mut dir: Vec<u8> = (0..1600)
+                .map(|i| if dims.is_edge(i) { 0 } else { 4 })
+                .collect();
+            let basins: Vec<Basin> = Vec::new();
+            steepest(
+                dims,
+                [0, row0],
+                &ground,
+                &flags,
+                &[0; 1600],
+                &basins,
+                &mut dir,
+            );
+            dir
+        };
+        let (a, b) = (band(0), band(20));
+        for y in 21..39 {
+            for x in 1..39 {
+                assert_eq!(a[y * 40 + x], b[(y - 20) * 40 + x], "cell ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn a_cycle_every_neighbour_drains_into_spills_the_whole_region() {
+        // A 2-cycle (6, 7) that every other cell drains into, but the corner 15 (no
+        // receiver): no cycle cell has a usable neighbour, so the whole region spills over 15
+        // and the flow from there to the cycle is reversed.
+        let dims = Dims { w: 4, h: 4 };
+        let ground = vec![9.0f32; 16];
+        let flags = vec![0u8; 16];
+        let mut dir = vec![0u8; 16];
+        for (i, d) in dir.iter_mut().enumerate() {
+            let (y, x) = (i / 4, i % 4);
+            let target = if x < 2 { 6 } else { 7 };
+            let (ty, tx) = (target / 4, target % 4);
+            let (dy, dx) = (ty as isize - y as isize, tx as isize - x as isize);
+            if (dy, dx) != (0, 0) && dy.abs() <= 1 && dx.abs() <= 1 {
+                *d = OFFSETS
+                    .iter()
+                    .position(|&o| o == (dy, dx))
+                    .map_or(0, |k| k as u8 + 1);
+            }
+        }
+        (dir[6], dir[7]) = (4, 3);
+        dir[14] = 1; // to 10, which drains into the cycle
+        dir[15] = 0;
+        let before = cycle_cells(dims, &dir);
+        assert_eq!(before, 2);
+        assert!(spill_cycles(dims, &ground, &flags, &mut dir, |_| true) > 0);
+        assert!(drains(dims, &dir));
     }
 }
