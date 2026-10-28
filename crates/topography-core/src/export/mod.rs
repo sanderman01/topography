@@ -1,6 +1,11 @@
 //! Heightmap texture tiles, height encoding, masks, and export validation.
 
 mod heightmap;
+// Consumed by the v2 tile writer; only tests use it until then.
+#[cfg_attr(not(test), allow(dead_code))]
+mod pyramid;
+#[cfg(test)]
+pub(crate) mod testworld;
 mod view;
 pub use heightmap::{Layout, heightmap};
 pub use view::view;
