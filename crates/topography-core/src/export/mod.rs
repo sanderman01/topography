@@ -2,6 +2,7 @@
 
 mod heightmap;
 mod layers;
+mod legends;
 mod pyramid;
 #[cfg(test)]
 pub(crate) mod testworld;

@@ -1,7 +1,10 @@
 //! Heightmap and game layer texture tiles with area-mean quadtree LOD levels
 //! (master plan §5, §10; manifest v2).
 
-use super::layers::{APRON, GAME_CLASSES, GAME_DENSITIES, HEIGHT, LayerSpec, MOISTURE, metadata};
+use super::layers::{
+    APRON, GAME_CLASSES, GAME_DENSITIES, HEIGHT, LAND_COVER, LayerSpec, MOISTURE, metadata,
+};
+use super::legends::legends;
 use super::pyramid::{Mean, Mode, Pyramid, Reduce};
 use super::tiles::{Checks, Geometry, RowWindow, TileWriter, cut};
 use crate::acquisition::{
@@ -496,12 +499,13 @@ pub fn heightmap(
         height_spec.name.into(),
         metadata(&height_spec, spacing, last),
     );
+    let mut class_counts = [[0u64; 256]; 2];
     for (_, out, _, counts) in &classes {
-        let mut m = metadata(&out.spec, spacing, last);
-        // Classes present at the finest level, for the legends.
-        m["present"] = json!((0..256).filter(|&c| counts[c] > 0).collect::<Vec<_>>());
-        layer_meta.insert(out.spec.name.into(), m);
+        let i = usize::from(out.spec.name == LAND_COVER.name);
+        class_counts[i] = *counts;
+        layer_meta.insert(out.spec.name.into(), metadata(&out.spec, spacing, last));
     }
+    let legends = legends(&class_counts[0], &class_counts[1])?;
     for (_, out, _) in &densities {
         layer_meta.insert(out.spec.name.into(), metadata(&out.spec, spacing, last));
     }
@@ -579,6 +583,7 @@ pub fn heightmap(
             "decode": "height_m = h_min_m + code * step_m", "range_from": "ground and water surface",
             "max_quantization_error_m": max_error},
         "layers": layer_meta,
+        "legends": legends,
         "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix in layers.{layer}.prefix; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), aprons beyond the world edge repeat the edge texel",
         "levels": levels,
         "masters": master_files,
@@ -614,6 +619,23 @@ mod tests {
             serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
         assert_eq!(m["schema_version"], 2);
         assert!(m["layers"]["biome"].is_object() && m["layers"].get("vegetation").is_none());
+        let present = |legend: &str, id: u64| {
+            m["legends"][legend]["classes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap()["present"]
+                .as_bool()
+        };
+        assert_eq!(
+            (present("land-cover", 30), present("land-cover", 10)),
+            (Some(true), Some(false))
+        );
+        assert_eq!(
+            (present("biome", 1), present("biome", 19)),
+            (Some(true), Some(false))
+        );
         // Shared edge: tile (0,0)'s last height column is tile (1,0)'s first.
         let (w, _, a) = view::read_png(&out.join("height/L0/height_L0_0_0.png")).unwrap();
         let (_, _, b) = view::read_png(&out.join("height/L0/height_L0_1_0.png")).unwrap();
