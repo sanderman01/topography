@@ -417,7 +417,7 @@ output takes 15 bytes a 1 m cell (elevation, water surface and body, and three m
 at 64 km), plus 4 bytes a cell for `elevation-raw.f32` until the run finishes (17 GB) and two
 band directories (about 4 GB); `cascade_l4` checks the free space before it starts. The
 chain needs about 40 bytes a 4 m cell (11 GB at 64 km); its 4 m hydrology at 64 km takes
-5.1 GB, with the large Python arrays released while it runs.
+5.3 GB, with the large Python arrays released while it runs.
 
 Then redraw the cover at 1 m from the layout and add land cover:
 
@@ -570,8 +570,8 @@ including receiver cycles; lakes with several levels; beds rising downstream). U
 | fujix-collage-55, 32 m, 2048² | 4 s | 0.16 GB | 287 lakes, 114 rivers (294 km) |
 | Fujion chain world, 4 m, 8192², `--coarse` | 94 s | 1.9 GB | 203 lakes, 461 rivers (616 km) |
 | Fujion 1 m band, 32,768 × 1,536 | 45-55 s | 1.0-1.2 GB | about 350 rivers a band |
-| fujix 64 km, 4 m, 16,384² `--coarse` | 6.2 min | 5.1 GB | the carved 32 m ground upsampled, with 1 m noise |
-| fujix 64 km, 1 m band, 65,536 × 1,536 | 2.4 min | 2.8 GB | one 1,024 m band with 256 m halos |
+| fujix 64 km, 4 m, 16,384² `--coarse` | 6.2 min | 5.3 GB | the carved 32 m ground upsampled, with 1 m noise |
+| fujix 64 km, 1 m band, 65,536 × 1,536 | 2.4 min | 2.7 GB | one 1,024 m band with 256 m halos |
 
 In the cascade on an 8 km Fujion crop, generating each level from the carved level above
 keeps cuts small: at 4 m all steps together lower ground at most 9 m, at 1 m at most 7 m.
