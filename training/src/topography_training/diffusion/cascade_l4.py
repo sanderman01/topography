@@ -32,8 +32,9 @@ from .data import smooth, soft_cover
 NOISE_ROWS = 256  # starting noise is drawn per block of rows, so overlapping bands agree
 MARGIN_4M = 16  # 4 m context cells around a band for the smoothing
 WATER_SIGMA_M = 3.0  # rounds 4 m water corners at 1 m
-# Body fields that hold for the whole world (the rest are per band grid).
-BODY_FIELDS = ("id", "kind", "level_m", "coarse", "parent", "endorheic", "ice", "over_budget")
+# Fields of water bodies that hold for the whole world (the rest are per band grid). Dry
+# basins are not water (and not in the raster); they stay in the band reports' bodies.
+BODY_FIELDS = ("id", "kind", "level_m", "coarse", "parent", "over_budget")
 
 
 def _noise(seed: int, g0: int, g1: int, cols: int):
@@ -189,8 +190,17 @@ def main(argv=None) -> int:
         water_out[a:b] = np.where(np.isfinite(o.surface), 255, 0)
         for mm in (elev, surface_out, body_out, water_out):
             mm.flush()
+        # A body's parent is where it really ends: the band whose core holds its mouth or exit.
+        core = range(a - top, b - top)
         for entry in o.bodies:
-            bodies.setdefault(str(entry["id"]), {k: entry[k] for k in BODY_FIELDS if k in entry})
+            if entry["kind"] == "dry":
+                continue
+            end = entry.get("mouth_cell") or entry.get("exit_cell")
+            fields = {k: entry[k] for k in BODY_FIELDS if k in entry}
+            if end is not None and end[1] in core:
+                bodies[str(entry["id"])] = fields
+            else:
+                bodies.setdefault(str(entry["id"]), fields)
         progress["hydrology_done"] = j + 1
         progress["hydrology_s"].append(time.time() - t)
         save()
@@ -269,16 +279,13 @@ def main(argv=None) -> int:
         count[: len(c)] += c
     listed = []
     for entry in bodies.values():
-        if entry["kind"] != "dry":
-            cells = int(count[entry["id"]]) if entry["id"] < len(count) else 0
-            if not cells:
-                continue
-            entry = entry | {"area_km2": cells / 1e6}
-        listed.append(entry)
-    listed.sort(key=lambda e: (e["kind"] == "dry", e["id"]))
+        cells = int(count[entry["id"]]) if entry["id"] < len(count) else 0
+        if cells:
+            listed.append(entry | {"area_km2": cells / 1e6})
+    listed.sort(key=lambda e: e["id"])
     (args.out / "bodies.json").write_text(json.dumps({
         "schema_version": 1, "kind": "water_bodies",
-        "note": "merged from the 1 m bands; areas count delivered cells, dry basins (not in the raster) have none",
+        "note": "water bodies merged from the 1 m bands; areas count delivered cells; parents from the band holding each end",
         "bodies": listed}, indent=1))
 
     # Pictures: the whole area averaged to 8 m and a 1,024 m square at 1 m in the middle.

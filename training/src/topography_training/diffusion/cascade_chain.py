@@ -49,7 +49,8 @@ CRATER_CLASSES = (4,)
 # L3 learned land only (lidar stops at the shore); deeper than this its seabed is the L2 surface.
 L3_SEABED_M = 5.0
 # Judgment: L1 lakes get a bed sloping down from their shore at L2, so 32 m hydrology keeps
-# them (beds over 30 m deep cannot be breached).
+# them. Breaching cuts at most 30 m (BREACH_MAX_M), so beds that reach 40 m keep large lakes
+# whatever the budget, with margin for a spill lower than the L1 level.
 LAKE_BED_SLOPE = 0.1
 LAKE_BED_MAX_M = 40.0
 # 32 m rivers drawn at 4 m for L3's water channel: blur (4 m cells) and threshold.
