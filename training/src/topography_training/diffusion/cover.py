@@ -1,23 +1,17 @@
 """Snow/ice and vegetation from an authored layout, following the terrain.
 
-python -m topography_training.diffusion.cover --world <world output> --layout <L0 dir>
-
 The layout's forest share and snowline are read bilinearly, and its class map by
 nearest cell, at positions displaced by a smooth noise field (about 150 m). The snow
 and tree lines then bend with the ground (a game judgment, not a climate model):
 snow lies lower on pole-facing slopes and in gullies, sheds from steep faces and
 lingers less on ridges; trees reach higher in sheltered gullies and on sun-facing
 slopes, thin out on steep ground and near their limit, and leave patchy edges. The
-chain uses this for its 32 m and 4 m cover, and this command redraws the cover of a
-finished world (for example after L4, at 1 m) and updates its manifest.
+chain uses this for its 32 m and 4 m cover, and game_layers for the 2 m export layers.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
-import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -168,49 +162,3 @@ def _digest(path: Path) -> str:
 
 
 MARGIN_M = 320.0  # context rows around a block for the terrain measures
-
-
-def redraw(world: Path, layout_dir: Path, rows: int = 2048) -> None:
-    """Rewrite snow-ice.u8 and vegetation.u8 (2 present, 1 absent) of a world from its layout,
-    and write biome.u8 (terrain class per cell, borders warped like the cover)."""
-    manifest_path = world / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    n, cell = manifest["size"][0], float(manifest["spacing_m"])
-    sampler = Sampler(layout.load(layout_dir))
-    off = (sampler.extent_m - n * cell) / 2  # crops sit in the middle of the layout
-    h = np.memmap(world / "elevation.f32", "<f4", "r", shape=(n, n))
-    snow_out = np.memmap(world / "snow-ice.u8", np.uint8, "r+", shape=(n, n))
-    veg_out = np.memmap(world / "vegetation.u8", np.uint8, "r+", shape=(n, n))
-    biome_out = np.memmap(world / "biome.u8", np.uint8, "w+", shape=(n, n))
-    m = int(np.ceil(MARGIN_M / cell))
-    for y in range(0, n, rows):
-        b = min(y + rows, n)
-        a, e = max(y - m, 0), min(b + m, n)
-        snow, veg = sampler.cover(np.asarray(h[a:e]), off + a * cell, off, cell)
-        snow_out[y:b] = np.where(snow[y - a : b - a], 2, 1)
-        veg_out[y:b] = np.where(veg[y - a : b - a], 2, 1)
-        biome_out[y:b] = sampler.classes(off + y * cell, off, b - y, n, cell)
-    for m in (snow_out, veg_out, biome_out):
-        m.flush()
-    del snow_out, veg_out, biome_out
-    for name in ("snow-ice.u8", "vegetation.u8", "biome.u8"):
-        manifest["layers"][name] = _digest(world / name)
-    manifest["cover"] = {"method": METHOD, "layout": str(layout_dir.resolve())}
-    manifest_path.write_text(json.dumps(manifest, indent=1))
-
-
-def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--world", type=Path, required=True)
-    p.add_argument("--layout", type=Path, required=True, help="L0 directory (`topography world layout`)")
-    args = p.parse_args(argv)
-    if not (args.world / "manifest.json").exists():
-        print("error: --world has no manifest.json", file=sys.stderr)
-        return 2
-    redraw(args.world, args.layout)
-    print(f"redrew snow-ice.u8 and vegetation.u8 and wrote biome.u8 in {args.world}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
