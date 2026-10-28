@@ -1,0 +1,26 @@
+crates/topography-core/src/export/description.rs
+  s_8c1b40ea9c1e0d::t_0bb1e7d796a368 85,89-102
+  s_8c1b40ea9c1e0d::t_c60144926a02b7 479
+  s_8c1b40ea9c1e0d::t_df24f7cfb52731 764-785
+  s_8c1b40ea9c1e0d::t_7623a9af44c957 345-352,354-356,358,364-365
+  s_8c1b40ea9c1e0d::t_67140006bcbc1a 366
+  s_8c1b40ea9c1e0d::t_c58dc0faad5fea 506
+  s_8c1b40ea9c1e0d::t_a2b5417e9d8260 631-637
+  s_8c1b40ea9c1e0d::t_6c434e48781aae 103-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff362d3c381ec1979402fc2498312564f1801b16",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
