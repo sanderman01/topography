@@ -82,10 +82,24 @@ fn find_base(world: &Path, manifest: &Value) -> Option<(Map<String, Value>, Path
         .flatten()
         .find_map(|dir| {
             let path = dir.join("description.json");
-            let bytes = grid::read_bodies(&path).ok()?;
-            let map = serde_json::from_slice::<Map<String, Value>>(&bytes).ok()?;
-            Some((map, path))
+            Some((read_description(&path)?, path))
         })
+}
+
+/// A `description.json` object; layout outlines can pass the 1 MiB metadata limit.
+fn read_description(path: &Path) -> Option<Map<String, Value>> {
+    use std::io::Read;
+    const LIMIT: u64 = 64 << 20;
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > LIMIT {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// The 4 m hydrology directory: the world's `hydrology.4m`, else its source world's.
@@ -328,20 +342,28 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
     let mut centre = HashMap::new();
     let mut lake_bounds: BTreeMap<u16, [usize; 4]> = BTreeMap::new();
     let f32le = f32::from_le_bytes;
-    let rows = if c0 < c1 { r0..r1 } else { 0..0 };
-    for y0 in rows.step_by(CHUNK_ROWS) {
+    ensure(
+        c0 < c1 && r0 < r1,
+        format!(
+            "4 m hydrology {} does not overlap the export",
+            dir.display()
+        ),
+    )?;
+    for y0 in (r0..r1).step_by(CHUNK_ROWS) {
         let rows = [y0, (y0 + CHUNK_ROWS).min(r1)];
-        let window = |name: &str| dir.join(name);
-        let flow = grid::read_window(&window("flow.u8"), size, [c0, c1], rows, |b: [u8; 1]| b[0])?;
+        let flow = grid::read_window(&dir.join("flow.u8"), size, [c0, c1], rows, |b: [u8; 1]| {
+            b[0]
+        })?;
         let body = grid::read_window(
-            &window("water-body.u32"),
+            &dir.join("water-body.u32"),
             size,
             [c0, c1],
             rows,
             u32::from_le_bytes,
         )?;
-        let surface = grid::read_window(&window("water-surface.f32"), size, [c0, c1], rows, f32le)?;
-        let discharge = grid::read_window(&window("discharge.f32"), size, [c0, c1], rows, f32le)?;
+        let surface =
+            grid::read_window(&dir.join("water-surface.f32"), size, [c0, c1], rows, f32le)?;
+        let discharge = grid::read_window(&dir.join("discharge.f32"), size, [c0, c1], rows, f32le)?;
         for (k, (&f, &b)) in flow.iter().zip(&body).enumerate() {
             let Some(id) = present(b) else { continue };
             let (c, r) = (c0 + k % (c1 - c0), y0 + k / (c1 - c0));
@@ -454,7 +476,7 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
         let i = usize::from(id);
         lakes.push(json!({
             "body": id,
-            "level_m": bodies.level_m[i],
+            "level_m": round(f64::from(bodies.level_m[i]), 3),
             "area_km2": round(area_km2(stats, i, frame), 6),
             "outline_m": rings,
         }));
@@ -481,7 +503,7 @@ fn body_table(bodies: &Bodies, stats: &WaterStats, frame: &Frame) -> Vec<Value> 
                 "parent": bodies.parent[i],
             });
             if bodies.level_m[i].is_finite() {
-                e["level_m"] = json!(bodies.level_m[i]);
+                e["level_m"] = json!(round(f64::from(bodies.level_m[i]), 3));
             }
             e
         })
@@ -606,7 +628,13 @@ pub(super) fn write(
         }
     };
     let measured = d.get("level").cloned().unwrap_or(Value::Null);
-    let hydrology = hydrology_dir(world, manifest).filter(|dir| dir.join("grid.json").is_file());
+    let hydrology = hydrology_dir(world, manifest);
+    if let Some(dir) = &hydrology {
+        ensure(
+            dir.join("grid.json").is_file(),
+            format!("4 m hydrology {} has no grid.json", dir.display()),
+        )?;
+    }
     let water = match &hydrology {
         Some(dir) => water(dir, frame, bodies, stats)?,
         None => {
@@ -731,6 +759,28 @@ mod tests {
                 assert!(d["measured_level"].is_null());
             }
         }
+    }
+
+    #[test]
+    fn a_named_but_missing_or_disjoint_hydrology_fails_the_export() {
+        let dir = tempfile::tempdir().unwrap();
+        let world = testworld::write(dir.path(), 256, 1.0, |x, _| (x as f32, f32::NAN, 0));
+        let path = world.join("manifest.json");
+        let mut m: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        m["hydrology"] = json!({"4m": "hydrology/4m"});
+        fs::write(&path, m.to_string()).unwrap();
+        let fail = |out: &str| {
+            let out = dir.path().join(out);
+            let err = heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap_err();
+            assert!(!out.exists());
+            err.to_string()
+        };
+        assert!(fail("a").contains("has no grid.json"));
+        let grid = world.join("hydrology/4m");
+        fs::create_dir_all(&grid).unwrap();
+        let shape = json!({"size": [8, 8], "spacing_m": 4.0, "origin": [10000.0, 10000.0]});
+        fs::write(grid.join("grid.json"), shape.to_string()).unwrap();
+        assert!(fail("b").contains("does not overlap the export"));
     }
 
     fn area(ring: &[[f64; 2]]) -> f64 {
