@@ -142,6 +142,34 @@ def measure(spec: dict, h: np.ndarray, cell_m: float, level: str, region_map: np
     }
 
 
+def measure_window(spec: dict, h: np.ndarray, cell_m: float, origin_m) -> dict:
+    """Pass ground and feature values on a window h of the map whose north-west corner lies
+    at origin_m (x, y); points outside the window are left out. Band reach needs the whole
+    map, so it is not measured here."""
+    ox, oy = origin_m
+    rows, cols = h.shape
+
+    def inside(p):
+        return 0 <= p[0] - ox < cols * cell_m and 0 <= p[1] - oy < rows * cell_m
+
+    def local(p):
+        return [p[0] - ox, p[1] - oy]
+
+    passes = {p["id"]: {"ground_m": round(float(_window(h, cell_m, local(p["at"]), PASS_RADIUS_M).min()), 1)}
+              for p in spec.get("passes", []) if inside(p["at"])}
+    features = {}
+    for f in spec.get("features", []):
+        if "at" in f and inside(f["at"]):
+            got = _feature(f | {"at": local(f["at"])}, h, cell_m).get("measured", {})
+            if got.get("caldera_at_m"):  # back to map metres
+                got["caldera_at_m"] = [round(got["caldera_at_m"][0] + ox), round(got["caldera_at_m"][1] + oy)]
+            features[f["id"]] = got
+        elif "path" in f and (path := [local(p) for p in f["path"] if inside(p)]):
+            features[f["id"]] = _feature(f | {"path": path}, h, cell_m).get("measured", {})
+    return {"cell_m": cell_m, "window_m": [ox, oy, cols * cell_m, rows * cell_m], "passes": passes,
+            "features": features}
+
+
 def markdown(d: dict) -> str:
     lines = [f"# {d['world']}: world description", "",
              f"Level `{d['level']}`, {d['cell_m']:.0f} m cells, {d['extent_m'] / 1000:.1f} km square. "
@@ -158,6 +186,11 @@ def markdown(d: dict) -> str:
     lines += ["", "## Features", "", "| Feature | Kind | Target | Measured |", "| --- | --- | --- | --- |"]
     for f in d["features"]:
         lines.append(f"| {f['name']} | {f['kind']} | {json.dumps(f['target'])} | {json.dumps(f.get('measured', {}))} |")
+    for w in d.get("finer", []):
+        x, y, wm, hm = w["window_m"]
+        lines += ["", f"## Level `{w['level']}` ({w['cell_m']:g} m), window {wm / 1000:g} × {hm / 1000:g} km at "
+                  f"({x:.0f}, {y:.0f})", "", "| Pass or feature | Measured |", "| --- | --- |"]
+        lines += [f"| {k} | {json.dumps(v)} |" for k, v in (w["passes"] | w["features"]).items()]
     return "\n".join(lines) + "\n"
 
 
