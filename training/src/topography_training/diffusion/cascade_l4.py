@@ -119,6 +119,7 @@ def main(argv=None) -> int:
     hyd = args.out / "hydrology"
     if args.out.exists():
         if (args.out / "manifest.json").exists():
+            (args.out / "elevation-raw.f32").unlink(missing_ok=True)  # left by a crash while finishing
             print("error: output is already complete", file=sys.stderr)
             return 2
         if not progress_path.exists() or json.loads(progress_path.read_text())["params"] != params:
