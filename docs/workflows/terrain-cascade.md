@@ -546,12 +546,22 @@ Steps:
   every river beside it (a hole) or a kept basin level beside it. Lowered cells drain into
   the channel; their discharge is not recomputed.
 - Receivers, at every level: after breaching and widening, every land cell outside basins
-  drains to its steepest-descent neighbour on the final ground (drop over distance, a diagonal
-  √2 long; a basin neighbour counts at its level). The flood's discovery order picks the lowest
-  neighbour, which is nearly always a diagonal (about 90 % of receivers) and drew 45° streams
-  across slopes; steepest descent gives about 50 % diagonals. Cells with no strictly lower
-  neighbour (flats) keep the flood receiver, so every cell still drains and no cycle can form.
-  `receivers_set_by_steepest_descent` counts the cells changed.
+  drains along the fall line on the final ground: of the two neighbours bracketing its gradient
+  direction (Horn's 3 × 3 slope) it takes one with a share equal to the angle between them,
+  against a low-discrepancy threshold of its position (deterministic), so paths follow the true
+  fall line on average instead of running as parallel straight lines on smooth slopes. Where
+  that neighbour is not lower (or at the grid edge) it takes the steepest descent (drop over
+  distance, a diagonal √2 long; a basin neighbour counts at its level). The flood's discovery
+  order picks the lowest neighbour, which is nearly always a diagonal (about 90 % of receivers)
+  and drew 45° streams across slopes. Cells with no strictly lower neighbour (flats) keep the
+  flood receiver. A flood step left uphill (a pit lowered after the flood, such as a trench
+  end) can close a cycle with a neighbour stepping down into it: those cells get their flood
+  receivers back, and a cycle left after that spills like a depression (over the lowest
+  receiving neighbour, reversing the flow from there when every neighbour drains into it).
+  The same spill follows channel widening; the guard counts cycles on the final routing.
+  `receivers_set_by_steepest_descent` counts the cells the fall-line step changed. The
+  fujix, Fujion and band figures in this section predate fall-line receivers; those grids
+  still pass every check with them.
 - Stream power, on grids of 32 m or coarser only (`erosion.rs`): five iterations of the
   implicit stream-power law (Braun and Willett 2013, FastScape) with n = 1, no uplift:
   each land cell, in receiver order from the outlets up, moves to
@@ -937,28 +947,44 @@ and seam passed:
 
 | Step | Time | Peak RAM (capped 7 GB) | Result |
 | --- | --- | --- | --- |
-| Chain (L1, L2, 32 m, L3 8 km, 4 m) | 5.8 min (hydrology 2 s and 8 s) | 2.7 GB | 66 lakes and 39 rivers (78 km) at 32 m; 9 lakes and 80 rivers (34 km) at 4 m, 1.5 % water |
-| L4, 4 km at 1 m | 15.7 min (hydrology 6-7 s a band) | 2.7 GB | 37 to 310 rivers a band, 0.13-0.30 % water |
+| Chain (L1, L2, 32 m, L3 8 km, 4 m) | 5.7 min (4 m hydrology 8 s) | 3.5 GB | 66 lakes and 39 rivers (85 km) at 32 m; 8 lakes and 68 rivers (33 km) at 4 m, 1.5 % water |
+| L4, 4 km at 1 m | 14.5 min (hydrology 6-7 s a band) | 3.9 GB | 41 to 287 rivers a band, 0.15-0.30 % water |
 
 Generating each level from the carved level above shrinks the cuts: on this 8 km crop at 4 m
-all steps together lower ground by at most 20 m (31 m on the uncarved test world above), path
-burns 0 m (19 m), trench walls 6.8 m (28 m), with 255 cells cut more than 10 m; at 1 m at most
-7.4 m and none over 10 m (11 m and 31 m before). Compared with the old Python water on the
+all steps together lower ground by at most 12 m (31 m on the uncarved test world above), with
+28 cells cut more than 10 m and trench walls lowered at most 6.8 m (28 m); at 1 m at most
+7.0 m and none over 10 m (11 m and 31 m before). Compared with the old Python water on the
 same layout (`fujion-v3-chain-14`), lakes now have beds below a level surface (no flat
 128 m terraces), the Fuji summit crater keeps its lake with an outflow, and the 4 m world has
-a branching river network where the old one drew a single stream. 1 m tributaries on smooth,
-evenly sloping cone flanks still follow D8 fall lines as straight parallel lines. PNGs:
+a branching river network where the old one drew a single stream. With fall-line receivers,
+1 m tributaries on smooth cone flanks curve with the slope where steepest descent drew
+parallel east-west lines (`scratch/hydro-v2/t6/fall-line-before-after.png`, a 1 km square at
+column 3,000, row 2,300 of the 4 km crop). PNGs:
 `scratch/hydro-v2/t6/water-4m-old-vs-new.png`, `water-4m-8km.png` and `water-1m-4km.png`
 (sea navy, lakes blue, rivers cyan).
 
-The run found and fixed five robustness gaps in the Rust tool: wall cells that trench widening
-pointed back at a trench end formed receiver cycles (they now keep their old receiver, or in
-channel widening take the steepest lower neighbour not draining into them, and any cycle left
-spills like a depression); a coarse path ending in a coarse dry basin with no hollow at the finer
-level continues down the routing; coarse paths run over dry basin floors (at 1 m a glacier is a
-field of thousands of small ice basins, which had left a coarse river missing); a stream
-turning back across a seam onto the previous band's ground beside its river joins that river;
-and body lists over 1 MiB are read.
+The run found robustness gaps in the Rust tool, now fixed (fix round 1 of the review made the
+cycle and seam fixes geometric, with unit tests for each):
+- Receiver cycles: a wall cell that trench widening pointed back at a trench end draining into
+  it formed a cycle. Trench walls on a cycle get their old receivers back; a channel wall never
+  points at a cell whose flow runs through it (it takes its steepest lower neighbour that does
+  not, or stays unlowered); any cycle left spills (above).
+- A coarse path ending in a coarse dry basin with no hollow at the finer level continues down
+  the routing; coarse paths run over dry basin floors (at 1 m a glacier is a field of thousands
+  of small ice basins, which had left a coarse river missing).
+- Seams: a stream in a band's first row draining back onto the previous band's dry ground,
+  with that band's river up to three cells away, is routed along the first rows into the river
+  on ground lowered to a running minimum (never climbing; `band.streams_joined_across_seam`).
+  A new stream that would join the previous band's river beside that band's dry ground lower
+  than the river's surface is dropped like one running onto dry ground, and this band's dry
+  cells beside the previous band's rivers are raised to their surface (as lips).
+- Body lists over 1 MiB are read.
+
+The 1 m world's `bodies.json` lists water bodies only (sea, lakes, rivers), each with the
+parent from the band whose core holds its mouth or exit; dry and ice basins (not in the
+raster) are only in the per-band outputs. During an L4 run `elevation-raw.f32` (the
+cross-faded diffusion surface) sits beside `elevation.f32`: another 4 bytes a cell (4 GB at
+32 km, 16 GB at 64 km) until the run finishes and removes it.
 
 ## Export
 
