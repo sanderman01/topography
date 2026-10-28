@@ -22,6 +22,7 @@ pub(super) struct Mean;
 impl Reduce for Mean {
     type Row = Vec<f32>;
     fn reduce(&self, [a, b, c]: [&Vec<f32>; 3]) -> Vec<f32> {
+        debug_assert!(a.len() == b.len() && c.len() == b.len() && b.len() % 2 == 0);
         (0..b.len() / 2)
             .map(|i| {
                 let t = taps(i);
@@ -43,32 +44,33 @@ const MODE_W: [u32; 3] = [1, 2, 1];
 impl Reduce for Mode {
     type Row = Vec<u8>;
     fn reduce(&self, [a, b, c]: [&Vec<u8>; 3]) -> Vec<u8> {
+        debug_assert!(a.len() == b.len() && c.len() == b.len() && b.len() % 2 == 0);
         let mut weight = [0u32; 256];
         (0..b.len() / 2)
             .map(|i| {
                 let t = taps(i);
-                let mut seen = Vec::with_capacity(9);
+                let (mut seen, mut n) = ([0u8; 9], 0);
                 for (r, wy) in [a, b, c].iter().zip(MODE_W) {
                     for (&x, wx) in t.iter().zip(MODE_W) {
                         let class = r[x];
                         if weight[usize::from(class)] == 0 {
-                            seen.push(class);
+                            seen[n] = class;
+                            n += 1;
                         }
                         weight[usize::from(class)] += wy * wx;
                     }
                 }
-                let best = seen.iter().map(|&k| weight[usize::from(k)]).max();
+                let seen = &seen[..n];
+                // Heaviest class; the centre keeps a tie it is part of, else the lowest id.
                 let centre = b[2 * i];
-                let class = if Some(weight[usize::from(centre)]) == best {
-                    centre
-                } else {
-                    seen.iter()
-                        .copied()
-                        .filter(|&k| Some(weight[usize::from(k)]) == best)
-                        .min()
-                        .unwrap_or(centre)
-                };
-                for k in seen {
+                let mut class = centre;
+                for &k in seen {
+                    let (wk, wc) = (weight[usize::from(k)], weight[usize::from(class)]);
+                    if wk > wc || (wk == wc && class != centre && k < class) {
+                        class = k;
+                    }
+                }
+                for &k in seen {
                     weight[usize::from(k)] = 0;
                 }
                 class
@@ -88,6 +90,8 @@ struct Level<T> {
 }
 
 /// Every level from `first` to `last`, fed one row of level `first` at a time.
+/// Widths and row counts must be even down to `last` (power-of-two worlds): an odd width
+/// drops the last column, and an odd row count leaves the last row unreduced.
 pub(super) struct Pyramid<R: Reduce> {
     reduce: R,
     first: u32,
@@ -112,8 +116,7 @@ impl<R: Reduce> Pyramid<R> {
     }
 
     /// `sink(level, y, row)` receives each row of each level once, in row order per level.
-    pub fn push(&mut self, row: R::Row, sink: &mut Sink<'_, R::Row>) -> Result<()> {
-        let mut row = row;
+    pub fn push(&mut self, mut row: R::Row, sink: &mut Sink<'_, R::Row>) -> Result<()> {
         let top = self.levels.len() - 1;
         for (k, state) in self.levels.iter_mut().enumerate() {
             let level = self.first + k as u32;
