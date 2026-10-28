@@ -27,16 +27,12 @@ WATER_TABLE = ROOT / "configs" / "hydrology" / "water-v1.toml"
 
 @dataclass(frozen=True)
 class Water:
-    """How much water a terrain class gets (configs/hydrology/water-v1.toml): lakes kept
-    (shares of the land), small lakes on finer levels, the drainage area where streams begin
-    and their width (m per sqrt(km2)), closed dry basins, and whether streams sink (karst)."""
+    """How much water a terrain class gets (configs/hydrology/water-v1.toml): shares of its
+    land kept as lakes, as tarns at 4 m and as closed dry basins."""
 
     lake_share: float
     tarn_share: float
-    stream_km2: float
-    stream_width: float = 2.5
     dry_share: float = 0.0
-    sinks: bool = False
 
 
 def load_water(path: Path = WATER_TABLE) -> dict[int, Water]:
@@ -289,8 +285,12 @@ def seam(north: Path, south: Path) -> None:
         raise RuntimeError(f"seam check failed between {north.name} and {south.name}:\n{done.stdout}{done.stderr}")
 
 
-# Hydrology layers a world output carries (beside water.u8, kept until export v2).
-WORLD_LAYERS = ("elevation.f32", "water-surface.f32", "water-body.u32", "bodies.json")
+# Hydrology rasters a world output carries (beside water.u8, kept until export v2) and its
+# body list (`world_bodies`).
+WORLD_LAYERS = ("elevation.f32", "water-surface.f32", "water-body.u32")
+# World body lists keep dry basins from this area (1 ha): a 1 m glacier holds thousands of
+# tiny ice basins.
+WORLD_DRY_MIN_KM2 = 0.01
 WATER_FILL = ("ground continues under all water; water-surface.f32 holds the water surface "
               "(NaN dry, sea 0), water-body.u32 its body (bodies.json)")
 
@@ -306,11 +306,37 @@ def sha256(path: Path) -> str:
 
 
 def link(src: Path, dst: Path, names) -> dict[str, str]:
-    """Hard-link files of a hydrology output into a world output; their SHA-256 by name."""
+    """Hard-link (or, across file systems, copy) files of a hydrology output into a world
+    output; their SHA-256 by name."""
     for name in names:
         (dst / name).unlink(missing_ok=True)
-        (dst / name).hardlink_to(src / name)
+        try:
+            (dst / name).hardlink_to(src / name)
+        except OSError:
+            shutil.copy2(src / name, dst / name)
     return {name: sha256(dst / name) for name in names}
+
+
+def world_bodies(entries: list[dict], note: str) -> dict:
+    """A world's body list: water bodies, and dry basins of at least WORLD_DRY_MIN_KM2.
+    A parent left out of the list becomes 0 (its water ends there)."""
+    kept = [e for e in entries if e["kind"] != "dry" or e.get("area_km2", 0.0) >= WORLD_DRY_MIN_KM2]
+    ids = {e["id"] for e in kept}
+    kept = [e | {"parent": 0} if e.get("parent", 0) not in ids else e for e in kept]
+    kept.sort(key=lambda e: (e["kind"] == "dry", e["id"]))
+    return {"schema_version": 1, "kind": "water_bodies", "note": note,
+            "dry_min_km2": WORLD_DRY_MIN_KM2, "bodies": kept}
+
+
+def check_disk(path: Path, need_bytes: float, what: str) -> None:
+    """Stop before a long run when the file system holding `path` has too little room."""
+    probe = path
+    while not probe.exists():
+        probe = probe.parent
+    free = shutil.disk_usage(probe).free
+    if free < need_bytes:
+        raise SystemExit(f"error: {what} needs about {need_bytes / 1e9:.0f} GB on {probe}, "
+                         f"{free / 1e9:.0f} GB free")
 
 
 @dataclass

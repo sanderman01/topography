@@ -12,13 +12,7 @@ pub(super) const DEFAULT: &str = include_str!("../../../../../configs/hydrology/
 pub(super) struct Water {
     pub lake_share: f64,
     pub tarn_share: f64,
-    #[allow(dead_code)] // per-class stream start (finer levels)
-    pub stream_km2: f64,
-    #[allow(dead_code)] // channel width (Task 4)
-    pub stream_width: f64,
     pub dry_share: f64,
-    #[allow(dead_code)] // karst sinks (later task)
-    pub sinks: bool,
 }
 
 #[derive(Deserialize)]
