@@ -240,11 +240,12 @@ pub(super) fn widen_trenches(
     }
     // A wall cell the trench drains into, pointed back at the trench, closes a cycle: it takes
     // its receiver before widening (`old_receiver`, trenches) or its steepest lower neighbour
-    // that does not drain into it (channels, whose old receivers may now lie above it).
+    // that does not drain into it (channels, whose old receivers may now lie above it). A cell
+    // lowered out of a sink basin had none, so it takes the steepest neighbour too.
     let ground_now: &[f32] = ground;
     flood::restore_on_cycles(dims, dir, |dir, c| {
         let old = *old_dir.get(&(c as u32))?;
-        if old_receiver {
+        if old_receiver && old != 0 {
             return Some(old);
         }
         let mut best: Option<(f32, u8)> = None;
