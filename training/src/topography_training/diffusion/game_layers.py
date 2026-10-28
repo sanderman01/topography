@@ -26,8 +26,8 @@ from scipy import ndimage
 
 from . import borders, cover, layout
 
-METHOD = ("game layers v1: cover v2 fields at 2 m, moisture-weighted forest, soft snow, talus below rock; "
-          "biome and land cover dithered from smoothed shares and ramps")
+METHOD = ("game layers v1: cover v2 fields at 2 m, moisture-weighted forest, soft snow (none on land-cover water), "
+          "talus below rock; biome and land cover dithered from smoothed shares and ramps")
 MOIST_DRY, MOIST_WET = 0.15, 0.45  # forest density ramps in over this moisture range
 SNOW_SOFT_M = 80.0  # snow cover ramps from 0 to 1 across the bent snow line ± this
 SNOW_SHED_DEG = (40.0, 55.0)  # as cover.SNOW_STEEP_DEG
@@ -38,7 +38,7 @@ BIOME_MIX_M = 64.0  # gaussian sigma of each class's share across biome borders
 ALPINE_BAND_M = 400.0  # grass gives way to bare ground over this band above the tree line
 ROCK_RAMP_DEG = (30.0, 40.0)  # bare rock ramps in around 35 degrees
 BARE_CLASS_DEG = (10.0, 20.0)  # bare classes are bare from gentle slopes up
-WATER_WET = 0.25  # land-cover water at this wet share, undithered: keeps 1 m rivers whole at 2 m
+WATER_WET = 0.25  # land-cover water (and no snow) at this wet share, undithered: keeps 1 m rivers whole at 2 m
 BIOME_SEED, LANDCOVER_SEED = 5, 6  # blue-noise tiles, distinct from training's and the collage's
 TREE, SHRUB, GRASS, BARE, SNOW, WATER = 10, 20, 30, 60, 70, 80  # ESA WorldCover codes
 # Open (non-forest, non-snow) land by terrain class id (0: unlabelled).
@@ -76,6 +76,15 @@ def _layout(manifest: dict) -> Path | None:
     return None
 
 
+def _layout_offset(origin, extent_m: float, size_m: float) -> tuple[float, float]:
+    """(south, east) metres of a world's north-west corner from the layout's, whose own corner
+    is at (0, extent) in the sketch plane (cascade_chain); raises if the world leaves the layout."""
+    oy, ox = extent_m - float(origin[1]), float(origin[0])
+    if min(oy, ox) < -0.5 or max(oy, ox) + size_m > extent_m + 0.5:
+        raise ValueError(f"world origin {origin} ({size_m:g} m square) is outside the {extent_m:g} m layout")
+    return oy, ox
+
+
 def _moisture(world: Path, manifest: dict, origin, rows: np.ndarray, cols: np.ndarray, step: int,
               c0: float) -> np.ndarray:
     """Moisture bilinear from the world's grid at game texels (exporter lattice positions)."""
@@ -96,7 +105,7 @@ def _fields(sampler, h, wet, moist, y0_m, x0_m, s):
     glacier = f["classes"] == cover.GLACIER  # layout classes, warped as cover reads them
     snow = np.where(glacier, 1.0, cover._ramp(h - f["snowline"], -SNOW_SOFT_M, SNOW_SOFT_M)
                     * (1 - cover._ramp(f["slope"], *SNOW_SHED_DEG)))
-    snow *= (h >= 0) & (wet < 0.5)
+    snow *= (h >= 0) & (wet < WATER_WET)  # no snow where land cover is water
     veg = f["share"] * cover._ramp(moist, MOIST_DRY, MOIST_WET) * (1 - snow) * (1 - wet)
     rock = (slope2 > ROCK_DEG).astype(np.float32)
     near = np.clip(ndimage.gaussian_filter(rock, TALUS_REACH_M / s) / 0.25, 0, 1)
@@ -164,7 +173,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         raise ValueError("world has no moisture entry; regenerate it with hydrology v2")
     origin = json.loads((Path(manifest["world_input"]) / "world.json").read_text())["origin"]
     sampler = cover.Sampler(layout.load(layout_dir))
-    off = (sampler.extent_m - n * c0) / 2  # crops sit in the middle of the layout
+    oy, ox = _layout_offset(origin, sampler.extent_m, n * c0)
     ground = np.memmap(world / "elevation.f32", "<f4", "r", shape=(n, n))
     surface = np.memmap(world / "water-surface.f32", "<f4", "r", shape=(n, n))
     (world / "game").mkdir(exist_ok=True)
@@ -178,7 +187,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     cols = np.arange(mg)
     # Biome shares on a 32 m grid over the world; texels read them at their centres.
     n32 = int(np.ceil(n * c0 / 32.0))
-    c32 = sampler.classes(off, off, n32, n32, 32.0)
+    c32 = sampler.classes(oy, ox, n32, n32, 32.0)
     shares = [(int(k), ndimage.gaussian_filter((c32 == k).astype(np.float32), BIOME_MIX_M / 32.0))
               for k in np.unique(c32)]
     del c32
@@ -202,7 +211,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         else:
             h = g
         moist = _moisture(world, manifest, origin, np.arange(g0, g1), cols, step, c0)
-        f = _fields(sampler, h, wet, moist, off + g0 * s, off, s)
+        f = _fields(sampler, h, wet, moist, oy + g0 * s, ox, s)
         sl = slice(y - g0, b - g0)
         for k in DENSITIES:
             outs[k][y:b] = np.round(255 * np.clip(f[k][sl], 0, 1)).astype(np.uint8)

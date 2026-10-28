@@ -458,7 +458,9 @@ $P -m topography_training.diffusion.game_layers --world data/worlds/fujion-v3-ch
 `game_layers` writes `game/` at 2 m (at the world's spacing when coarser): vegetation, snow
 and talus densities (0 to 1) and dithered biome and land cover, and records them in the
 world manifest's `game` entry; rerunning replaces them. `--layout` defaults to the layout
-the world records. It refuses worlds without a `moisture` entry. `--rows` (default 256)
+the world records. The world's place on the layout comes from its `world-input/world.json`
+origin, so off-centre squares (`--centre`, `--l3-centre`) get their own cover. It refuses
+worlds without a `moisture` entry or that leave the layout. `--rows` (default 256)
 bounds memory, about 3.7 GB at 64 km (extrapolated); `--png out.png` also writes area-mean
 previews (snow, vegetation, talus as RGB, and `out-landcover.png`). On the 8 km chain test
 and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
@@ -482,7 +484,7 @@ and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
   line grassland (30) gives way to bare ground over 400 m; dunes, badlands, glacier ground,
   volcanoes and lava are bare from gentle slopes up; other open land takes its class's
   typical cover. Water (80) is a hard rule at a wet share of at least 0.25 (`WATER_WET`),
-  not dithered, so 1 m rivers stay whole at 2 m. The blue-noise tile is 256 texels (512 m
+  not dithered, so 1 m rivers stay whole at 2 m; `snow-cover` is 0 on those texels. The blue-noise tile is 256 texels (512 m
   at 2 m); no lattice shows in the 8 km test pictures.
 - Known tuning point: hydrology moisture sits low (Fujion median 0.11 to 0.14,
   `fujix-55-chain` 0.20 over the whole map, about 40% of it below 0.15), so forest below the
