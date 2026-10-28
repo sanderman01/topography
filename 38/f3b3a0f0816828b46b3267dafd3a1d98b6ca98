@@ -1,0 +1,26 @@
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_85fdd55603da73 438-441
+  s_8c1b40ea9c1e0d::t_152dcd94c3da38 350-366
+  s_8c1b40ea9c1e0d::t_04cdf52bbd581e 390
+  s_8c1b40ea9c1e0d::t_10df42078ffc07 417-420
+  s_8c1b40ea9c1e0d::t_b5f821a81c2c97 457-468,471,474,476-477,480-486,488-518
+docs/plans/fujix-v1.md
+  s_8c1b40ea9c1e0d::t_9c076872add336 10-11
+  s_8c1b40ea9c1e0d::t_4f0325760a8366 237-238,240-241,246-247,250,253-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38f3b3a0f0816828b46b3267dafd3a1d98b6ca98",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
