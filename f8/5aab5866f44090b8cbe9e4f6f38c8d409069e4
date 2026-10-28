@@ -1,0 +1,22 @@
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_08a1b68aab03d8 369-373,395,399-400,402-404,408-420,431-437,440-441,443-444,447-449,451,453-458,460-568,570-576
+  s_8c1b40ea9c1e0d::t_e780cf6c39bd5e 577
+training/src/topography_training/diffusion/cascade_l4.py
+  s_8c1b40ea9c1e0d::t_c40cbd04c46766 70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f85aab5866f44090b8cbe9e4f6f38c8d409069e4",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
