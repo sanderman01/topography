@@ -43,9 +43,13 @@ fn row_offset(a: &Grid, b: &Grid) -> Result<usize> {
     Ok(rows.round() as usize)
 }
 
+/// Body kinds by id, and the highest id the band used (`next_id` - 1 when given: a band
+/// whose newest bodies were dropped still reserves their ids).
 fn kinds(bodies: &Value) -> (HashMap<u32, BodyKind>, u32) {
     let mut kinds = HashMap::new();
-    let mut max_id = 1;
+    let mut max_id = (bodies["next_id"].as_u64().unwrap_or(2) as u32)
+        .saturating_sub(1)
+        .max(1);
     for b in bodies["bodies"].as_array().into_iter().flatten() {
         let id = b["id"].as_u64().unwrap_or(0) as u32;
         max_id = max_id.max(id);
@@ -112,17 +116,6 @@ fn same_surface(a: f32, b: f32) -> bool {
     (a.is_nan() && b.is_nan()) || (a - b).abs() <= 1e-3
 }
 
-/// Compare two adjacent band outputs (`north` then `south`). Rows of the northern core that
-/// the southern grid holds must be identical (ground and surface within 1 mm, body ids
-/// equal); across the seam (the last northern core row against the first southern core row)
-/// no centreline may flow onto dry ground that is not a basin, no dry cell may sit more than
-/// 1 cm below an adjacent lake or the sea, and a lake id keeps one level (river banks are the
-/// southern band's own checks). Returns the report (JSON text) and whether it passed.
-/// Streams (discharge from `river_km2`) in this band's first row that drain back across the
-/// seam onto the previous band's dry ground, where that band's river runs a cell or two over
-/// (its halo guess put the stream there): route them along the first rows into the river, on
-/// ground lowered to a running minimum so the route never climbs. A river cell above the
-/// stream's own ground is not joined. Returns the streams joined.
 /// Per fixed cell (the first `fixed_rows` rows): whether its flow in the previous band
 /// (`flow` there) comes back into this grid's free rows.
 pub(super) fn reenters(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<bool> {
@@ -165,6 +158,11 @@ pub(super) fn reenters(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<bool> 
     state.into_iter().map(|s| s == YES).collect()
 }
 
+/// Streams (discharge from `river_km2`) in this band's first row that drain back across the
+/// seam onto the previous band's dry ground, where that band's river runs a cell or two over
+/// (its halo guess put the stream there): route them along the first rows into the river, on
+/// ground lowered to a running minimum so the route never climbs. A river cell above the
+/// stream's own ground is not joined. Returns the streams joined.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn join_seam_rivers(
     dims: Dims,
@@ -249,6 +247,12 @@ pub(super) fn join_seam_rivers(
     joined
 }
 
+/// Compare two adjacent band outputs (`north` then `south`). Rows of the northern core that
+/// the southern grid holds must be identical (ground and surface within 1 mm, body ids
+/// equal); across the seam (the last northern core row against the first southern core row)
+/// no centreline may flow onto dry ground that is not a basin, no dry cell may sit more than
+/// 1 cm below an adjacent lake or the sea, and a lake id keeps one level (river banks are the
+/// southern band's own checks). Returns the report (JSON text) and whether it passed.
 pub fn seam(north: &Path, south: &Path) -> Result<(String, bool)> {
     let (a, _) = manifest(north)?;
     let (b, _) = manifest(south)?;

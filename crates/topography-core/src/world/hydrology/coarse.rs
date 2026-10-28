@@ -252,8 +252,14 @@ pub(super) fn read(dir: &Path, fine: &Grid) -> Result<Coarse> {
     let bodies_bytes = grid::read_bodies(&raster("bodies.json"))?;
     digests.insert("bodies.json".into(), digest(&bodies_bytes).into());
     let bodies: Value = serde_json::from_slice(&bodies_bytes)?;
-    let (mut lakes, mut rivers, mut dry, mut max_id) =
-        (HashMap::new(), HashMap::new(), HashSet::new(), 1u32);
+    // Ids up to `next_id` - 1 are in use even when their bodies are not listed.
+    let reserved = (bodies["next_id"].as_u64().unwrap_or(2) as u32).saturating_sub(1);
+    let (mut lakes, mut rivers, mut dry, mut max_id) = (
+        HashMap::new(),
+        HashMap::new(),
+        HashSet::new(),
+        reserved.max(1),
+    );
     for b in bodies["bodies"].as_array().into_iter().flatten() {
         let id = b["id"].as_u64().unwrap_or(0) as u32;
         max_id = max_id.max(id);

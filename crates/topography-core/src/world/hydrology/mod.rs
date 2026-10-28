@@ -983,7 +983,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
         .max(flood::cycle_cells(dims, &dir))
         .max(flood::cycle_cells(dims, &check_dir));
     let (mut checks, examples) = report::checks(&ctx, cycles);
-    let bodies = report::bodies(&ctx, &body_id);
+    let mut bodies = report::bodies(&ctx, &body_id);
+    // The next free id: the next band and finer level start above it.
+    bodies["next_id"] = json!(next);
     let mut figures = report::figures(&ctx, &carve, extended);
     if let Some(c) = &coarse {
         let (consistency, consistency_figures) = fine::consistency(
