@@ -1,0 +1,39 @@
+training/src/topography_training/diffusion/borders.py
+  s_8c1b40ea9c1e0d::t_a755acd9afc94f 83-93
+training/src/topography_training/diffusion/game_layers.py
+  s_8c1b40ea9c1e0d::t_c6fd794c94b890 222-225
+  s_8c1b40ea9c1e0d::t_caa54d4f0d675f 265
+  s_8c1b40ea9c1e0d::t_f6ff313b391bbc 282
+  s_8c1b40ea9c1e0d::t_b58f9a63b890b2 104-145
+  s_8c1b40ea9c1e0d::t_c01e30faf8a8b9 149
+  s_8c1b40ea9c1e0d::t_5ea904b6503430 177-182,187
+  s_8c1b40ea9c1e0d::t_c2ee5d24c2f42e 150-151,266
+  s_8c1b40ea9c1e0d::t_e8bfedfe6927e9 27,29-30
+  s_8c1b40ea9c1e0d::t_48f784541adbb7 204-211
+  s_8c1b40ea9c1e0d::t_afc4c7051623a0 5-9,13
+  s_8c1b40ea9c1e0d::t_fd0c3bd220cf2d 183-186
+  s_8c1b40ea9c1e0d::t_3fb2dd3ce33764 48-49
+  s_8c1b40ea9c1e0d::t_d81ac41b168153 37-44,47,50-52
+  s_8c1b40ea9c1e0d::t_38fb81b8567142 10-12
+  s_8c1b40ea9c1e0d::t_377f240f7e52de 247-257
+  s_8c1b40ea9c1e0d::t_db400e62fbebab 45-46
+  s_8c1b40ea9c1e0d::t_ec3923ae197cb4 277,280-281,283,286
+training/README.md
+  s_8c1b40ea9c1e0d::t_c01e30faf8a8b9 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be1bc294229673a757bcbe2aa8069bfefa6fcc7e",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
