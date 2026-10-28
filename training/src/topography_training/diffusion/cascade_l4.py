@@ -9,7 +9,8 @@ and are cross-faded over the halo. Each band then gets its water from the Rust
 `topography world hydrology` at 1 m, north to south: it holds the world's 4 m network fixed
 (`--coarse`) and takes the previous band's rows (`--north`); the seam between them is
 checked and a failure stops the run. Water cells keep the refined 4 m ground (L4 learned
-land only) under the hydrology surface. Output layers are memory-mapped and filled band by
+land only) under the hydrology surface, and a band whose 4 m ground is all deep sea keeps it
+without diffusion. `--km` with `--centre` places the square anywhere. Output layers are memory-mapped and filled band by
 band; rerunning with the same arguments resumes after the last finished band.
 Writes a 1 m world output (manifest.json + layers, water-surface.f32, water-body.u32 and
 bodies.json) for `topography export heightmap`, plus overview.png and detail.png hillshades.
@@ -38,6 +39,7 @@ BODY_FIELDS = ("id", "kind", "level_m", "coarse", "parent", "over_budget", "endo
 # Disk per 1 m cell: elevation, the raw surface while running, water surface and body (4 B
 # each), water, snow and vegetation (1 B each).
 DISK_BYTES = 19
+DEEP_SEA_M = -50.0  # bands whose 4 m ground is all below this are not diffused
 
 
 def _noise(seed: int, g0: int, g1: int, cols: int):
@@ -65,7 +67,9 @@ def main(argv=None) -> int:
     p.add_argument("--class-runs", type=Path, help="directory of per-class expert runs (c1, c2, ...) mixed over --run")
     p.add_argument("--world", type=Path, required=True, help="4 m world output (cascade_chain)")
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--km", type=int, help="central square side in units of 1,024 m (power of two); default whole world")
+    p.add_argument("--km", type=int, help="square side in units of 1,024 m (power of two); default whole world")
+    p.add_argument("--centre", help="X,Y: centre of the --km square in map metres from the north-west corner "
+                   "(y south); default the 4 m world's centre")
     p.add_argument("--class-id", type=int, help="terrain class when the world manifest has none")
     p.add_argument("--band-m", type=int, default=1024, help="band height; 1,024 m keeps a 64 km run under about 10 GB")
     p.add_argument("--halo-m", type=int, default=256)
@@ -105,7 +109,17 @@ def main(argv=None) -> int:
     if c4 > n4 or c4 & (c4 - 1):
         print("error: --km must give a power-of-two square inside the world", file=sys.stderr)
         return 2
-    off4 = (n4 - c4) // 2
+    # The world's 4 m grid in the map plane (an L3 square sits at its offset).
+    g4 = json.loads((coarse_dir / "grid.json").read_text())
+    off_m = g4.get("offset_m") or [0.0, 0.0]
+    col4 = row4 = (n4 - c4) // 2
+    if args.centre is not None:
+        try:
+            cx, cy = (float(v) for v in args.centre.split(","))
+        except ValueError:
+            print("error: --centre takes X,Y", file=sys.stderr)
+            return 2
+        col4, row4 = (int(np.clip(round((c - o) / 4.0 - c4 / 2), 0, n4 - c4)) for c, o in ((cx, off_m[0]), (cy, off_m[1])))
     n = c4 * 4
 
     params = {"run": str(args.run.resolve()), "world": str(args.world.resolve()), "km": args.km,
@@ -113,6 +127,8 @@ def main(argv=None) -> int:
               "stride": args.stride, "seed": args.seed}
     if args.guidance != 1.0:
         params["guidance"] = args.guidance
+    if args.centre is not None:
+        params["window_4m"] = [col4, row4]
     if args.class_runs is not None:
         params["class_runs"] = str(args.class_runs.resolve())
     progress_path = args.out / "progress.json"
@@ -151,7 +167,7 @@ def main(argv=None) -> int:
     def read4(name, dtype):
         # Memory-mapped: a band reads only its rows.
         mm = np.memmap(args.world / name, dtype=dtype, mode="r", shape=(n4, n4))
-        return mm[off4 : off4 + c4, off4 : off4 + c4]
+        return mm[row4 : row4 + c4, col4 : col4 + c4]
 
     h4 = read4("elevation.f32", "<f4")
     water4, snow4, veg4 = read4("water.u8", np.uint8), read4("snow-ice.u8", np.uint8), read4("vegetation.u8", np.uint8)
@@ -174,9 +190,7 @@ def main(argv=None) -> int:
           f"{n} x {n} at 1 m in {len(bands)} bands", flush=True)
 
     # Band grids sit in the 4 m hydrology grid's plane, offset by the crop.
-    g4 = json.loads((coarse_dir / "grid.json").read_text())
-    off_m = g4.get("offset_m") or [0.0, 0.0]
-    origin, east, south = g4["origin"], off_m[0] + off4 * 4.0, off_m[1] + off4 * 4.0
+    origin, east, south = g4["origin"], off_m[0] + col4 * 4.0, off_m[1] + row4 * 4.0
     bodies = progress["bodies"]
 
     def save():
@@ -237,7 +251,11 @@ def main(argv=None) -> int:
         # 4 m rows covering the band with a margin; the 1 m fields are cropped back to it.
         r0, r1 = g0 // 4 - m, g1 // 4 + m
         crop = np.s_[m * 4 : -m * 4, m * 4 : -m * 4]
-        coarse = cascade.refine_surface(level, _rows_4m(h4, r0, r1, -m, c4 + m))[crop]
+        ground4 = _rows_4m(h4, r0, r1, -m, c4 + m)
+        # A band of deep sea only (with its margin) keeps the refined 4 m ground: L4 learned land only.
+        deep = bool((ground4 < DEEP_SEA_M).all())
+        coarse = cascade.refine_surface(level, ground4)[crop]
+        del ground4
         water = cascade.refine_mask(_rows_4m(water4, r0, r1, -m, c4 + m) == 255, 4, WATER_SIGMA_M,
                                     keep_thin=True)[crop]
 
@@ -252,20 +270,25 @@ def main(argv=None) -> int:
         # Legend v3 classes as the run's model classes (older runs see subclasses as parents).
         classes = int(lut[classes]) if isinstance(classes, (int, np.integer)) else lut[classes].astype(np.int64)
         extra = [np.where(water, 255, 0).astype(np.uint8), snow, veg]
-        if "forms" in config:  # form channels from the run's per-class table (forms.py)
+        if deep:
+            h = coarse
+        elif "forms" in config:  # form channels from the run's per-class table (forms.py)
             from . import forms
 
             cmap = np.full(coarse.shape, classes, np.uint8) if np.ndim(classes) == 0 else classes.astype(np.uint8)
             extra += list(forms.from_classes(cmap, config["forms"]["table"], None,
                                              config["forms"]["sigma"] * window).astype(np.float16))
             del cmap
-        field = cascade.LazyField(level, coarse, extra, classes, n_classes)
-        res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
-                           noise=_noise(args.seed, g0, g1, n), guidance=args.guidance)[0, 0].numpy()
-        # L4 learned land only: water keeps the refined 4 m ground, with a soft shore.
-        land = 1.0 - np.clip(smooth(water.astype(np.float32), 2.0), 0, 1)
-        h = (coarse + res * scale * land).astype(np.float32)
-        del res, field
+        if not deep:
+            field = cascade.LazyField(level, coarse, extra, classes, n_classes)
+            res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
+                               noise=_noise(args.seed, g0, g1, n), guidance=args.guidance)[0, 0].numpy()
+            # L4 learned land only: water keeps the refined 4 m ground, with a soft shore.
+            land = 1.0 - np.clip(smooth(water.astype(np.float32), 2.0), 0, 1)
+            h = (coarse + res * scale * land).astype(np.float32)
+            del res, field, land
+        else:
+            progress.setdefault("deep_sea_bands", []).append(k)
 
         # Rows this band owns; the first `halo` rows are cross-faded with the band above.
         w0, w1 = (a - half if k else 0), (b + half if b < n else n)
@@ -283,9 +306,10 @@ def main(argv=None) -> int:
         progress["band_s"].append(time.time() - t)
         progress["bands_done"] = k + 1
         save()
-        print(f"band {k + 1}/{len(bands)} rows {a}-{b} in {progress['band_s'][-1]:.0f} s", flush=True)
+        print(f"band {k + 1}/{len(bands)} rows {a}-{b} in {progress['band_s'][-1]:.0f} s"
+              + (" (deep sea, not diffused)" if deep else ""), flush=True)
         # Free the band's fields before Rust runs; the band above is now final down to its halo.
-        del coarse, water, snow, veg, classes, extra, land, h
+        del coarse, water, snow, veg, classes, extra, h
         hydro_until(k)
     hydro_until(len(bands))
 
@@ -317,7 +341,7 @@ def main(argv=None) -> int:
          np.asarray(water_out[c - r : c + r, c - r : c + r]) == 255, 1024)
 
     src = json.loads((Path(world["world_input"]) / "world.json").read_text())
-    ox, oy = src["origin"][0] + off4 * 4.0, src["origin"][1] - off4 * 4.0
+    ox, oy = src["origin"][0] + col4 * 4.0, src["origin"][1] - row4 * 4.0
     world_input = args.out / "world-input"
     world_input.mkdir(exist_ok=True)
     (world_input / "world.json").write_text(json.dumps(
@@ -329,6 +353,14 @@ def main(argv=None) -> int:
     if (args.world / "moisture.f32").exists():  # 128 m moisture, as the 4 m world's
         digests |= hydrology.link(args.world, args.out, ("moisture.f32",))
         extra["moisture"] = world["moisture"]
+    if "description" in world:  # carried through as the chain measured it
+        shutil.copy(args.world / world["description"], args.out / "description.json")
+        shutil.copy(args.world / "description.md", args.out / "description.md")
+        digests["description.json"] = hydrology.sha256(args.out / "description.json")
+        extra["description"] = "description.json"
+    if torch.cuda.is_available():  # this process only; a resumed run counts its last part
+        extra["peak_vram_gb"] = round(torch.cuda.max_memory_reserved() / 2**30, 2)
+    extra["deep_sea_bands"] = progress.get("deep_sea_bands", [])
     (args.out / "manifest.json").write_text(json.dumps({
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 1.0, "size": [n, n], "class_id": class_id,
