@@ -25,6 +25,7 @@ ROCK_DEG = 40.0  # cliff faces that shed scree
 TALUS_DEG = ((22.0, 30.0), (38.0, 45.0))  # scree lies on slopes rising over the first band, gone by the second
 TALUS_REACH_M = 20.0  # gaussian sigma of rock share spreading onto the slopes below
 NAMES = ("vegetation-density", "snow-cover", "talus-density")
+ROWS = 256  # about 3.4 GB peak at 65,536² (32,768 game texels wide)
 LATTICE = "value (i, j) is the area mean of the footprint centred on world sample (i·2^L, j·2^L)"
 
 
@@ -66,8 +67,7 @@ def _moisture(world: Path, manifest: dict, origin, rows: np.ndarray, cols: np.nd
 def _fields(sampler, h, wet, moist, y0_m, x0_m, s):
     f = sampler.fields(h, y0_m, x0_m, s)
     slope2 = np.degrees(np.arctan(np.hypot(*np.gradient(h, s))))  # local slope for scree
-    cls = sampler.classes(y0_m, x0_m, *h.shape, s)  # layout classes, warped as cover reads them
-    glacier = cls == cover.GLACIER
+    glacier = f["classes"] == cover.GLACIER  # layout classes, warped as cover reads them
     snow = np.where(glacier, 1.0, cover._ramp(h - f["snowline"], -SNOW_SOFT_M, SNOW_SOFT_M)
                     * (1 - cover._ramp(f["slope"], *SNOW_SHED_DEG)))
     snow *= (h >= 0) & (wet < 0.5)
@@ -79,7 +79,7 @@ def _fields(sampler, h, wet, moist, y0_m, x0_m, s):
     return {"vegetation-density": veg, "snow-cover": snow, "talus-density": talus}
 
 
-def write(world: Path, layout_dir: Path | None = None, rows: int = 512) -> dict:
+def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict:
     """Write game/<name>.u8 (round(255 × fraction)) at 2 m (the world's spacing if coarser) and
     record them in the manifest; returns manifest["game"]."""
     manifest_path = world / "manifest.json"
@@ -91,19 +91,26 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = 512) -> dict:
     layout_dir = layout_dir or _layout(manifest)
     if layout_dir is None:
         raise ValueError("world records no layout; pass --layout")
+    if "moisture" not in manifest:
+        raise ValueError("world has no moisture entry; regenerate it with hydrology v2")
     origin = json.loads((Path(manifest["world_input"]) / "world.json").read_text())["origin"]
     sampler = cover.Sampler(layout.load(layout_dir))
     off = (sampler.extent_m - n * c0) / 2  # crops sit in the middle of the layout
     ground = np.memmap(world / "elevation.f32", "<f4", "r", shape=(n, n))
     surface = np.memmap(world / "water-surface.f32", "<f4", "r", shape=(n, n))
     (world / "game").mkdir(exist_ok=True)
-    outs = {k: np.memmap(world / "game" / f"{k}.u8", np.uint8, "w+", shape=(mg, mg)) for k in NAMES}
+    # New files replaced into place: world copies may hard-link the original's layers.
+    tmps = {k: world / "game" / f"{k}.u8.tmp" for k in NAMES}
+    for t in tmps.values():
+        t.unlink(missing_ok=True)
+    outs = {k: np.memmap(tmps[k], np.uint8, "w+", shape=(mg, mg)) for k in NAMES}
     m = int(np.ceil(cover.MARGIN_M / s))
+    align = max(1, int(round(cover.FEATURE_M / s)))  # cover.terrain_features block size
     cols = np.arange(mg)
     for y in range(0, mg, rows):
         b = min(y + rows, mg)
-        # Start on a multiple of 16 so cover's ~16 m feature grid stays put across blocks.
-        g0, g1 = max((y - m) // 16 * 16, 0), min(b + m, mg)
+        # Start on the feature grid so it stays put across blocks.
+        g0, g1 = max((y - m) // align * align, 0), min(b + m, mg)
         # Fine rows step·g0 - 1 (the row above, at level 1) up to step·g1.
         r0 = max(step * g0 - (step - 1), 0)
         g = np.asarray(ground[r0 : step * g1], np.float32)
@@ -122,12 +129,13 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = 512) -> dict:
         a.flush()
     del outs
     for k in NAMES:
+        os.replace(tmps[k], world / "game" / f"{k}.u8")
         manifest["layers"][f"game/{k}.u8"] = cover._digest(world / "game" / f"{k}.u8")
     manifest["game"] = {
         "spacing_m": s, "size": [mg, mg], "level": level, "lattice": LATTICE, "method": METHOD,
         "params": {"layout": str(Path(layout_dir).resolve()), "moist_dry": MOIST_DRY, "moist_wet": MOIST_WET,
                    "snow_soft_m": SNOW_SOFT_M, "snow_shed_deg": list(SNOW_SHED_DEG), "rock_deg": ROCK_DEG,
-                   "talus_deg": [list(t) for t in TALUS_DEG], "talus_reach_m": TALUS_REACH_M},
+                   "talus_deg": [list(t) for t in TALUS_DEG], "talus_reach_m": TALUS_REACH_M, "rows": rows},
         "layers": list(NAMES),
     }
     # Replace, not rewrite: world copies may hard-link files of the original.
@@ -155,13 +163,14 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--world", type=Path, required=True, help="world output (cascade_chain or cascade_l4)")
     p.add_argument("--layout", type=Path, help="L0 directory; default the one the world records")
+    p.add_argument("--rows", type=int, default=ROWS, help="output rows per block (bounds RAM)")
     p.add_argument("--png", type=Path, help="also write an RGB picture (snow R, vegetation G, talus B)")
     args = p.parse_args(argv)
     if not (args.world / "manifest.json").exists():
         print("error: --world has no manifest.json", file=sys.stderr)
         return 2
     try:
-        game = write(args.world, args.layout)
+        game = write(args.world, args.layout, args.rows)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
