@@ -586,7 +586,18 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &acc,
         river_km2,
     );
-    if seam_joins > 0 {
+    // Rivers entering here that would leave again onto the previous band's dry ground.
+    let inflows_rerouted = band::reroute_inflows(
+        dims,
+        fixed_rows,
+        &mut ground,
+        &flags,
+        &body,
+        &reentry,
+        &mut dir,
+        &inflow,
+    );
+    if seam_joins > 0 || inflows_rerouted > 0 {
         cycles = flood::accumulate(dims, &dir, weight, &mut acc);
     }
     lap("accumulate", &mut t);
@@ -1097,6 +1108,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 "river_inflow_cells": seam_inflow,
                 "streams_pruned_at_seam": channels.streams_pruned,
                 "streams_joined_across_seam": seam_joins,
+                "inflows_rerouted": inflows_rerouted,
             }),
         );
     }

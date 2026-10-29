@@ -250,6 +250,145 @@ pub(super) fn join_seam_rivers(
     joined
 }
 
+/// Rivers entering from the previous band (`inflow`: fixed centreline cell, free cell) whose
+/// routing here leaves back across the seam onto that band's dry ground (its halo guess ran
+/// elsewhere): reroute each from its entry over free cells along the lowest way (least
+/// highest ground) to water, a basin, the grid edge or the previous band's river, on ground
+/// lowered to a running minimum so the route never climbs. Returns the rivers rerouted.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn reroute_inflows(
+    dims: Dims,
+    fixed_rows: usize,
+    ground: &mut [f32],
+    flags: &[u8],
+    body: &[u32],
+    reentry: &[u32],
+    dir: &mut [u8],
+    inflow: &[(usize, usize)],
+) -> u64 {
+    // Cells a search may visit before it gives up.
+    const MAX_CELLS: usize = 1 << 22;
+    let first = fixed_rows * dims.w;
+    let water = |x: usize| flags[x] & (RIVER | SEA) != 0 || body[x] != 0;
+    let fixed_end = |x: usize| water(x) && reentry[x] == NO_ENTRY;
+    // Whether the routing from free cell `c` ends at water, a basin, an edge or a fixed end
+    // (through fixed water that comes back here, unless it comes back onto this route).
+    let ends_well = |memo: &mut HashMap<usize, bool>, dir: &[u8], c: usize| {
+        let mut chain = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut x = c;
+        let ok = loop {
+            if let Some(&v) = memo.get(&x) {
+                break v;
+            }
+            if x < first {
+                if !water(x) {
+                    break false;
+                }
+                match reentry[x] {
+                    NO_ENTRY => break true,
+                    e => x = e as usize,
+                }
+                continue;
+            }
+            if flags[x] & SEA != 0 || body[x] != 0 {
+                break true;
+            }
+            if !seen.insert(x) {
+                break false;
+            }
+            chain.push(x);
+            match receiver(dims, dir, x) {
+                Some(r) => x = r,
+                None => break true,
+            }
+        };
+        for y in chain {
+            memo.insert(y, ok);
+        }
+        ok
+    };
+    let mut rerouted = 0;
+    for &(i, r) in inflow {
+        let mut memo: HashMap<usize, bool> = HashMap::new();
+        if flags[i] & CENTRE == 0 || ends_well(&mut memo, dir, r) {
+            continue;
+        }
+        let mut from: HashMap<usize, usize> = HashMap::from([(r, r)]);
+        let mut heap = std::collections::BinaryHeap::from([Lowest(ground[r], r)]);
+        let mut end = None;
+        'search: while let Some(Lowest(z, c)) = heap.pop() {
+            if c != r && ends_well(&mut memo, dir, c) {
+                end = Some((c, None));
+                break;
+            }
+            for (_, j) in dims.neighbours(c) {
+                if from.contains_key(&j) {
+                    continue;
+                }
+                if j < first {
+                    if fixed_end(j) {
+                        end = Some((c, Some(j)));
+                        break 'search;
+                    }
+                    continue;
+                }
+                from.insert(j, c);
+                heap.push(Lowest(z.max(ground[j]), j));
+            }
+            if from.len() > MAX_CELLS {
+                break;
+            }
+        }
+        let Some((last, into)) = end else { continue };
+        let mut route = vec![last];
+        while route[route.len() - 1] != r {
+            route.push(from[&route[route.len() - 1]]);
+        }
+        route.reverse();
+        for p in route.windows(2) {
+            dir[p[0]] = dims.towards(p[0], p[1]);
+            ground[p[1]] = ground[p[1]].min(ground[p[0]]);
+        }
+        // On to the end: into the fixed river, or down the routing until it no longer climbs.
+        let g = ground[last];
+        match into {
+            Some(j) => dir[last] = dims.towards(last, j),
+            None => {
+                let mut x = receiver(dims, dir, last);
+                while let Some(y) = x.filter(|&y| y >= first && flags[y] & SEA == 0) {
+                    if body[y] != 0 || ground[y] <= g {
+                        break;
+                    }
+                    ground[y] = g;
+                    x = receiver(dims, dir, y);
+                }
+            }
+        }
+        rerouted += 1;
+    }
+    rerouted
+}
+
+/// Min-heap entry by ground height.
+struct Lowest(f32, usize);
+impl PartialEq for Lowest {
+    fn eq(&self, o: &Self) -> bool {
+        self.cmp(o).is_eq()
+    }
+}
+impl Eq for Lowest {}
+impl Ord for Lowest {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        o.0.total_cmp(&self.0).then(o.1.cmp(&self.1))
+    }
+}
+impl PartialOrd for Lowest {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
 /// Compare two adjacent band outputs (`north` then `south`). Rows of the northern core that
 /// the southern grid holds must be identical (ground and surface within 1 mm, body ids
 /// equal); across the seam (the last northern core row against the first southern core row)
@@ -587,5 +726,37 @@ mod tests {
         );
         assert_eq!(joined, 0);
         assert_eq!(dir, before);
+    }
+
+    #[test]
+    fn a_river_turning_back_onto_taken_dry_ground_is_rerouted() {
+        // 4 x 4, first row taken: the river (0, 0) enters at (0, 1), whose routing runs east
+        // and back north onto taken dry ground at (3, 0). The lowest way out is south to
+        // the edge at (0, 3).
+        let dims = Dims { w: 4, h: 4 };
+        let mut ground = vec![9.0; 16];
+        for (i, z) in [(4, 5.0), (8, 6.0), (12, 4.0)] {
+            ground[i] = z;
+        }
+        ground[5..8].fill(7.0);
+        ground[9..12].fill(7.0);
+        ground[13..16].fill(7.0);
+        let mut flags = vec![0u8; 16];
+        flags[0] = RIVER | CENTRE;
+        let mut dir = vec![0u8; 16];
+        (dir[4], dir[5], dir[6], dir[8]) = (4, 4, 6, 2);
+        let back = [4, NO_ENTRY, NO_ENTRY, NO_ENTRY];
+        let n = reroute_inflows(
+            dims,
+            1,
+            &mut ground,
+            &flags,
+            &[0; 16],
+            &back,
+            &mut dir,
+            &[(0, 4)],
+        );
+        assert_eq!(n, 1);
+        assert_eq!((dir[4], ground[8]), (2, 5.0));
     }
 }
