@@ -5,7 +5,7 @@
 //! no higher than the coarse one.
 
 use super::coarse::Coarse;
-use super::flood::{self, CENTRE, Dims, FIXED, OUTLET, SEA};
+use super::flood::{self, CENTRE, Dims, FIXED, OUTLET, RIVER, SEA};
 use super::lakes::{Basin, Kind, NO_EXIT};
 use serde_json::{Map, Value, json};
 use std::{
@@ -575,6 +575,105 @@ pub(super) fn route(
     flood::spill_cycles(dims, ground, flags, dir, |i| !on_path[i])
 }
 
+/// Route a head the corridor flood missed (`sources`: its free cells) by the lowest way
+/// (least highest ground) over free land to the nearest end: a cell already routed (`recv`),
+/// the sea, a lake, another river's path (`claimed`), the previous band's water whose flow
+/// does not come back here unrouted (`back`), or a grid-edge outlet (or the bottom edge of
+/// the halo from row `halo`). The way joins `recv` and `corridor`; ends outside the corridor
+/// join `seeds`, new edge outlets `outlets`.
+#[allow(clippy::too_many_arguments)]
+fn route_stranded(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    sources: &[usize],
+    claimed: impl Fn(usize) -> bool,
+    back: &impl Fn(usize) -> Option<usize>,
+    halo: usize,
+    recv: &mut HashMap<u32, u32>,
+    seeds: &mut HashSet<u32>,
+    corridor: &mut HashSet<u32>,
+    outlets: &mut Vec<u32>,
+) {
+    // Cells a search may visit before it gives up.
+    const MAX_CELLS: usize = 1 << 22;
+    let w = dims.w;
+    let open = |i: usize| {
+        flags[i] & (SEA | FIXED) == 0
+            && (body[i] == 0 || basins[body[i] as usize - 1].kind == Kind::Dry)
+    };
+    let lake = |i: usize| {
+        flags[i] & FIXED == 0 && body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake
+    };
+    let mut from: HashMap<usize, usize> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+    for &s in sources.iter().filter(|&&s| open(s)) {
+        from.insert(s, s);
+        heap.push(Item(ground[s], s as u32));
+    }
+    // (last cell of the way, the end it drains into: None for an edge outlet)
+    let mut end: Option<(usize, Option<usize>)> = None;
+    'search: while let Some(Item(z, c)) = heap.pop() {
+        let c = c as usize;
+        let edge =
+            dims.is_edge(c) && (flags[c] & OUTLET != 0 || (c / w + 1 == dims.h && c / w >= halo));
+        if edge {
+            end = Some((c, None));
+            break;
+        }
+        for (_, j) in dims.neighbours(c) {
+            if from.contains_key(&j) {
+                continue;
+            }
+            let fixed_water = flags[j] & FIXED != 0
+                && flags[j] & (RIVER | SEA) != 0
+                && back(j).is_none_or(|r| recv.contains_key(&(r as u32)));
+            if recv.contains_key(&(j as u32))
+                || flags[j] & SEA != 0
+                || lake(j)
+                || claimed(j)
+                || fixed_water
+            {
+                end = Some((c, Some(j)));
+                break 'search;
+            }
+            if open(j) {
+                from.insert(j, c);
+                heap.push(Item(ground[j].max(z), j as u32));
+            }
+        }
+        if from.len() > MAX_CELLS {
+            break;
+        }
+    }
+    let Some((last, into)) = end else { return };
+    match into {
+        Some(j) => {
+            recv.insert(last as u32, j as u32);
+            if !corridor.contains(&(j as u32)) {
+                seeds.insert(j as u32);
+            }
+        }
+        None => {
+            recv.insert(last as u32, u32::MAX);
+            seeds.insert(last as u32);
+            if flags[last] & OUTLET == 0 {
+                outlets.push(last as u32);
+            }
+        }
+    }
+    let mut x = last;
+    corridor.insert(x as u32);
+    while from[&x] != x {
+        let p = from[&x];
+        recv.insert(p as u32, x as u32);
+        corridor.insert(p as u32);
+        x = p;
+    }
+}
+
 /// Fine centrelines of the coarse rivers (largest first). A river's corridor is the fine cells
 /// of its coarse cells and their neighbours (not other coarse rivers or lakes, the sea, fixed
 /// cells or earlier paths). A priority flood over it starts from where the coarse river ends
@@ -892,22 +991,61 @@ pub(super) fn rivers(
         }
         // Heads: coarse centreline cells without a centreline donor of this river in the
         // window (donors in the previous band count only when it hands the river over).
+        let is_head = |q: usize| {
+            c.centre(q)
+                && !fully_fixed(q)
+                && !cd.neighbours(q).any(|(_, p)| {
+                    c.centre(p)
+                        && c.body[p] == id
+                        && c.dir(p) != 0
+                        && cd.neighbour(p, c.dir(p) as usize - 1) == Some(q)
+                        && inside(p)
+                        && (!fully_fixed(p) || !my_inflows.is_empty())
+                })
+        };
+        // Last resort for a head the corridor flood missed: the lowest way over free cells
+        // to any end (this river's routed cells, the sea, a lake, another path, the previous
+        // band's water or a grid-edge outlet), made part of the corridor.
+        let in_core = |i: usize| (core_rows[0]..core_rows[1]).contains(&(i / w));
+        let mut stranded: Vec<Vec<usize>> = own
+            .iter()
+            .filter(|&&q| is_head(q))
+            .map(|&q| c.fine_cells(q, w, h).collect::<Vec<_>>())
+            .filter(|cells| {
+                !cells.iter().any(|&i| recv.contains_key(&(i as u32)))
+                    && cells
+                        .iter()
+                        .any(|&i| flags[i] & (SEA | FIXED) == 0 && in_core(i))
+            })
+            .collect();
+        stranded.extend(
+            my_inflows
+                .iter()
+                .filter(|f| !recv.contains_key(&f.cell))
+                .map(|f| vec![f.cell as usize]),
+        );
+        for sources in stranded {
+            route_stranded(
+                dims,
+                ground,
+                flags,
+                body,
+                basins,
+                &sources,
+                |j| claimed.contains_key(&(j as u32)),
+                &back,
+                core_rows[1],
+                &mut recv,
+                &mut seeds,
+                &mut corridor,
+                &mut out.outlets,
+            );
+        }
         // (cell, lake it leaves, entering surface and discharge)
         type Head = (u32, u32, Option<(f32, f32)>);
         let mut heads: Vec<Head> = Vec::new();
         for &q in own {
-            if !c.centre(q) || fully_fixed(q) {
-                continue;
-            }
-            let donor = cd.neighbours(q).any(|(_, p)| {
-                c.centre(p)
-                    && c.body[p] == id
-                    && c.dir(p) != 0
-                    && cd.neighbour(p, c.dir(p) as usize - 1) == Some(q)
-                    && inside(p)
-                    && (!fully_fixed(p) || !my_inflows.is_empty())
-            });
-            if donor {
+            if !is_head(q) {
                 continue;
             }
             let source = exits
