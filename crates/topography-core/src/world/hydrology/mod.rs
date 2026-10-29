@@ -341,15 +341,15 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut label = vec![0u32; n];
     let mut deps = lakes::find(dims, &ground, &filled, &dir, classes.as_deref(), &mut label);
     drop(filled);
+    let mut on_path = vec![false; if coarse.is_some() { n } else { 0 }];
+    for p in imprint.iter().flat_map(|im| &im.paths) {
+        for &x in &p.cells {
+            on_path[x as usize] = true;
+        }
+    }
     if let Some(c) = &coarse {
         // No basin in or beside a coarse lake, and no new lake beside a coarse river path
         // (the path is cut down through it later); coarse dry and ice basins stay.
-        let mut on_path = vec![false; n];
-        for p in imprint.iter().flat_map(|im| &im.paths) {
-            for &x in &p.cells {
-                on_path[x as usize] = true;
-            }
-        }
         let mut near_path = vec![false; deps.len()];
         for i in 0..n {
             if label[i] == 0 {
@@ -406,13 +406,23 @@ pub fn run(options: &Options) -> Result<Outcome> {
             }
         }
     }
+    // A sink kept for a coarse dry basin holds no path cell outside that basin's coarse cells:
+    // the path ends at the first sink cell, and a sink reaching up its trench would erase it.
+    let path_kept = |i: usize, b: u32| {
+        on_path.get(i).copied().unwrap_or(false)
+            && basins[(b + coarse_lakes) as usize - 1].kind == Kind::Sink
+            && coarse
+                .as_ref()
+                .is_some_and(|c| c.dry_basin(c.cell(w, i)).is_none())
+    };
     for i in 0..n {
         let b = map[label[i] as usize];
-        if b != 0 && body[i] == 0 {
+        if b != 0 && body[i] == 0 && !path_kept(i, b) {
             body[i] = b + coarse_lakes;
         }
     }
     drop(label);
+    drop(on_path);
     let kept_by_budget = basins.len();
     lap("depressions", &mut t);
 
