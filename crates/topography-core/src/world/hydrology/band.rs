@@ -160,7 +160,7 @@ pub(super) fn reentry(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<u32> {
 }
 
 /// Streams (discharge from `river_km2`) in this band's first row that drain back across the
-/// seam onto the previous band's dry ground, where that band's river runs a cell or two over
+/// seam onto the previous band's dry ground, where that band's river runs a few cells over
 /// (its halo guess put the stream there): route them along the first rows into the river, on
 /// ground lowered to a running minimum so the route never climbs. A river cell above the
 /// stream's own ground is not joined. Returns the streams joined.
@@ -176,7 +176,9 @@ pub(super) fn join_seam_rivers(
     acc: &[f32],
     river_km2: f32,
 ) -> u64 {
+    // Rows the route may use, and its steps (halo guesses differ by several metres).
     const REACH: usize = 3;
+    const STEPS: usize = 8;
     let w = dims.w;
     let first = fixed_rows * w;
     if fixed_rows == 0 || first + w > ground.len() {
@@ -200,7 +202,7 @@ pub(super) fn join_seam_rivers(
         let mut from: HashMap<usize, usize> = HashMap::from([(i, i)]);
         let mut layer = vec![i];
         let mut end = None;
-        'search: for _ in 0..=REACH {
+        'search: for _ in 0..=STEPS {
             let mut next = Vec::new();
             for &c in &layer {
                 let target = dims
