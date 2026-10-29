@@ -444,16 +444,31 @@ pub(super) fn extract(
 
     // Gorge rule against the final surface: channel cells more than D above it stay dry
     // (they are above every surface beside them, so they are valid banks).
-    let keep: Vec<bool> = band
-        .iter()
-        .map(|b| {
-            let (j, o) = (b.cell as usize, b.owner as usize);
-            ground[j] <= surface[o] + depth_m(acc[o])
-                || dims
-                    .neighbours(j)
-                    .any(|(_, k)| owner(flags, &band, k).is_some_and(|o2| ground[j] < surface[o2]))
+    // Nor beside a previous band's dry bank below the surface (that ground cannot be raised):
+    // the cell becomes a bank itself, raised with the owner's other banks.
+    let below_fixed_bank = |j: usize, o: usize| {
+        let entered = entered_basin(dims, dir, flags, body, o);
+        dims.neighbours(j).any(|(_, k)| {
+            fixed(flags, k)
+                && ground[k] + SEAM_BANK_TOLERANCE_M < surface[o]
+                && is_bank(dims, dir, flags, body, basins, entered, o, j, k)
         })
-        .collect();
+    };
+    let mut keep: Vec<bool> = Vec::with_capacity(band.len());
+    for b in &band {
+        let (j, o) = (b.cell as usize, b.owner as usize);
+        let gorge = ground[j] > surface[o] + depth_m(acc[o])
+            && !dims
+                .neighbours(j)
+                .any(|(_, k)| owner(flags, &band, k).is_some_and(|o2| ground[j] < surface[o2]));
+        let seam = !fixed(flags, j) && below_fixed_bank(j, o);
+        if seam {
+            ch.raised.push(o as u32);
+        }
+        keep.push(!gorge && !seam);
+    }
+    ch.raised.sort_unstable();
+    ch.raised.dedup();
     let mut kept = keep.iter();
     band.retain(|b| {
         let ok = *kept.next().unwrap_or(&true);
