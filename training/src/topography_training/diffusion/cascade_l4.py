@@ -232,9 +232,17 @@ def main(argv=None) -> int:
         print(f"hydrology {j + 1}/{len(bands)} rows {a}-{b} in {progress['hydrology_s'][-1]:.0f} s, water {wet:.2%}",
               flush=True)
 
+    failed: list[RuntimeError] = []
+
     def hydro_until(k: int):
-        while progress["hydrology_done"] < k:
-            hydro(progress["hydrology_done"])
+        # A failed band stops hydrology only: diffusion does not read it, so the GPU keeps working
+        # and a rerun after the fix resumes hydrology at that band.
+        while not failed and progress["hydrology_done"] < k:
+            try:
+                hydro(progress["hydrology_done"])
+            except RuntimeError as e:
+                failed.append(e)
+                print(f"hydrology stopped, diffusion continues: {e}", flush=True)
 
     hydro_until(done - 1)
     for k in range(done, len(bands)):
@@ -314,6 +322,8 @@ def main(argv=None) -> int:
         del coarse, water, snow, veg, classes, extra, h, guide
         hydro_until(k)
     hydro_until(len(bands))
+    if failed:
+        raise failed[0]
 
     # World body list: areas from the delivered cells; dry basins keep no area.
     count = np.zeros(1, np.int64)
