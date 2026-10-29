@@ -29,6 +29,8 @@ pub const DEFAULT_RIVER_KM2: f64 = 10.0;
 /// Judgment constant: the deepest cut breaching may make below a depression's spill. Deeper
 /// depressions are kept (lakes at the spill lowered by this much, or dry sinks).
 pub const BREACH_MAX_M: f32 = 30.0;
+/// Judgment constant: the most a coarse lake's dry exit is notched down to the lake level.
+const NOTCH_MAX_M: f32 = 0.5;
 
 /// Default river start by grid spacing: 10 km² at 32 m and coarser, 0.5 km² at 4 m (from
 /// 2 m), 0.05 km² at 1 m.
@@ -408,21 +410,20 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     // A sink kept for a coarse dry basin holds no path cell outside that basin's coarse cells:
     // the path ends at the first sink cell, and a sink reaching up its trench would erase it.
-    let path_kept = |i: usize, b: u32| {
+    let path_kept = |basins: &[lakes::Basin], i: usize, id: u32| {
         on_path.get(i).copied().unwrap_or(false)
-            && basins[(b + coarse_lakes) as usize - 1].kind == Kind::Sink
+            && basins[id as usize - 1].kind == Kind::Sink
             && coarse
                 .as_ref()
                 .is_some_and(|c| c.dry_basin(c.cell(w, i)).is_none())
     };
     for i in 0..n {
         let b = map[label[i] as usize];
-        if b != 0 && body[i] == 0 && !path_kept(i, b) {
+        if b != 0 && body[i] == 0 && !path_kept(&basins, i, b + coarse_lakes) {
             body[i] = b + coarse_lakes;
         }
     }
     drop(label);
-    drop(on_path);
     let kept_by_budget = basins.len();
     lap("depressions", &mut t);
 
@@ -452,7 +453,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
         if flags[i] & SEA != 0 {
             dir[i] = 0;
         }
+        // Nor a sink left where breaching gave up (such as dry ground below sea level).
+        if body[i] as usize > kept_by_budget && path_kept(&basins, i, body[i]) {
+            body[i] = 0;
+        }
     }
+    drop(on_path);
     eprintln!("hydrology: breach lowered {carved} cells");
     lap("breach", &mut t);
 
@@ -670,6 +676,18 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 exit_acc[b] = acc[r];
                 basins[b - 1].exit = r as u32;
             }
+        }
+    }
+    // A coarse lake spills at its level: a dry exit a little above it (the fine rim beside a
+    // lake that misses its coarse outflow) is notched down to it.
+    for b in basins.iter().take(coarse_lakes as usize) {
+        let e = b.exit as usize;
+        let dry = b.exit != lakes::NO_EXIT
+            && flags[e] & (SEA | FIXED) == 0
+            && (body[e] == 0 || basins[body[e] as usize - 1].kind != Kind::Lake);
+        if b.kind == Kind::Lake && dry && ground[e] > b.level && ground[e] <= b.level + NOTCH_MAX_M
+        {
+            ground[e] = b.level;
         }
     }
 
