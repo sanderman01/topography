@@ -157,9 +157,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
     };
     let mut inflow = Vec::new();
     // Fixed cells whose flow in the previous band comes back into this run's cells.
-    let reenters = north
+    let reentry = north
         .as_ref()
-        .map_or_else(Vec::new, |b| band::reenters(dims, &b.flow, fixed_rows));
+        .map_or_else(Vec::new, |b| band::reentry(dims, &b.flow, fixed_rows));
+    let reenters: Vec<bool> = reentry.iter().map(|&r| r != band::NO_ENTRY).collect();
     if let Some(b) = &north {
         for i in 0..fixed_rows * w {
             ground[i] = b.ground[i];
@@ -230,7 +231,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
             let figures = fine::lakes(dims, &mut ground, &flags, &mut body, &mut basins, c, |i| {
                 (fixed_kind(i) == Some(BodyKind::Lake)).then(|| fixed_id(i))
             });
-            let feeds: std::collections::HashSet<usize> = inflow.iter().map(|&(i, _)| i).collect();
             let inflows: Vec<fine::Inflow> = inflow
                 .iter()
                 .filter(|&&(i, _)| flags[i] & CENTRE != 0 && c.rivers.contains_key(&fixed_id(i)))
@@ -250,7 +250,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 c,
                 &inflows,
                 fixed_id,
-                |j| feeds.contains(&j) || reenters.get(j).copied().unwrap_or(false),
+                |j| {
+                    reentry
+                        .get(j)
+                        .filter(|&&r| r != band::NO_ENTRY)
+                        .map(|&r| r as usize)
+                },
                 grid.core_rows,
                 grid.spacing_m,
             );

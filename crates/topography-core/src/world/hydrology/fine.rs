@@ -583,7 +583,8 @@ pub(super) fn route(
 /// fine cell it holds whose path climbs least (then the lowest), beside the lake when the river
 /// leaves one, and follows the flood
 /// down. A head the flood cannot reach counts as unrouted only in the core rows (a halo is
-/// made again by the next band). The surface cap is described where it is computed.
+/// made again by the next band). The surface cap is described where it is computed. `back`
+/// gives the free cell a fixed cell's flow in the previous band comes back into.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rivers(
     dims: Dims,
@@ -594,7 +595,7 @@ pub(super) fn rivers(
     c: &Coarse,
     inflows: &[Inflow],
     fixed_id: impl Fn(usize) -> u32,
-    feeds: impl Fn(usize) -> bool,
+    back: impl Fn(usize) -> Option<usize>,
     core_rows: [usize; 2],
     spacing_m: f64,
 ) -> Imprint {
@@ -734,7 +735,8 @@ pub(super) fn rivers(
                 Some(0.0)
             } else if flags[j] & FIXED != 0 {
                 // Not a fixed cell that drains into this grid (that is where rivers enter).
-                let ends = !feeds(j) && ((north_end && fixed_id(j) == id) || fixed_id(j) == parent);
+                let ends = back(j).is_none()
+                    && ((north_end && fixed_id(j) == id) || fixed_id(j) == parent);
                 ends.then_some(ground[j])
             } else if claimed.get(&(j as u32)) == Some(&parent) {
                 // A confluence: the larger river's path (made before this one).
@@ -843,10 +845,27 @@ pub(super) fn rivers(
                 }
             }
         }
-        // Corridor cells the river's own end cannot reach (another river's path cuts across)
-        // end at that river instead: a confluence.
-        for pass in 0..2 {
+        // Corridor cells the river's own end cannot reach end at its fixed cells whose flow
+        // comes back into a cell already reached (a stretch dipping south of the seam), and
+        // then (another river's path cuts across) at that river instead: a confluence.
+        for pass in 0..3 {
             if pass == 1 {
+                for &i in &corridor {
+                    if recv.contains_key(&i) {
+                        continue;
+                    }
+                    for (_, j) in dims.neighbours(i as usize) {
+                        let ends = flags[j] & FIXED != 0
+                            && fixed_id(j) == id
+                            && back(j).is_some_and(|r| recv.contains_key(&(r as u32)));
+                        if ends && seeds.insert(j as u32) {
+                            top.insert(j as u32, rank_of(i as usize).saturating_sub(1));
+                            heap.push(Item(ground[j], j as u32));
+                        }
+                    }
+                }
+            }
+            if pass == 2 {
                 for &i in &corridor {
                     if recv.contains_key(&i) {
                         continue;
@@ -1270,10 +1289,78 @@ mod tests {
             &c,
             &[],
             |_| 0,
-            |_| false,
+            |_| None,
             [0, 6],
             2.0,
         );
         assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
+    }
+
+    #[test]
+    fn a_stretch_into_the_previous_band_ends_where_its_flow_comes_back() {
+        // 6 x 4 coarse cells of 2 x 2 fine cells; the top two coarse rows are the previous
+        // band's. River 3 rises at (0, 2), runs north into those rows and east, and comes
+        // back at (4, 2) to the sea in the bottom-right corner. The upstream stretch can reach
+        // no end in this band: it ends at the fixed river, whose flow re-enters at the inflow.
+        let mut c = coarse();
+        (c.size, c.ww, c.wh) = ([6, 4], 6, 4);
+        let line = |d: u8| FLOW_CENTRE | d;
+        let course = [
+            ((0, 2), 1),
+            ((0, 1), 6),
+            ((1, 0), 4),
+            ((2, 0), 4),
+            ((3, 0), 8),
+            ((4, 1), 2),
+            ((4, 2), 2),
+            ((4, 3), 2),
+        ];
+        (c.body, c.flow, c.surface) = (vec![0; 24], vec![0; 24], vec![f32::NAN; 24]);
+        for (k, ((x, y), d)) in course.into_iter().enumerate() {
+            let q = y * 6 + x;
+            (c.body[q], c.flow[q], c.surface[q]) = (3, line(d), 20.0 - k as f32);
+        }
+        c.discharge = vec![1.0; 24];
+        c.lakes = HashMap::new();
+        c.rivers = HashMap::from([(
+            3,
+            River {
+                parent: 1,
+                drainage_km2: 1.0,
+            },
+        )]);
+        let dims = Dims { w: 12, h: 8 };
+        let fixed = 4 * 12;
+        let mut ground: Vec<f32> = (0..96).map(|i| 20.0 - (i / 12) as f32).collect();
+        let mut flags = vec![0u8; 96];
+        flags[..fixed].fill(FIXED);
+        flags[90..].fill(SEA);
+        let river_cell = |j: usize| c.body[c.cell(12, j)] == 3;
+        let inflow = Inflow {
+            cell: (4 * 12 + 8) as u32,
+            id: 3,
+            surface: 16.0,
+            q: 1.0,
+        };
+        let fixed_id = |j: usize| if j < fixed && river_cell(j) { 3 } else { 0 };
+        let im = rivers(
+            dims,
+            &mut ground,
+            &flags,
+            &[0; 96],
+            &[],
+            &c,
+            &[inflow],
+            fixed_id,
+            |j| (fixed_id(j) == 3).then_some(4 * 12 + 8),
+            [4, 8],
+            2.0,
+        );
+        assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
+        assert!(
+            im.paths
+                .iter()
+                .any(|p| p.next.is_some_and(|n| (n as usize) < fixed))
+        );
     }
 }

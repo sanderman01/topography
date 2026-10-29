@@ -116,13 +116,14 @@ fn same_surface(a: f32, b: f32) -> bool {
     (a.is_nan() && b.is_nan()) || (a - b).abs() <= 1e-3
 }
 
-/// Per fixed cell (the first `fixed_rows` rows): whether its flow in the previous band
-/// (`flow` there) comes back into this grid's free rows.
-pub(super) fn reenters(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<bool> {
-    const UNKNOWN: u8 = 0;
-    const NO: u8 = 1;
-    const YES: u8 = 2;
-    const OPEN: u8 = 3;
+/// No free cell (`reentry`).
+pub(super) const NO_ENTRY: u32 = u32::MAX;
+
+/// Per fixed cell (the first `fixed_rows` rows): the free cell of this grid its flow in the
+/// previous band (`flow` there) comes back into, or `NO_ENTRY`.
+pub(super) fn reentry(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<u32> {
+    const UNKNOWN: u32 = u32::MAX - 1;
+    const OPEN: u32 = u32::MAX - 2;
     let m = (fixed_rows * dims.w).min(flow.len());
     let mut state = vec![UNKNOWN; m];
     let mut chain = Vec::new();
@@ -131,14 +132,14 @@ pub(super) fn reenters(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<bool> 
             continue;
         }
         let mut c = start;
-        let back = loop {
+        let entry = loop {
             if c >= m {
-                break true;
+                break c as u32;
             }
             match state[c] {
                 UNKNOWN => {}
-                OPEN => break false,
-                s => break s == YES,
+                OPEN => break NO_ENTRY,
+                s => break s,
             }
             state[c] = OPEN;
             chain.push(c);
@@ -148,14 +149,14 @@ pub(super) fn reenters(dims: Dims, flow: &[u8], fixed_rows: usize) -> Vec<bool> 
                 .flatten()
             {
                 Some(r) => c = r,
-                None => break false,
+                None => break NO_ENTRY,
             }
         };
         for x in chain.drain(..) {
-            state[x] = if back { YES } else { NO };
+            state[x] = entry;
         }
     }
-    state.into_iter().map(|s| s == YES).collect()
+    state
 }
 
 /// Streams (discharge from `river_km2`) in this band's first row that drain back across the
@@ -567,8 +568,9 @@ mod tests {
         let (dims, mut ground, flags, mut dir, acc) = seam_scene(-1.0);
         let mut flow = vec![0u8; 6];
         flow[3] = 2;
-        let back = reenters(dims, &flow, 1);
-        assert!(back[3] && !back[1]);
+        let entry = reentry(dims, &flow, 1);
+        assert_eq!((entry[3], entry[1]), (9, NO_ENTRY));
+        let back: Vec<bool> = entry.iter().map(|&r| r != NO_ENTRY).collect();
         let before = dir.clone();
         let joined = join_seam_rivers(
             dims,
