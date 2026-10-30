@@ -868,6 +868,22 @@ pub(super) fn raise_lips(
             }
         }
     }
+    // So do the banks of this band's channel cells that river owns (its surface is fixed).
+    for b in band {
+        let (x, o) = (b.cell as usize, b.owner as usize);
+        if flags[x] & FIXED != 0 || flags[o] & FIXED == 0 || surface[o].is_nan() {
+            continue;
+        }
+        let entered = entered_basin(dims, dir, flags, body, o);
+        for (_, j) in dims.neighbours(x) {
+            if dry(j)
+                && ground[j] < surface[o]
+                && is_bank(dims, dir, flags, body, basins, entered, o, x, j)
+            {
+                raise(ground, j, surface[o], &mut stack);
+            }
+        }
+    }
     // A dry cell beside a lake below its level (left by carving next to a lake grown over
     // carved ground) becomes a divide at the level, or joins the lake when 6 or more of its
     // neighbours are that lake (a notch inside it).
