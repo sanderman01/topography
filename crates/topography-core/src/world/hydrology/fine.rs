@@ -1037,17 +1037,38 @@ pub(super) fn rivers(
         // Last resort for a head the corridor flood missed: the lowest way over free cells
         // to any end (this river's routed cells, the sea, a lake, another path, the previous
         // band's water or a grid-edge outlet), made part of the corridor.
-        let in_core = |i: usize| (core_rows[0]..core_rows[1]).contains(&(i / w));
+        // A head is due when its coarse river reaches free core cells from it (a head in the
+        // halo may flow into the core); other halo heads are made again by the next band.
+        let due = |q: usize| {
+            let core = |p: usize| {
+                c.fine_cells(p, w, h).any(|i| {
+                    flags[i] & (SEA | FIXED) == 0 && (core_rows[0]..core_rows[1]).contains(&(i / w))
+                })
+            };
+            if !c.fine_cells(q, w, h).any(|i| flags[i] & (SEA | FIXED) == 0) {
+                return false;
+            }
+            let mut p = q;
+            for _ in 0..=own.len() {
+                if core(p) {
+                    return true;
+                }
+                match (c.dir(p) != 0)
+                    .then(|| cd.neighbour(p, c.dir(p) as usize - 1))
+                    .flatten()
+                    .filter(|&n| on_line(n))
+                {
+                    Some(n) => p = n,
+                    None => return false,
+                }
+            }
+            false
+        };
         let mut stranded: Vec<Vec<usize>> = own
             .iter()
-            .filter(|&&q| is_head(q))
+            .filter(|&&q| is_head(q) && due(q))
             .map(|&q| c.fine_cells(q, w, h).collect::<Vec<_>>())
-            .filter(|cells| {
-                !cells.iter().any(|&i| recv.contains_key(&(i as u32)))
-                    && cells
-                        .iter()
-                        .any(|&i| flags[i] & (SEA | FIXED) == 0 && in_core(i))
-            })
+            .filter(|cells| !cells.iter().any(|&i| recv.contains_key(&(i as u32))))
             .collect();
         stranded.extend(
             my_inflows
@@ -1126,10 +1147,7 @@ pub(super) fn rivers(
                     heads.push((i as u32, source, None));
                 }
                 None => {
-                    let core = |i: usize| (core_rows[0]..core_rows[1]).contains(&(i / w));
-                    if c.fine_cells(q, w, h)
-                        .any(|i| flags[i] & (SEA | FIXED) == 0 && core(i))
-                    {
+                    if due(q) {
                         out.unrouted.push(id);
                     }
                 }
