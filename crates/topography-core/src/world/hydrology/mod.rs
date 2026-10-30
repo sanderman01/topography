@@ -1001,6 +1001,22 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }
     };
 
+    // Land still draining uphill (a receiver restored on a cycle after its cell was lowered)
+    // takes a lower neighbour, on the routing the checks see.
+    let unclimbed = if check_dir.is_empty() {
+        flood::unclimb(dims, &ground, &flags, &body, &mut dir)
+    } else {
+        let changed = flood::unclimb(dims, &ground, &flags, &body, &mut check_dir);
+        for &(i, d) in &changed {
+            dir[i] = d;
+        }
+        changed
+    };
+    if !unclimbed.is_empty() {
+        eprintln!("hydrology: {} land cells turned downhill", unclimbed.len());
+    }
+    drop(unclimbed);
+
     let mut carve = report::Carve::default();
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
         if y >= fixed_rows {

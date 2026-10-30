@@ -723,6 +723,57 @@ pub(super) fn spill_cycles(
     redirected
 }
 
+/// Dry land cells (not fixed, wet or in a basin) that drain uphill onto plain land take their
+/// steepest lower neighbour whose flow does not come back to them: a receiver restored on a
+/// cycle can lie above a cell lowered after the flood. Returns the cells changed and their
+/// new direction bytes.
+pub(super) fn unclimb(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    dir: &mut [u8],
+) -> Vec<(usize, u8)> {
+    let plain = |j: usize| flags[j] & SEA == 0 && (flags[j] & RIVER != 0 || body[j] == 0);
+    let returns = |dir: &[u8], from: usize, to: usize| {
+        let mut c = from;
+        for _ in 0..4096 {
+            if c == to {
+                return true;
+            }
+            match receiver(dims, dir, c) {
+                Some(r) => c = r,
+                None => return false,
+            }
+        }
+        true
+    };
+    let mut changed = Vec::new();
+    for i in 0..ground.len() {
+        if flags[i] & (FIXED | SEA | RIVER) != 0 || body[i] != 0 {
+            continue;
+        }
+        if !receiver(dims, dir, i).is_some_and(|r| plain(r) && ground[r] > ground[i]) {
+            continue;
+        }
+        let mut best: Option<(f32, u8)> = None;
+        for (k, j) in dims.neighbours(i) {
+            let d = k as u8 + 1;
+            let slope = (ground[i] - ground[j]) / Dims::step(d) as f32;
+            let receives = flags[j] & FIXED == 0 || flags[j] & OUTLET != 0;
+            if receives && slope > 0.0 && best.is_none_or(|(s, _)| slope > s) && !returns(dir, j, i)
+            {
+                best = Some((slope, d));
+            }
+        }
+        if let Some((_, d)) = best {
+            dir[i] = d;
+            changed.push((i, d));
+        }
+    }
+    changed
+}
+
 /// Cells on receiver cycles take the receiver `pick` gives (None: leave the cell), until no
 /// cycle is left, no cell changes or after 32 rounds. Returns the cells changed.
 pub(super) fn restore_on_cycles(
