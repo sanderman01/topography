@@ -345,7 +345,8 @@ pub(super) fn leak_cells(
 /// Coarse-consistency checks (each must be 0): every coarse lake with fine cells here present
 /// at the same level, every coarse river present and routed, no fine water of a coarse river
 /// above its coarse surface (the highest over its coarse cell and the 8 around it, or its
-/// path's cap where higher: the interpolation along the path) by more than the tolerance.
+/// path's cap where higher: the interpolation along the path, or a coarse lake's level beside
+/// it) by more than the tolerance.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn consistency(
     dims: Dims,
@@ -379,6 +380,18 @@ pub(super) fn consistency(
             .map(|q| c.surface[q])
             .fold(f32::NEG_INFINITY, f32::max)
             .max(cap.get(&(i as u32)).copied().unwrap_or(f32::NEG_INFINITY));
+        // Beside a coarse lake a river stands at least at its level (as `rivers::extract`
+        // raises it): that level is coarse too.
+        let beside = dims
+            .neighbours(i)
+            .filter_map(|(_, j)| c.lakes.get(&body_id(j)))
+            .map(|l| l.level)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let top = if top.is_finite() {
+            top.max(beside)
+        } else {
+            top
+        };
         if top.is_finite() && surface[i] > top + SURFACE_TOLERANCE_M {
             above += 1;
             above_max = above_max.max(surface[i] - top);
@@ -919,6 +932,9 @@ pub(super) fn rivers(
         let mut recv: HashMap<u32, u32> = HashMap::new();
         let mut top: HashMap<u32, u32> = HashMap::new();
         let mut seeds: HashSet<u32> = HashSet::new();
+        // Order of a seed set beside the corridor: the lowest of its corridor neighbours', so
+        // it does not depend on the (random) set iteration order.
+        let mut fresh: HashMap<u32, u32> = HashMap::new();
         for &i in &corridor {
             let i = i as usize;
             let exit = leave
@@ -935,15 +951,22 @@ pub(super) fn rivers(
                 heap.push(Item(ground[i], i as u32));
             }
             for (_, j) in dims.neighbours(i) {
-                if !corridor.contains(&(j as u32)) && !seeds.contains(&(j as u32)) {
+                let (jj, t) = (j as u32, rank_of(i).saturating_sub(1));
+                if corridor.contains(&jj) {
+                    continue;
+                }
+                if let Some(e) = fresh.get_mut(&jj) {
+                    *e = (*e).min(t);
+                } else if !seeds.contains(&jj) {
                     if let Some(z) = is_seed(j) {
-                        seeds.insert(j as u32);
-                        top.insert(j as u32, rank_of(i).saturating_sub(1));
-                        heap.push(Item(z, j as u32));
+                        seeds.insert(jj);
+                        fresh.insert(jj, t);
+                        heap.push(Item(z, jj));
                     }
                 }
             }
         }
+        top.extend(fresh.drain());
         // Corridor cells the river's own end cannot reach end at its fixed cells whose flow
         // comes back into a cell already reached (a stretch dipping south of the seam), and
         // then (another river's path cuts across) at that river instead: a confluence.
@@ -957,12 +980,16 @@ pub(super) fn rivers(
                         let ends = flags[j] & FIXED != 0
                             && fixed_id(j) == id
                             && back(j).is_some_and(|r| recv.contains_key(&(r as u32)));
-                        if ends && seeds.insert(j as u32) {
-                            top.insert(j as u32, rank_of(i as usize).saturating_sub(1));
+                        let t = rank_of(i as usize).saturating_sub(1);
+                        if let Some(e) = fresh.get_mut(&(j as u32)) {
+                            *e = (*e).min(t);
+                        } else if ends && seeds.insert(j as u32) {
+                            fresh.insert(j as u32, t);
                             heap.push(Item(ground[j], j as u32));
                         }
                     }
                 }
+                top.extend(fresh.drain());
             }
             if pass == 2 {
                 for &i in &corridor {
@@ -970,12 +997,16 @@ pub(super) fn rivers(
                         continue;
                     }
                     for (_, j) in dims.neighbours(i as usize) {
-                        if claimed.contains_key(&(j as u32)) && seeds.insert(j as u32) {
-                            top.insert(j as u32, rank_of(i as usize).saturating_sub(1));
+                        let t = rank_of(i as usize).saturating_sub(1);
+                        if let Some(e) = fresh.get_mut(&(j as u32)) {
+                            *e = (*e).min(t);
+                        } else if claimed.contains_key(&(j as u32)) && seeds.insert(j as u32) {
+                            fresh.insert(j as u32, t);
                             heap.push(Item(ground[j], j as u32));
                         }
                     }
                 }
+                top.extend(fresh.drain());
             }
             while let Some(Item(z, a)) = heap.pop() {
                 let ra = top[&a];
