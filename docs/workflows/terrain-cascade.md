@@ -427,6 +427,38 @@ diffused (the manifest's `deep_sea_bands` and `windows`). `--guidance-classes` l
 The output adds `water-surface.f32`, `water-body.u32`, `bodies.json` and the world's 128 m
 `moisture.f32`; band reports stay in `hydrology/`. Rerunning the same command resumes after
 the last finished band (diffusion or hydrology), and after a failure while finishing.
+
+The diffused surface hydrology reads, `elevation-raw.f32` (4 bytes a cell, 17 GB at 64 km),
+is kept: the manifest records it as `hydrology_input` with its digest. So hydrology can be
+rerun after a hydrology fix without diffusion and without the GPU:
+
+```sh
+$P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --hydrology-only
+```
+
+It reruns every band's hydrology from the kept raw surface, north to south, rewrites
+`elevation.f32`, the water layers, `bodies.json`, the pictures and the manifest, and resumes
+after the last band it finished (`progress.json` keeps its state under `rerun`). The game
+layers follow the ground, so run `game_layers` again afterwards. `--drop-raw` removes the raw
+surface when a run (or a rerun) finishes; a world without it needs diffusion again to change
+its hydrology.
+
+Each band's hydrology fails (and stops hydrology, while diffusion goes on as for any failed
+check) on a step at its seam with the band above or on ground cut deeper than allowed
+([Bands and seams](#bands-and-seams---north)). After the last band, a seam audit checks the
+whole world: at every band boundary it counts columns where what shows (the water surface
+where wet, else the ground) steps more than 5 m and more than 4 times the steps between the
+rows beside it, except where both cells are water of one body. It writes
+`hydrology/seam-audit.json`, records the totals in the manifest (`seam_audit`) and fails the
+run on any such column. It also runs on its own on a finished world (exit status 1 on a
+step):
+
+```sh
+$P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --seam-audit
+```
+
+On the first fujix-55-l4 world (before the seam fixes) it counted 8,260 columns at 28 of the
+63 boundaries, up to 206 m (at row 31,744).
 `--km N` limits the run to a central N × 1,024 m square for quick checks; worlds without a
 `hydrology/4m` output (made before hydrology v2) must be regenerated, and older chain
 worlds need `--class-id`. `--class-runs` mixes per-class expert runs over `--run`. At
@@ -439,7 +471,7 @@ Python besides those buffers, the run peaked at 9.4 GB (page cache included), an
 hydrology takes 2.8 GB in Rust while Python holds 1.6 GB. So run it in a 12 GB cap; 2,048 m
 bands roughly double the Python share. The
 output takes 15 bytes a 1 m cell (elevation, water surface and body, and three masks: 64 GB
-at 64 km), plus 4 bytes a cell for `elevation-raw.f32` until the run finishes (17 GB) and two
+at 64 km), plus 4 bytes a cell for the kept `elevation-raw.f32` (17 GB) and two
 band directories (about 4 GB); `cascade_l4` checks the free space before it starts. L4 still
 writes the 1 m binary `water.u8`, `snow-ice.u8` and `vegetation.u8` (12.9 GB at 64 km), which
 the export ignores; dropping them is left to sub-project 5. The
@@ -690,6 +722,24 @@ end on taken dry ground, or join the taken river beside lower taken ground, is d
 surface. `rivers_cut_at_seam` must be 0, and the cycle guard also counts the routing stitched
 with the previous band's.
 
+No step at the seam: a band's first 64 rows (`SEAM_BLEND_ROWS`) start from a blend of the
+previous band's ground there (its halo, continuous with the taken rows) into this band's own,
+so the seam starts without a step in either direction. On finer levels no cut goes deeper than
+`BREACH_MAX_M` (30 m) below that starting ground, and near the seam no cut goes below the
+previous band's dry ground in its last row less the 35° side slope over the distance (down to a
+taken river's or lake's bed beside it): breaching keeps a depression it cannot drain within
+that as a sink and fills a pocket instead, and trench walls, channel beds (but a channel just
+below its water) and seam joins stop there. Coarse river paths may cut deeper (the coarse
+network sets where they run) but keep the seam limit, filling up to it where needed
+(`path_fill_*`), and keep four cells from taken dry ground below their water. Checks: `ground_below_carve_floor` (dry ground below that limit) and `seam_steps` (a
+step between the taken last row and the first row, water surface where wet, over 5 m and 4
+times the steps between the rows beside it, beyond the step the band started with), with
+figures under `carving`.
+
+On finer levels a sink that breaching left (not a coarse dry basin) that a river runs into,
+away from the seam blend, fills to its spill as a lake draining over it, so a river does not
+end in a dry hollow (such as one below sea level behind a lagoon's rim).
+
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
 flow onto dry ground that is not a basin, no dry cell may sit more than 1 cm below an adjacent
@@ -701,7 +751,8 @@ All must be 0: lakes in more than one piece or with ground at or above their lev
 exits off the level, river cells below an adjacent lake, wet cells whose surface is not above
 the ground, centreline surfaces rising downstream, rivers ending on dry land, dry land
 draining uphill, dry cells more than 1 cm below an adjacent lake, sea or river (river banks
-as above), dry cells in holes, and the `guard_` checks (land not draining to an outlet,
+as above), dry cells in holes, on finer levels dry ground carved below its limit and steps at
+the seam (above), and the `guard_` checks (land not draining to an outlet,
 including receiver cycles; lakes with several levels; beds rising downstream). Unit tests
 (`cargo test -p topography-core hydrology`, run by `scripts/check.sh`) break each check.
 `check_examples` gives up to three failing cells per check.
