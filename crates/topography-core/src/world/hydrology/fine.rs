@@ -1400,12 +1400,7 @@ pub(super) fn rivers(
             let runs_along = fixed_rows > 0 && cells.iter().any(|&c| along(c));
             let climbs = climb(ground, &cells);
             if let Some(end) = next.filter(|_| climbs > PATH_CLIMB_M || runs_along) {
-                // Within the corridor: away from the coarse river the cap would cut deep.
-                let open = |i: usize| {
-                    corridor.contains(&(i as u32))
-                        && !claimed.contains_key(&(i as u32))
-                        && !along(i as u32)
-                };
+                let open = |i: usize| !claimed.contains_key(&(i as u32)) && !along(i as u32);
                 if let Some(way) = route_descending(
                     dims,
                     ground,
@@ -1559,6 +1554,15 @@ pub(super) fn rivers(
                     .filter(|p| corridor_rank.get(p).is_none_or(|&r| r >= here))
                     .map(|p| c.surface[p])
                     .fold(f32::NEG_INFINITY, f32::max);
+                // Away from the coarse river (a path laid off its corridor) its surface says
+                // nothing of the ground here: no cap, the path only keeps descending.
+                let near_river = (-1..=1)
+                    .flat_map(|dy| (-1..=1).map(move |dx| [qx as isize + dx, qy as isize + dy]))
+                    .filter_map(|p| c.at(p))
+                    .any(|p| c.body[p] == id);
+                if !near_river {
+                    continue;
+                }
                 let v = v.max(local);
                 let e = out.cap.entry(cell).or_insert(f32::INFINITY);
                 *e = e.min(v);

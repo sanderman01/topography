@@ -734,8 +734,9 @@ network sets where they run) but keep the seam limit, filling up to it where nee
 (`path_fill_*`), and keep four cells from taken dry ground below their water when a way that
 climbs no more allows. A coarse path that climbs more than 5 m above its lowest point upstream,
 or runs along the first 16 rows more than 16 columns from where its river crosses the seam, is
-laid again within its corridor along the way to its end that climbs least, keeping off the
-seam there (`paths_relaid`). Checks: `ground_below_carve_floor` (dry ground below that limit) and `seam_steps` (a
+laid again along the way to its end that climbs least, keeping off the seam there
+(`paths_relaid`); cells of a path away from its coarse river get no surface cap (the coarse
+surface says nothing of the ground there), so the burn only keeps them descending. Checks: `ground_below_carve_floor` (dry ground below that limit) and `seam_steps` (a
 step between the taken last row and the first row, water surface where wet, over 5 m and 4
 times the steps between the rows beside it, beyond the step the band started with), with
 figures under `carving`.
