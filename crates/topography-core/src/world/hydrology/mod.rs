@@ -164,6 +164,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         .map_or_else(Vec::new, |b| band::reentry(dims, &b.flow, fixed_rows));
     let reenters: Vec<bool> = reentry.iter().map(|&r| r != band::NO_ENTRY).collect();
     if let Some(b) = &north {
+        band::blend_seam(dims, fixed_rows, &mut ground, &b.halo_ground);
         for i in 0..fixed_rows * w {
             ground[i] = b.ground[i];
             flags[i] |= FIXED;
@@ -226,6 +227,32 @@ pub fn run(options: &Options) -> Result<Outcome> {
         None => flood::open_sea(dims, &ground, |i| dims.is_edge(i), |_| false, &mut flags),
     }
 
+    // On finer levels no cut goes deeper than BREACH_MAX_M below the ground here, nor leaves a
+    // step at the seam (`band::ground_floor`); the trunk level carves as it did.
+    // This band's first row as it starts (after the blend), for the seam step check.
+    let start_row: Vec<f32> = ground
+        .get(fixed_rows * w..(fixed_rows + 1) * w)
+        .map_or_else(Vec::new, <[f32]>::to_vec);
+    let (carve_floor, seam_floor): (Vec<f32>, Vec<f32>) = if coarse.is_some() {
+        band::ground_floor(
+            dims,
+            fixed_rows,
+            &ground,
+            |i| flags[i] & (RIVER | SEA) != 0 || fixed_kind(i) == Some(BodyKind::Lake),
+            BREACH_MAX_M,
+            erosion::SIDE_SLOPE_DEG.to_radians().tan(),
+            grid.spacing_m,
+        )
+    } else {
+        (vec![f32::NEG_INFINITY; n], Vec::new())
+    };
+    // Coarse river paths keep only the seam limit (`band::ground_floor`).
+    let path_floor = |i: usize| {
+        i.checked_sub(fixed_rows * w)
+            .and_then(|k| seam_floor.get(k).copied())
+            .unwrap_or(f32::NEG_INFINITY)
+    };
+
     // The coarse network on the fine ground: lakes at their level, river paths burned in.
     let mut basins = Vec::new();
     let (lake_figures, imprint) = match &coarse {
@@ -253,6 +280,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 &inflows,
                 fixed_id,
                 |j| north.as_ref().map_or(f32::NAN, |b| b.surface[j]),
+                path_floor,
                 |j| {
                     reentry
                         .get(j)
@@ -438,6 +466,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &mut flags,
         &mut dir,
         BREACH_MAX_M,
+        &carve_floor,
         coarse.is_some(),
         |pit, deep| {
             let class = class_at(pit);
@@ -494,6 +523,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         dims.neighbours(i)
             .filter_map(|(_, j)| kept_level(j))
             .fold(0f32, f32::max)
+            .max(carve_floor[i])
     };
     let mut breach_cut: HashMap<u32, f32> = HashMap::new();
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
@@ -590,6 +620,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &mut dir,
         &acc,
         river_km2,
+        &carve_floor,
     );
     // Rivers entering here that would leave again onto the previous band's dry ground.
     let inflows_rerouted = band::reroute_inflows(
@@ -601,6 +632,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &reentry,
         &mut dir,
         &inflow,
+        &carve_floor,
     );
     if seam_joins > 0 || inflows_rerouted.rivers > 0 {
         cycles = flood::accumulate(dims, &dir, weight, &mut acc);
@@ -814,6 +846,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         grid.spacing_m,
         &mut surface,
         given,
+        &carve_floor,
     );
     // Channel cuts deeper than one cell's rise widen as trenches do, from the water surface.
     let cuts = std::mem::take(&mut channels.cuts);
@@ -841,7 +874,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         if lowest.is_finite() {
             f = f.max(lowest - rivers::HOLE_M);
         }
-        f
+        f.max(carve_floor[i])
     };
     let (mut channel_widening, lowered) = erosion::widen_trenches(
         dims,
@@ -1061,6 +1094,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
         cell_km2: cell_km2 as f64,
         spacing_m: grid.spacing_m,
         open_rows,
+        fixed_rows,
+        start_row: &start_row,
     };
     // Cycles on this run's final routing (taken cells end it), before accumulation, or in
     // the routing stitched with the previous band's (a loop across the seam: the previous band
@@ -1073,6 +1108,11 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // The next free id: the next band and finer level start above it.
     bodies["next_id"] = json!(next);
     let mut figures = report::figures(&ctx, &carve, extended);
+    if coarse.is_some() {
+        let (carving, carving_figures) = report::carving(&ctx, &carve_floor, fixed_rows, &body_id);
+        checks.extend(carving);
+        figures.insert("carving".into(), carving_figures);
+    }
     if let Some(c) = &coarse {
         // Rivers reaching the sea here, through the rivers they join.
         let to_sea: std::collections::HashSet<u32> = rivers

@@ -28,6 +28,10 @@ pub(super) struct Context<'a> {
     pub spacing_m: f64,
     /// Top and bottom rows are band edges (not the world's), where a lake may continue.
     pub open_rows: [bool; 2],
+    /// Rows copied from the previous band.
+    pub fixed_rows: usize,
+    /// The first row after them as this band started (after the seam blend); empty: none.
+    pub start_row: &'a [f32],
 }
 
 impl Context<'_> {
@@ -269,10 +273,82 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
     (m, examples)
 }
 
+/// Judgment constant: a step between the previous band's last row and this band's first row
+/// (water surface where wet, else ground) counts when over this and 4 times the steps between
+/// the rows beside it.
+pub(super) const SEAM_STEP_M: f32 = 5.0;
+
+/// Carving checks (each must be 0): free dry ground below its carve `floor` (cut deeper than
+/// the limit, or leaving a step at the seam), and steps at the seam (`fixed_rows`) not shared by
+/// the rows beside it, except where both cells are water of one body (`body_id`). With a
+/// cell of each and the deepest cut below the floor.
+pub(super) fn carving(
+    c: &Context,
+    floor: &[f32],
+    fixed_rows: usize,
+    body_id: &dyn Fn(usize) -> u32,
+) -> (Map<String, Value>, Value) {
+    let w = c.dims.w;
+    let cell = |i: usize| json!([i % w, i / w]);
+    let (mut below, mut deepest, mut below_at) = (0u64, 0f32, Vec::new());
+    for (i, &f) in floor.iter().enumerate() {
+        // Channel beds may lie below it by their depth under the water (`rivers::extract`).
+        if c.fixed(i) || c.wet(i) {
+            continue;
+        }
+        let by = f - c.ground[i];
+        if by > BANK_TOLERANCE_M {
+            below += 1;
+            deepest = deepest.max(by);
+            if below_at.len() < 3 {
+                below_at.push(cell(i));
+            }
+        }
+    }
+    let (mut steps, mut step_at, mut step_max) = (0u64, Vec::new(), 0f32);
+    if fixed_rows >= 2 && fixed_rows + 1 < c.dims.h {
+        for x in 0..w {
+            let (a, b) = ((fixed_rows - 1) * w + x, fixed_rows * w + x);
+            if c.wet(a) && c.wet(b) && body_id(a) == body_id(b) {
+                continue;
+            }
+            // What shows: the water surface where wet, else the ground.
+            let g = |i: usize| {
+                if c.surface[i].is_finite() {
+                    c.surface[i]
+                } else {
+                    c.ground[i]
+                }
+            };
+            // The step this band made: less the one its first row started with.
+            let start = c.start_row.get(x).map_or(0.0, |&s| s - c.ground[a]);
+            let step = (g(b) - g(a) - start).abs();
+            let beside = (g(b + w) - g(b)).abs().max((g(a) - g(a - w)).abs());
+            if step > SEAM_STEP_M && step > 4.0 * beside {
+                steps += 1;
+                step_max = step_max.max(step);
+                if step_at.len() < 3 {
+                    step_at.push(cell(b));
+                }
+            }
+        }
+    }
+    let mut m = Map::new();
+    m.insert("ground_below_carve_floor".into(), json!(below));
+    m.insert("seam_steps".into(), json!(steps));
+    let figures = json!({
+        "ground_below_carve_floor_max_m": deepest,
+        "ground_below_carve_floor_at_cells": below_at,
+        "seam_step_max_m": step_max,
+        "seam_steps_at_cells": step_at,
+    });
+    (m, figures)
+}
+
 /// Lakes whose cells form more than one 8-connected piece. A piece touching a band edge row
-/// may join the rest beyond it and does not count, nor does a piece only of the previous
-/// band's cells. Also a cell of each extra piece, and of each piece only of the previous
-/// band's cells of a lake that has other pieces (split at the seam, shown as a figure).
+/// may join the rest beyond it and does not count, nor does a piece of the previous band's
+/// cells reaching no further than the seam blend. Also a cell of each extra piece, and of each
+/// such seam piece of a lake that has other pieces (split at the seam, shown as a figure).
 fn lake_pieces(c: &Context) -> (usize, Vec<usize>, Vec<usize>) {
     let n = c.ground.len();
     let mut seen = vec![false; n];
@@ -288,12 +364,15 @@ fn lake_pieces(c: &Context) -> (usize, Vec<usize>, Vec<usize>) {
         };
         seen[i] = true;
         stack.push(i);
-        // A piece only of the previous band's cells was joined through that band's halo,
-        // which this band made again; it cannot change here and does not count.
-        let (mut edge, mut taken) = (false, true);
+        // A piece of the previous band's cells, and of this band's only within the seam blend
+        // (where the ground is that band's), was joined through that band's halo, which this
+        // band made again; it does not count.
+        let blend_end = (c.fixed_rows + super::band::SEAM_BLEND_ROWS) * c.dims.w;
+        let (mut edge, mut fixed, mut beyond) = (false, false, false);
         while let Some(a) = stack.pop() {
             edge |= open(a);
-            taken &= c.fixed(a);
+            fixed |= c.fixed(a);
+            beyond |= a >= blend_end;
             for (_, j) in c.dims.neighbours(a) {
                 if !seen[j] && c.lake(j) == Some(id) {
                     seen[j] = true;
@@ -302,6 +381,7 @@ fn lake_pieces(c: &Context) -> (usize, Vec<usize>, Vec<usize>) {
             }
         }
         all[id as usize] += 1;
+        let taken = fixed && !beyond;
         if taken && !edge {
             taken_at.push((id, i));
         }
@@ -655,6 +735,8 @@ mod tests {
             cell_km2: 1.0,
             spacing_m: 1000.0,
             open_rows: [false, false],
+            fixed_rows: 0,
+            start_row: &[],
         };
         checks(&c, 0).0
     }

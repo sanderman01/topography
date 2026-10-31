@@ -150,6 +150,7 @@ pub(super) fn extract(
     spacing_m: f64,
     surface: &mut [f32],
     given: Given,
+    carve_floor: &[f32],
 ) -> (Vec<River>, Vec<Band>, Channels) {
     let n = ground.len();
     let l = spacing_m as f32;
@@ -484,6 +485,13 @@ pub(super) fn extract(
 
     // Beds: the centreline below its surface by the cell's mean depth, reaching below 0 m
     // over the last cells to the sea.
+    // A channel bed not below the carve floor (`band::ground_floor`; empty: none) unless the
+    // water `s` stands lower: then just below it.
+    let floored = |i: usize, bed: f32, s: f32| {
+        carve_floor
+            .get(i)
+            .map_or(bed, |&f| bed.max(f.min(s - MIN_DEPTH_M)))
+    };
     let cut = |ground: &mut [f32], i: usize, bed: f32, ch: &mut Channels| {
         if bed < ground[i] {
             ch.cut_cells += 1;
@@ -534,7 +542,7 @@ pub(super) fn extract(
         if let Some(&f) = floor.get(&(i as u32)) {
             bed = bed.max(f);
         }
-        cut(ground, i, bed, &mut ch);
+        cut(ground, i, floored(i, bed, s), &mut ch);
     }
     // Beds never rise downstream (a raised surface leaves an older, deeper bed upstream):
     // each centreline bed at most every bed upstream, upstream first.
@@ -565,7 +573,12 @@ pub(super) fn extract(
     for b in &band {
         let (j, o) = (b.cell as usize, b.owner as usize);
         surface[j] = surface[o];
-        cut(ground, j, surface[o] - b.depth, &mut ch);
+        cut(
+            ground,
+            j,
+            floored(j, surface[o] - b.depth, surface[o]),
+            &mut ch,
+        );
     }
     // The channel continues into the seabed past each sea mouth.
     for i in 0..n {
@@ -1046,6 +1059,7 @@ mod tests {
             1.0,
             &mut surface,
             given,
+            &[],
         );
         for i in [4, 7, 10, 13] {
             assert!(flags[i] & CENTRE != 0, "cell {i} is on the river");
@@ -1100,6 +1114,7 @@ mod tests {
             1.0,
             &mut surface,
             given,
+            &[],
         );
         assert_eq!(ch.streams_pruned, 1);
         assert!([5, 9, 13].iter().all(|&i| flags[i] & RIVER == 0));

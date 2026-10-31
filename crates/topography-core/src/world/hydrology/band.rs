@@ -16,10 +16,16 @@ pub(super) enum BodyKind {
     River,
 }
 
+/// Judgment constant: rows below the seam over which this band's input ground blends from the
+/// previous band's ground (continuous with the rows taken from it) into its own.
+pub(super) const SEAM_BLEND_ROWS: usize = 64;
+
 /// The northern band's outputs over this grid's top `rows` rows (its core).
 pub(super) struct North {
     pub rows: usize,
     pub ground: Vec<f32>,
+    /// Its ground over the first rows after `rows` (up to `SEAM_BLEND_ROWS`), whole rows.
+    pub halo_ground: Vec<f32>,
     pub surface: Vec<f32>,
     pub body: Vec<u32>,
     pub discharge: Vec<f32>,
@@ -98,8 +104,12 @@ pub(super) fn read_north(dir: &Path, grid: &Grid) -> Result<North> {
     let mut digests = Map::new();
     digests.insert("grid.json".into(), digest(&bytes).into());
     digests.insert("bodies.json".into(), digest(&bodies_bytes).into());
+    // Its ground over this grid's first free rows (its halo), as far as it reaches.
+    let halo = [t + rows, (t + rows + SEAM_BLEND_ROWS).min(a.h)];
+    let halo_ground = grid::read_window(&dir.join("elevation.f32"), size, xs, halo, f32le)?;
     Ok(North {
         rows,
+        halo_ground,
         ground: read_f32("elevation.f32")?,
         surface: read_f32("water-surface.f32")?,
         body,
@@ -114,6 +124,94 @@ pub(super) fn read_north(dir: &Path, grid: &Grid) -> Result<North> {
 /// Water surfaces equal within 1 mm (both dry counts as equal).
 fn same_surface(a: f32, b: f32) -> bool {
     (a.is_nan() && b.is_nan()) || (a - b).abs() <= 1e-3
+}
+
+/// Blend this grid's first free rows from the previous band's ground (`halo`, whole rows
+/// after `fixed_rows`) into its own over `SEAM_BLEND_ROWS`: that ground is continuous with the
+/// rows taken from it, so the seam starts without a step whichever band carved there.
+pub(super) fn blend_seam(dims: Dims, fixed_rows: usize, ground: &mut [f32], halo: &[f32]) {
+    let w = dims.w;
+    let rows = (halo.len() / w).min(dims.h.saturating_sub(fixed_rows));
+    for d in 0..rows {
+        let k = 1.0 - d as f32 / SEAM_BLEND_ROWS as f32;
+        let row = (fixed_rows + d) * w;
+        for x in 0..w {
+            let (h, g) = (halo[d * w + x], ground[row + x]);
+            if h.is_finite() {
+                ground[row + x] = k * h + (1.0 - k) * g;
+            }
+        }
+    }
+}
+
+/// Lowest ground each free cell may be carved to: at most `depth_m` below its ground now, and
+/// near the seam not below the previous band's dry ground in its last row less the side slope
+/// (`tan`) over the distance, so no cut leaves a step at the seam. Beside water there (`wet`)
+/// the limit is that water's bed plus the side slope instead, where lower: rivers and lakes
+/// cross the seam at their own beds. Fixed cells get +inf (never carved). Also the seam limit
+/// alone over the rows it reaches after `fixed_rows` (whole rows; coarse river paths keep only
+/// that one, as the coarse network sets where they run).
+pub(super) fn ground_floor(
+    dims: Dims,
+    fixed_rows: usize,
+    ground: &[f32],
+    wet: impl Fn(usize) -> bool,
+    depth_m: f32,
+    tan: f32,
+    spacing_m: f64,
+) -> (Vec<f32>, Vec<f32>) {
+    let w = dims.w;
+    let mut floor: Vec<f32> = ground.iter().map(|&g| g - depth_m).collect();
+    floor[..fixed_rows * w].fill(f32::INFINITY);
+    if fixed_rows == 0 {
+        return (floor, Vec::new());
+    }
+    let last = (fixed_rows - 1) * w;
+    // Dry ground sets the limit; beside water in that row it may go down to the water's bed
+    // and up from it at the side slope (a stream reaching the water there is not dammed).
+    let source: Vec<f32> = (0..w)
+        .map(|x| {
+            if wet(last + x) {
+                f32::NEG_INFINITY
+            } else {
+                ground[last + x]
+            }
+        })
+        .collect();
+    let water: Vec<f32> = (0..w)
+        .map(|x| {
+            if wet(last + x) {
+                ground[last + x]
+            } else {
+                f32::INFINITY
+            }
+        })
+        .collect();
+    // Beyond this many cells a source's limit lies below every carve's depth bound.
+    let reach = (depth_m / (tan * spacing_m as f32)).ceil() as usize + 1;
+    let rows = reach.min(dims.h - fixed_rows);
+    let mut seam_rows = vec![f32::NEG_INFINITY; rows * w];
+    for dy in 1..=rows {
+        let row = (fixed_rows - 1 + dy) * w;
+        let drop: Vec<f32> = (0..=reach)
+            .map(|dx| tan * ((dx * dx + dy * dy) as f32).sqrt() * spacing_m as f32)
+            .collect();
+        for x in 0..w {
+            let (a, b) = (x.saturating_sub(reach), (x + reach).min(w - 1));
+            let dry = (a..=b)
+                .map(|s| source[s] - drop[s.abs_diff(x)])
+                .fold(f32::NEG_INFINITY, f32::max);
+            let wet = (a..=b)
+                .map(|s| water[s] + drop[s.abs_diff(x)])
+                .fold(f32::INFINITY, f32::min);
+            let seam = dry.min(wet);
+            // Never above the cell's own ground (natural slopes steeper than `tan` stay).
+            let seam = seam.min(ground[row + x]);
+            floor[row + x] = floor[row + x].max(seam);
+            seam_rows[(dy - 1) * w + x] = seam;
+        }
+    }
+    (floor, seam_rows)
 }
 
 /// No free cell (`reentry`).
@@ -175,6 +273,7 @@ pub(super) fn join_seam_rivers(
     dir: &mut [u8],
     acc: &[f32],
     river_km2: f32,
+    carve_floor: &[f32],
 ) -> u64 {
     // Rows the route may use, and its steps (halo guesses differ by several metres).
     const REACH: usize = 3;
@@ -243,7 +342,10 @@ pub(super) fn join_seam_rivers(
         dir[last] = k as u8 + 1;
         for p in route.windows(2) {
             dir[p[0]] = dims.towards(p[0], p[1]);
-            ground[p[1]] = ground[p[1]].min(ground[p[0]]);
+            let to = carve_floor
+                .get(p[1])
+                .map_or(ground[p[0]], |&f| ground[p[0]].max(f));
+            ground[p[1]] = ground[p[1]].min(to);
         }
         joined += 1;
     }
@@ -266,6 +368,7 @@ pub(super) fn reroute_inflows(
     reentry: &[u32],
     dir: &mut [u8],
     inflow: &[(usize, usize)],
+    carve_floor: &[f32],
 ) -> Reroute {
     // Cells a search may visit before it gives up.
     const MAX_CELLS: usize = 1 << 22;
@@ -348,6 +451,7 @@ pub(super) fn reroute_inflows(
         }
         route.reverse();
         let mut lower = |ground: &mut [f32], c: usize, to: f32| {
+            let to = carve_floor.get(c).map_or(to, |&f| to.max(f));
             if to < ground[c] {
                 cut.max_m = cut.max_m.max(ground[c] - to);
                 cut.cells += 1;
@@ -681,7 +785,8 @@ mod tests {
                 &[false; 6],
                 &mut dir,
                 &acc,
-                0.5
+                0.5,
+                &[]
             ),
             1
         );
@@ -711,7 +816,8 @@ mod tests {
                 &[false; 6],
                 &mut dir,
                 &acc,
-                0.5
+                0.5,
+                &[]
             ),
             0
         );
@@ -739,6 +845,7 @@ mod tests {
             &mut dir,
             &acc,
             0.5,
+            &[],
         );
         assert_eq!(joined, 0);
         assert_eq!(dir, before);
@@ -771,9 +878,53 @@ mod tests {
             &back,
             &mut dir,
             &[(0, 4)],
+            &[],
         );
         assert_eq!((n.rivers, n.cells), (1, 1));
         assert_eq!(n.max_m, 1.0);
         assert_eq!((dir[4], ground[8]), (2, 5.0));
+    }
+
+    #[test]
+    fn the_first_free_row_starts_as_the_previous_bands_ground() {
+        // 2 x 4, one taken row; the previous band's ground over the free rows is 0, this
+        // band's 10: the first free row starts as that band's, blending to this band's own.
+        let dims = Dims { w: 2, h: 4 };
+        let mut ground = vec![10.0f32; 8];
+        let halo = vec![0.0f32; 4];
+        blend_seam(dims, 1, &mut ground, &halo);
+        assert_eq!(ground[2], 0.0);
+        let k = 1.0 - 1.0 / SEAM_BLEND_ROWS as f32;
+        assert!((ground[4] - (1.0 - k) * 10.0).abs() < 1e-5);
+        assert_eq!(ground[6], 10.0, "past the previous band's rows");
+    }
+
+    #[test]
+    fn carving_stops_at_depth_and_at_the_seam_side_slope() {
+        // 40 x 40, one taken row: dry at 100 m but for a river (bed 90 m) at column 0; this
+        // band's ground is 100 m, the side slope 1 m a cell, cuts at most 30 m. Below taken
+        // dry ground a cut goes one side slope down a row; beside the river down towards its
+        // bed; far from the seam to the depth limit.
+        let (w, h) = (40, 40);
+        let dims = Dims { w, h };
+        let mut ground = vec![100.0f32; w * h];
+        ground[0] = 90.0;
+        let (floor, seam) = ground_floor(dims, 1, &ground, |i| i == 0, 30.0, 1.0, 1.0);
+        assert!(
+            floor[..w].iter().all(|f| f.is_infinite()),
+            "taken cells are never carved"
+        );
+        let at = |x: usize, y: usize| floor[y * w + x];
+        assert!(
+            (at(30, 1) - 99.0).abs() < 1e-4,
+            "below dry ground: one side slope"
+        );
+        assert!((at(30, 3) - 97.0).abs() < 1e-4);
+        assert!(
+            (at(0, 1) - 91.0).abs() < 1e-4,
+            "below the river: its bed plus the slope"
+        );
+        assert_eq!(at(30, 39), 70.0, "far from the seam: the depth limit");
+        assert_eq!(seam[30], at(30, 1));
     }
 }

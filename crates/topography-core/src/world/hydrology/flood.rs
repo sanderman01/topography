@@ -228,20 +228,23 @@ pub(super) fn fill(dims: Dims, ground: &[f32], flags: &mut [u8], dir: &mut [u8])
     filled
 }
 
-/// Lower the path from `from` towards the outlet to at most `target`, stopping at basin cells
-/// and at ground already low enough; lowered cells get `BREACHED`. Returns the cells lowered.
+/// Lower the path from `from` towards the outlet to at most `target`, stopping at basin cells,
+/// at ground already low enough and at a cell whose carve `floor` lies above `target`; lowered
+/// cells get `BREACHED`. Returns the cells lowered.
+#[allow(clippy::too_many_arguments)]
 fn lower(
     dims: Dims,
     ground: &mut [f32],
     flags: &mut [u8],
     body: &[u32],
     dir: &[u8],
+    floor: &[f32],
     from: usize,
     target: f32,
 ) -> u64 {
     let (mut at, mut lowered) = (Some(from), 0);
     while let Some(a) = at {
-        if body[a] != 0 || ground[a] <= target || flags[a] & FIXED != 0 {
+        if body[a] != 0 || ground[a] <= target || flags[a] & FIXED != 0 || floor[a] > target {
             break;
         }
         ground[a] = target;
@@ -252,13 +255,16 @@ fn lower(
     lowered
 }
 
-/// `lower` from `from` to `target` would stop at a fixed cell above `target`.
+/// `lower` from `from` to `target` would stop at a fixed cell or a carve `floor` above
+/// `target` (a cut too deep, or one leaving a step at the seam).
+#[allow(clippy::too_many_arguments)]
 fn blocked(
     dims: Dims,
     ground: &[f32],
     flags: &[u8],
     body: &[u32],
     dir: &[u8],
+    floor: &[f32],
     from: usize,
     target: f32,
 ) -> bool {
@@ -267,7 +273,7 @@ fn blocked(
         if body[a] != 0 || ground[a] <= target {
             return false;
         }
-        if flags[a] & FIXED != 0 {
+        if flags[a] & FIXED != 0 || floor[a] > target {
             return true;
         }
         at = receiver(dims, dir, a);
@@ -306,7 +312,9 @@ fn lake_downstream(dims: Dims, body: &[u32], basins: &[Basin], dir: &[u8], from:
 /// kept as `keep_kind(pit, false)` says, lakes at 0 m (lagoons) or a sink, so cuts never go
 /// below sea level. One whose path out starts at a fixed cell (from the previous band) above
 /// the pit is a sink. On a finer level (`fine`), a depression the flood reaches from a lake
-/// joins it, and one beside a lake is breached past the cap (the coarse lake must drain).
+/// joins it, and one beside a lake is breached past the cap (the coarse lake must drain). A
+/// path out that would cut a cell below its carve `floor` counts as blocked, as a fixed cell
+/// does, and no cell is lowered below it.
 /// Returns cells lowered.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn breach(
@@ -317,6 +325,7 @@ pub(super) fn breach(
     flags: &mut [u8],
     dir: &mut [u8],
     cap_m: f32,
+    floor: &[f32],
     fine: bool,
     keep_kind: impl Fn(usize, bool) -> Kind,
 ) -> u64 {
@@ -364,13 +373,13 @@ pub(super) fn breach(
                 }
                 let p = ground[low];
                 let deep = z - p > cap_m;
-                let blocked = blocked(dims, ground, flags, body, dir, c, p);
+                let blocked = blocked(dims, ground, flags, body, dir, floor, c, p);
                 let lake =
                     |i: usize| body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake;
                 if fine && lake(c) {
                     // Below the lake's level beside it: it joins the lake (`lakes::extend`).
                 } else if !deep && p >= 0.0 && !blocked {
-                    lowered += lower(dims, ground, flags, body, dir, c, p);
+                    lowered += lower(dims, ground, flags, body, dir, floor, c, p);
                 } else if let Some(beside) = region
                     .iter()
                     .flat_map(|&a| dims.neighbours(a as usize))
@@ -428,7 +437,7 @@ pub(super) fn breach(
                             }
                         }
                     }
-                    lowered += lower(dims, ground, flags, body, dir, c, p.max(0.0));
+                    lowered += lower(dims, ground, flags, body, dir, floor, c, p.max(0.0));
                 } else if blocked || keep_kind(low, deep) == Kind::Sink {
                     // (A shallow one below 0 m becomes a lagoon at 0 m in any class.)
                     basins.push(Basin::kept(Kind::Sink, z, c as u32));
@@ -473,7 +482,7 @@ pub(super) fn breach(
                 if basin.kind == Kind::Sink {
                     dir[n] = 0;
                 } else {
-                    lowered += lower(dims, ground, flags, body, dir, c, level);
+                    lowered += lower(dims, ground, flags, body, dir, floor, c, level);
                 }
                 if level <= z {
                     pit.push_back(n);
@@ -486,7 +495,12 @@ pub(super) fn breach(
                 continue;
             }
             if ground[n] < z {
-                lowered += lower(dims, ground, flags, body, dir, c, ground[n]);
+                if blocked(dims, ground, flags, body, dir, floor, c, ground[n]) {
+                    // The way out cannot be cut that low: the cell is filled to it instead.
+                    ground[n] = z;
+                } else {
+                    lowered += lower(dims, ground, flags, body, dir, floor, c, ground[n]);
+                }
             }
             if ground[n] == z {
                 pit.push_back(n);
@@ -897,6 +911,7 @@ mod tests {
             &mut flags,
             &mut dir,
             30.0,
+            &[f32::NEG_INFINITY; 64],
             false,
             |_, _| Kind::Lake,
         );
@@ -942,6 +957,7 @@ mod tests {
                 &mut flags,
                 &mut dir,
                 2.0,
+                &[f32::NEG_INFINITY; 64],
                 false,
                 |_, deep| if deep { kind } else { Kind::Lake },
             );
@@ -1165,6 +1181,7 @@ mod tests {
             &mut flags,
             &mut dir,
             30.0,
+            &[f32::NEG_INFINITY; 64],
             true,
             |_, _| Kind::Sink,
         );

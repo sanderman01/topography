@@ -468,8 +468,8 @@ pub(super) struct Path {
     pub next: Option<u32>,
     /// Lake basin (index + 1) this path leaves at its head, 0 for none.
     pub source: u32,
-    /// Lowest bed (the previous band's bed it ends on), else negative infinity.
-    pub floor: f32,
+    /// Lowest bed per cell: the previous band's bed it ends on and the seam limit downstream.
+    pub floors: Vec<f32>,
 }
 
 pub(super) struct Imprint {
@@ -528,7 +528,7 @@ fn floor(dims: Dims, body: &[u32], basins: &[Basin], source: u32, i: usize) -> f
         .fold(f32::NEG_INFINITY, f32::max)
 }
 
-/// Path cells raised to the previous band's bed they end on (`Path::floor`): most and count.
+/// Path cells filled above their ground to the path's floors (`Path::floors`): most and count.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Fill {
     pub max_m: f32,
@@ -574,14 +574,17 @@ pub(super) fn burn(
             let to = ground[c].min(target.max(ground[d]).max(f).max(0.0));
             ground[c] = ground[c].min(to);
         }
-        // Ending on the previous band's bed: no lower, so the bed does not rise into it (a
-        // hollow below it is filled).
-        for &c in &p.cells {
-            let by = p.floor - ground[c as usize];
-            if by > 0.0 {
-                fill.max_m = fill.max_m.max(by);
-                fill.cells += 1;
-                ground[c as usize] = p.floor;
+        // Not below the path's floors (the bed it ends on, the carve floor downstream): a cut
+        // stops there and a hollow below them is filled (counted).
+        for (k, &c) in p.cells.iter().enumerate() {
+            let c = c as usize;
+            if p.floors[k] > ground[c] {
+                ground[c] = p.floors[k];
+                let above = p.floors[k] - before[k];
+                if above > 0.0 {
+                    fill.max_m = fill.max_m.max(above);
+                    fill.cells += 1;
+                }
             }
         }
         for (k, &c) in p.cells.iter().enumerate() {
@@ -619,6 +622,10 @@ pub(super) fn route(
     }
     flood::spill_cycles(dims, ground, flags, dir, |i| !on_path[i])
 }
+
+/// Judgment constant: cells a path into the previous band's water keeps from that band's dry
+/// ground below the water (room for its channel and a bank).
+const SEAM_CLEAR: isize = 4;
 
 /// Rise a seam bank may stand below the water beside it (as the report's bank check).
 const SEAM_BANK_M: f32 = super::report::BANK_TOLERANCE_M;
@@ -797,6 +804,7 @@ pub(super) fn rivers(
     inflows: &[Inflow],
     fixed_id: impl Fn(usize) -> u32,
     fixed_surface: impl Fn(usize) -> f32,
+    path_floor: impl Fn(usize) -> f32,
     back: impl Fn(usize) -> Option<usize>,
     core_rows: [usize; 2],
     spacing_m: f64,
@@ -1294,29 +1302,26 @@ pub(super) fn rivers(
                 .map(|r| fixed_surface(r as usize))
                 .filter(|s| s.is_finite());
             if let Some(s) = end_s {
+                // Within `SEAM_CLEAR` cells: the path's channel and banks, raised to its
+                // water, would reach there too (a levee on the seam).
                 let low_bank = |i: usize| {
+                    let (x, y) = ((i % w) as isize, (i / w) as isize);
                     flags[i] & FIXED == 0
-                        && dims.neighbours(i).any(|(_, k)| {
-                            flags[k] & FIXED != 0
-                                && flags[k] & (RIVER | SEA) == 0
-                                && fixed_id(k) == 0
-                                && ground[k] + SEAM_BANK_M < s
+                        && (-SEAM_CLEAR..=SEAM_CLEAR).any(|dy| {
+                            (-SEAM_CLEAR..=SEAM_CLEAR).any(|dx| {
+                                let (a, b) = (x + dx, y + dy);
+                                if a < 0 || b < 0 || a >= w as isize || b >= h as isize {
+                                    return false;
+                                }
+                                let k = b as usize * w + a as usize;
+                                flags[k] & FIXED != 0
+                                    && flags[k] & (RIVER | SEA) == 0
+                                    && fixed_id(k) == 0
+                                    && ground[k] + SEAM_BANK_M < s
+                            })
                         })
                 };
-                // As the bank check: not ground ahead along the path's flow.
-                let below = (0..cells.len()).any(|k| {
-                    let (i, to) = (cells[k] as usize, cells.get(k + 1).copied().or(next));
-                    let d = to.map_or(0, |t| dims.towards(i, t as usize));
-                    flags[i] & FIXED == 0
-                        && dims.neighbours(i).any(|(_, j)| {
-                            flags[j] & FIXED != 0
-                                && flags[j] & (RIVER | SEA) == 0
-                                && fixed_id(j) == 0
-                                && ground[j] + SEAM_BANK_M < s
-                                && !dims.ahead(d, i, j)
-                        })
-                });
-                if below {
+                if cells.iter().any(|&x| low_bank(x as usize)) {
                     let end = |j: usize| {
                         flags[j] & (FIXED | RIVER) == FIXED | RIVER
                             && fixed_id(j) == id
@@ -1334,9 +1339,19 @@ pub(super) fn rivers(
                 .filter(|&r| flags[r as usize] & FIXED != 0)
                 .map(|r| fixed_surface(r as usize))
                 .filter(|s| s.is_finite());
-            let floor = next
+            // Lowest bed each cell may get: never below the previous band's bed the path ends
+            // on, nor below the seam limit (`path_floor`) of any cell downstream (a path that
+            // must not cut beside the seam stays up and fills what lies lower above it, so it
+            // never climbs).
+            let end_bed = next
                 .filter(|_| end_s.is_some())
                 .map_or(f32::NEG_INFINITY, |r| ground[r as usize]);
+            let mut floors = vec![end_bed; cells.len()];
+            let mut low = end_bed;
+            for k in (0..cells.len()).rev() {
+                low = low.max(path_floor(cells[k] as usize));
+                floors[k] = low;
+            }
             // Cap: coarse surfaces at the middle of each run through one coarse cell of
             // this river, linear between them by path length.
             let mut s = vec![0f64; cells.len()];
@@ -1420,12 +1435,11 @@ pub(super) fn rivers(
                 let e = out.q.get_mut(&x).expect("set above");
                 *e = e.max(first);
             }
-            // That water cannot change and the previous band's checks held it.
-            if let Some(s) = end_s {
-                for x in &cells {
-                    if let Some(e) = out.cap.get_mut(x) {
-                        *e = e.max(s);
-                    }
+            // That water cannot change and the previous band's checks held it. The water may
+            // also stand on the floors the path keeps.
+            for (k, x) in cells.iter().enumerate() {
+                if let Some(e) = out.cap.get_mut(x) {
+                    *e = e.max(end_s.unwrap_or(f32::NEG_INFINITY)).max(floors[k]);
                 }
             }
             claimed.extend(cells.iter().map(|&x| (x, id)));
@@ -1434,7 +1448,7 @@ pub(super) fn rivers(
                 cells,
                 next,
                 source,
-                floor,
+                floors,
             });
         }
     }
@@ -1651,6 +1665,7 @@ mod tests {
             &[],
             |_| 0,
             |_| f32::NAN,
+            |_| f32::NEG_INFINITY,
             |_| None,
             [0, 6],
             2.0,
@@ -1715,6 +1730,7 @@ mod tests {
             &[inflow],
             fixed_id,
             |_| f32::NAN,
+            |_| f32::NEG_INFINITY,
             |j| (fixed_id(j) == 3).then_some(4 * 12 + 8),
             [4, 8],
             2.0,
@@ -1842,6 +1858,7 @@ mod tests {
             &[],
             fixed_id,
             |j| if river_cell(j) { 10.0 } else { f32::NAN },
+            |_| f32::NEG_INFINITY,
             |_| None,
             [2, 6],
             2.0,
