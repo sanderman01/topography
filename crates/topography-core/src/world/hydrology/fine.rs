@@ -625,6 +625,10 @@ pub(super) fn route(
     flood::spill_cycles(dims, ground, flags, dir, |i| !on_path[i])
 }
 
+/// Judgment constant: rows beside the seam a coarse path keeps off, and columns either side of
+/// where its river crosses the seam where it may run there (`rivers`).
+const SEAM_STRIP: usize = 16;
+
 /// Judgment constant: a path whose ground rises more than this above its lowest point upstream
 /// is laid again along the way that climbs least.
 const PATH_CLIMB_M: f32 = 5.0;
@@ -1342,6 +1346,19 @@ pub(super) fn rivers(
         for f in &my_inflows {
             heads.push((f.cell, 0, Some((f.surface, f.q))));
         }
+        // Columns near where this river (or what it ends in) crosses the seam, in the previous
+        // band's last row.
+        let fixed_rows = (0..h).find(|&y| flags[y * w] & FIXED == 0).unwrap_or(h);
+        let mut near_cross = vec![false; w];
+        if fixed_rows > 0 {
+            for x in 0..w {
+                let f = fixed_id((fixed_rows - 1) * w + x);
+                if f != 0 && (f == id || f == parent) {
+                    let (a, b) = (x.saturating_sub(SEAM_STRIP), (x + SEAM_STRIP).min(w - 1));
+                    near_cross[a..=b].fill(true);
+                }
+            }
+        }
         let river = out.ids.len();
         out.ids.push(id);
         for (head, source, inflow) in heads {
@@ -1373,8 +1390,17 @@ pub(super) fn rivers(
             // A path that climbs (down into a hollow, then up to its end, as where the coarse
             // river crosses the seam above a valley this band's ground holds) is laid again
             // along the way to that end that climbs least, so it is neither cut nor filled.
-            if let Some(end) = next.filter(|_| climb(ground, &cells) > PATH_CLIMB_M) {
-                let open = |i: usize| !claimed.contains_key(&(i as u32));
+            // So is one running along the seam away from where its river crosses it (it
+            // would be cut or filled against the ground the previous band keeps), if a way
+            // that keeps off the seam there climbs no more.
+            let along = |c: u32| {
+                let c = c as usize;
+                (fixed_rows..fixed_rows + SEAM_STRIP).contains(&(c / w)) && !near_cross[c % w]
+            };
+            let runs_along = fixed_rows > 0 && cells.iter().any(|&c| along(c));
+            let climbs = climb(ground, &cells);
+            if let Some(end) = next.filter(|_| climbs > PATH_CLIMB_M || runs_along) {
+                let open = |i: usize| !claimed.contains_key(&(i as u32)) && !along(i as u32);
                 if let Some(way) = route_descending(
                     dims,
                     ground,
@@ -1385,7 +1411,12 @@ pub(super) fn rivers(
                     end as usize,
                     open,
                 ) {
-                    if climb(ground, &way) < climb(ground, &cells) {
+                    let better = if runs_along {
+                        climb(ground, &way) <= climbs + 1.0
+                    } else {
+                        climb(ground, &way) < climbs
+                    };
+                    if better {
                         cells = way;
                         out.relaid += 1;
                     }
@@ -1426,8 +1457,12 @@ pub(super) fn rivers(
                             && back(j).is_none()
                     };
                     let avoid = |i: usize| low_bank(i) || claimed.contains_key(&(i as u32));
+                    // Not a way that climbs much more (a crossing above a hollow).
                     if let Some((way, j)) =
                         route_round(dims, ground, flags, body, basins, head as usize, end, avoid)
+                            .filter(|(way, _)| {
+                                climb(ground, way) <= climb(ground, &cells) + PATH_CLIMB_M
+                            })
                     {
                         (cells, next) = (way, Some(j));
                     }
