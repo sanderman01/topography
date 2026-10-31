@@ -269,7 +269,8 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
 }
 
 /// Lakes whose cells form more than one 8-connected piece. A piece touching a band edge row
-/// may join the rest beyond it and does not count. Also a cell of each extra piece.
+/// may join the rest beyond it and does not count, nor does a piece only of the previous
+/// band's cells. Also a cell of each extra piece.
 fn lake_pieces(c: &Context) -> (usize, Vec<usize>) {
     let n = c.ground.len();
     let mut seen = vec![false; n];
@@ -283,9 +284,12 @@ fn lake_pieces(c: &Context) -> (usize, Vec<usize>) {
         };
         seen[i] = true;
         stack.push(i);
-        let mut edge = false;
+        // A piece only of the previous band's cells was joined through that band's halo,
+        // which this band made again; it cannot change here and does not count.
+        let (mut edge, mut taken) = (false, true);
         while let Some(a) = stack.pop() {
             edge |= open(a);
+            taken &= c.fixed(a);
             for (_, j) in c.dims.neighbours(a) {
                 if !seen[j] && c.lake(j) == Some(id) {
                     seen[j] = true;
@@ -293,7 +297,7 @@ fn lake_pieces(c: &Context) -> (usize, Vec<usize>) {
                 }
             }
         }
-        if !edge {
+        if !edge && !taken {
             pieces[id as usize] += 1;
             if pieces[id as usize] > 1 {
                 extra.push(i);
