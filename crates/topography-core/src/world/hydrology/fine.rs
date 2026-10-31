@@ -687,7 +687,11 @@ fn route_stranded(
     };
     let mut from: HashMap<usize, usize> = HashMap::new();
     let mut heap = BinaryHeap::new();
-    for &s in sources.iter().filter(|&&s| open(s)) {
+    // Never from a routed cell or seed: a new receiver there could close a loop.
+    for &s in sources
+        .iter()
+        .filter(|&&s| open(s) && !recv.contains_key(&(s as u32)) && !seeds.contains(&(s as u32)))
+    {
         from.insert(s, s);
         heap.push(Item(ground[s], s as u32));
     }
@@ -708,7 +712,10 @@ fn route_stranded(
             let fixed_water = flags[j] & FIXED != 0
                 && flags[j] & (RIVER | SEA) != 0
                 && back(j).is_none_or(|r| recv.contains_key(&(r as u32)));
+            // A seed (such as a dry basin mouth cell) ends the way: routed through, it would
+            // take a receiver and close a loop with the chains already ending in it.
             if recv.contains_key(&(j as u32))
+                || seeds.contains(&(j as u32))
                 || flags[j] & SEA != 0
                 || lake(j)
                 || claimed(j)
@@ -943,7 +950,8 @@ pub(super) fn rivers(
                     .then(|| cd.neighbour(last, d as usize - 1))
                     .flatten()
                     .filter(|&p| on_line(p));
-                match next {
+                // A coarse loop (none expected) ends the chain instead of hanging.
+                match next.filter(|_| chain.len() <= own.len()) {
                     Some(p) => match rank.get(&p) {
                         Some(&r) => {
                             base = r + 1;
@@ -1143,6 +1151,10 @@ pub(super) fn rivers(
                 .map(|f| vec![f.cell as usize]),
         );
         for sources in stranded {
+            // An earlier way may have run through this head: it is reached now.
+            if sources.iter().any(|&s| recv.contains_key(&(s as u32))) {
+                continue;
+            }
             route_stranded(
                 dims,
                 ground,
@@ -1181,7 +1193,11 @@ pub(super) fn rivers(
             // path climbs to the stem would have the stem burned down to it.
             let climb = |i: usize| {
                 let (mut at, mut top) = (i as u32, ground[i]);
-                while let Some(&r) = recv.get(&at).filter(|&&r| r != u32::MAX) {
+                // Bounded: a loop (never made) cannot hang the run.
+                for _ in 0..=recv.len() {
+                    let Some(&r) = recv.get(&at).filter(|&&r| r != u32::MAX) else {
+                        break;
+                    };
                     top = top.max(ground[r as usize]);
                     if seeds.contains(&r) {
                         break;
@@ -1233,6 +1249,10 @@ pub(super) fn rivers(
             let mut at = head;
             let next = loop {
                 cells.push(at);
+                // A loop in the receivers (never made) counts as unrouted instead of hanging.
+                if cells.len() > recv.len() + 1 {
+                    break Some(u32::MAX);
+                }
                 // A grid-edge outlet in the corridor ends the path on it.
                 match recv[&at] {
                     u32::MAX => break None,
@@ -1240,6 +1260,11 @@ pub(super) fn rivers(
                     r => at = r,
                 }
             };
+            if next == Some(u32::MAX) {
+                eprintln!("hydrology: coarse river {id} has a receiver loop; left unrouted");
+                out.unrouted.push(id);
+                continue;
+            }
             // Ending in the previous band's water (surface `end_s`): a way beside that band's
             // dry ground below it (which cannot be raised) goes round, to this river's water
             // there; the path stands at least at that surface and its bed at the end's.
