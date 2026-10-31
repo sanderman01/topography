@@ -1097,6 +1097,23 @@ mod tests {
     }
 
     #[test]
+    fn a_region_spills_where_its_way_back_is_free() {
+        // One row: the 2-cycle (3, 4) with donors 1 -> 2 -> 3 and 5 -> 4. The lowest outlet
+        // (0, beside 1) is reached back only through 2, which may not change (a coarse path):
+        // the region spills over 6 instead.
+        let dims = Dims { w: 7, h: 1 };
+        let mut ground = vec![5.0f32; 7];
+        (ground[0], ground[6]) = (1.0, 2.0);
+        let flags = vec![0u8; 7];
+        let (e, w) = (4u8, 3u8);
+        let mut dir = vec![0, e, e, e, w, w, 0];
+        assert_eq!(cycle_cells(dims, &dir), 2);
+        spill_cycles(dims, &ground, &flags, &mut dir, |i| i != 2);
+        assert_eq!(cycle_cells(dims, &dir), 0);
+        assert_eq!((dir[2], dir[4], dir[5]), (e, e, e));
+    }
+
+    #[test]
     fn the_sea_does_not_flood_a_coarse_lake() {
         // Ground below 0 m from the edge (column 0) to column 4; columns 2 and 3 are a coarse
         // lake's cells, so the sea stops at column 1.

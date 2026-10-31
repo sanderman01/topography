@@ -1722,4 +1722,137 @@ mod tests {
                 .any(|p| p.next.is_some_and(|n| (n as usize) < fixed))
         );
     }
+
+    /// Whether following `recv` from every cell ends (no loop).
+    fn no_loop(recv: &HashMap<u32, u32>) -> bool {
+        recv.keys().all(|&k| {
+            let mut at = k;
+            (0..=recv.len()).any(|_| match recv.get(&at) {
+                Some(&r) if r != u32::MAX => {
+                    at = r;
+                    false
+                }
+                _ => true,
+            })
+        })
+    }
+
+    #[test]
+    fn stranded_ways_close_no_receiver_loop() {
+        // 6 x 3, row 1 falling east between high rows, an outlet at (5, 1). Head A (0, 1) is routed first and
+        // its way runs through (2, 1), a cell of head B; (4, 1) is a seed (a dry basin mouth).
+        // A's way ends at the seed; B, routed after, must not start from its routed cell
+        // (re-pointing it into A's way closed the loop that hung band 53).
+        let dims = Dims { w: 6, h: 3 };
+        let ground: Vec<f32> = (0..18)
+            .map(|i| {
+                if i / 6 == 1 {
+                    10.0 - (i % 6) as f32
+                } else {
+                    20.0
+                }
+            })
+            .collect();
+        let mut flags = vec![0u8; 18];
+        flags[11] = OUTLET;
+        let (mut recv, mut seeds, mut corridor) = (HashMap::new(), HashSet::new(), HashSet::new());
+        seeds.insert(10);
+        let mut outlets = Vec::new();
+        for sources in [vec![6], vec![8, 2, 14]] {
+            route_stranded(
+                dims,
+                &ground,
+                &flags,
+                &[0; 18],
+                &[],
+                &sources,
+                |_| false,
+                &|_| None,
+                3,
+                &mut recv,
+                &mut seeds,
+                &mut corridor,
+                &mut outlets,
+            );
+            if sources == [6] {
+                assert_eq!((recv[&8], recv.get(&10)), (9, None), "ends at the seed");
+            }
+        }
+        assert_eq!(recv[&8], 9, "a routed cell keeps its receiver");
+        assert!(no_loop(&recv), "{recv:?}");
+    }
+
+    #[test]
+    fn a_path_into_the_previous_bands_water_meets_its_bed_and_surface() {
+        // 3 x 3 coarse cells of 2 x 2 fine cells; the top coarse row is the previous band's.
+        // River 3 runs north from (1, 2) into that band's river at (1, 0), whose bed (9.5 m)
+        // and water (10 m) stand above this band's valley (5 m) and the coarse surface (6 m).
+        // The path is not cut below that bed (the valley is filled) and its cap allows the
+        // water.
+        let mut c = coarse();
+        (c.size, c.ww, c.wh) = ([3, 3], 3, 3);
+        c.body = vec![0, 3, 0, 0, 3, 0, 0, 3, 0];
+        let line = FLOW_CENTRE | 1;
+        c.flow = vec![0, line, 0, 0, line, 0, 0, line, 0];
+        c.surface = vec![
+            f32::NAN,
+            6.0,
+            f32::NAN,
+            f32::NAN,
+            6.0,
+            f32::NAN,
+            f32::NAN,
+            6.0,
+            f32::NAN,
+        ];
+        c.discharge = vec![1.0; 9];
+        c.lakes = HashMap::new();
+        c.rivers = HashMap::from([(
+            3,
+            River {
+                parent: 7,
+                drainage_km2: 1.0,
+            },
+        )]);
+        let dims = Dims { w: 6, h: 6 };
+        let fixed = 2 * 6;
+        let river_cell = |j: usize| j < fixed && (2..4).contains(&(j % 6));
+        let mut flags = vec![0u8; 36];
+        let mut ground = vec![5.0f32; 36];
+        for j in 0..fixed {
+            flags[j] = FIXED;
+            ground[j] = 12.0;
+            if river_cell(j) {
+                flags[j] |= RIVER | CENTRE;
+                ground[j] = 9.5;
+            }
+        }
+        let fixed_id = |j: usize| if river_cell(j) { 3 } else { 0 };
+        let im = rivers(
+            dims,
+            &mut ground,
+            &flags,
+            &[0; 36],
+            &[],
+            &c,
+            &[],
+            fixed_id,
+            |j| if river_cell(j) { 10.0 } else { f32::NAN },
+            |_| None,
+            [2, 6],
+            2.0,
+        );
+        assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
+        let p = &im.paths[0];
+        assert!(p.next.is_some_and(|n| (n as usize) < fixed));
+        for &x in &p.cells {
+            assert!(
+                ground[x as usize] >= 9.5,
+                "bed {} at {x}",
+                ground[x as usize]
+            );
+            assert!(im.cap.get(&x).is_none_or(|&s| s >= 10.0));
+        }
+        assert!(im.fill.cells > 0 && (im.fill.max_m - 4.5).abs() < 1e-4);
+    }
 }
