@@ -346,7 +346,7 @@ pub(super) fn leak_cells(
 /// at the same level, every coarse river present and routed, no fine water of a coarse river
 /// above its coarse surface (the highest over its coarse cell and the 8 around it, or its
 /// path's cap where higher: the interpolation along the path, or a coarse lake's level beside
-/// it) by more than the tolerance.
+/// it, or sea level for a river ending in the sea) by more than the tolerance.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn consistency(
     dims: Dims,
@@ -358,6 +358,7 @@ pub(super) fn consistency(
     core_rows: [usize; 2],
     cap: &HashMap<u32, f32>,
     body_id: &dyn Fn(usize) -> u32,
+    to_sea: &HashSet<u32>,
 ) -> (Map<String, Value>, Value) {
     let (w, h) = (dims.w, dims.h);
     let mut present: HashSet<u32> = HashSet::new();
@@ -387,8 +388,15 @@ pub(super) fn consistency(
             .filter_map(|(_, j)| c.lakes.get(&body_id(j)))
             .map(|l| l.level)
             .fold(f32::NEG_INFINITY, f32::max);
+        // A river reaching the sea here (`to_sea`) never stands below sea level (it rises to
+        // the sea it flows into), though its coarse surface may (a coastal hollow).
+        let sea = if to_sea.contains(&id) {
+            0.0
+        } else {
+            f32::NEG_INFINITY
+        };
         let top = if top.is_finite() {
-            top.max(beside)
+            top.max(beside).max(sea)
         } else {
             top
         };
@@ -1483,6 +1491,7 @@ mod tests {
             [0, 4],
             &HashMap::new(),
             &|i| s.ids[i],
+            &HashSet::new(),
         );
         m.into_iter()
             .filter(|(_, v)| v.as_u64() != Some(0))

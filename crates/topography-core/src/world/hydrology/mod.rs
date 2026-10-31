@@ -1064,6 +1064,22 @@ pub fn run(options: &Options) -> Result<Outcome> {
     bodies["next_id"] = json!(next);
     let mut figures = report::figures(&ctx, &carve, extended);
     if let Some(c) = &coarse {
+        // Rivers reaching the sea here, through the rivers they join.
+        let to_sea: std::collections::HashSet<u32> = rivers
+            .iter()
+            .filter(|r| {
+                let mut r = *r;
+                for _ in 0..rivers.len() {
+                    match r.end {
+                        rivers::End::Sea => return true,
+                        rivers::End::Joins(b) if b != 0 => r = &rivers[b as usize - 1],
+                        _ => return false,
+                    }
+                }
+                false
+            })
+            .map(|r| r.id)
+            .collect();
         let (consistency, consistency_figures) = fine::consistency(
             dims,
             &flags,
@@ -1074,6 +1090,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             grid.core_rows,
             &path_cap,
             &body_id,
+            &to_sea,
         );
         checks.extend(consistency);
         // Coarse lakes still leaking after the sill rounds.
