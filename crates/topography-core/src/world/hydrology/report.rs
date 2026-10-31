@@ -224,7 +224,7 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
             off
         })
         .count();
-    let (pieces, split) = lake_pieces(c);
+    let (pieces, split, _) = lake_pieces(c);
     for i in split {
         note("lakes_in_several_pieces", i);
     }
@@ -270,11 +270,14 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
 
 /// Lakes whose cells form more than one 8-connected piece. A piece touching a band edge row
 /// may join the rest beyond it and does not count, nor does a piece only of the previous
-/// band's cells. Also a cell of each extra piece.
-fn lake_pieces(c: &Context) -> (usize, Vec<usize>) {
+/// band's cells. Also a cell of each extra piece, and of each piece only of the previous
+/// band's cells of a lake that has other pieces (split at the seam, shown as a figure).
+fn lake_pieces(c: &Context) -> (usize, Vec<usize>, Vec<usize>) {
     let n = c.ground.len();
     let mut seen = vec![false; n];
     let mut pieces = vec![0u32; c.basins.len() + 1];
+    let mut all = vec![0u32; c.basins.len() + 1];
+    let mut taken_at: Vec<(u32, usize)> = Vec::new();
     let mut extra = Vec::new();
     let mut stack = Vec::new();
     let open = |i: usize| (c.open_rows[0] && i < c.dims.w) || (c.open_rows[1] && i >= n - c.dims.w);
@@ -297,6 +300,10 @@ fn lake_pieces(c: &Context) -> (usize, Vec<usize>) {
                 }
             }
         }
+        all[id as usize] += 1;
+        if taken && !edge {
+            taken_at.push((id, i));
+        }
         if !edge && !taken {
             pieces[id as usize] += 1;
             if pieces[id as usize] > 1 {
@@ -304,7 +311,12 @@ fn lake_pieces(c: &Context) -> (usize, Vec<usize>) {
             }
         }
     }
-    (pieces.iter().filter(|&&p| p > 1).count(), extra)
+    let at_seam = taken_at
+        .into_iter()
+        .filter(|&(id, _)| all[id as usize] > 1)
+        .map(|(_, i)| i)
+        .collect();
+    (pieces.iter().filter(|&&p| p > 1).count(), extra, at_seam)
 }
 
 /// Dry cells below an adjacent river surface that the bank check lets pass only because
@@ -367,7 +379,14 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
     let here = || c.rivers.iter().filter(|r| r.cells > 0);
     let ends = |e: fn(&End) -> bool| here().filter(|r| e(&r.end)).count();
     let km2 = |cells: usize| cells as f64 * c.cell_km2;
+    let (_, _, at_seam) = lake_pieces(c);
+    let w = c.dims.w;
     let value = json!({
+        // Not a check: this band cannot change the previous band's cells.
+        "lake_pieces_split_at_seam": {
+            "count": at_seam.len(),
+            "at_cells": at_seam.iter().take(3).map(|&i| [i % w, i / w]).collect::<Vec<_>>(),
+        },
         "cells": n,
         "spacing_m": c.spacing_m,
         "sea_km2": km2(sea),
