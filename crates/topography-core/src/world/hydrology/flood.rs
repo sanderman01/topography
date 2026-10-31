@@ -799,6 +799,21 @@ pub(super) fn unclimb(
     changed
 }
 
+/// Whether the routing from `from` reaches `to` (within 4,096 cells; longer counts as yes).
+pub(super) fn reaches(dims: Dims, dir: &[u8], from: usize, to: usize) -> bool {
+    let mut c = from;
+    for _ in 0..4096 {
+        if c == to {
+            return true;
+        }
+        match receiver(dims, dir, c) {
+            Some(r) => c = r,
+            None => return false,
+        }
+    }
+    true
+}
+
 /// Cells on receiver cycles take the receiver `pick` gives (None: leave the cell), until no
 /// cycle is left, no cell changes or after 32 rounds. Returns the cells changed.
 pub(super) fn restore_on_cycles(

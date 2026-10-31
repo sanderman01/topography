@@ -164,7 +164,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
         .map_or_else(Vec::new, |b| band::reentry(dims, &b.flow, fixed_rows));
     let reenters: Vec<bool> = reentry.iter().map(|&r| r != band::NO_ENTRY).collect();
     if let Some(b) = &north {
-        band::blend_seam(dims, fixed_rows, &mut ground, &b.halo_ground);
         for i in 0..fixed_rows * w {
             ground[i] = b.ground[i];
             flags[i] |= FIXED;
@@ -179,6 +178,16 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 _ => {}
             }
         }
+        let limit = band::seam_limit(
+            dims,
+            fixed_rows,
+            &ground,
+            |i| flags[i] & (RIVER | SEA) != 0 || fixed_kind(i) == Some(BodyKind::Lake),
+            BREACH_MAX_M,
+            erosion::SIDE_SLOPE_DEG.to_radians().tan(),
+            grid.spacing_m,
+        );
+        band::blend_seam(dims, fixed_rows, &mut ground, &b.halo_ground, &limit);
         // Fixed cells draining into this run's cells feed it; the others beside them are
         // outlets, unless their flow in the previous band comes back here (a loop).
         for (i, f) in flags.iter_mut().enumerate().take(fixed_rows * w) {
@@ -229,10 +238,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
 
     // On finer levels no cut goes deeper than BREACH_MAX_M below the ground here, nor leaves a
     // step at the seam (`band::ground_floor`); the trunk level carves as it did.
-    // This band's first row as it starts (after the blend), for the seam step check.
-    let start_row: Vec<f32> = ground
-        .get(fixed_rows * w..(fixed_rows + 1) * w)
-        .map_or_else(Vec::new, <[f32]>::to_vec);
     let (carve_floor, seam_floor): (Vec<f32>, Vec<f32>) = if coarse.is_some() {
         band::ground_floor(
             dims,
@@ -634,8 +639,78 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &inflow,
         &carve_floor,
     );
-    if seam_joins > 0 || inflows_rerouted.rivers > 0 {
+    // A river with no way on that does not climb ends where it enters, in a sink.
+    for &r in &inflows_rerouted.stuck {
+        if body[r] == 0 {
+            basins.push(lakes::Basin::kept(Kind::Sink, ground[r], lakes::NO_EXIT));
+            kept_basin.push(true);
+            body[r] = basins.len() as u32;
+            dir[r] = 0;
+        }
+    }
+    if seam_joins > 0 || inflows_rerouted.rivers > 0 || !inflows_rerouted.stuck.is_empty() {
         cycles = flood::accumulate(dims, &dir, weight, &mut acc);
+    }
+    // A river whose water would have to climb past what its carve floor lets carving lower
+    // (near the seam, any rise of the previous band's ground beside it) takes its steepest
+    // other way down, or ends there in a sink: no trench below the floor.
+    let (mut climbs_turned, mut climbs_ended) = (0u64, 0u64);
+    if coarse.is_some() {
+        let mut path = vec![false; n];
+        for p in imprint.iter().flat_map(|im| &im.paths) {
+            for &x in &p.cells {
+                path[x as usize] = true;
+            }
+        }
+        for _ in 0..4 {
+            let at = rivers::climbs(
+                dims,
+                &ground,
+                &flags,
+                &body,
+                &basins,
+                &dir,
+                &acc,
+                river_km2,
+                &carve_floor,
+                |i| path[i],
+            );
+            if at.is_empty() {
+                break;
+            }
+            for c in at {
+                let r = receiver(dims, &dir, c);
+                let to = dims
+                    .neighbours(c)
+                    .filter(|&(_, j)| {
+                        Some(j) != r
+                            && ground[j] < ground[c]
+                            && (flags[j] & FIXED == 0 || flags[j] & (OUTLET | RIVER | SEA) != 0)
+                            && !flood::reaches(dims, &dir, j, c)
+                    })
+                    .max_by(|a, b| {
+                        let slope = |&(k, j): &(usize, usize)| {
+                            (ground[c] - ground[j]) / Dims::step(k as u8 + 1) as f32
+                        };
+                        slope(a).total_cmp(&slope(b))
+                    });
+                match to {
+                    Some((_, j)) => {
+                        dir[c] = dims.towards(c, j);
+                        climbs_turned += 1;
+                    }
+                    None if body[c] == 0 => {
+                        basins.push(lakes::Basin::kept(Kind::Sink, ground[c], lakes::NO_EXIT));
+                        kept_basin.push(true);
+                        body[c] = basins.len() as u32;
+                        dir[c] = 0;
+                        climbs_ended += 1;
+                    }
+                    None => {}
+                }
+            }
+            cycles = flood::accumulate(dims, &dir, weight, &mut acc);
+        }
     }
     lap("accumulate", &mut t);
 
@@ -1100,6 +1175,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     drop(unclimbed);
 
     let mut carve = report::Carve::default();
+    let mut slots = report::Slots::new(w, fixed_rows);
     grid::for_each_input_row(&options.grid, grid.w, |y, row| {
         if y >= fixed_rows {
             carve.add(
@@ -1108,6 +1184,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 &ground[y * grid.w..(y + 1) * grid.w],
                 grid.spacing_m,
             );
+        }
+        if coarse.is_some() && y + 1 >= fixed_rows {
+            slots.add(y, row, &ground, &surface);
         }
     })?;
     let open_rows = coarse.as_ref().map_or([false; 2], |c| {
@@ -1133,7 +1212,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         spacing_m: grid.spacing_m,
         open_rows,
         fixed_rows,
-        start_row: &start_row,
+        carve_floor: &carve_floor,
     };
     // Cycles on this run's final routing (taken cells end it), before accumulation, or in
     // the routing stitched with the previous band's (a loop across the seam: the previous band
@@ -1147,7 +1226,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
     bodies["next_id"] = json!(next);
     let mut figures = report::figures(&ctx, &carve, extended);
     if coarse.is_some() {
-        let (carving, carving_figures) = report::carving(&ctx, &carve_floor, fixed_rows, &body_id);
+        let (carving, carving_figures) =
+            report::carving(&ctx, &carve_floor, fixed_rows, &body_id, &carve, &slots);
         checks.extend(carving);
         figures.insert("carving".into(), carving_figures);
     }
@@ -1233,6 +1313,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 "inflows_rerouted": inflows_rerouted.rivers,
                 "inflow_reroute_cells_lowered": inflows_rerouted.cells,
                 "inflow_reroute_max_cut_m": inflows_rerouted.max_m,
+                "inflows_ended_in_a_sink": inflows_rerouted.stuck.len(),
             }),
         );
     }
@@ -1260,6 +1341,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("channel_widening".into(), channel_widening);
     figures.insert("receivers_set_by_steepest_descent".into(), json!(resteered));
     figures.insert("receivers_spilled".into(), json!(receivers_spilled));
+    figures.insert("river_climbs_turned".into(), json!(climbs_turned));
+    figures.insert("river_climbs_ended_in_a_sink".into(), json!(climbs_ended));
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));

@@ -128,8 +128,17 @@ fn same_surface(a: f32, b: f32) -> bool {
 
 /// Blend this grid's first free rows from the previous band's ground (`halo`, whole rows
 /// after `fixed_rows`) into its own over `SEAM_BLEND_ROWS`: that ground is continuous with the
-/// rows taken from it, so the seam starts without a step whichever band carved there.
-pub(super) fn blend_seam(dims: Dims, fixed_rows: usize, ground: &mut [f32], halo: &[f32]) {
+/// rows taken from it, so the seam starts without a step whichever band carved there. Where
+/// that band carved its halo below the seam limit (`limit`, whole rows from `seam_limit`; a
+/// channel its hydrology guessed there), the blend takes no more of the cut than the limit
+/// allows, nor below this band's own ground.
+pub(super) fn blend_seam(
+    dims: Dims,
+    fixed_rows: usize,
+    ground: &mut [f32],
+    halo: &[f32],
+    limit: &[f32],
+) {
     let w = dims.w;
     let rows = (halo.len() / w).min(dims.h.saturating_sub(fixed_rows));
     for d in 0..rows {
@@ -137,21 +146,21 @@ pub(super) fn blend_seam(dims: Dims, fixed_rows: usize, ground: &mut [f32], halo
         let row = (fixed_rows + d) * w;
         for x in 0..w {
             let (h, g) = (halo[d * w + x], ground[row + x]);
+            let f = limit
+                .get(d * w + x)
+                .map_or(f32::NEG_INFINITY, |&f| f.min(g));
             if h.is_finite() {
-                ground[row + x] = k * h + (1.0 - k) * g;
+                ground[row + x] = k * h.max(f) + (1.0 - k) * g;
             }
         }
     }
 }
 
-/// Lowest ground each free cell may be carved to: at most `depth_m` below its ground now, and
-/// near the seam not below the previous band's dry ground in its last row less the side slope
-/// (`tan`) over the distance, so no cut leaves a step at the seam. Beside water there (`wet`)
-/// the limit is that water's bed plus the side slope instead, where lower: rivers and lakes
-/// cross the seam at their own beds. Fixed cells get +inf (never carved). Also the seam limit
-/// alone over the rows it reaches after `fixed_rows` (whole rows; coarse river paths keep only
-/// that one, as the coarse network sets where they run).
-pub(super) fn ground_floor(
+/// The seam limit over the free rows after `fixed_rows` (whole rows, as far as a carve
+/// `depth_m` deep can matter): the previous band's dry ground in its last row less the side
+/// slope (`tan`) over the distance, or beside water there (`wet`) that water's bed plus the
+/// slope, where lower.
+pub(super) fn seam_limit(
     dims: Dims,
     fixed_rows: usize,
     ground: &[f32],
@@ -159,12 +168,10 @@ pub(super) fn ground_floor(
     depth_m: f32,
     tan: f32,
     spacing_m: f64,
-) -> (Vec<f32>, Vec<f32>) {
+) -> Vec<f32> {
     let w = dims.w;
-    let mut floor: Vec<f32> = ground.iter().map(|&g| g - depth_m).collect();
-    floor[..fixed_rows * w].fill(f32::INFINITY);
     if fixed_rows == 0 {
-        return (floor, Vec::new());
+        return Vec::new();
     }
     let last = (fixed_rows - 1) * w;
     // Dry ground sets the limit; beside water in that row it may go down to the water's bed
@@ -190,9 +197,8 @@ pub(super) fn ground_floor(
     // Beyond this many cells a source's limit lies below every carve's depth bound.
     let reach = (depth_m / (tan * spacing_m as f32)).ceil() as usize + 1;
     let rows = reach.min(dims.h - fixed_rows);
-    let mut seam_rows = vec![f32::NEG_INFINITY; rows * w];
+    let mut out = vec![f32::NEG_INFINITY; rows * w];
     for dy in 1..=rows {
-        let row = (fixed_rows - 1 + dy) * w;
         let drop: Vec<f32> = (0..=reach)
             .map(|dx| tan * ((dx * dx + dy * dy) as f32).sqrt() * spacing_m as f32)
             .collect();
@@ -204,12 +210,37 @@ pub(super) fn ground_floor(
             let wet = (a..=b)
                 .map(|s| water[s] + drop[s.abs_diff(x)])
                 .fold(f32::INFINITY, f32::min);
-            let seam = dry.min(wet);
-            // Never above the cell's own ground (natural slopes steeper than `tan` stay).
-            let seam = seam.min(ground[row + x]);
-            floor[row + x] = floor[row + x].max(seam);
-            seam_rows[(dy - 1) * w + x] = seam;
+            out[(dy - 1) * w + x] = dry.min(wet);
         }
+    }
+    out
+}
+
+/// Lowest ground each free cell may be carved to: at most `depth_m` below its ground now, and
+/// near the seam not below the previous band's dry ground in its last row less the side slope
+/// (`tan`) over the distance, so no cut leaves a step at the seam. Beside water there (`wet`)
+/// the limit is that water's bed plus the side slope instead, where lower: rivers and lakes
+/// cross the seam at their own beds. Fixed cells get +inf (never carved). Also the seam limit
+/// alone over the rows it reaches after `fixed_rows` (whole rows; coarse river paths keep only
+/// that one, as the coarse network sets where they run).
+pub(super) fn ground_floor(
+    dims: Dims,
+    fixed_rows: usize,
+    ground: &[f32],
+    wet: impl Fn(usize) -> bool,
+    depth_m: f32,
+    tan: f32,
+    spacing_m: f64,
+) -> (Vec<f32>, Vec<f32>) {
+    let w = dims.w;
+    let mut floor: Vec<f32> = ground.iter().map(|&g| g - depth_m).collect();
+    floor[..fixed_rows * w].fill(f32::INFINITY);
+    let mut seam_rows = seam_limit(dims, fixed_rows, ground, wet, depth_m, tan, spacing_m);
+    for (k, seam) in seam_rows.iter_mut().enumerate() {
+        let i = fixed_rows * w + k;
+        // Never above the cell's own ground (natural slopes steeper than `tan` stay).
+        *seam = seam.min(ground[i]);
+        floor[i] = floor[i].max(*seam);
     }
     (floor, seam_rows)
 }
@@ -339,6 +370,16 @@ pub(super) fn join_seam_rivers(
         if into > low {
             continue;
         }
+        // Nor a route the carve floor would keep from descending (it would need a trench).
+        let mut level = ground[route[0]];
+        let climbs = route.iter().skip(1).any(|&c| {
+            let f = carve_floor.get(c).copied().unwrap_or(f32::NEG_INFINITY);
+            level = level.min(ground[c]);
+            f > level
+        });
+        if climbs {
+            continue;
+        }
         dir[last] = k as u8 + 1;
         for p in route.windows(2) {
             dir[p[0]] = dims.towards(p[0], p[1]);
@@ -354,10 +395,10 @@ pub(super) fn join_seam_rivers(
 
 /// Rivers entering from the previous band (`inflow`: fixed centreline cell, free cell) whose
 /// routing here leaves back across the seam onto that band's dry ground (its halo guess ran
-/// elsewhere): reroute each from its entry over free cells along the lowest way (least
-/// highest ground) to water, a basin, the grid edge or the previous band's river, on ground
-/// lowered to a running minimum so the route never climbs (no depth limit: the cut is
-/// reported).
+/// elsewhere): reroute each from its entry over free cells to water, a basin, the grid edge or
+/// the previous band's river, on ground lowered to a running minimum so the route never
+/// climbs, and only over cells whose carve floor allows that (no trench). A river with no such
+/// way is left in `stuck` (its entry ends in a sink).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reroute_inflows(
     dims: Dims,
@@ -418,10 +459,14 @@ pub(super) fn reroute_inflows(
         if flags[i] & CENTRE == 0 || ends_well(&mut memo, dir, r) {
             continue;
         }
+        // Along the way whose water level (the running minimum of the ground) stays highest,
+        // only over cells that can be lowered to that level (their carve floor is not above
+        // it): the route never climbs, so it needs no trench.
+        let floor = |c: usize| carve_floor.get(c).copied().unwrap_or(f32::NEG_INFINITY);
         let mut from: HashMap<usize, usize> = HashMap::from([(r, r)]);
-        let mut heap = std::collections::BinaryHeap::from([Lowest(ground[r], r)]);
+        let mut heap = std::collections::BinaryHeap::from([Widest(ground[r], ground[r], r)]);
         let mut end = None;
-        'search: while let Some(Lowest(z, c)) = heap.pop() {
+        'search: while let Some(Widest(level, _, c)) = heap.pop() {
             if c != r && ends_well(&mut memo, dir, c) {
                 end = Some((c, None));
                 break;
@@ -431,20 +476,27 @@ pub(super) fn reroute_inflows(
                     continue;
                 }
                 if j < first {
-                    if fixed_end(j) {
+                    if fixed_end(j) && ground[j] <= level {
                         end = Some((c, Some(j)));
                         break 'search;
                     }
                     continue;
                 }
+                if floor(j) > level {
+                    continue;
+                }
                 from.insert(j, c);
-                heap.push(Lowest(z.max(ground[j]), j));
+                heap.push(Widest(level.min(ground[j]), ground[j], j));
             }
             if from.len() > MAX_CELLS {
                 break;
             }
         }
-        let Some((last, into)) = end else { continue };
+        let Some((last, into)) = end else {
+            // No way out that does not climb: the river ends here (a sink).
+            cut.stuck.push(r);
+            continue;
+        };
         let mut route = vec![last];
         while route[route.len() - 1] != r {
             route.push(from[&route[route.len() - 1]]);
@@ -482,28 +534,33 @@ pub(super) fn reroute_inflows(
     cut
 }
 
-/// What `reroute_inflows` did: rivers rerouted, cells lowered and the deepest cut.
-#[derive(Clone, Copy, Default)]
+/// What `reroute_inflows` did: rivers rerouted, cells lowered and the deepest cut, and the
+/// entry cells of rivers with no way out that does not climb.
+#[derive(Clone, Default)]
 pub(super) struct Reroute {
     pub rivers: u64,
     pub cells: u64,
     pub max_m: f32,
+    pub stuck: Vec<usize>,
 }
 
-/// Min-heap entry by ground height.
-struct Lowest(f32, usize);
-impl PartialEq for Lowest {
+/// Max-heap entry: the highest water level first, then the lowest ground, then the lowest index.
+struct Widest(f32, f32, usize);
+impl PartialEq for Widest {
     fn eq(&self, o: &Self) -> bool {
         self.cmp(o).is_eq()
     }
 }
-impl Eq for Lowest {}
-impl Ord for Lowest {
+impl Eq for Widest {}
+impl Ord for Widest {
     fn cmp(&self, o: &Self) -> std::cmp::Ordering {
-        o.0.total_cmp(&self.0).then(o.1.cmp(&self.1))
+        self.0
+            .total_cmp(&o.0)
+            .then(o.1.total_cmp(&self.1))
+            .then(o.2.cmp(&self.2))
     }
 }
-impl PartialOrd for Lowest {
+impl PartialOrd for Widest {
     fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(o))
     }
@@ -883,6 +940,24 @@ mod tests {
         assert_eq!((n.rivers, n.cells), (1, 1));
         assert_eq!(n.max_m, 1.0);
         assert_eq!((dir[4], ground[8]), (2, 5.0));
+        // Where no cell beside the entry may be carved down to its level, the route would
+        // climb: no reroute, the river ends at its entry.
+        ground[8] = 6.0;
+        let floor: Vec<f32> = ground.iter().map(|&g| g - 0.5).collect();
+        let mut dir = vec![0u8; 16];
+        (dir[4], dir[5], dir[6], dir[8]) = (4, 4, 6, 2);
+        let n = reroute_inflows(
+            dims,
+            1,
+            &mut ground,
+            &flags,
+            &[0; 16],
+            &back,
+            &mut dir,
+            &[(0, 4)],
+            &floor,
+        );
+        assert_eq!((n.rivers, n.stuck.as_slice()), (0, &[4][..]));
     }
 
     #[test]
@@ -892,11 +967,15 @@ mod tests {
         let dims = Dims { w: 2, h: 4 };
         let mut ground = vec![10.0f32; 8];
         let halo = vec![0.0f32; 4];
-        blend_seam(dims, 1, &mut ground, &halo);
+        blend_seam(dims, 1, &mut ground, &halo, &[]);
         assert_eq!(ground[2], 0.0);
         let k = 1.0 - 1.0 / SEAM_BLEND_ROWS as f32;
         assert!((ground[4] - (1.0 - k) * 10.0).abs() < 1e-5);
         assert_eq!(ground[6], 10.0, "past the previous band's rows");
+        // A channel that band cut in its halo comes in only down to the seam limit.
+        let mut ground = vec![10.0f32; 8];
+        blend_seam(dims, 1, &mut ground, &halo, &[9.0, 12.0]);
+        assert_eq!((ground[2], ground[3]), (9.0, 10.0));
     }
 
     #[test]

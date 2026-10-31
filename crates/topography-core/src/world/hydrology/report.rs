@@ -30,8 +30,8 @@ pub(super) struct Context<'a> {
     pub open_rows: [bool; 2],
     /// Rows copied from the previous band.
     pub fixed_rows: usize,
-    /// The first row after them as this band started (after the seam blend); empty: none.
-    pub start_row: &'a [f32],
+    /// Lowest ground carving may reach per cell (`band::ground_floor`); empty: none.
+    pub carve_floor: &'a [f32],
 }
 
 impl Context<'_> {
@@ -72,11 +72,19 @@ pub(super) struct Carve {
     volume_m3: f64,
     max_m: f32,
     max_at: [usize; 2],
+    /// Raised more than `RAISE_MAX_M`, and the most raised.
+    pub raised_over: u64,
+    pub raise_max_m: f32,
+    pub raise_max_at: [usize; 2],
 }
 
 impl Carve {
     pub fn add(&mut self, y: usize, input: &[f32], carved: &[f32], spacing_m: f64) {
         for (x, (a, b)) in input.iter().zip(carved).enumerate() {
+            if b - a > self.raise_max_m {
+                (self.raise_max_m, self.raise_max_at) = (b - a, [x, y]);
+            }
+            self.raised_over += u64::from(b - a > RAISE_MAX_M);
             if b < a {
                 self.cells += 1;
                 if a - b > 10.0 {
@@ -150,7 +158,15 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                 rises += 1;
                 note("river_cells_rising_downstream", i);
             }
-            if r.is_some_and(|r| c.centre(r) && c.ground[r] > c.ground[i] + BED_TOLERANCE_M) {
+            // A bed held at its carve floor may rise (a pool under the water).
+            let held = |r: usize| {
+                c.carve_floor
+                    .get(r)
+                    .is_some_and(|&f| c.ground[r] <= f + BED_TOLERANCE_M)
+            };
+            if r.is_some_and(|r| {
+                c.centre(r) && c.ground[r] > c.ground[i] + BED_TOLERANCE_M && !held(r)
+            }) {
                 bed_rises += 1;
                 note("guard_river_beds_rising_downstream", i);
             }
@@ -273,30 +289,141 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
     (m, examples)
 }
 
-/// Judgment constant: a step between the previous band's last row and this band's first row
-/// (water surface where wet, else ground) counts when over this and 4 times the steps between
-/// the rows beside it.
+/// Judgment constant: what hydrology changed (shown height less the input) may differ across
+/// the seam by this much, plus the side slope's rise per row further in (`SEAM_CHECK_ROWS`).
 pub(super) const SEAM_STEP_M: f32 = 5.0;
+/// Rows after the seam the step rule compares with the previous band's last row.
+pub(super) const SEAM_CHECK_ROWS: usize = 4;
+/// Judgment constant: a cell whose hydrology change lies this far below that of both cells
+/// beside it (north and south, or west and east) is a slot.
+pub(super) const SLOT_M: f32 = 5.0;
+/// Judgment constant: a river bed may lie this far below the carve floor (about the deepest
+/// channel); coarse river paths burned deeper fail here too.
+pub(super) const RIVER_FLOOR_SLACK_M: f32 = 5.0;
+/// Judgment constant: the most any step may raise ground above its input (fills, banks, sills;
+/// a backwater over a rise the carve floor keeps fills the valley behind it up to the rise).
+pub(super) const RAISE_MAX_M: f32 = 60.0;
+
+/// What shows at a cell: the water surface where wet, else the ground.
+fn shown(ground: &[f32], surface: &[f32], i: usize) -> f32 {
+    if surface[i].is_finite() {
+        surface[i]
+    } else {
+        ground[i]
+    }
+}
+
+/// Slots found while streaming the input rows (`add`): cells whose change (shown less input)
+/// lies `SLOT_M` below both neighbours north and south or west and east, over the rows after
+/// `fixed_rows`; those in the first `SEAM_CHECK_ROWS` rows are seam slots. Also the input of
+/// the rows the seam rule needs (the previous band's last row, then `SEAM_CHECK_ROWS`).
+pub(super) struct Slots {
+    w: usize,
+    fixed_rows: usize,
+    rows: [(usize, Vec<f32>); 2],
+    pub raw_seam: Vec<f32>,
+    pub cells: u64,
+    pub seam_cells: u64,
+    pub max_m: f32,
+    pub seam_max_m: f32,
+    pub at: Vec<[usize; 2]>,
+}
+
+impl Slots {
+    pub fn new(w: usize, fixed_rows: usize) -> Self {
+        Slots {
+            w,
+            fixed_rows,
+            rows: [(usize::MAX, Vec::new()), (usize::MAX, Vec::new())],
+            raw_seam: Vec::new(),
+            cells: 0,
+            seam_cells: 0,
+            max_m: 0.0,
+            seam_max_m: 0.0,
+            at: Vec::new(),
+        }
+    }
+
+    /// Input row `y` (rows in order) against the final `ground` and `surface`.
+    pub fn add(&mut self, y: usize, input: &[f32], ground: &[f32], surface: &[f32]) {
+        let w = self.w;
+        if self.fixed_rows > 0 && y + 1 >= self.fixed_rows && y < self.fixed_rows + SEAM_CHECK_ROWS
+        {
+            self.raw_seam.extend_from_slice(input);
+        }
+        let d: Vec<f32> = (0..w)
+            .map(|x| shown(ground, surface, y * w + x) - input[x])
+            .collect();
+        let [(ya, a), (yb, b)] = std::mem::replace(
+            &mut self.rows,
+            [(usize::MAX, Vec::new()), (usize::MAX, Vec::new())],
+        );
+        // Row yb is the middle one when rows ya, yb, y are consecutive.
+        if ya != usize::MAX && yb == ya + 1 && y == yb + 1 && yb >= self.fixed_rows {
+            let seam = yb < self.fixed_rows + SEAM_CHECK_ROWS;
+            for x in 0..w {
+                let ns = a[x].min(d[x]) - b[x];
+                let we = if x > 0 && x + 1 < w {
+                    b[x - 1].min(b[x + 1]) - b[x]
+                } else {
+                    0.0
+                };
+                let by = ns.max(we);
+                if by > SLOT_M {
+                    self.cells += 1;
+                    self.max_m = self.max_m.max(by);
+                    if seam {
+                        self.seam_cells += 1;
+                        self.seam_max_m = self.seam_max_m.max(by);
+                    }
+                    if self.at.len() < 3 {
+                        self.at.push([x, yb]);
+                    }
+                }
+            }
+        }
+        self.rows = [(yb, b), (y, d)];
+    }
+}
 
 /// Carving checks (each must be 0): free dry ground below its carve `floor` (cut deeper than
-/// the limit, or leaving a step at the seam), and steps at the seam (`fixed_rows`) not shared by
-/// the rows beside it, except where both cells are water of one body (`body_id`). With a
-/// cell of each and the deepest cut below the floor.
+/// the limit, or leaving a step at the seam); river beds more than `RIVER_FLOOR_SLACK_M` below
+/// it; ground raised more than `RAISE_MAX_M` (`carve`); seam steps: across the seam
+/// (`fixed_rows`) what hydrology changed (shown less input, `slots.raw_seam`) differs by more
+/// than `SEAM_STEP_M` plus the side slope per row, over the first `SEAM_CHECK_ROWS` rows, except
+/// where both cells are water of one body (`body_id`); and slots in those rows. With a cell
+/// of each and the extremes.
 pub(super) fn carving(
     c: &Context,
     floor: &[f32],
     fixed_rows: usize,
     body_id: &dyn Fn(usize) -> u32,
+    carve: &Carve,
+    slots: &Slots,
 ) -> (Map<String, Value>, Value) {
     let w = c.dims.w;
     let cell = |i: usize| json!([i % w, i / w]);
     let (mut below, mut deepest, mut below_at) = (0u64, 0f32, Vec::new());
+    let (mut beds, mut beds_deepest, mut beds_at) = (0u64, 0f32, Vec::new());
     for (i, &f) in floor.iter().enumerate() {
-        // Channel beds may lie below it by their depth under the water (`rivers::extract`).
-        if c.fixed(i) || c.wet(i) {
+        if c.fixed(i) {
             continue;
         }
         let by = f - c.ground[i];
+        // Channel beds may lie below it by about their depth; lakes and the sea are not carved.
+        if c.river(i) {
+            if by > RIVER_FLOOR_SLACK_M {
+                beds += 1;
+                beds_deepest = beds_deepest.max(by);
+                if beds_at.len() < 3 {
+                    beds_at.push(cell(i));
+                }
+            }
+            continue;
+        }
+        if c.wet(i) {
+            continue;
+        }
         if by > BANK_TOLERANCE_M {
             below += 1;
             deepest = deepest.max(by);
@@ -306,41 +433,55 @@ pub(super) fn carving(
         }
     }
     let (mut steps, mut step_at, mut step_max) = (0u64, Vec::new(), 0f32);
-    if fixed_rows >= 2 && fixed_rows + 1 < c.dims.h {
+    let rise = super::erosion::SIDE_SLOPE_DEG.to_radians().tan() * c.spacing_m as f32;
+    let raw = &slots.raw_seam;
+    if fixed_rows >= 1 && raw.len() >= 2 * w {
+        let d = |k: usize, x: usize| {
+            let i = (fixed_rows - 1 + k) * w + x;
+            shown(c.ground, c.surface, i) - raw[k * w + x]
+        };
+        let rows = (raw.len() / w).min(c.dims.h + 1 - fixed_rows);
         for x in 0..w {
-            let (a, b) = ((fixed_rows - 1) * w + x, fixed_rows * w + x);
-            if c.wet(a) && c.wet(b) && body_id(a) == body_id(b) {
-                continue;
-            }
-            // What shows: the water surface where wet, else the ground.
-            let g = |i: usize| {
-                if c.surface[i].is_finite() {
-                    c.surface[i]
-                } else {
-                    c.ground[i]
+            let a = (fixed_rows - 1) * w + x;
+            let mut worst = 0f32;
+            for k in 1..rows {
+                let b = (fixed_rows - 1 + k) * w + x;
+                if c.wet(a) && c.wet(b) && body_id(a) == body_id(b) {
+                    continue;
                 }
-            };
-            // The step this band made: less the one its first row started with.
-            let start = c.start_row.get(x).map_or(0.0, |&s| s - c.ground[a]);
-            let step = (g(b) - g(a) - start).abs();
-            let beside = (g(b + w) - g(b)).abs().max((g(a) - g(a - w)).abs());
-            if step > SEAM_STEP_M && step > 4.0 * beside {
+                let step = (d(k, x) - d(0, x)).abs();
+                if step > SEAM_STEP_M + rise * (k - 1) as f32 {
+                    worst = worst.max(step);
+                }
+            }
+            if worst > 0.0 {
                 steps += 1;
-                step_max = step_max.max(step);
+                step_max = step_max.max(worst);
                 if step_at.len() < 3 {
-                    step_at.push(cell(b));
+                    step_at.push(cell(fixed_rows * w + x));
                 }
             }
         }
     }
     let mut m = Map::new();
     m.insert("ground_below_carve_floor".into(), json!(below));
+    m.insert("river_beds_below_carve_floor".into(), json!(beds));
+    m.insert("ground_raised_over_limit".into(), json!(carve.raised_over));
     m.insert("seam_steps".into(), json!(steps));
+    m.insert("seam_slots".into(), json!(slots.seam_cells));
     let figures = json!({
         "ground_below_carve_floor_max_m": deepest,
         "ground_below_carve_floor_at_cells": below_at,
+        "river_beds_below_carve_floor_max_m": beds_deepest,
+        "river_beds_below_carve_floor_at_cells": beds_at,
+        "ground_raised_max_m": carve.raise_max_m,
+        "ground_raised_max_at_cell": carve.raise_max_at,
         "seam_step_max_m": step_max,
-        "seam_steps_at_cells": step_at,
+        "seam_steps_at_columns": step_at,
+        "seam_slot_max_m": slots.seam_max_m,
+        "slots": slots.cells,
+        "slot_max_m": slots.max_m,
+        "slots_at_cells": slots.at,
     });
     (m, figures)
 }
@@ -736,7 +877,7 @@ mod tests {
             spacing_m: 1000.0,
             open_rows: [false, false],
             fixed_rows: 0,
-            start_row: &[],
+            carve_floor: &[],
         };
         checks(&c, 0).0
     }
@@ -747,6 +888,52 @@ mod tests {
             .filter(|(_, v)| v.as_u64() != Some(0))
             .map(|(k, _)| k)
             .collect()
+    }
+
+    #[test]
+    fn a_slot_or_step_at_the_seam_fails() {
+        // 5 x 7, two taken rows, input flat at 10 m. Cut (2, 2) 8 m: a 1-row slot in the
+        // first free row and a step across the seam; raise (4, 6) 61 m: over the raise limit.
+        let (w, h) = (5, 7);
+        let mut ground = vec![10.0f32; w * h];
+        ground[2 * w + 2] = 2.0;
+        ground[6 * w + 4] = 71.0;
+        let input = vec![10.0f32; w];
+        let surface = vec![f32::NAN; w * h];
+        let (mut carve, mut slots) = (Carve::default(), Slots::new(w, 2));
+        for y in 1..h {
+            slots.add(y, &input, &ground, &surface);
+            if y >= 2 {
+                carve.add(y, &input, &ground[y * w..(y + 1) * w], 1.0);
+            }
+        }
+        let mut flags = vec![0u8; w * h];
+        flags[..2 * w].fill(FIXED);
+        let (dir, acc) = (vec![2u8; w * h], vec![0f32; w * h]);
+        let body = vec![0u32; w * h];
+        let c = Context {
+            dims: Dims { w, h },
+            ground: &ground,
+            dir: &dir,
+            acc: &acc,
+            flags: &flags,
+            body: &body,
+            surface: &surface,
+            basins: &[],
+            rivers: &[],
+            band: &[],
+            cell_km2: 1.0,
+            spacing_m: 1.0,
+            open_rows: [false, false],
+            fixed_rows: 2,
+            carve_floor: &[],
+        };
+        let floor = vec![f32::NEG_INFINITY; w * h];
+        let (m, _) = carving(&c, &floor, 2, &|_| 0, &carve, &slots);
+        for name in ["seam_slots", "seam_steps", "ground_raised_over_limit"] {
+            assert_eq!(m[name], json!(1), "{name}: {m:?}");
+        }
+        assert_eq!(m["ground_below_carve_floor"], json!(0));
     }
 
     #[test]

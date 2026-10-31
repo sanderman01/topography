@@ -1400,7 +1400,11 @@ pub(super) fn rivers(
             let runs_along = fixed_rows > 0 && cells.iter().any(|&c| along(c));
             let climbs = climb(ground, &cells);
             if let Some(end) = next.filter(|_| climbs > PATH_CLIMB_M || runs_along) {
-                let open = |i: usize| !claimed.contains_key(&(i as u32)) && !along(i as u32);
+                // Near its end (on the seam too, where it joins another river) it may reach it.
+                let near_end = |i: usize| (i % w).abs_diff(end as usize % w) <= SEAM_STRIP;
+                let open = |i: usize| {
+                    !claimed.contains_key(&(i as u32)) && (!along(i as u32) || near_end(i))
+                };
                 if let Some(way) = route_descending(
                     dims,
                     ground,
@@ -1411,8 +1415,10 @@ pub(super) fn rivers(
                     end as usize,
                     open,
                 ) {
+                    // Off the seam a climb is cut or filled within the carve floor; along it,
+                    // only below the floor (a trench at the seam): any such way is better.
                     let better = if runs_along {
-                        climb(ground, &way) <= climbs + 1.0
+                        true
                     } else {
                         climb(ground, &way) < climbs
                     };

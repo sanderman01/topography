@@ -407,19 +407,42 @@ pub(super) fn extract(
     // outflow along the shore stays at it). Nor below the water it flows into (a sill, a
     // fixed cell, a raised one). Lower surfaces upstream rise too (a backwater). Dry banks
     // below a raised surface are raised later, as lips are.
+    let lake_beside = |flags: &[u8], body: &[u32], i: usize| {
+        dims.neighbours(i)
+            .filter(|&(_, j)| lake(flags, body, j))
+            .map(|(_, j)| basins[body[j] as usize - 1].level)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    // The previous band's dry ground beside a cell (it cannot be raised).
+    let taken_bank = |flags: &[u8], body: &[u32], ground: &[f32], i: usize| {
+        dims.neighbours(i)
+            .filter(|&(_, k)| {
+                fixed(flags, k) && flags[k] & (SEA | RIVER) == 0 && !lake(flags, body, k)
+            })
+            .map(|(_, k)| ground[k])
+            .fold(f32::INFINITY, f32::min)
+    };
+    // How high a raise may lift a cell's water: that ground, and a coarse path's cap.
+    let ceiling = |flags: &[u8], body: &[u32], ground: &[f32], i: usize| {
+        let cap = given.cap.get(&(i as u32)).copied().unwrap_or(f32::INFINITY);
+        taken_bank(flags, body, ground, i).min(cap)
+    };
     let mut stack: Vec<usize> = Vec::new();
     for i in 0..n {
         if centre(flags, i) && !fixed(flags, i) {
-            let beside = dims
-                .neighbours(i)
-                .filter(|&(_, j)| lake(flags, body, j))
-                .map(|(_, j)| basins[body[j] as usize - 1].level)
-                .fold(f32::NEG_INFINITY, f32::max);
+            let beside = lake_beside(flags, body, i);
             let below = receiver(dims, dir, i)
                 .map(|r| if flags[r] & SEA != 0 { 0.0 } else { surface[r] })
                 .filter(|s| !s.is_nan())
                 .unwrap_or(f32::NEG_INFINITY);
-            let level = beside.max(below);
+            // Nor below its carve floor: the bed stops there, so the water stands on it (a
+            // backwater upstream, banks raised later) instead of in a trench below it; but
+            // not above the previous band's dry ground beside it (that cannot be raised) nor
+            // a coarse path's cap.
+            let floor = carve_floor.get(i).map_or(f32::NEG_INFINITY, |&f| {
+                (f + MIN_DEPTH_M).min(ceiling(flags, body, ground, i))
+            });
+            let level = beside.max(below).max(floor);
             if surface[i] < level {
                 surface[i] = level;
                 ch.raised.push(i as u32);
@@ -437,6 +460,41 @@ pub(super) fn extract(
                 surface[d] = surface[c];
                 ch.raised.push(d as u32);
                 stack.push(d);
+            }
+        }
+    }
+    // A backwater reaching beside the previous band's lower dry ground (or a coarse path's cap)
+    // stops at it (not below a lake beside, nor below water it flows into that stays: the sea,
+    // a fixed cell, a sill), and the water downstream stands no higher (its beds go just
+    // below it).
+    let held_below = |flags: &[u8], surface: &[f32], i: usize| {
+        receiver(dims, dir, i)
+            .filter(|&r| {
+                flags[r] & SEA != 0
+                    || (centre(flags, r) && (fixed(flags, r) || sills.contains_key(&(r as u32))))
+            })
+            .map(|r| if flags[r] & SEA != 0 { 0.0 } else { surface[r] })
+            .filter(|s| !s.is_nan())
+            .unwrap_or(f32::NEG_INFINITY)
+    };
+    for &i in &ch.raised {
+        let i = i as usize;
+        let cap = ceiling(flags, body, ground, i)
+            .max(lake_beside(flags, body, i))
+            .max(held_below(flags, surface, i));
+        if surface[i] > cap && !sills.contains_key(&(i as u32)) {
+            surface[i] = cap;
+            stack.push(i);
+        }
+    }
+    while let Some(c) = stack.pop() {
+        if let Some(r) = receiver(dims, dir, c)
+            .filter(|&r| centre(flags, r) && !fixed(flags, r) && !sills.contains_key(&(r as u32)))
+        {
+            let to = surface[c].max(held_below(flags, surface, r));
+            if surface[r] > to {
+                surface[r] = to;
+                stack.push(r);
             }
         }
     }
@@ -466,7 +524,11 @@ pub(super) fn extract(
         if seam {
             ch.raised.push(o as u32);
         }
-        keep.push(!gorge && !seam);
+        // Nor where its bed could not reach below the water (the carve floor).
+        let floored = carve_floor
+            .get(j)
+            .is_some_and(|&f| f > surface[o] - MIN_DEPTH_M);
+        keep.push(!gorge && !seam && !floored);
     }
     ch.raised.sort_unstable();
     ch.raised.dedup();
@@ -485,8 +547,9 @@ pub(super) fn extract(
 
     // Beds: the centreline below its surface by the cell's mean depth, reaching below 0 m
     // over the last cells to the sea.
-    // A channel bed not below the carve floor (`band::ground_floor`; empty: none) unless the
-    // water `s` stands lower: then just below it.
+    // A channel bed not below the carve floor (`band::ground_floor`; empty: none): the water
+    // was raised to stand on it. Only beside the previous band's lower dry ground may the
+    // water `s` stand lower (the bed just below it; `river_beds_below_carve_floor` bounds that).
     let floored = |i: usize, bed: f32, s: f32| {
         carve_floor
             .get(i)
@@ -559,7 +622,8 @@ pub(super) fn extract(
             match receiver(dims, dir, c).filter(|&r| centre(flags, r)) {
                 Some(r) => {
                     if !fixed(flags, r) && !fixed(flags, c) {
-                        let to = ground[c];
+                        // Not below the carve floor: a pool under water instead.
+                        let to = floored(r, ground[c], surface[r]);
                         cut(ground, r, to, &mut ch);
                     }
                     donors[r] -= 1;
@@ -699,6 +763,68 @@ fn cells_to_sea(dims: Dims, dir: &[u8], flags: &[u8], i: usize) -> Option<usize>
         }
     }
     None
+}
+
+/// Cells carrying a river (discharge from `river_km2`) whose water would have to climb: the
+/// free dry cell they drain into has its carve floor (`floor`) above the water level arriving
+/// there (the lowest ground, or lake level, on the way down), so only a trench below the floor
+/// could carry it on. Not cells taken from the previous band, nor `keep` ones (coarse paths).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn climbs(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    dir: &[u8],
+    acc: &[f32],
+    river_km2: f32,
+    floor: &[f32],
+    keep: impl Fn(usize) -> bool,
+) -> Vec<usize> {
+    const DONE: u8 = u8::MAX;
+    let n = ground.len();
+    if floor.len() != n {
+        return Vec::new();
+    }
+    let mut level: Vec<f32> = (0..n)
+        .map(|i| match body[i] {
+            b if b != 0 && flags[i] & (SEA | RIVER) == 0 => {
+                basins[b as usize - 1].level.max(ground[i])
+            }
+            _ => ground[i],
+        })
+        .collect();
+    let mut donors = vec![0u8; n];
+    for i in 0..n {
+        if let Some(r) = receiver(dims, dir, i) {
+            donors[r] = donors[r].saturating_add(1);
+        }
+    }
+    let mut out = Vec::new();
+    for i in 0..n {
+        let mut c = i;
+        while donors[c] == 0 {
+            donors[c] = DONE;
+            let Some(r) = receiver(dims, dir, c) else {
+                break;
+            };
+            let free = |j: usize| flags[j] & (FIXED | SEA) == 0 && !keep(j);
+            if acc[c] >= river_km2
+                && free(c)
+                && free(r)
+                && body[r] == 0
+                && floor[r] > level[c] + 0.01
+            {
+                out.push(c);
+            } else {
+                level[r] = level[r].min(level[c]);
+            }
+            donors[r] -= 1;
+            c = r;
+        }
+    }
+    out
 }
 
 /// A dry cell more than this below every adjacent water surface is a hole.
@@ -1066,6 +1192,52 @@ mod tests {
             assert_eq!(body[i], 1);
         }
         assert!(rivers[0].end == End::Sea);
+    }
+
+    #[test]
+    fn a_bed_never_goes_below_the_carve_floor() {
+        // Column 1 of a 3 x 4 grid drains south to the sea row; a low bank at (0, 1) pulls
+        // the river's water 5 m below its ground. The carve floor (8 m) holds the bed: the
+        // water stands on it, upstream too, instead of in a trench.
+        let dims = Dims { w: 3, h: 4 };
+        let n = 12;
+        let mut ground = vec![10.0f32; n];
+        ground[3] = 5.0;
+        let mut flags = vec![0u8; n];
+        for i in 9..12 {
+            (flags[i], ground[i]) = (SEA, -1.0);
+        }
+        let mut dir = vec![0u8; n];
+        for i in [1, 4, 7] {
+            dir[i] = 2;
+        }
+        let mut acc = vec![0.0f32; n];
+        for i in [1, 4, 7] {
+            acc[i] = 1.0;
+        }
+        let mut body = vec![0u32; n];
+        let mut surface = vec![f32::NAN; n];
+        let floor = vec![8.0f32; n];
+        extract(
+            dims,
+            &mut ground,
+            &dir,
+            &acc,
+            &mut flags,
+            &mut body,
+            &[],
+            1.0,
+            1.0,
+            &mut surface,
+            Given::default(),
+            &floor,
+        );
+        for i in [1, 4, 7] {
+            assert!(flags[i] & CENTRE != 0);
+            assert!(ground[i] >= 8.0, "bed {i} at {}", ground[i]);
+            assert!(surface[i] > ground[i], "water {i} above its bed");
+        }
+        assert!(surface[1] >= surface[4] && surface[4] >= surface[7]);
     }
 
     #[test]
