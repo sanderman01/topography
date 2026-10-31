@@ -252,6 +252,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 c,
                 &inflows,
                 fixed_id,
+                |j| north.as_ref().map_or(f32::NAN, |b| b.surface[j]),
                 |j| {
                     reentry
                         .get(j)

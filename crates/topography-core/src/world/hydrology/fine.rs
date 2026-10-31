@@ -460,6 +460,8 @@ pub(super) struct Path {
     pub next: Option<u32>,
     /// Lake basin (index + 1) this path leaves at its head, 0 for none.
     pub source: u32,
+    /// Lowest bed (the previous band's bed it ends on), else negative infinity.
+    pub floor: f32,
 }
 
 pub(super) struct Imprint {
@@ -552,6 +554,11 @@ pub(super) fn burn(
             let to = ground[c].min(target.max(ground[d]).max(f).max(0.0));
             ground[c] = ground[c].min(to);
         }
+        // Ending on the previous band's bed: no lower, so the bed does not rise into it (a
+        // hollow below it is filled).
+        for &c in &p.cells {
+            ground[c as usize] = ground[c as usize].max(p.floor);
+        }
         for (k, &c) in p.cells.iter().enumerate() {
             let cut = before[k] - ground[c as usize];
             if cut > 0.0 && seen.insert(c) {
@@ -586,6 +593,56 @@ pub(super) fn route(
         }
     }
     flood::spill_cycles(dims, ground, flags, dir, |i| !on_path[i])
+}
+
+/// Rise a seam bank may stand below the water beside it (as the report's bank check).
+const SEAM_BANK_M: f32 = 0.01;
+
+/// The lowest way (least highest ground) from `head` over free land, not through `avoid`
+/// cells, to a cell beside an `end`: the way's cells and that end.
+#[allow(clippy::too_many_arguments)]
+fn route_round(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    head: usize,
+    end: impl Fn(usize) -> bool,
+    avoid: impl Fn(usize) -> bool,
+) -> Option<(Vec<u32>, u32)> {
+    // Cells a search may visit before it gives up.
+    const MAX_CELLS: usize = 1 << 22;
+    let open = |i: usize| {
+        flags[i] & (SEA | FIXED) == 0
+            && (body[i] == 0 || basins[body[i] as usize - 1].kind == Kind::Dry)
+            && !avoid(i)
+    };
+    let mut from: HashMap<usize, usize> = HashMap::from([(head, head)]);
+    let mut heap = BinaryHeap::from([Item(ground[head], head as u32)]);
+    while let Some(Item(z, c)) = heap.pop() {
+        let c = c as usize;
+        for (_, j) in dims.neighbours(c) {
+            if end(j) {
+                let mut way = vec![c as u32];
+                let mut x = c;
+                while from[&x] != x {
+                    x = from[&x];
+                    way.push(x as u32);
+                }
+                way.reverse();
+                return Some((way, j as u32));
+            }
+            if !from.contains_key(&j) && open(j) {
+                from.insert(j, c);
+                heap.push(Item(ground[j].max(z), j as u32));
+            }
+        }
+        if from.len() > MAX_CELLS {
+            break;
+        }
+    }
+    None
 }
 
 /// Route a head the corridor flood missed (`sources`: its free cells) by the lowest way
@@ -707,6 +764,7 @@ pub(super) fn rivers(
     c: &Coarse,
     inflows: &[Inflow],
     fixed_id: impl Fn(usize) -> u32,
+    fixed_surface: impl Fn(usize) -> f32,
     back: impl Fn(usize) -> Option<usize>,
     core_rows: [usize; 2],
     spacing_m: f64,
@@ -1174,6 +1232,58 @@ pub(super) fn rivers(
                     r => at = r,
                 }
             };
+            // Ending in the previous band's water (surface `end_s`): a way beside that band's
+            // dry ground below it (which cannot be raised) goes round, to this river's water
+            // there; the path stands at least at that surface and its bed at the end's.
+            let mut next = next;
+            let end_s = next
+                .filter(|&r| flags[r as usize] & FIXED != 0)
+                .map(|r| fixed_surface(r as usize))
+                .filter(|s| s.is_finite());
+            if let Some(s) = end_s {
+                let low_bank = |i: usize| {
+                    flags[i] & FIXED == 0
+                        && dims.neighbours(i).any(|(_, k)| {
+                            flags[k] & FIXED != 0
+                                && flags[k] & (RIVER | SEA) == 0
+                                && fixed_id(k) == 0
+                                && ground[k] + SEAM_BANK_M < s
+                        })
+                };
+                // As the bank check: not ground ahead along the path's flow.
+                let below = (0..cells.len()).any(|k| {
+                    let (i, to) = (cells[k] as usize, cells.get(k + 1).copied().or(next));
+                    let d = to.map_or(0, |t| dims.towards(i, t as usize));
+                    flags[i] & FIXED == 0
+                        && dims.neighbours(i).any(|(_, j)| {
+                            flags[j] & FIXED != 0
+                                && flags[j] & (RIVER | SEA) == 0
+                                && fixed_id(j) == 0
+                                && ground[j] + SEAM_BANK_M < s
+                                && !dims.ahead(d, i, j)
+                        })
+                });
+                if below {
+                    let end = |j: usize| {
+                        flags[j] & (FIXED | RIVER) == FIXED | RIVER
+                            && fixed_id(j) == id
+                            && back(j).is_none()
+                    };
+                    let avoid = |i: usize| low_bank(i) || claimed.contains_key(&(i as u32));
+                    if let Some((way, j)) =
+                        route_round(dims, ground, flags, body, basins, head as usize, end, avoid)
+                    {
+                        (cells, next) = (way, Some(j));
+                    }
+                }
+            }
+            let end_s = next
+                .filter(|&r| flags[r as usize] & FIXED != 0)
+                .map(|r| fixed_surface(r as usize))
+                .filter(|s| s.is_finite());
+            let floor = next
+                .filter(|_| end_s.is_some())
+                .map_or(f32::NEG_INFINITY, |r| ground[r as usize]);
             // Cap: coarse surfaces at the middle of each run through one coarse cell of
             // this river, linear between them by path length.
             let mut s = vec![0f64; cells.len()];
@@ -1257,12 +1367,21 @@ pub(super) fn rivers(
                 let e = out.q.get_mut(&x).expect("set above");
                 *e = e.max(first);
             }
+            // That water cannot change and the previous band's checks held it.
+            if let Some(s) = end_s {
+                for x in &cells {
+                    if let Some(e) = out.cap.get_mut(x) {
+                        *e = e.max(s);
+                    }
+                }
+            }
             claimed.extend(cells.iter().map(|&x| (x, id)));
             out.paths.push(Path {
                 river,
                 cells,
                 next,
                 source,
+                floor,
             });
         }
     }
@@ -1476,6 +1595,7 @@ mod tests {
             &c,
             &[],
             |_| 0,
+            |_| f32::NAN,
             |_| None,
             [0, 6],
             2.0,
@@ -1539,6 +1659,7 @@ mod tests {
             &c,
             &[inflow],
             fixed_id,
+            |_| f32::NAN,
             |j| (fixed_id(j) == 3).then_some(4 * 12 + 8),
             [4, 8],
             2.0,
