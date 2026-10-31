@@ -3,7 +3,7 @@
 
 use std::{
     cmp::Ordering,
-    collections::{BinaryHeap, HashSet, VecDeque},
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
 };
 
 use super::lakes::{Basin, Kind};
@@ -693,8 +693,20 @@ pub(super) fn spill_cycles(
                     }
                 }
             }
+            // Only cells `may` allows are reversed, never fixed ones: else the guard sees it. A
+            // cell whose flow to the cycle crosses another is no spill point (a coarse path
+            // into a lake whose spill drains back into it: the lake spills elsewhere).
+            let allowed = |c: usize| may(c) && flags[c] & FIXED == 0;
+            let mut blocked: HashMap<usize, bool> = HashMap::new();
+            for &c in &order {
+                let b = !allowed(c)
+                    || (!on[c]
+                        && receiver(dims, dir, c)
+                            .is_none_or(|r| blocked.get(&r).copied().unwrap_or(true)));
+                blocked.insert(c, b);
+            }
             let mut out: Option<(f32, usize, usize)> = None;
-            for &u in &order {
+            for &u in order.iter().filter(|&&u| !blocked[&u]) {
                 for (_, v) in dims.neighbours(u) {
                     if !region.contains(&v) && receives(v) && out.is_none_or(|b| ground[v] < b.0) {
                         out = Some((ground[v], u, v));
@@ -709,8 +721,7 @@ pub(super) fn spill_cycles(
                     None => break,
                 }
             }
-            // Only cells `may` allows are reversed, never fixed ones: else the guard sees it.
-            if path.iter().any(|&c| !may(c) || flags[c] & FIXED != 0) {
+            if path.iter().any(|&c| !allowed(c)) {
                 continue;
             }
             for k in (1..path.len()).rev() {
