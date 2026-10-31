@@ -1,0 +1,38 @@
+crates/topography-core/src/world/hydrology/fine.rs
+  s_8c1b40ea9c1e0d::t_ea7d14462f59e7 488-489
+  s_8c1b40ea9c1e0d::t_5c1eec29cd1330 595
+  s_8c1b40ea9c1e0d::t_7f9f95fa301c8d 539
+  s_8c1b40ea9c1e0d::t_dc55100619af94 842
+  s_8c1b40ea9c1e0d::t_14595ce7b48891 1439-1440
+  s_8c1b40ea9c1e0d::t_6b98fb40565818 548,551
+  s_8c1b40ea9c1e0d::t_92fc0c7d79164b 578-583
+  s_8c1b40ea9c1e0d::t_9a8b55f6dbfb08 529-535
+crates/topography-core/src/world/hydrology/band.rs
+  s_8c1b40ea9c1e0d::t_85a865db4f4d19 775-776
+  s_8c1b40ea9c1e0d::t_771b92f199873d 257-258,269
+  s_8c1b40ea9c1e0d::t_abd44e606e6091 312
+  s_8c1b40ea9c1e0d::t_7b561c886b4883 350-356,359,371,376,378-386
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_16c700169c93ab 552,561-562
+  s_8c1b40ea9c1e0d::t_a2edc08ef797fc 605
+  s_8c1b40ea9c1e0d::t_2341f00915a6f9 1154-1156
+  s_8c1b40ea9c1e0d::t_12478f6c64b338 751-755
+  s_8c1b40ea9c1e0d::t_d4cd2824654007 469,471
+  s_8c1b40ea9c1e0d::t_3d13a45510c034 484
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51ce7833697f7f37525ace70f3bfe8ec41690eae",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
