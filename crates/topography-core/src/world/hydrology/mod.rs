@@ -684,19 +684,56 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
 
     // A dry pass-through basin that a river flows into fills as a lake (not glacier basins;
-    // on finer levels coarse dry basins stay dry).
+    // on finer levels coarse dry basins stay dry). On finer levels a sink breaching left (not
+    // the coarse network's) that a river runs into fills to its spill and overflows too: a
+    // river does not end in a dry hollow, such as one below sea level behind a lagoon's rim.
     let mut inflow_by_basin = vec![0f32; basins.len() + 1];
+    // Basins within the seam blend (a lake there would meet the previous band's dry ground).
+    let mut at_seam = vec![false; basins.len() + 1];
     for i in 0..n {
         inflow_by_basin[body[i] as usize] = inflow_by_basin[body[i] as usize].max(acc[i]);
+        if i / w < fixed_rows + band::SEAM_BLEND_ROWS {
+            at_seam[body[i] as usize] = true;
+        }
     }
     for (b, basin) in basins.iter_mut().enumerate() {
-        if !fine_level
-            && basin.kind == Kind::Dry
-            && !basin.ice
-            && inflow_by_basin[b + 1] >= river_km2
-        {
+        let fills = if fine_level {
+            basin.kind == Kind::Sink && b >= kept_by_budget && !(fixed_rows > 0 && at_seam[b + 1])
+        } else {
+            basin.kind == Kind::Dry
+        };
+        if fills && !basin.ice && inflow_by_basin[b + 1] >= river_km2 {
             basin.kind = Kind::Lake;
             basin.filled_by_river = true;
+        }
+    }
+    // Such a sink had no receivers: its cells now drain to where the flood reached it (its
+    // spill), breadth first, and the discharge is summed again so it overflows onward.
+    let filled: Vec<usize> = (kept_by_budget..basins.len())
+        .filter(|&b| fine_level && basins[b].filled_by_river)
+        .collect();
+    for &b in &filled {
+        let (id, exit) = (b as u32 + 1, basins[b].exit as usize);
+        let mut queue = std::collections::VecDeque::from([exit]);
+        let mut seen = std::collections::HashSet::from([exit]);
+        while let Some(c) = queue.pop_front() {
+            for (_, j) in dims.neighbours(c) {
+                if body[j] == id && seen.insert(j) {
+                    dir[j] = dims.towards(j, c);
+                    queue.push_back(j);
+                }
+            }
+        }
+    }
+    if !filled.is_empty() {
+        cycles = cycles.max(flood::accumulate(dims, &dir, weight, &mut acc));
+        if let Some(im) = &imprint {
+            for (&cell, &q) in &im.q {
+                acc[cell as usize] = acc[cell as usize].max(q);
+            }
+        }
+        if let Some(b) = &north {
+            acc[..fixed_rows * w].copy_from_slice(&b.discharge);
         }
     }
     // Coarse river paths keep their course: a lake does not grow over a burned path cell.

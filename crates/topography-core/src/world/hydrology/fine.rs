@@ -489,6 +489,8 @@ pub(super) struct Imprint {
     pub fill: Fill,
     /// Heads whose path walk met a receiver loop or a cell without a receiver (unrouted).
     pub receiver_loops: u64,
+    /// Paths laid again along the way that climbs least (`PATH_CLIMB_M`).
+    pub relaid: u64,
     /// Grid edge cells that become outlets where a coarse river leaves the grid.
     pub outlets: Vec<u32>,
 }
@@ -621,6 +623,80 @@ pub(super) fn route(
         }
     }
     flood::spill_cycles(dims, ground, flags, dir, |i| !on_path[i])
+}
+
+/// Judgment constant: a path whose ground rises more than this above its lowest point upstream
+/// is laid again along the way that climbs least.
+const PATH_CLIMB_M: f32 = 5.0;
+
+/// How far a path's ground rises above its lowest point upstream.
+fn climb(ground: &[f32], cells: &[u32]) -> f32 {
+    let mut low = f32::INFINITY;
+    let mut most = 0f32;
+    for &c in cells {
+        let g = ground[c as usize];
+        low = low.min(g);
+        most = most.max(g - low);
+    }
+    most
+}
+
+/// The way from `head` over free land (`open` cells, not water or fixed) to a cell beside
+/// `end` that climbs least in total (rises along it summed, then length): its cells.
+#[allow(clippy::too_many_arguments)]
+fn route_descending(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    head: usize,
+    end: usize,
+    open: impl Fn(usize) -> bool,
+) -> Option<Vec<u32>> {
+    // Cells a search may visit before it gives up; the length weight breaks ties.
+    const MAX_CELLS: usize = 1 << 22;
+    const PER_CELL: f32 = 1e-3;
+    let free = |i: usize| {
+        flags[i] & (SEA | FIXED) == 0
+            && (body[i] == 0 || basins[body[i] as usize - 1].kind == Kind::Dry)
+            && open(i)
+    };
+    let mut cost: HashMap<usize, f32> = HashMap::from([(head, 0.0)]);
+    let mut from: HashMap<usize, usize> = HashMap::from([(head, head)]);
+    let mut heap = BinaryHeap::from([Item(0.0, head as u32)]);
+    while let Some(Item(k, c)) = heap.pop() {
+        let c = c as usize;
+        if k > cost[&c] {
+            continue;
+        }
+        if dims.neighbours(c).any(|(_, j)| j == end) {
+            let mut way = vec![c as u32];
+            let mut x = c;
+            while from[&x] != x {
+                x = from[&x];
+                way.push(x as u32);
+            }
+            way.reverse();
+            return Some(way);
+        }
+        for (d, j) in dims.neighbours(c) {
+            if !free(j) {
+                continue;
+            }
+            let step = Dims::step(d as u8 + 1) as f32 * PER_CELL;
+            let kj = k + (ground[j] - ground[c]).max(0.0) + step;
+            if cost.get(&j).is_none_or(|&old| kj < old) {
+                cost.insert(j, kj);
+                from.insert(j, c);
+                heap.push(Item(kj, j as u32));
+            }
+        }
+        if cost.len() > MAX_CELLS {
+            break;
+        }
+    }
+    None
 }
 
 /// Judgment constant: cells a path into the previous band's water keeps from that band's dry
@@ -851,6 +927,7 @@ pub(super) fn rivers(
         burn_max_at: [0, 0],
         fill: Fill::default(),
         receiver_loops: 0,
+        relaid: 0,
         outlets: Vec::new(),
     };
     for id in ids {
@@ -1292,6 +1369,27 @@ pub(super) fn rivers(
                 out.receiver_loops += 1;
                 out.unrouted.push(id);
                 continue;
+            }
+            // A path that climbs (down into a hollow, then up to its end, as where the coarse
+            // river crosses the seam above a valley this band's ground holds) is laid again
+            // along the way to that end that climbs least, so it is neither cut nor filled.
+            if let Some(end) = next.filter(|_| climb(ground, &cells) > PATH_CLIMB_M) {
+                let open = |i: usize| !claimed.contains_key(&(i as u32));
+                if let Some(way) = route_descending(
+                    dims,
+                    ground,
+                    flags,
+                    body,
+                    basins,
+                    head as usize,
+                    end as usize,
+                    open,
+                ) {
+                    if climb(ground, &way) < climb(ground, &cells) {
+                        cells = way;
+                        out.relaid += 1;
+                    }
+                }
             }
             // Ending in the previous band's water (surface `end_s`): a way beside that band's
             // dry ground below it (which cannot be raised) goes round, to this river's water
