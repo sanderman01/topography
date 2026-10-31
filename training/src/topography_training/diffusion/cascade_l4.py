@@ -434,7 +434,7 @@ def main(argv=None) -> int:
         cascade.save_json(progress_path, progress)
 
     c.save, c.band_s = save, progress["band_s"]
-    failed: list[RuntimeError] = []
+    failed: list[Exception] = []
 
     def hydro_until(k: int):
         # A failed band (any failed check, the seam checks included) stops hydrology only:
@@ -443,7 +443,7 @@ def main(argv=None) -> int:
         while not failed and progress["hydrology_done"] < k:
             try:
                 _hydro_band(c, progress["hydrology_done"], progress)
-            except RuntimeError as e:
+            except Exception as e:  # any hydrology error, not only failed checks
                 failed.append(e)
                 print(f"hydrology stopped, diffusion continues: {e}", flush=True)
 

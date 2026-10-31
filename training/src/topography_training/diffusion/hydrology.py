@@ -213,6 +213,8 @@ _BINARY: Path | None = None
 def binary() -> Path:
     """The release `topography` binary, built (or brought up to date) once per process."""
     global _BINARY
+    if _BINARY is None and os.environ.get("TOPOGRAPHY_BIN"):
+        _BINARY = Path(os.environ["TOPOGRAPHY_BIN"])  # pinned copy: a long run is not changed by later builds
     if _BINARY is None:
         subprocess.run(["cargo", "build", "--release", "--locked", "--offline", "-q", "-p", "topography-cli"],
                        cwd=ROOT, check=True)
