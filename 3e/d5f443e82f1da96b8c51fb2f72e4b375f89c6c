@@ -1,0 +1,19 @@
+crates/topography-core/src/world/hydrology/mod.rs
+  s_f84aa4ba87235d::t_23160c208503fa 826
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ed5f443e82f1da96b8c51fb2f72e4b375f89c6c",
+  "prompts": {},
+  "sessions": {
+    "s_f84aa4ba87235d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a0a95e9a2f0cd9c60",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
