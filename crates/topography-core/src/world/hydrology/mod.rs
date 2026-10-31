@@ -466,8 +466,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // Coarse river paths burned again after breaching (which may have lowered some of their
     // cells); these cuts widen as trenches do.
     let mut burn_again = (0f32, 0usize);
+    let mut fill_again = fine::Fill::default();
     if let Some(im) = &imprint {
-        let (cells, max, at) = fine::burn(
+        let (cells, max, at, fill) = fine::burn(
             dims,
             &mut ground,
             &body,
@@ -480,6 +481,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             flags[c as usize] |= flood::BREACHED;
         }
         burn_again = (max, at);
+        fill_again = fill;
     }
     // Trenches widen into small valleys, through glacier too (ice is a surface layer). Kept
     // basins (such as an ice caldera), the sea and cells from the previous band stay as they
@@ -547,7 +549,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // Coarse river paths keep their own course, descending (widening may have lowered cells).
     if let Some(im) = &imprint {
         receivers_spilled += fine::route(dims, &ground, &flags, &mut dir, &im.paths);
-        let (_, max, at) = fine::burn(
+        let (_, max, at, fill) = fine::burn(
             dims,
             &mut ground,
             &body,
@@ -556,6 +558,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
             &im.cap,
             grid.spacing_m,
         );
+        fill_again.max_m = fill_again.max_m.max(fill.max_m);
+        fill_again.cells += fill.cells;
         if max > burn_again.0 {
             burn_again = (max, at);
         }
@@ -598,7 +602,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &mut dir,
         &inflow,
     );
-    if seam_joins > 0 || inflows_rerouted > 0 {
+    if seam_joins > 0 || inflows_rerouted.rivers > 0 {
         cycles = flood::accumulate(dims, &dir, weight, &mut acc);
     }
     lap("accumulate", &mut t);
@@ -744,6 +748,11 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "burn_max_at_cell": im.burn_max_at,
             "burn_after_breach_max_m": burn_again.0,
             "burn_after_breach_max_at_cell": [burn_again.1 % w, burn_again.1 / w],
+            // Paths ending in the previous band's water filled up to its bed.
+            "path_fill_max_m": im.fill.max_m,
+            "path_fill_cells": im.fill.cells,
+            "path_fill_after_breach_max_m": fill_again.max_m,
+            "path_fill_after_breach_cells": fill_again.cells,
             "unrouted_rivers": im.unrouted,
         });
         path_cap = im.cap.clone();
@@ -1142,7 +1151,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 "river_inflow_cells": seam_inflow,
                 "streams_pruned_at_seam": channels.streams_pruned,
                 "streams_joined_across_seam": seam_joins,
-                "inflows_rerouted": inflows_rerouted,
+                "inflows_rerouted": inflows_rerouted.rivers,
+                "inflow_reroute_cells_lowered": inflows_rerouted.cells,
+                "inflow_reroute_max_cut_m": inflows_rerouted.max_m,
             }),
         );
     }

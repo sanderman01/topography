@@ -485,6 +485,8 @@ pub(super) struct Imprint {
     pub burned: Vec<u32>,
     pub burn_max_m: f32,
     pub burn_max_at: [usize; 2],
+    /// Path cells filled to the previous band's bed they end on.
+    pub fill: Fill,
     /// Grid edge cells that become outlets where a coarse river leaves the grid.
     pub outlets: Vec<u32>,
 }
@@ -524,10 +526,17 @@ fn floor(dims: Dims, body: &[u32], basins: &[Basin], source: u32, i: usize) -> f
         .fold(f32::NEG_INFINITY, f32::max)
 }
 
+/// Path cells raised to the previous band's bed they end on (`Path::floor`): most and count.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Fill {
+    pub max_m: f32,
+    pub cells: u64,
+}
+
 /// Lower each path to a running minimum from its head and to its surface cap (not below 0 m
 /// or a lake floor beside it), then let each cut taper off upstream at the trench side slope
 /// instead of ending in a cliff (still never rising downstream). Returns the cells lowered and
-/// the deepest cut below the ground the path had and where.
+/// the deepest cut below the ground the path had and where, and the fill to `Path::floor`.
 pub(super) fn burn(
     dims: Dims,
     ground: &mut [f32],
@@ -536,9 +545,10 @@ pub(super) fn burn(
     paths: &[Path],
     cap: &HashMap<u32, f32>,
     spacing_m: f64,
-) -> (Vec<u32>, f32, usize) {
+) -> (Vec<u32>, f32, usize, Fill) {
     let tan = super::erosion::SIDE_SLOPE_DEG.to_radians().tan();
     let (mut cells, mut max, mut at) = (Vec::new(), 0f32, 0usize);
+    let mut fill = Fill::default();
     let mut seen: HashSet<u32> = HashSet::new();
     for p in paths {
         let before: Vec<f32> = p.cells.iter().map(|&c| ground[c as usize]).collect();
@@ -565,7 +575,12 @@ pub(super) fn burn(
         // Ending on the previous band's bed: no lower, so the bed does not rise into it (a
         // hollow below it is filled).
         for &c in &p.cells {
-            ground[c as usize] = ground[c as usize].max(p.floor);
+            let by = p.floor - ground[c as usize];
+            if by > 0.0 {
+                fill.max_m = fill.max_m.max(by);
+                fill.cells += 1;
+                ground[c as usize] = p.floor;
+            }
         }
         for (k, &c) in p.cells.iter().enumerate() {
             let cut = before[k] - ground[c as usize];
@@ -577,7 +592,7 @@ pub(super) fn burn(
             }
         }
     }
-    (cells, max, at)
+    (cells, max, at, fill)
 }
 
 /// Point each path cell at the next. A path ending where its flow comes back (a dry basin
@@ -824,6 +839,7 @@ pub(super) fn rivers(
         burned: Vec::new(),
         burn_max_m: 0.0,
         burn_max_at: [0, 0],
+        fill: Fill::default(),
         outlets: Vec::new(),
     };
     for id in ids {
@@ -1420,7 +1436,8 @@ pub(super) fn rivers(
     }
     out.unrouted.sort_unstable();
     out.unrouted.dedup();
-    let (cells, max, at) = burn(dims, ground, body, basins, &out.paths, &out.cap, spacing_m);
+    let (cells, max, at, fill) = burn(dims, ground, body, basins, &out.paths, &out.cap, spacing_m);
+    out.fill = fill;
     out.burned = cells;
     out.burn_max_m = max;
     out.burn_max_at = [at % w, at / w];

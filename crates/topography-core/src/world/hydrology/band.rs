@@ -254,7 +254,8 @@ pub(super) fn join_seam_rivers(
 /// routing here leaves back across the seam onto that band's dry ground (its halo guess ran
 /// elsewhere): reroute each from its entry over free cells along the lowest way (least
 /// highest ground) to water, a basin, the grid edge or the previous band's river, on ground
-/// lowered to a running minimum so the route never climbs. Returns the rivers rerouted.
+/// lowered to a running minimum so the route never climbs (no depth limit: the cut is
+/// reported).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reroute_inflows(
     dims: Dims,
@@ -265,7 +266,7 @@ pub(super) fn reroute_inflows(
     reentry: &[u32],
     dir: &mut [u8],
     inflow: &[(usize, usize)],
-) -> u64 {
+) -> Reroute {
     // Cells a search may visit before it gives up.
     const MAX_CELLS: usize = 1 << 22;
     let first = fixed_rows * dims.w;
@@ -308,7 +309,7 @@ pub(super) fn reroute_inflows(
         }
         ok
     };
-    let mut rerouted = 0;
+    let mut cut = Reroute::default();
     for &(i, r) in inflow {
         let mut memo: HashMap<usize, bool> = HashMap::new();
         if flags[i] & CENTRE == 0 || ends_well(&mut memo, dir, r) {
@@ -346,9 +347,16 @@ pub(super) fn reroute_inflows(
             route.push(from[&route[route.len() - 1]]);
         }
         route.reverse();
+        let mut lower = |ground: &mut [f32], c: usize, to: f32| {
+            if to < ground[c] {
+                cut.max_m = cut.max_m.max(ground[c] - to);
+                cut.cells += 1;
+                ground[c] = to;
+            }
+        };
         for p in route.windows(2) {
             dir[p[0]] = dims.towards(p[0], p[1]);
-            ground[p[1]] = ground[p[1]].min(ground[p[0]]);
+            lower(ground, p[1], ground[p[0]]);
         }
         // On to the end: into the fixed river, or down the routing until it no longer climbs.
         let g = ground[last];
@@ -360,14 +368,22 @@ pub(super) fn reroute_inflows(
                     if body[y] != 0 || ground[y] <= g {
                         break;
                     }
-                    ground[y] = g;
+                    lower(ground, y, g);
                     x = receiver(dims, dir, y);
                 }
             }
         }
-        rerouted += 1;
+        cut.rivers += 1;
     }
-    rerouted
+    cut
+}
+
+/// What `reroute_inflows` did: rivers rerouted, cells lowered and the deepest cut.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Reroute {
+    pub rivers: u64,
+    pub cells: u64,
+    pub max_m: f32,
 }
 
 /// Min-heap entry by ground height.
@@ -756,7 +772,8 @@ mod tests {
             &mut dir,
             &[(0, 4)],
         );
-        assert_eq!(n, 1);
+        assert_eq!((n.rivers, n.cells), (1, 1));
+        assert_eq!(n.max_m, 1.0);
         assert_eq!((dir[4], ground[8]), (2, 5.0));
     }
 }
