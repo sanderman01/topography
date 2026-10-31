@@ -1,0 +1,75 @@
+crates/topography-core/src/world/hydrology/band.rs
+  s_8c1b40ea9c1e0d::t_c5fab7e6edf4c2 970,975-978
+  s_8c1b40ea9c1e0d::t_86a311d6b1c2d1 131-141,153,159-163,171,174,200,213,216,227-228
+  s_8c1b40ea9c1e0d::t_990d9b67ecfb73 238-243
+  s_8c1b40ea9c1e0d::t_6d78eb72f7d14f 537-539,544
+  s_8c1b40ea9c1e0d::t_cb708429235eae 547-549,554-555,557-560,563
+  s_8c1b40ea9c1e0d::t_ff64722110d93b 373-380
+  s_8c1b40ea9c1e0d::t_1c36bd0bc577c8 489
+  s_8c1b40ea9c1e0d::t_4f97bbdf56fad1 467,469
+  s_8c1b40ea9c1e0d::t_11df32d2ee43d3 943-960
+  s_8c1b40ea9c1e0d::t_cae93c20140703 398-401
+  s_8c1b40ea9c1e0d::t_de2bcfba40691b 149-151
+  s_8c1b40ea9c1e0d::t_acf8b10c9b70a5 381,462-465,479,485,495-499
+  s_8c1b40ea9c1e0d::t_003207ecee7978 217-226,229-237,244,382,486-487
+crates/topography-core/src/world/hydrology/fine.rs
+  s_8c1b40ea9c1e0d::t_09dfbf79f50053 1403-1407
+  s_8c1b40ea9c1e0d::t_645fd2ab2368e8 1418-1419,1421
+crates/topography-core/src/world/hydrology/report.rs
+  s_8c1b40ea9c1e0d::t_5c4f2aa31fec8f 896,900
+  s_8c1b40ea9c1e0d::t_c74f8411a47ebf 303-305
+  s_8c1b40ea9c1e0d::t_be8e8faa1b55eb 292-293,295-302,307-387,390-395,401-402,407,409,413-426,436-443,445-450,452-457,459,461,468-469,471,475-478,480-484,937
+  s_8c1b40ea9c1e0d::t_f89117cc2fe353 75-78,84-87
+  s_8c1b40ea9c1e0d::t_499a2bee1a138a 880
+  s_8c1b40ea9c1e0d::t_1c70120ec4ac51 895,897
+  s_8c1b40ea9c1e0d::t_0d2672baf0e813 33-34
+  s_8c1b40ea9c1e0d::t_39be7804c81733 894,898-899,901-936
+  s_8c1b40ea9c1e0d::t_9dbe275e367b38 161-169
+  s_8c1b40ea9c1e0d::t_0062bd8f4248c9 306,893,938
+crates/topography-core/src/world/hydrology/flood.rs
+  s_8c1b40ea9c1e0d::t_e2369a74d9e85b 802-816
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_cc10d8d40e47ac 1344-1345
+  s_8c1b40ea9c1e0d::t_bdecf6a41e3ce8 1229-1230
+  s_8c1b40ea9c1e0d::t_b7f344cfd2386b 1215
+  s_8c1b40ea9c1e0d::t_48eb70ec4eff4d 181-190
+  s_8c1b40ea9c1e0d::t_10275e3a736102 1316
+  s_8c1b40ea9c1e0d::t_a9b4157df4a3cc 1178,1188-1189
+  s_8c1b40ea9c1e0d::t_962444182d1001 654-713,1190
+  s_8c1b40ea9c1e0d::t_d3808634a9d0d3 642-651,714
+crates/topography-core/src/world/hydrology/rivers.rs
+  s_8c1b40ea9c1e0d::t_a710cbef77f635 440-441,443
+  s_8c1b40ea9c1e0d::t_ae5af836f4d45c 482
+  s_8c1b40ea9c1e0d::t_9128e744a38c9d 439
+  s_8c1b40ea9c1e0d::t_b3d8e46f4d9a6e 425-429
+  s_8c1b40ea9c1e0d::t_b0686744c17afc 410-424,433,442,444,480-481,485-490
+  s_8c1b40ea9c1e0d::t_5cb68d064fecd3 626
+  s_8c1b40ea9c1e0d::t_e54610a6ba59a4 438,445
+  s_8c1b40ea9c1e0d::t_db7c8c84a62278 550-552
+  s_8c1b40ea9c1e0d::t_5f1e7e015e0188 466
+  s_8c1b40ea9c1e0d::t_c784337b4dbb39 470-479,483-484,494-497
+  s_8c1b40ea9c1e0d::t_8b9f7157ce31e3 498,500,768-812,818-827,1241
+  s_8c1b40ea9c1e0d::t_26425d3b4b1677 527-531
+  s_8c1b40ea9c1e0d::t_de2bcfba40691b 491-493,813-817
+  s_8c1b40ea9c1e0d::t_44e05f2abdbb75 499,1198-1213,1218-1240
+  s_8c1b40ea9c1e0d::t_c7d6bb607a1f68 625
+  s_8c1b40ea9c1e0d::t_df2e389ffb35cc 467-469
+  s_8c1b40ea9c1e0d::t_434ede6d37ff71 1214-1217
+  s_8c1b40ea9c1e0d::t_991fc7a7e90d54 828-829,1197,1242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1fb846348691142e5940f2f10de1441094bb5d31",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
