@@ -823,6 +823,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "path_fill_after_breach_max_m": fill_again.max_m,
             "path_fill_after_breach_cells": fill_again.cells,
             "receiver_loops": im.receiver_loops,
+            "paths_relaid": im.relaid,
             "unrouted_rivers": im.unrouted,
         });
         path_cap = im.cap.clone();
