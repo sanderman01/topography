@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import heapq
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -256,10 +257,24 @@ def write_grid(path: Path, h: np.ndarray, spacing_m: float, origin: tuple[float,
     return path
 
 
+# Judgment constant: a hydrology run this long (a band takes a few minutes) is taken for a
+# loop. TOPOGRAPHY_HYDROLOGY_TIMEOUT_S overrides it.
+TIMEOUT_S = 1200.0
+
+
+def _report(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text()) if path.exists() else None
+    except ValueError:
+        return None
+
+
 def run(grid: Path, out: Path, coarse: Path | None = None, north: Path | None = None,
-        wind_deg: float | None = None, water: Path | None = None, river_km2: float | None = None) -> dict:
+        wind_deg: float | None = None, water: Path | None = None, river_km2: float | None = None,
+        timeout_s: float | None = None) -> dict:
     """Run hydrology on `grid` into `out` (replaced if present); returns report.json. Raises
-    on a failed check (the outputs stay for reading)."""
+    RuntimeError on a failed check (the outputs stay for reading), a missing or unreadable
+    report, or a run past `timeout_s` (default TIMEOUT_S), naming the last finished stage."""
     if out.exists():
         shutil.rmtree(out)
     cmd = [str(binary()), "world", "hydrology", "--grid", str(grid), "--out", str(out)]
@@ -267,14 +282,25 @@ def run(grid: Path, out: Path, coarse: Path | None = None, north: Path | None = 
                         ("--water", water), ("--river-km2", river_km2)):
         if value is not None:
             cmd += [flag, str(value)]
-    done = subprocess.run(cmd, capture_output=True, text=True)
+    if timeout_s is None:
+        timeout_s = float(os.environ.get("TOPOGRAPHY_HYDROLOGY_TIMEOUT_S", TIMEOUT_S))
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired as e:
+        err = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
+        stages = [line for line in err.splitlines() if line.startswith("hydrology: ")]
+        last = stages[-1] if stages else "none"
+        raise RuntimeError(f"hydrology on {grid} ran past {timeout_s:.0f} s and was stopped "
+                           f"(likely looping); last stage line: {last}") from None
     sys.stdout.write(done.stdout)
-    report_path = out / "report.json"
+    report = _report(out / "report.json")
     if done.returncode != 0:
         sys.stderr.write(done.stderr)
-        failures = json.loads(report_path.read_text()).get("failures") if report_path.exists() else None
+        failures = report.get("failures") if report else None
         raise RuntimeError(f"hydrology failed on {grid} (exit {done.returncode}): {failures}")
-    return json.loads(report_path.read_text())
+    if report is None:
+        raise RuntimeError(f"hydrology on {grid} wrote no readable report.json")
+    return report
 
 
 def seam(north: Path, south: Path) -> None:

@@ -71,63 +71,6 @@ pub struct Outcome {
     pub summary: String,
 }
 
-/// Judgment constant: a stage running this long (its usual time is under a few minutes) is
-/// taken for a loop. `TOPOGRAPHY_HYDROLOGY_STAGE_LIMIT_S` overrides it.
-const STAGE_LIMIT_S: u64 = 1200;
-
-/// Ends the process with an error when one stage runs past the limit, so a loop fails
-/// instead of hanging the band.
-struct Watchdog {
-    state: std::sync::Arc<std::sync::Mutex<(String, Instant, bool)>>,
-}
-
-impl Watchdog {
-    fn start() -> Self {
-        let limit = std::env::var("TOPOGRAPHY_HYDROLOGY_STAGE_LIMIT_S")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(STAGE_LIMIT_S);
-        let state = std::sync::Arc::new(std::sync::Mutex::new((
-            "read".to_string(),
-            Instant::now(),
-            false,
-        )));
-        let watched = state.clone();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let Ok(s) = watched.lock() else { return };
-                if s.2 {
-                    return;
-                }
-                let secs = s.1.elapsed().as_secs();
-                if secs > limit {
-                    eprintln!(
-                        "hydrology: the stage after '{}' has run {secs} s (limit {limit} s): \
-                         aborting, it is likely looping",
-                        s.0
-                    );
-                    std::process::exit(3);
-                }
-            }
-        });
-        Self { state }
-    }
-    fn passed(&self, stage: &str) {
-        if let Ok(mut s) = self.state.lock() {
-            (s.0, s.1) = (stage.to_string(), Instant::now());
-        }
-    }
-}
-
-impl Drop for Watchdog {
-    fn drop(&mut self) {
-        if let Ok(mut s) = self.state.lock() {
-            s.2 = true;
-        }
-    }
-}
-
 /// Run hydrology on `--grid` into a new `--out` directory. Outputs are published even when a
 /// validation check fails (`passed` false), so the report can be read. Timings go to stderr.
 pub fn run(options: &Options) -> Result<Outcome> {
@@ -152,11 +95,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
         format!("{} already exists", options.out.display()),
     )?;
     let started = Instant::now();
-    let watchdog = Watchdog::start();
     let lap = |name: &str, t: &mut Instant| {
         eprintln!("hydrology: {name} {:.1} s", t.elapsed().as_secs_f64());
         *t = Instant::now();
-        watchdog.passed(name);
     };
     let mut t = Instant::now();
 
