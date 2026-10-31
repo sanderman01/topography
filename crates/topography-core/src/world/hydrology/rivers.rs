@@ -869,15 +869,26 @@ pub(super) fn raise_lips(
         }
     }
     // So do the banks of this band's channel cells that river owns (its surface is fixed).
-    for b in band {
-        let (x, o) = (b.cell as usize, b.owner as usize);
-        if flags[x] & FIXED != 0 || flags[o] & FIXED == 0 || surface[o].is_nan() {
+    // Any other bank still below the water (a step after the surfaces were set, such as
+    // widening lowering a river's mouth out of the basin it entered, changed the banks) is
+    // raised to it too, beyond the report's tolerance.
+    let wet = (0..ground.len())
+        .filter(|&i| flags[i] & (CENTRE | FIXED) == CENTRE)
+        .map(|i| (i, i))
+        .chain(band.iter().map(|b| (b.cell as usize, b.owner as usize)));
+    for (x, o) in wet.collect::<Vec<_>>() {
+        if flags[x] & FIXED != 0 || surface[o].is_nan() {
             continue;
         }
+        let slack = if flags[o] & FIXED != 0 {
+            0.0
+        } else {
+            SEAM_BANK_TOLERANCE_M
+        };
         let entered = entered_basin(dims, dir, flags, body, o);
         for (_, j) in dims.neighbours(x) {
             if dry(j)
-                && ground[j] < surface[o]
+                && ground[j] + slack < surface[o]
                 && is_bank(dims, dir, flags, body, basins, entered, o, x, j)
             {
                 raise(ground, j, surface[o], &mut stack);
