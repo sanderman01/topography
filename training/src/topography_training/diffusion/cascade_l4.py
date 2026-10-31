@@ -47,9 +47,15 @@ BODY_FIELDS = ("id", "kind", "level_m", "coarse", "parent", "over_budget", "endo
 DISK_BYTES = 19
 # The diffused surface hydrology carves: kept, so hydrology can be rerun without diffusion.
 RAW = "elevation-raw.f32"
-# Judgment constant: a step at a band boundary over this (and 4 times the rows beside it)
-# fails the seam audit; the per-band hydrology check counts the steps a band made alike.
+# Seam audit, as the per-band hydrology check (report.rs): what hydrology changed may differ
+# across a band boundary by SEAM_STEP_M plus the side slope per row over SEAM_CHECK_ROWS rows,
+# and a cell's change may not lie SLOT_M below both neighbours there.
 SEAM_STEP_M = 5.0
+SEAM_CHECK_ROWS = 4
+SLOT_M = 5.0
+SIDE_SLOPE = float(np.tan(np.radians(35.0)))  # m per 1 m row
+# The manifest of a world whose seam audit failed (not manifest.json: it is not finished).
+MANIFEST_FAILED = "manifest-failed.json"
 
 
 def _rows_4m(a: np.ndarray, r0: int, r1: int, c0: int, c1: int) -> np.ndarray:
@@ -63,6 +69,10 @@ def _hydro_band(c: SimpleNamespace, j: int, state: dict) -> None:
     """1 m hydrology of band j from the raw surface (its rows and halos final), checked against
     band j - 1, into the output layers; `state` counts finished bands, times and bodies."""
     t = time.time()
+    # Only band j - 1 is needed (as the north); others are left by a crash or an earlier rerun.
+    for d in c.hyd.glob("band-[0-9][0-9][0-9]"):
+        if d.name != f"band-{j - 1:03d}":
+            shutil.rmtree(d)
     a, b = c.bands[j]
     top, bot = max(a - c.halo_m, 0), min(b + c.halo_m, c.n)
     cls = c.classes4[top // 4 : bot // 4] if c.per_cell else np.full(((bot - top) // 4, c.c4), c.class_id, np.uint8)
@@ -104,30 +114,56 @@ def _hydro_band(c: SimpleNamespace, j: int, state: dict) -> None:
 
 
 def _seam_audit(out: Path, n: int, bands: list[tuple[int, int]], step_m: float = SEAM_STEP_M) -> dict:
-    """Steps at each band boundary of a 1 m world: columns where what shows (the water surface
-    where wet, else the ground) changes by more than `step_m` and 4 times the steps between the
-    rows beside it, except where both cells are water of one body."""
+    """Steps and slots at each band boundary of a 1 m world, as the per-band hydrology check
+    (`seam_steps`, `seam_slots`) counts them. With d = what shows (the water surface where wet,
+    else the ground) less the raw surface: a column steps where d in one of the first
+    SEAM_CHECK_ROWS rows of the band differs from d in the last row of the band above by more
+    than `step_m` plus the side slope per further row, unless both cells are water of one body;
+    it holds a slot where d lies SLOT_M below both neighbours (north and south, or west and
+    east) in those rows. Without the raw surface (dropped) only steps of what shows over
+    `step_m` and 4 times the rows beside count."""
     def mm(name, dtype):
         return np.memmap(out / name, dtype=dtype, mode="r", shape=(n, n))
 
     ground, surface, body = mm("elevation.f32", "<f4"), mm("water-surface.f32", "<f4"), mm("water-body.u32", "<u4")
+    raw = mm(RAW, "<f4") if (out / RAW).exists() else None
+    k = SEAM_CHECK_ROWS
     boundaries = []
     for a, _ in bands[1:]:
-        if a < 2 or a + 1 >= n:
+        if a < 2 or a + k + 1 >= n:
             continue
-        g = np.asarray(ground[a - 2 : a + 2], np.float64)
-        s = np.asarray(surface[a - 2 : a + 2], np.float64)
-        vis = np.where(np.isfinite(s), s, g)
-        bd = np.asarray(body[a - 1 : a + 1])
-        same = np.isfinite(s[1]) & np.isfinite(s[2]) & (bd[0] == bd[1])
-        step = np.abs(vis[2] - vis[1])
-        beside = np.maximum(np.abs(vis[3] - vis[2]), np.abs(vis[1] - vis[0]))
-        bad = (step > step_m) & (step > 4 * beside) & ~same
+        rows = slice(a - 2, a + k + 1)  # a - 2 .. a + k: d for a - 1 .. a + k - 1 with neighbours
+        s = np.asarray(surface[rows], np.float64)
+        vis = np.where(np.isfinite(s), s, np.asarray(ground[rows], np.float64))
+        bd, wet = np.asarray(body[rows]), np.isfinite(s)
+        slots = np.zeros(n, bool)
+        if raw is not None:
+            d = vis - np.asarray(raw[rows], np.float64)
+            bad, step = np.zeros(n, bool), np.zeros(n)
+            for r in range(k):  # rows a + r against row a - 1 (index 1)
+                same = wet[1] & wet[2 + r] & (bd[1] == bd[2 + r])
+                st = np.abs(d[2 + r] - d[1])
+                hit = (st > step_m + SIDE_SLOPE * r) & ~same
+                bad |= hit
+                step = np.where(hit, np.maximum(step, st), step)
+                mid = d[2 + r]
+                ns = np.minimum(d[1 + r], d[3 + r]) - mid
+                we = np.zeros(n)
+                we[1:-1] = np.minimum(mid[:-2], mid[2:]) - mid[1:-1]
+                slots |= np.maximum(ns, we) > SLOT_M
+        else:
+            same = wet[1] & wet[2] & (bd[1] == bd[2])
+            step = np.abs(vis[2] - vis[1])
+            beside = np.maximum(np.abs(vis[3] - vis[2]), np.abs(vis[1] - vis[0]))
+            bad = (step > step_m) & (step > 4 * beside) & ~same
+        bad |= slots
         cols = int(bad.sum())
-        boundaries.append({"row": a, "columns": cols, "max_step_m": round(float(step[bad].max()), 2) if cols else 0.0,
+        boundaries.append({"row": a, "columns": cols, "slot_columns": int(slots.sum()),
+                           "max_step_m": round(float(step[bad].max()), 2) if cols else 0.0,
                            "at_columns": np.flatnonzero(bad)[:3].tolist()})
     total = sum(b["columns"] for b in boundaries)
-    return {"step_m": step_m, "columns": total, "boundaries_with_steps": sum(1 for b in boundaries if b["columns"]),
+    return {"step_m": step_m, "rule": "hydrology change (shown - raw)" if raw is not None else "slopes (no raw)",
+            "columns": total, "boundaries_with_steps": sum(1 for b in boundaries if b["columns"]),
             "worst": sorted(boundaries, key=lambda b: -b["columns"])[:10], "boundaries": boundaries}
 
 
@@ -185,17 +221,30 @@ def _finish(c: SimpleNamespace, state: dict, extra: dict) -> None:
                                     "rerun": "cascade_l4 --hydrology-only --out <this world>"}
     audit = _seam_audit(c.out, n, c.bands)
     (c.hyd / "seam-audit.json").write_text(json.dumps(audit, indent=1))
-    extra["seam_audit"] = {k: audit[k] for k in ("step_m", "columns", "boundaries_with_steps")}
-    (c.out / "manifest.json").write_text(json.dumps({
+    passed = not audit["columns"]
+    extra["seam_audit"] = {k: audit[k] for k in ("step_m", "rule", "columns", "boundaries_with_steps")} | {
+        "passed": passed}
+    # An earlier world's game layers: kept, marked stale (they follow the ground).
+    game, game_layers = extra.pop("game", None), extra.pop("game_layers", {})
+    if game is not None:
+        extra["game"] = game | {"stale": f"hydrology rerun {extra.get('hydrology_rerun')}: rerun game_layers"}
+        digests |= game_layers
+    manifest = {
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 1.0, "size": [n, n], "class_id": c.class_id,
         "method": "banded L4 over a cascade chain 4 m world, 1 m hydrology per band",
         "water_fill": hydrology.WATER_FILL, **extra,
         "source_world": str(c.world_dir.resolve()), "params": c.params, "band_s": c.band_s,
-        "hydrology_s": state["hydrology_s"], "layers": digests}, indent=1))
-    if audit["columns"]:
-        raise RuntimeError(f"seam audit: {audit['columns']} columns step over {audit['step_m']} m at "
-                           f"{audit['boundaries_with_steps']} band boundaries (hydrology/seam-audit.json)")
+        "hydrology_s": state["hydrology_s"], "layers": digests}
+    # A world that failed its audit gets no manifest.json (export and resumes see it unfinished).
+    name = "manifest.json" if passed else MANIFEST_FAILED
+    cascade.save_json(c.out / name, manifest)
+    if passed:
+        (c.out / MANIFEST_FAILED).unlink(missing_ok=True)
+    else:
+        raise RuntimeError(f"seam audit: {audit['columns']} columns step or hold a slot at "
+                           f"{audit['boundaries_with_steps']} band boundaries (hydrology/seam-audit.json; "
+                           f"{MANIFEST_FAILED}); fix hydrology and rerun with --hydrology-only")
 
 
 def _setup(params: dict, out: Path) -> SimpleNamespace:
@@ -226,19 +275,21 @@ def _setup(params: dict, out: Path) -> SimpleNamespace:
         classes4=read4("classes.u8", np.uint8) if per_cell else None)
 
 
-def _layers(c: SimpleNamespace, mode: str) -> None:
+def _layers(c: SimpleNamespace, mode: str, raw_mode: str | None = None) -> None:
     def layer(name, dtype, m=mode):
         return np.memmap(c.out / name, dtype=dtype, mode=m, shape=(c.n, c.n))
 
     c.elev, c.water_out = layer("elevation.f32", "<f4"), layer("water.u8", np.uint8)
     c.surface_out, c.body_out = layer("water-surface.f32", "<f4"), layer("water-body.u32", "<u4")
     c.snow_out, c.veg_out = layer("snow-ice.u8", np.uint8), layer("vegetation.u8", np.uint8)
-    c.raw = layer(RAW, "<f4") if mode == "w+" or (c.out / RAW).exists() else None
+    c.raw = layer(RAW, "<f4", raw_mode or mode) if mode == "w+" or (c.out / RAW).exists() else None
 
 
-def _hydrology_only(out: Path, drop_raw: bool) -> int:
-    """Rerun every band's hydrology from the kept raw surface of an L4 world (finished or
-    not), without diffusion; resumes after the last band it finished."""
+def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
+    """Rerun every band's hydrology from the kept raw surface of an L4 world (finished, failed
+    or with hydrology stopped part-way), without diffusion. Resumes after the last band it
+    finished while the hydrology binary is the same; a new binary (a code fix), `restart` or
+    an attempt that went through every band starts again from band 0."""
     progress_path = out / "progress.json"
     if not progress_path.exists() or not (out / RAW).exists():
         print(f"error: {out} has no progress.json or {RAW} (worlds made before it was kept need diffusion again)",
@@ -249,21 +300,49 @@ def _hydrology_only(out: Path, drop_raw: bool) -> int:
         print("error: diffusion is not finished; rerun the full command to resume it", file=sys.stderr)
         return 2
     c = _setup(progress["params"], out)
-    _layers(c, "r+")
+    _layers(c, "r+", raw_mode="r")  # hydrology never writes the raw surface
     c.raw_kept = not drop_raw
-    state = progress.setdefault("rerun", {"hydrology_done": 0, "hydrology_s": [], "bodies": {}})
+    binary = hydrology.sha256(hydrology.binary())
+    state = progress.get("rerun")
+    if state is not None:
+        done = state["hydrology_done"]
+        why = ("--restart" if restart else "the hydrology binary changed" if state.get("binary") != binary
+               else "the last attempt went through every band" if done >= len(c.bands)
+               else "the band to resume from is gone" if done and not (c.hyd / f"band-{done - 1:03d}").exists()
+               else None)
+        if why:
+            print(f"hydrology only: starting again from band 0 ({why})", flush=True)
+            state = None
+    if state is None:
+        # The manifest of the world as it was (moved aside: its layers change from now on).
+        old = progress.get("rerun", {}).get("manifest")
+        if old is None and (out / "manifest.json").exists():
+            old = json.loads((out / "manifest.json").read_text())
+        state = progress["rerun"] = {"hydrology_done": 0, "hydrology_s": [], "bodies": {}, "binary": binary,
+                                     "manifest": old}
+    # The raw surface is what diffusion wrote: checked against its recorded digest.
+    want = ((state.get("manifest") or {}).get("hydrology_input") or {}).get("sha256") or state.get("raw_sha256")
+    print(f"hydrology only: checking {RAW}", flush=True)
+    got = hydrology.sha256(out / RAW)
+    if want is not None and got != want:
+        print(f"error: {RAW} does not match its recorded sha256 {want}; it is not the diffused surface",
+              file=sys.stderr)
+        return 2
+    state["raw_sha256"] = got
 
     def save():
         cascade.save_json(progress_path, progress)
 
     c.save, c.band_s = save, progress["band_s"]
     save()
+    (out / "manifest.json").unlink(missing_ok=True)
     print(f"hydrology only: {len(c.bands)} bands; resuming after band {state['hydrology_done']}", flush=True)
     while state["hydrology_done"] < len(c.bands):
         _hydro_band(c, state["hydrology_done"], state)
-    manifest = json.loads((out / "manifest.json").read_text()) if (out / "manifest.json").exists() else {}
-    # Fields of the diffusion that stay true; game layers follow the ground and need a rerun.
-    extra = {k: manifest[k] for k in ("peak_vram_gb", "deep_sea_bands", "windows") if k in manifest}
+    manifest = state.get("manifest") or {}
+    # Fields of the diffusion that stay true; game layers follow the ground and are marked stale.
+    extra = {k: manifest[k] for k in ("peak_vram_gb", "deep_sea_bands", "windows", "game") if k in manifest}
+    extra["game_layers"] = {k: v for k, v in manifest.get("layers", {}).items() if k.startswith("game/")}
     extra["hydrology_rerun"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     _finish(c, state, extra)
     progress["hydrology_s"], progress["bodies"] = state["hydrology_s"], state["bodies"]
@@ -313,7 +392,9 @@ def main(argv=None) -> int:
     p.add_argument("--guidance-classes", type=int, nargs="+",
                    help="legend classes whose windows get --guidance; other windows none (default: all)")
     p.add_argument("--hydrology-only", action="store_true",
-                   help=f"rerun every band's hydrology of --out from its {RAW} (no GPU); resumable")
+                   help=f"rerun every band's hydrology of --out from its {RAW} (no GPU); resumes while the "
+                        "hydrology binary is unchanged, else starts again from band 0")
+    p.add_argument("--restart", action="store_true", help="with --hydrology-only: start again from band 0")
     p.add_argument("--seam-audit", action="store_true",
                    help="only audit the band seams of a finished --out (exit 1 on a step)")
     p.add_argument("--drop-raw", action="store_true", help=f"remove {RAW} when finished (then no hydrology rerun)")
@@ -322,10 +403,11 @@ def main(argv=None) -> int:
         progress = json.loads((args.out / "progress.json").read_text())
         n, band_m, halo_m = _shape(progress["params"])
         audit = _seam_audit(args.out, n, cascade.bands(n, band_m, halo_m))
-        print(json.dumps({k: audit[k] for k in ("step_m", "columns", "boundaries_with_steps", "worst")}, indent=1))
+        print(json.dumps({k: audit[k] for k in ("step_m", "rule", "columns", "boundaries_with_steps", "worst")},
+                         indent=1))
         return 1 if audit["columns"] else 0
     if args.hydrology_only:
-        return _hydrology_only(args.out, args.drop_raw)
+        return _hydrology_only(args.out, args.drop_raw, args.restart)
     if args.run is None or args.world is None:
         p.error("--run and --world are needed (but for --hydrology-only and --seam-audit)")
     if args.centre is not None and args.km is None:
