@@ -1,0 +1,27 @@
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_89053734b04e9e 739-741
+  s_8c1b40ea9c1e0d::t_d5fa1a08695488 794-796
+  s_8c1b40ea9c1e0d::t_5826a853bf9ad2 440-454,456-466
+  s_8c1b40ea9c1e0d::t_c1941bd7ec637d 768-770,772-776
+  s_8c1b40ea9c1e0d::t_67eb2512a70b9f 762-767
+  s_8c1b40ea9c1e0d::t_c1b7d4ea71b66b 780-781
+  s_8c1b40ea9c1e0d::t_b5d32844266b23 737,744-747,753-756
+  s_8c1b40ea9c1e0d::t_61b4171294bc82 748-752
+  s_8c1b40ea9c1e0d::t_955dad5ed4ad47 771
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c540ff2e5b48aae95b2a4386f88c44bf928071ce",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
