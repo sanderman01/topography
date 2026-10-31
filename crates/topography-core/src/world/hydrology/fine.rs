@@ -1400,7 +1400,12 @@ pub(super) fn rivers(
             let runs_along = fixed_rows > 0 && cells.iter().any(|&c| along(c));
             let climbs = climb(ground, &cells);
             if let Some(end) = next.filter(|_| climbs > PATH_CLIMB_M || runs_along) {
-                let open = |i: usize| !claimed.contains_key(&(i as u32)) && !along(i as u32);
+                // Within the corridor: away from the coarse river the cap would cut deep.
+                let open = |i: usize| {
+                    corridor.contains(&(i as u32))
+                        && !claimed.contains_key(&(i as u32))
+                        && !along(i as u32)
+                };
                 if let Some(way) = route_descending(
                     dims,
                     ground,
