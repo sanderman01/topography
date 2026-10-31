@@ -5,8 +5,9 @@ use super::lakes::{Basin, Kind, NO_EXIT};
 use super::rivers::{Band, End, River, entered_basin, hole, is_bank, owner};
 use serde_json::{Map, Value, json};
 
-/// Dry ground may sit this far below adjacent water (f32 rounding of carved rims).
-const BANK_TOLERANCE_M: f32 = 0.01;
+/// Dry ground may sit this far below adjacent water (f32 rounding of carved rims). The repairs
+/// that keep banks above water use it too.
+pub(super) const BANK_TOLERANCE_M: f32 = 0.01;
 /// A centreline bed may rise this much into the next centreline cell (f32 rounding).
 const BED_TOLERANCE_M: f32 = 0.01;
 

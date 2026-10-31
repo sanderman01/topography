@@ -753,6 +753,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "path_fill_cells": im.fill.cells,
             "path_fill_after_breach_max_m": fill_again.max_m,
             "path_fill_after_breach_cells": fill_again.cells,
+            "receiver_loops": im.receiver_loops,
             "unrouted_rivers": im.unrouted,
         });
         path_cap = im.cap.clone();
@@ -1184,6 +1185,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));
+    figures.insert("late_bank_cells_raised".into(), json!(lips.late_banks));
     figures.insert(
         "notch_cells_joined_to_a_lake".into(),
         json!(lips.joins.len() as u64 + notches),

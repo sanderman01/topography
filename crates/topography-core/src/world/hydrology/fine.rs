@@ -487,6 +487,8 @@ pub(super) struct Imprint {
     pub burn_max_at: [usize; 2],
     /// Path cells filled to the previous band's bed they end on.
     pub fill: Fill,
+    /// Heads whose path walk met a receiver loop or a cell without a receiver (unrouted).
+    pub receiver_loops: u64,
     /// Grid edge cells that become outlets where a coarse river leaves the grid.
     pub outlets: Vec<u32>,
 }
@@ -619,7 +621,7 @@ pub(super) fn route(
 }
 
 /// Rise a seam bank may stand below the water beside it (as the report's bank check).
-const SEAM_BANK_M: f32 = 0.01;
+const SEAM_BANK_M: f32 = super::report::BANK_TOLERANCE_M;
 
 /// The lowest way (least highest ground) from `head` over free land, not through `avoid`
 /// cells, to a cell beside an `end`: the way's cells and that end.
@@ -840,6 +842,7 @@ pub(super) fn rivers(
         burn_max_m: 0.0,
         burn_max_at: [0, 0],
         fill: Fill::default(),
+        receiver_loops: 0,
         outlets: Vec::new(),
     };
     for id in ids {
@@ -1265,19 +1268,20 @@ pub(super) fn rivers(
             let mut at = head;
             let next = loop {
                 cells.push(at);
-                // A loop in the receivers (never made) counts as unrouted instead of hanging.
-                if cells.len() > recv.len() + 1 {
+                // A loop in the receivers or a cell without one (neither is made) counts as
+                // unrouted instead of hanging or panicking.
+                let Some(&r) = recv.get(&at).filter(|_| cells.len() <= recv.len() + 1) else {
                     break Some(u32::MAX);
-                }
+                };
                 // A grid-edge outlet in the corridor ends the path on it.
-                match recv[&at] {
+                match r {
                     u32::MAX => break None,
                     r if seeds.contains(&r) && !corridor.contains(&r) => break Some(r),
                     r => at = r,
                 }
             };
             if next == Some(u32::MAX) {
-                eprintln!("hydrology: coarse river {id} has a receiver loop; left unrouted");
+                out.receiver_loops += 1;
                 out.unrouted.push(id);
                 continue;
             }

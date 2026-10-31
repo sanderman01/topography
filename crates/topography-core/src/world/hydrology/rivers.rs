@@ -17,7 +17,7 @@ const BAND_MIN_SHARE: f32 = 0.1;
 /// Sea mouths: the bed reaches below 0 m over this many cells and continues into the seabed.
 pub(super) const MOUTH_CELLS: usize = 4;
 /// The previous band's ground may sit this far below a river surface beside it (f32 rounding).
-const SEAM_BANK_TOLERANCE_M: f32 = 0.01;
+const SEAM_BANK_TOLERANCE_M: f32 = super::report::BANK_TOLERANCE_M;
 /// Judgment constant: a surface drop forced by a low bank tapers upstream by this slope.
 pub(super) const GRADE_SLOPE: f32 = 0.05;
 /// Shallowest centreline water, so the surface stays above the bed in f32.
@@ -784,6 +784,9 @@ pub(super) struct Lips {
     pub volume_m3: f64,
     /// Notch cells that join a lake (cell, basin index + 1) instead of being raised.
     pub joins: Vec<(u32, u32)>,
+    /// Banks of this band's rivers still below the water when lips are raised (a step after
+    /// the surfaces changed which cells are banks): raised by the final catch-all.
+    pub late_banks: u64,
 }
 
 impl Lips {
@@ -872,6 +875,7 @@ pub(super) fn raise_lips(
     // Any other bank still below the water (a step after the surfaces were set, such as
     // widening lowering a river's mouth out of the basin it entered, changed the banks) is
     // raised to it too, beyond the report's tolerance.
+    let mut late_banks = 0u64;
     let wet = (0..ground.len())
         .filter(|&i| flags[i] & (CENTRE | FIXED) == CENTRE)
         .map(|i| (i, i))
@@ -892,6 +896,7 @@ pub(super) fn raise_lips(
                 && is_bank(dims, dir, flags, body, basins, entered, o, x, j)
             {
                 raise(ground, j, surface[o], &mut stack);
+                late_banks += u64::from(slack > 0.0);
             }
         }
     }
@@ -943,6 +948,7 @@ pub(super) fn raise_lips(
         }
     }
     lips.joins = joins;
+    lips.late_banks = late_banks;
     lips
 }
 
