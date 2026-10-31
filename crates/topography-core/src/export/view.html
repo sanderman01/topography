@@ -101,7 +101,7 @@ void main() {
   vec3 base = vec3(.80);
   if (uMode == 1) {
     base = cover(floor(m.a * 255.0 + .5), m.b);
-    if (m.g > .5) base = ${vec3(SNOW)};
+    base = mix(base, ${vec3(SNOW)}, m.g);
     if (m.r > .5) base = ${vec3(WATER)};
   } else if (uMode == 2) {
     base = biome(floor(texelFetch(uB, ivec2(floor(vUV + .5)), 0).r * 255.0 + .5));
