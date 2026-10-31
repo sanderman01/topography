@@ -437,21 +437,33 @@ $P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --h
 ```
 
 It reruns every band's hydrology from the kept raw surface, north to south, rewrites
-`elevation.f32`, the water layers, `bodies.json`, the pictures and the manifest, and resumes
-after the last band it finished (`progress.json` keeps its state under `rerun`). The game
-layers follow the ground, so run `game_layers` again afterwards. `--drop-raw` removes the raw
-surface when a run (or a rerun) finishes; a world without it needs diffusion again to change
-its hydrology.
+`elevation.f32`, the water layers, `bodies.json`, the pictures and the manifest. It works on a
+finished world, on one whose seam audit failed and on one whose inline hydrology stopped at a
+failed band. It opens the raw surface read-only and checks it against the digest the
+manifest (or its first rerun) recorded. `progress.json` keeps the rerun's state under
+`rerun`, with the hydrology binary's digest: the same command resumes after the last band it
+finished while the binary is unchanged, and starts again from band 0 when the binary changed
+(a code fix), when the last attempt went through every band, or with `--restart`. So after a
+hydrology fix, rerun the same command. The manifest is moved aside while the rerun goes, so a
+half-rerun world does not look finished; its `game` entry is kept and marked stale, since the
+game layers follow the ground: run `game_layers` again afterwards. `--drop-raw` removes the
+raw surface when a run (or a rerun) finishes; a world without it needs diffusion again to
+change its hydrology.
 
-Each band's hydrology fails (and stops hydrology, while diffusion goes on as for any failed
-check) on a step at its seam with the band above or on ground cut deeper than allowed
+Each band's hydrology fails (and stops hydrology, while diffusion goes on, for any error)
+on a step or slot at its seam with the band above or on ground cut deeper than allowed
 ([Bands and seams](#bands-and-seams---north)). After the last band, a seam audit checks the
-whole world: at every band boundary it counts columns where what shows (the water surface
-where wet, else the ground) steps more than 5 m and more than 4 times the steps between the
-rows beside it, except where both cells are water of one body. It writes
-`hydrology/seam-audit.json`, records the totals in the manifest (`seam_audit`) and fails the
-run on any such column. It also runs on its own on a finished world (exit status 1 on a
-step):
+whole world with the same rule: at every band boundary, with d the change hydrology made
+(what shows, the water surface where wet, else the ground, less the raw surface), a column
+fails where d in one of the first four rows of the band differs from d in the last row above
+by more than 5 m plus the 35° side slope's rise per further row (except where both cells are
+water of one body), or where d lies 5 m below both neighbours (north and south, or west and
+east) in those rows (a slot). A world without its raw surface falls back to steps of what
+shows over 5 m and 4 times the rows beside them. The audit writes
+`hydrology/seam-audit.json` and records the totals in the manifest (`seam_audit`). A world
+that fails gets `manifest-failed.json` instead of `manifest.json`, so export and resumes see
+it unfinished; fix hydrology and rerun `--hydrology-only`. The audit also runs on its own
+(exit status 1 on a failing column):
 
 ```sh
 $P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --seam-audit
@@ -722,28 +734,51 @@ end on taken dry ground, or join the taken river beside lower taken ground, is d
 surface. `rivers_cut_at_seam` must be 0, and the cycle guard also counts the routing stitched
 with the previous band's.
 
-No step at the seam: a band's first 64 rows (`SEAM_BLEND_ROWS`) start from a blend of the
+The seam: a band's first 64 rows (`SEAM_BLEND_ROWS`) start from a blend of the
 previous band's ground there (its halo, continuous with the taken rows) into this band's own,
-so the seam starts without a step in either direction. On finer levels no cut goes deeper than
+so the seam starts without a step in either direction; a cut that band made in its halo (a
+channel its hydrology guessed there) comes in only down to the seam limit below. On finer
+levels no cut goes deeper than
 `BREACH_MAX_M` (30 m) below that starting ground, and near the seam no cut goes below the
 previous band's dry ground in its last row less the 35° side slope over the distance (down to a
-taken river's or lake's bed beside it): breaching keeps a depression it cannot drain within
-that as a sink and fills a pocket instead, and trench walls, channel beds (but a channel just
-below its water) and seam joins stop there. Coarse river paths may cut deeper (the coarse
+taken river's or lake's bed beside it): the carve floor. Breaching keeps a depression it
+cannot drain within that as a sink and fills a pocket instead; trench walls, seam joins and
+channel beds stop there. Where a river's water would stand below the floor (a low bank
+downstream, a route over a rise), its bed stays on the floor and the water is raised to stand
+on it, upstream too (a backwater), and the dry banks beside are raised to the water (on a
+river over a high rise this fills the valley behind it); not above the previous band's dry
+ground beside it or a coarse path's surface cap, where the bed goes just below the water
+instead (bounded by `river_beds_below_carve_floor`). A channel cell beside the centreline
+whose bed cannot reach below the water stays dry. A river
+entering from the previous band that must be rerouted takes only a way whose cells can be
+lowered to its water level within their floor (it never climbs); with no such way it ends at
+its entry in a sink (`inflows_ended_in_a_sink`). Seam joins that would climb are not made.
+Coarse river paths may cut deeper (the coarse
 network sets where they run) but keep the seam limit, filling up to it where needed
 (`path_fill_*`), and keep four cells from taken dry ground below their water when a way that
 climbs no more allows. A coarse path that climbs more than 5 m above its lowest point upstream,
 or runs along the first 16 rows more than 16 columns from where its river crosses the seam, is
 laid again along the way to its end that climbs least, keeping off the seam there
-(`paths_relaid`); cells of a path away from its coarse river get no surface cap (the coarse
-surface says nothing of the ground there), so the burn only keeps them descending. Checks: `ground_below_carve_floor` (dry ground below that limit) and `seam_steps` (a
-step between the taken last row and the first row, water surface where wet, over 5 m and 4
-times the steps between the rows beside it, beyond the step the band started with), with
-figures under `carving`.
+(`paths_relaid`; along the seam any such way is taken, since a climb there could only be
+cut below the floor); cells of a path away from its coarse river get no surface cap (the coarse
+surface says nothing of the ground there), so the burn only keeps them descending. Other
+river routes whose water would have to climb past what the floor lets carving lower turn to
+their steepest other way down, or end there in a sink (`river_climbs_turned`,
+`river_climbs_ended_in_a_sink`). Checks,
+with figures under `carving`: `ground_below_carve_floor` (dry ground below the floor),
+`river_beds_below_carve_floor` (river cells more than 5 m below it, coarse paths included,
+so a path burn deeper than about 35 m fails), `ground_raised_over_limit` (ground raised more
+than 60 m above the input by any fill), `seam_steps` (columns where the change hydrology made,
+shown height less the input, differs between the taken last row and one of the first four
+rows by more than 5 m plus the side slope's rise per further row, except where both cells are
+water of one body) and `seam_slots` (cells in those rows whose change lies 5 m below both
+neighbours, north and south or west and east). `slots` counts such cells over the whole band
+as a figure.
 
 On finer levels a sink that breaching left (not a coarse dry basin) that a river runs into,
 away from the seam blend, fills to its spill as a lake draining over it, so a river does not
-end in a dry hollow (such as one below sea level behind a lagoon's rim).
+end in a dry hollow (such as one below sea level behind a lagoon's rim). Within the blend
+(64 rows) such a sink stays dry, so a river there can still end in a dry hollow.
 
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
@@ -756,9 +791,9 @@ All must be 0: lakes in more than one piece or with ground at or above their lev
 exits off the level, river cells below an adjacent lake, wet cells whose surface is not above
 the ground, centreline surfaces rising downstream, rivers ending on dry land, dry land
 draining uphill, dry cells more than 1 cm below an adjacent lake, sea or river (river banks
-as above), dry cells in holes, on finer levels dry ground carved below its limit and steps at
-the seam (above), and the `guard_` checks (land not draining to an outlet,
-including receiver cycles; lakes with several levels; beds rising downstream). Unit tests
+as above), dry cells in holes, on finer levels the carving and seam checks (above), and the
+`guard_` checks (land not draining to an outlet, including receiver cycles; lakes with
+several levels; beds rising downstream, except onto a bed held at its carve floor). Unit tests
 (`cargo test -p topography-core hydrology`, run by `scripts/check.sh`) break each check.
 `check_examples` gives up to three failing cells per check.
 
