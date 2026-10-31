@@ -1,0 +1,31 @@
+training/src/topography_training/diffusion/cascade_l4.py
+  s_8c1b40ea9c1e0d::t_419b7b00eac48e 201-295,298,300,315-319,321-330,336,390,402,407,409-414,427,431,436,440-442,445,515-517,536-539
+  s_8c1b40ea9c1e0d::t_ae60d88044e9d4 62-200
+  s_8c1b40ea9c1e0d::t_4839c85e8f5e6b 19-22
+  s_8c1b40ea9c1e0d::t_9f22df754e37b1 51
+  s_8c1b40ea9c1e0d::t_046f9ce42b484d 45-46,48-50,52
+  s_8c1b40ea9c1e0d::t_8aac6409b0a1e3 33
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_146e2740a3b0b2 734,740-741
+  s_8c1b40ea9c1e0d::t_5bf53f79102689 430-461
+  s_8c1b40ea9c1e0d::t_f16ef9987d4dd6 725-733,735-739
+  s_8c1b40ea9c1e0d::t_7cad53032c0c15 754-755
+  s_8c1b40ea9c1e0d::t_54dc6d17c75f61 474
+  s_8c1b40ea9c1e0d::t_c01ff4b72bf0e2 742
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30d192ca4c49f383a9dba008de7136ccd3ad5b30",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
