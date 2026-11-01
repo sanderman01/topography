@@ -433,22 +433,37 @@ is kept: the manifest records it as `hydrology_input` with its digest. So hydrol
 rerun after a hydrology fix without diffusion and without the GPU:
 
 ```sh
-$P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --hydrology-only
+systemd-run --user --scope -q -p MemoryMax=6G \
+    $P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --hydrology-only
 ```
 
-It reruns every band's hydrology from the kept raw surface, north to south, rewrites
-`elevation.f32`, the water layers, `bodies.json`, the pictures and the manifest. It works on a
-finished world, on one whose seam audit failed and on one whose inline hydrology stopped at a
-failed band. It opens the raw surface read-only and checks it against the digest the
-manifest (or its first rerun) recorded. `progress.json` keeps the rerun's state under
-`rerun`, with the hydrology binary's digest: the same command resumes after the last band it
-finished while the binary is unchanged, and starts again from band 0 when the binary changed
-(a code fix), when the last attempt went through every band, or with `--restart`. So after a
-hydrology fix, rerun the same command. The manifest is moved aside while the rerun goes, so a
-half-rerun world does not look finished; its `game` entry is kept and marked stale, since the
-game layers follow the ground: run `game_layers` again afterwards. `--drop-raw` removes the
-raw surface when a run (or a rerun) finishes; a world without it needs diffusion again to
-change its hydrology.
+A band's Rust hydrology peaked at about 2.8 GB at 64 km; the cap keeps a runaway band from
+taking the session down. It reruns every band's hydrology from the kept raw surface, north
+to south, rewrites `elevation.f32`, the water layers, `bodies.json`, the pictures and the
+manifest. It works on a finished world, on one whose seam audit failed and on one whose
+inline hydrology stopped at a failed band. It opens the raw surface read-only and checks it
+against the digest the manifest (`manifest.json`, else `manifest-failed.json`, or the first
+rerun) recorded, and keeps the diffusion's `peak_vram_gb`, `deep_sea_bands` and `windows`.
+
+Both the full command and the rerun pin the hydrology binary for the whole run: they copy
+`TOPOGRAPHY_BIN` (if set, else the release build, brought up to date first) to
+`hydrology/bin/topography-<sha12>` in the world and run that copy, so a later `cargo build`
+cannot change the remaining bands. The manifest records it as `hydrology_binary` (with
+`mixed`, every binary used, when a resumed full run changed it). Unset `TOPOGRAPHY_BIN` for a
+rerun after a hydrology fix, or point it at the fixed build: an old pin left exported reruns
+the old code.
+
+`progress.json` keeps the rerun's state under `rerun`, with the binary's digest and a digest
+of the Python hydrology code (`hydrology.py` and the band step): the same command resumes
+after the last band it finished while both are unchanged, and starts again from band 0 when
+either changed (a code fix), when the last attempt failed its seam audit, or with
+`--restart`. A failure while finishing (not the audit) only finishes again. So after a
+hydrology fix, rerun the same command. While a rerun is in progress or failed, the full
+command refuses to run, so it cannot finish over half-rerun bands. The manifest is moved
+aside while the rerun goes, so a half-rerun world does not look finished; its `game` entry is
+kept and marked stale, since the game layers follow the ground: run `game_layers` again
+afterwards. `--drop-raw` removes the raw surface when a run (or a rerun) finishes; a world
+without it needs diffusion again to change its hydrology.
 
 Each band's hydrology fails (and stops hydrology, while diffusion goes on, for any error)
 on a step or slot at its seam with the band above or on ground cut deeper than allowed
