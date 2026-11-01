@@ -794,7 +794,9 @@ On finer levels a sink that breaching left (not a coarse dry basin) that a river
 fills to its spill as a lake draining over it, so a river does not end in a dry hollow (such
 as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached),
 unless it reaches the first three rows after the seam: a lake there would meet the previous
-band's dry ground, which cannot be raised. A river can still end in such a sink.
+band's dry ground, which cannot be raised. It also stays a sink when not all of its cells drain
+to its spill: a sink a climbing river ends in has no spill, and a pocket below 0 m left inside
+a breached depression does not reach it. A river can still end in such a sink.
 
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
