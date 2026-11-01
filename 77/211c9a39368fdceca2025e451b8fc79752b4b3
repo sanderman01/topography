@@ -1,0 +1,81 @@
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_eff49d6bd21675 795-809
+  s_8c1b40ea9c1e0d::t_309793e3dfc36c 810-811
+crates/topography-core/src/world/hydrology/lakes.rs
+  s_8c1b40ea9c1e0d::t_f1f84491b591d3 387-388,393-395
+  s_8c1b40ea9c1e0d::t_fdf4f5ac58a089 718-719
+  s_8c1b40ea9c1e0d::t_78cd9b826f76f8 744,902
+  s_8c1b40ea9c1e0d::t_b9a76867c61db4 351-354
+  s_8c1b40ea9c1e0d::t_287c2be7c06bd6 417,595
+  s_8c1b40ea9c1e0d::t_9ec45c8e5303af 3
+  s_8c1b40ea9c1e0d::t_9c2fea7ec483db 668-669
+  s_8c1b40ea9c1e0d::t_e8c4890829d8b0 921-922
+  s_8c1b40ea9c1e0d::t_bc6bb63b82fcec 960-968
+  s_8c1b40ea9c1e0d::t_d7b484d0df9d92 448-473
+  s_8c1b40ea9c1e0d::t_671b9fb622d8ec 348-350
+  s_8c1b40ea9c1e0d::t_c4f0511249ce89 710
+  s_8c1b40ea9c1e0d::t_cefe7d82ebec5f 492-493
+  s_8c1b40ea9c1e0d::t_d70ec1cdde53b4 592,597
+  s_8c1b40ea9c1e0d::t_34a055024a98fd 304-314,322-347,355-364,367-383,410,414-416,418-422,426-428,430-437,439-444,475,482-485,496,498-506,508-517,519-520,527-541,544-551,553,579-591,593-594,596,605-616,618-628,630,632-633,635-639,643-645
+  s_8c1b40ea9c1e0d::t_be8df814003fd4 399,401
+  s_8c1b40ea9c1e0d::t_599e826457b9b8 646-651,656-660,662-665,670-699,702-706,709,711-713,715-717,720-721,725,727-734,752-759,761,785,788-789,792-798,800-803
+  s_8c1b40ea9c1e0d::t_6c270200e3b78a 486-490
+  s_8c1b40ea9c1e0d::t_9ec0f0990e4060 714,722-724,726
+  s_8c1b40ea9c1e0d::t_7cb574291e6672 402-409
+  s_8c1b40ea9c1e0d::t_0559cf4520d035 365,384
+  s_8c1b40ea9c1e0d::t_779f97c7b878e8 571,576
+  s_8c1b40ea9c1e0d::t_5f33a761c5e5e7 315-316
+  s_8c1b40ea9c1e0d::t_9eb4b26a18fe04 708
+  s_8c1b40ea9c1e0d::t_b20a9ec33d9d67 319-321,568
+  s_8c1b40ea9c1e0d::t_beb8fd6a59bcff 474
+  s_8c1b40ea9c1e0d::t_2cd85cfb1253dc 631,640
+  s_8c1b40ea9c1e0d::t_97556b71d392e5 642
+  s_8c1b40ea9c1e0d::t_6bf38e0cc03ba6 661,799
+  s_8c1b40ea9c1e0d::t_20074fe0b50a7a 666,760,762-765,767-782
+  s_8c1b40ea9c1e0d::t_7d59ac2c25f812 950-959,969-979
+  s_8c1b40ea9c1e0d::t_98592dc18332dc 491,494-495,497
+  s_8c1b40ea9c1e0d::t_df21d0fc20341c 438,445-447,476-480
+  s_8c1b40ea9c1e0d::t_4edf2bceb381cd 543,552,617,629,634
+  s_8c1b40ea9c1e0d::t_2d5d4fea565f6d 366,481,507,518,521-523
+  s_8c1b40ea9c1e0d::t_7a4fd6a3f90436 385-386,389-392,396-398
+  s_8c1b40ea9c1e0d::t_91885c16c84e5a 411-413,423-425,429
+  s_8c1b40ea9c1e0d::t_09c6426920e070 598-604
+  s_8c1b40ea9c1e0d::t_2aac008bcff498 641
+  s_8c1b40ea9c1e0d::t_b0488a46fdc6df 317-318
+  s_8c1b40ea9c1e0d::t_fb1a6223100494 735,745-751
+  s_8c1b40ea9c1e0d::t_dc8ecc795b2074 790-791
+  s_8c1b40ea9c1e0d::t_fd4e4e2aaf4b58 524-526
+  s_8c1b40ea9c1e0d::t_935bfcbf931aed 700-701
+  s_8c1b40ea9c1e0d::t_08bac9c0ab0906 554-567
+  s_8c1b40ea9c1e0d::t_83fc961142e02b 766,783-784
+  s_8c1b40ea9c1e0d::t_b3a6e17ded5663 837-862,871-901,903-920,923,933-949,980-997
+  s_8c1b40ea9c1e0d::t_473e2e3af2cc0b 400,736-743,786-787,863-870,924-932
+  s_8c1b40ea9c1e0d::t_628b1c21c17d6f 542
+  s_8c1b40ea9c1e0d::t_6d18780c19f584 569-570,577-578
+  s_8c1b40ea9c1e0d::t_39a214b57475d8 572-575,667,707
+  s_8c1b40ea9c1e0d::t_0ac322fc03e1ed 652-655
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_711d499ea99403 766-777,779-783
+  s_8c1b40ea9c1e0d::t_b103cea189d857 778
+  s_8c1b40ea9c1e0d::t_76838036603b34 32-34
+  s_8c1b40ea9c1e0d::t_22035b0b95a15b 1333
+  s_8c1b40ea9c1e0d::t_f8aa0c5b759d54 1328-1332
+  s_8c1b40ea9c1e0d::t_4b84bfc80d61bf 784-785
+  s_8c1b40ea9c1e0d::t_af4942baf49b6d 1334-1336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77211c9a39368fdceca2025e451b8fc79752b4b3",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
