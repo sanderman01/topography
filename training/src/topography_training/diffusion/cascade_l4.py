@@ -58,6 +58,30 @@ SIDE_SLOPE = float(np.tan(np.radians(35.0)))  # m per 1 m row
 MANIFEST_FAILED = "manifest-failed.json"
 
 
+class SeamAuditFailed(RuntimeError):
+    """A finished world failed its seam audit (manifest-failed.json written)."""
+
+
+def _code_digest() -> str:
+    """Digest of the Python side of band hydrology (hydrology.py and `_hydro_band`): a change
+    restarts a rerun, as a new binary does."""
+    import hashlib
+    import inspect
+
+    h = hashlib.sha256(Path(hydrology.__file__).read_bytes())
+    h.update(inspect.getsource(_hydro_band).encode())
+    h.update(repr(BODY_FIELDS).encode())
+    return h.hexdigest()
+
+
+def _pin(c: SimpleNamespace) -> dict:
+    """Pin the hydrology binary (TOPOGRAPHY_BIN, else the release build) into the world's
+    hydrology/bin for the whole run; its manifest entry."""
+    path, digest = hydrology.pin_binary(c.hyd / "bin")
+    print(f"hydrology binary: {path} (sha256 {digest[:12]})", flush=True)
+    return {"sha256": digest, "file": str(path.relative_to(c.out))}
+
+
 def _rows_4m(a: np.ndarray, r0: int, r1: int, c0: int, c1: int) -> np.ndarray:
     """A 4 m block with indices beyond the field repeating its edge."""
     rows = np.clip(np.arange(r0, r1), 0, a.shape[0] - 1)
@@ -242,7 +266,7 @@ def _finish(c: SimpleNamespace, state: dict, extra: dict) -> None:
     if passed:
         (c.out / MANIFEST_FAILED).unlink(missing_ok=True)
     else:
-        raise RuntimeError(f"seam audit: {audit['columns']} columns step or hold a slot at "
+        raise SeamAuditFailed(f"seam audit: {audit['columns']} columns step or hold a slot at "
                            f"{audit['boundaries_with_steps']} band boundaries (hydrology/seam-audit.json; "
                            f"{MANIFEST_FAILED}); fix hydrology and rerun with --hydrology-only")
 
@@ -288,8 +312,8 @@ def _layers(c: SimpleNamespace, mode: str, raw_mode: str | None = None) -> None:
 def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     """Rerun every band's hydrology from the kept raw surface of an L4 world (finished, failed
     or with hydrology stopped part-way), without diffusion. Resumes after the last band it
-    finished while the hydrology binary is the same; a new binary (a code fix), `restart` or
-    an attempt that went through every band starts again from band 0."""
+    finished while the hydrology binary and Python code are the same; a change (a code fix),
+    `restart` or an attempt that failed its seam audit starts again from band 0."""
     progress_path = out / "progress.json"
     if not progress_path.exists() or not (out / RAW).exists():
         print(f"error: {out} has no progress.json or {RAW} (worlds made before it was kept need diffusion again)",
@@ -302,24 +326,29 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     c = _setup(progress["params"], out)
     _layers(c, "r+", raw_mode="r")  # hydrology never writes the raw surface
     c.raw_kept = not drop_raw
-    binary = hydrology.sha256(hydrology.binary())
+    pinned = _pin(c)
+    binary, code = pinned["sha256"], _code_digest()
     state = progress.get("rerun")
     if state is not None:
         done = state["hydrology_done"]
         why = ("--restart" if restart else "the hydrology binary changed" if state.get("binary") != binary
-               else "the last attempt went through every band" if done >= len(c.bands)
-               else "the band to resume from is gone" if done and not (c.hyd / f"band-{done - 1:03d}").exists()
+               else "the hydrology Python code changed" if state.get("code") != code
+               else "the last attempt failed its seam audit" if state.get("audit_failed")
+               else "the band to resume from is gone"
+               if 0 < done < len(c.bands) and not (c.hyd / f"band-{done - 1:03d}").exists()
                else None)
         if why:
             print(f"hydrology only: starting again from band 0 ({why})", flush=True)
             state = None
     if state is None:
-        # The manifest of the world as it was (moved aside: its layers change from now on).
+        # The manifest of the world as it was (moved aside: its layers change from now on); after
+        # an audit failure, the failed one.
         old = progress.get("rerun", {}).get("manifest")
-        if old is None and (out / "manifest.json").exists():
-            old = json.loads((out / "manifest.json").read_text())
+        for name in ("manifest.json", MANIFEST_FAILED):
+            if old is None and (out / name).exists():
+                old = json.loads((out / name).read_text())
         state = progress["rerun"] = {"hydrology_done": 0, "hydrology_s": [], "bodies": {}, "binary": binary,
-                                     "manifest": old}
+                                     "code": code, "manifest": old}
     # The raw surface is what diffusion wrote: checked against its recorded digest.
     want = ((state.get("manifest") or {}).get("hydrology_input") or {}).get("sha256") or state.get("raw_sha256")
     print(f"hydrology only: checking {RAW}", flush=True)
@@ -342,11 +371,22 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     manifest = state.get("manifest") or {}
     # Fields of the diffusion that stay true; game layers follow the ground and are marked stale.
     extra = {k: manifest[k] for k in ("peak_vram_gb", "deep_sea_bands", "windows", "game") if k in manifest}
+    for k in ("deep_sea_bands", "windows"):  # a world whose inline hydrology stopped has no manifest
+        if k not in extra and k in progress:
+            extra[k] = progress[k]
     extra["game_layers"] = {k: v for k, v in manifest.get("layers", {}).items() if k.startswith("game/")}
     extra["hydrology_rerun"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    _finish(c, state, extra)
+    extra["hydrology_binary"] = pinned
+    try:
+        _finish(c, state, extra)
+    except SeamAuditFailed:
+        # Only an audit failure restarts the next rerun; any other failure here just finishes again.
+        state["audit_failed"] = True
+        save()
+        raise
     progress["hydrology_s"], progress["bodies"] = state["hydrology_s"], state["bodies"]
     progress["hydrology_done"] = len(c.bands)
+    progress["hydrology_binary"], progress["hydrology_binaries"] = pinned, [binary]
     del progress["rerun"]
     save()
     _drop(c, drop_raw)
@@ -393,7 +433,8 @@ def main(argv=None) -> int:
                    help="legend classes whose windows get --guidance; other windows none (default: all)")
     p.add_argument("--hydrology-only", action="store_true",
                    help=f"rerun every band's hydrology of --out from its {RAW} (no GPU); resumes while the "
-                        "hydrology binary is unchanged, else starts again from band 0")
+                        "hydrology binary and Python code are unchanged, else starts again from band 0; the "
+                        "binary (TOPOGRAPHY_BIN, else the release build) is copied to hydrology/bin")
     p.add_argument("--restart", action="store_true", help="with --hydrology-only: start again from band 0")
     p.add_argument("--seam-audit", action="store_true",
                    help="only audit the band seams of a finished --out (exit 1 on a step)")
@@ -475,6 +516,10 @@ def main(argv=None) -> int:
             print("error: output directory exists with other arguments", file=sys.stderr)
             return 2
         progress = json.loads(progress_path.read_text())
+        if "rerun" in progress:  # its layers are part rerun: finishing here would mix bands
+            print("error: a --hydrology-only rerun is in progress or failed; continue it with "
+                  "--hydrology-only --out <this world>", file=sys.stderr)
+            return 2
         mode = "r+"
     else:
         # Plus two band directories of about 22 B a cell while the run goes.
@@ -529,6 +574,14 @@ def main(argv=None) -> int:
                 failed.append(e)
                 print(f"hydrology stopped, diffusion continues: {e}", flush=True)
 
+    if progress["hydrology_done"] < len(bands):
+        # Every binary this run's bands were made with (a resume may bring a new one).
+        used = progress.setdefault("hydrology_binaries", [])
+        pinned = _pin(c)
+        if not used or used[-1] != pinned["sha256"]:
+            used.append(pinned["sha256"])
+        progress["hydrology_binary"] = pinned
+        save()
     hydro_until(done - 1)
     for k in range(done, len(bands)):
         t = time.time()
@@ -615,6 +668,9 @@ def main(argv=None) -> int:
         extra["peak_vram_gb"] = round(torch.cuda.max_memory_reserved() / 2**30, 2)
     extra["deep_sea_bands"] = progress.get("deep_sea_bands", [])
     extra["windows"] = progress.get("windows", {})  # of diffused bands: deep-sea skipped, guided
+    if "hydrology_binary" in progress:
+        extra["hydrology_binary"] = progress["hydrology_binary"] | (
+            {"mixed": progress["hydrology_binaries"]} if len(progress.get("hydrology_binaries", [])) > 1 else {})
     _finish(c, progress, extra)
     # Only now the run cannot be resumed any more: drop the last band (and the raw surface
     # with --drop-raw).

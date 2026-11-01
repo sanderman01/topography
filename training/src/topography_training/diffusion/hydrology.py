@@ -222,6 +222,25 @@ def binary() -> Path:
     return _BINARY
 
 
+def pin_binary(dest: Path) -> tuple[Path, str]:
+    """Copy `binary()` into `dest` as topography-<sha12> (other copies there removed) and run
+    that copy from now on, so later builds cannot change a long run; returns it and its sha256."""
+    global _BINARY
+    src = binary()
+    digest = sha256(src)
+    pinned = dest / f"topography-{digest[:12]}"
+    if not pinned.exists() or sha256(pinned) != digest:
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp = pinned.with_suffix(".tmp")
+        shutil.copy2(src, tmp)
+        tmp.rename(pinned)
+    for old in dest.glob("topography-*"):
+        if old != pinned:
+            old.unlink()
+    _BINARY = pinned
+    return pinned, digest
+
+
 def write_table(path: Path, **overrides: float) -> Path:
     """The water table with some fields set for every class (cascade_chain overrides)."""
     lines = ['schema_version = 1', 'kind = "water_table"', 'legend = "topography terrain-v3"']
