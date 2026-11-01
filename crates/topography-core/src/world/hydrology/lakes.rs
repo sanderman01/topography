@@ -600,6 +600,18 @@ pub(super) fn fill_to_spill(
     if pieces.is_empty() {
         return Err("no ground below the level");
     }
+    // The outflow crosses the dry region at the level to the outlet: the previous band's dry
+    // ground beside it, which cannot be raised as a bank, must not lie below it.
+    let low_fixed = |i: usize| {
+        dims.neighbours(i).any(|(_, j)| {
+            flags[j] & (FIXED | SEA | RIVER) == FIXED
+                && body[j] == 0
+                && ground[j] < level - tolerance
+        })
+    };
+    if inside.iter().chain([&outlet]).any(|&i| low_fixed(i)) {
+        return Err("the previous band's ground beside the outflow lies below the level");
+    }
     if pieces.iter().flatten().any(|&i| seam.steps(dims, i, level)) {
         return Err("it would leave a step at the seam");
     }
@@ -1084,6 +1096,14 @@ mod tests {
         assert_eq!(
             spill(&p).err(),
             Some("ground draining away lies below the level beside the lake")
+        );
+        // Its cell beside the rim and the outlet (not the lake) at 0 m: the outflow would
+        // stand above it.
+        p.ground[w + 2] = 5.0;
+        p.ground[w + 5] = 0.0;
+        assert_eq!(
+            spill(&p).err(),
+            Some("the previous band's ground beside the outflow lies below the level")
         );
     }
 
