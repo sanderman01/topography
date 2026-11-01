@@ -781,7 +781,8 @@ river routes whose water would have to climb past what the floor lets carving lo
 their steepest other way down (`river_climbs_turned`). With no lower neighbour (a flat the
 breach filled where the floor kept it from cutting), such a river goes on along the way whose
 water level stays highest, over cells a channel can be cut in to that level, to where its
-routing no longer climbs (`river_climbs_routed_on`); with no such way it ends there in a sink
+routing goes on without climbing, and through any water on without coming back onto the route
+(`river_climbs_routed_on`); with no such way it ends there in a sink
 (`river_climbs_ended_in_a_sink`). Checks,
 with figures under `carving`: `ground_below_carve_floor` (dry ground below the floor),
 `river_beds_below_carve_floor` (river cells more than 5 m below it, coarse paths included,

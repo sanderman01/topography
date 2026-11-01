@@ -853,8 +853,10 @@ pub(super) fn route_on(
     const MAX_WALK: usize = 1 << 20;
     const TOLERANCE_M: f32 = 0.01;
     let free = |j: usize| flags[j] & (FIXED | SEA) == 0 && !keep(j) && body[j] == 0;
-    // The routing from `x` on, as `climbs` follows it: no climb before water, a basin or an end.
+    // The routing from `x` on, as `climbs` follows it: no climb before water, a basin or an
+    // end; and on through those to its end, never back onto the route (a loop).
     let clear = |route: &std::collections::HashSet<usize>, mut x: usize, mut lvl: f32| {
+        let mut climbing = true;
         for _ in 0..MAX_WALK {
             let Some(r) = receiver(dims, dir, x) else {
                 return true;
@@ -863,9 +865,9 @@ pub(super) fn route_on(
                 return false;
             }
             if !free(r) {
-                return true;
+                climbing = false;
             }
-            if floor[r] > lvl + TOLERANCE_M {
+            if climbing && floor[r] > lvl + TOLERANCE_M {
                 return false;
             }
             lvl = lvl.min(ground[r]);
@@ -1215,6 +1217,27 @@ mod tests {
         dir[12] = dims.towards(12, 13);
         dir[13] = dims.towards(13, 14);
         let (flags, body) = (vec![0u8; 15], vec![0u32; 15]);
+        let route = route_on(
+            dims,
+            &ground,
+            &flags,
+            &body,
+            &dir,
+            &floor,
+            |_| false,
+            6,
+            0.5,
+        );
+        assert_eq!(route, Some(vec![6, 12]));
+        // Lake cell 5 drains into cell 6, and the lower shore cell 10 drains into the lake: a
+        // route onto it would close a loop through the lake, so the route goes by cell 12.
+        let mut body = body.clone();
+        body[5] = 1;
+        let mut ground = ground.clone();
+        ground[10] = 0.9;
+        floor[10] = 0.0;
+        dir[5] = dims.towards(5, 6);
+        dir[10] = dims.towards(10, 5);
         let route = route_on(
             dims,
             &ground,
