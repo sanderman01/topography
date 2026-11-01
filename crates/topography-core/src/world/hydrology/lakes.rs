@@ -272,6 +272,35 @@ pub(super) fn extend(
     added
 }
 
+/// Receivers draining sink basin `id` (of `cells` cells) breadth first to its `exit`, the cell
+/// the flood reached it from, so that it fills to that spill. None where it cannot: no exit
+/// (a sink a river ends in rather than climb), or cells not reached from the exit (a pocket
+/// below 0 m left inside a breached depression, or a basin split by trench widening).
+pub(super) fn drain_to_exit(
+    dims: Dims,
+    basin: &[u32],
+    id: u32,
+    exit: u32,
+    cells: usize,
+) -> Option<Vec<(usize, u8)>> {
+    if exit == NO_EXIT {
+        return None;
+    }
+    let exit = exit as usize;
+    let mut moves = Vec::with_capacity(cells);
+    let mut queue = std::collections::VecDeque::from([exit]);
+    let mut seen = std::collections::HashSet::from([exit]);
+    while let Some(c) = queue.pop_front() {
+        for (_, j) in dims.neighbours(c) {
+            if basin[j] == id && seen.insert(j) {
+                moves.push((j, dims.towards(j, c)));
+                queue.push_back(j);
+            }
+        }
+    }
+    (moves.len() == cells).then_some(moves)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +323,16 @@ mod tests {
             extend(dims, &ground, &dir, &[0; 3], &mut basin, &lakes, |_| false),
             2
         );
+    }
+
+    #[test]
+    fn a_sink_fills_only_when_all_its_cells_drain_to_its_exit() {
+        // Exit cell 0; sink cells 1 and 2 drain west to it.
+        let dims = Dims { w: 4, h: 1 };
+        let moves = drain_to_exit(dims, &[0, 1, 1, 0], 1, 0, 2).unwrap();
+        assert_eq!(moves, [(1, 3), (2, 3)]);
+        // A pocket not beside its exit (dry cell 1 between), and a sink with no exit.
+        assert!(drain_to_exit(dims, &[0, 0, 1, 1], 1, 0, 2).is_none());
+        assert!(drain_to_exit(dims, &[0, 1, 0, 0], 1, NO_EXIT, 1).is_none());
     }
 }

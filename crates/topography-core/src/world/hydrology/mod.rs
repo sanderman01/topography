@@ -769,41 +769,43 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // Basins reaching the seam's first rows (a lake there would meet the previous band's dry
     // ground, which cannot be raised); the bank checks catch one that grows there.
     let mut at_seam = vec![false; basins.len() + 1];
+    let mut cells_by_basin = vec![0usize; basins.len() + 1];
     for i in 0..n {
         inflow_by_basin[body[i] as usize] = inflow_by_basin[body[i] as usize].max(acc[i]);
+        cells_by_basin[body[i] as usize] += 1;
         if i / w < fixed_rows + SEAM_LAKE_GAP_ROWS {
             at_seam[body[i] as usize] = true;
         }
     }
+    // Such a sink had no receivers: its cells now drain to where the flood reached it (its
+    // spill), breadth first, and the discharge is summed again so it overflows onward. One
+    // whose cells do not all drain there stays a sink (`lakes::drain_to_exit`).
+    let mut filled = Vec::new();
     for (b, basin) in basins.iter_mut().enumerate() {
         let fills = if fine_level {
             basin.kind == Kind::Sink && b >= kept_by_budget && !(fixed_rows > 0 && at_seam[b + 1])
         } else {
             basin.kind == Kind::Dry
         };
-        if fills && !basin.ice && inflow_by_basin[b + 1] >= river_km2 {
-            basin.kind = Kind::Lake;
-            basin.filled_by_river = true;
+        if !(fills && !basin.ice && inflow_by_basin[b + 1] >= river_km2) {
+            continue;
         }
-    }
-    // Such a sink had no receivers: its cells now drain to where the flood reached it (its
-    // spill), breadth first, and the discharge is summed again so it overflows onward.
-    let filled: Vec<usize> = (kept_by_budget..basins.len())
-        .filter(|&b| fine_level && basins[b].filled_by_river)
-        .collect();
-    for &b in &filled {
-        let (id, exit) = (b as u32 + 1, basins[b].exit as usize);
-        let mut queue = std::collections::VecDeque::from([exit]);
-        let mut seen = std::collections::HashSet::from([exit]);
-        while let Some(c) = queue.pop_front() {
-            for (_, j) in dims.neighbours(c) {
-                if body[j] == id && seen.insert(j) {
-                    dir[j] = dims.towards(j, c);
-                    queue.push_back(j);
+        if fine_level {
+            let id = b as u32 + 1;
+            match lakes::drain_to_exit(dims, &body, id, basin.exit, cells_by_basin[b + 1]) {
+                Some(moves) => {
+                    for (j, d) in moves {
+                        dir[j] = d;
+                    }
+                    filled.push(b);
                 }
+                None => continue,
             }
         }
+        basin.kind = Kind::Lake;
+        basin.filled_by_river = true;
     }
+    drop(cells_by_basin);
     if !filled.is_empty() {
         cycles = cycles.max(flood::accumulate(dims, &dir, weight, &mut acc));
         if let Some(im) = &imprint {
