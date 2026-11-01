@@ -775,10 +775,11 @@ water of one body) and `seam_slots` (cells in those rows whose change lies 5 m b
 neighbours, north and south or west and east). `slots` counts such cells over the whole band
 as a figure.
 
-On finer levels a sink that breaching left (not a coarse dry basin) that a river runs into,
-away from the seam blend, fills to its spill as a lake draining over it, so a river does not
-end in a dry hollow (such as one below sea level behind a lagoon's rim). Within the blend
-(64 rows) such a sink stays dry, so a river there can still end in a dry hollow.
+On finer levels a sink that breaching left (not a coarse dry basin) that a river runs into
+fills to its spill as a lake draining over it, so a river does not end in a dry hollow (such
+as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached),
+unless it reaches the first three rows after the seam: a lake there would meet the previous
+band's dry ground, which cannot be raised. A river can still end in such a sink.
 
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
