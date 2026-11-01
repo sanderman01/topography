@@ -787,23 +787,62 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // the coarse network's) that a river runs into fills to its spill (or its own lowest one)
     // and overflows too: a river does not end in a dry hollow, such as one below sea level
     // behind a lagoon's rim.
-    let river_sinks = lakes::fill_river_sinks(
-        dims,
-        &ground,
-        &flags,
-        &mut body,
-        &mut basins,
-        &mut kept_basin,
-        &mut dir,
-        &acc,
-        lakes::RiverSinkRule {
-            fine: fine_level,
-            first: kept_by_budget,
-            fixed_rows,
-            river_km2,
-        },
-    );
-    if river_sinks.filled > 0 {
+    // Coarse river paths keep their course: no lake grows over a burned path cell.
+    let mut on_path = vec![false; n];
+    if let Some(im) = &imprint {
+        for p in &im.paths {
+            for &c in &p.cells {
+                on_path[c as usize] = true;
+            }
+        }
+    }
+    // The seam step rule's inputs, for lakes filled near the seam.
+    let mut seam_step = lakes::SeamStep::none();
+    if let (Some(b), true) = (&north, fine_level && fixed_rows > 0) {
+        let last = (fixed_rows - 1) * w;
+        let mut raw_last = Vec::new();
+        grid::for_each_input_row(&options.grid, grid.w, |y, row| {
+            if y + 1 == fixed_rows {
+                raw_last.extend_from_slice(row);
+            } else if y >= fixed_rows && y < fixed_rows + report::SEAM_CHECK_ROWS {
+                seam_step.raw.extend_from_slice(row);
+            }
+        })?;
+        seam_step.change = (0..w)
+            .map(|x| {
+                let s = b.surface[last + x];
+                (if s.is_nan() { ground[last + x] } else { s }) - raw_last[x]
+            })
+            .collect();
+        seam_step.fixed_rows = fixed_rows;
+        seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
+    }
+    // Again while a lake filled this way sends a river on into a further sink.
+    let mut river_sinks = lakes::RiverSinks::default();
+    for _ in 0..4 {
+        let pass = lakes::fill_river_sinks(
+            dims,
+            &ground,
+            &flags,
+            &mut body,
+            &mut basins,
+            &mut kept_basin,
+            &mut dir,
+            &acc,
+            lakes::RiverSinkRule {
+                fine: fine_level,
+                first: kept_by_budget,
+                fixed_rows,
+                river_km2,
+                keep: &|i| on_path[i],
+                seam: &seam_step,
+            },
+        );
+        let again = pass.filled > 0;
+        river_sinks.add(pass);
+        if !again {
+            break;
+        }
         cycles = cycles.max(flood::accumulate(dims, &dir, weight, &mut acc));
         if let Some(im) = &imprint {
             for (&cell, &q) in &im.q {
@@ -814,15 +853,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             acc[..fixed_rows * w].copy_from_slice(&b.discharge);
         }
     }
-    // Coarse river paths keep their course: a lake does not grow over a burned path cell.
-    let mut on_path = vec![false; n];
-    if let Some(im) = &imprint {
-        for p in &im.paths {
-            for &c in &p.cells {
-                on_path[c as usize] = true;
-            }
-        }
-    }
+    drop(seam_step);
     let extended = lakes::extend(dims, &ground, &dir, &flags, &mut body, &basins, |i| {
         on_path[i]
     });

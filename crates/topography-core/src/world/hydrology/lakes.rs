@@ -340,6 +340,44 @@ impl PartialOrd for Low {
     }
 }
 
+/// The seam step rule (`report::carving`) for lakes made near the seam.
+pub(super) struct SeamStep {
+    /// Rows copied from the previous band; 0: no seam.
+    pub fixed_rows: usize,
+    /// Per column, what hydrology changed in the previous band's last row (shown less input).
+    pub change: Vec<f32>,
+    /// The input of the first `SEAM_CHECK_ROWS` rows after the seam.
+    pub raw: Vec<f32>,
+    /// The side slope's rise per row.
+    pub rise: f32,
+}
+
+impl SeamStep {
+    pub fn none() -> Self {
+        Self {
+            fixed_rows: 0,
+            change: Vec::new(),
+            raw: Vec::new(),
+            rise: 0.0,
+        }
+    }
+    /// Water at `level` over cell `i` would differ across the seam by more than the rule allows.
+    fn steps(&self, dims: Dims, i: usize, level: f32) -> bool {
+        let (y, x) = (i / dims.w, i % dims.w);
+        if self.change.len() != dims.w || y < self.fixed_rows {
+            return false;
+        }
+        let k = y - self.fixed_rows;
+        match self.raw.get(k * dims.w + x) {
+            Some(&raw) if k < super::report::SEAM_CHECK_ROWS => {
+                let step = (level - raw - self.change[x]).abs();
+                step > super::report::SEAM_STEP_M + self.rise * k as f32
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Sink basin `id`, which a river enters at `start` but which cannot fill to its recorded exit
 /// (a pocket below 0 m inside a breached depression, or a basin trench widening split): the
 /// lake its piece holding `start` makes when filled to its own lowest spill. A priority flood
@@ -349,9 +387,9 @@ impl PartialOrd for Low {
 /// (`merged`); a lake at or above the level beside it takes it in (`join`). An error (the
 /// reason) where that is not clean: the flood meets a kept sink, a climb's sink, a basin above
 /// its level or other water draining in, or the grid edge; ground draining away (the previous
-/// band's, of the first `fixed_rows`, included: it is a wall) lies below the level beside the
-/// lake; the lake is deeper near the seam than its checks allow; or a sink cell above the level
-/// cannot drain onto it.
+/// band's and `keep` cells, coarse river paths, included: they are walls, though a path below
+/// the level may take the spill) or water lies below the level beside the lake; the lake would
+/// leave a step at the seam (`seam`); or a sink cell above the level cannot drain onto it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fill_to_spill(
     dims: Dims,
@@ -362,7 +400,8 @@ pub(super) fn fill_to_spill(
     dir: &[u8],
     id: u32,
     start: usize,
-    fixed_rows: usize,
+    keep: &dyn Fn(usize) -> bool,
+    seam: &SeamStep,
 ) -> Result<Spill, &'static str> {
     use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
     const MAX_CELLS: usize = 1 << 22;
@@ -442,11 +481,11 @@ pub(super) fn fill_to_spill(
         }
         if foreign(x) {
             // Water or a pass-through basin below the level takes the spill; afterwards
-            // water beside the region is left as it is. A lake at or above the level (all the
-            // region is below it, the rest of the rim higher) takes the region in.
+            // water beside the region that drains away is left as it is. A lake at or above
+            // the level (all the region is below it, the rest of the rim higher) takes the
+            // region in.
             let kind = (flags[x] & SEA == 0).then(|| basins[body[x] as usize - 1].kind);
             match walk(&inside, x) {
-                _ if outlet.is_some() => {}
                 Some(false) => {}
                 // A lake breaching left that drains in (a lagoon whose outflow ends here)
                 // is part of the hollow: its cells are ground to fill.
@@ -470,7 +509,8 @@ pub(super) fn fill_to_spill(
                     heap.push(Low(ground[x], x));
                     continue;
                 }
-                _ => return Err("water beside it drains into it"),
+                Some(true) => return Err("water beside it drains into it"),
+                None => return Err("meets a kept sink or a dead end"),
             }
             match outlet {
                 None if kind != Some(Kind::Sink) && z < level => outlet = Some(x),
@@ -478,19 +518,23 @@ pub(super) fn fill_to_spill(
                     (outlet, join, level) = (Some(x), Some(body[x]), z);
                     break;
                 }
-                None => return Err("meets a kept sink or a basin above the level"),
+                None => return Err("meets a basin above the level"),
                 Some(_) => {}
             }
             continue;
         }
-        if z != ground[x] {
+        if z.to_bits() != ground[x].to_bits() {
             // Pushed at its lake's level before that lake was taken in.
             heap.push(Low(ground[x], x));
             continue;
         }
-        if flags[x] & FIXED != 0 {
+        if flags[x] & FIXED != 0 || keep(x) {
             // The previous band's cells are a wall, checked against the level below (no flow
-            // goes back across the seam).
+            // goes back across the seam); so are coarse river paths, which keep their course,
+            // unless one below the level takes the spill.
+            if keep(x) && outlet.is_none() && z < level && walk(&inside, x) == Some(false) {
+                outlet = Some(x);
+            }
             continue;
         }
         if closed(x) {
@@ -539,8 +583,13 @@ pub(super) fn fill_to_spill(
             for (_, j) in dims.neighbours(cells[k]) {
                 if below(j) && taken.insert(j) {
                     cells.push(j);
-                } else if !inside.contains(&j) && !water(j) && ground[j] < level - tolerance {
+                } else if inside.contains(&j) {
+                    continue;
+                } else if !water(j) && ground[j] < level - tolerance {
                     return Err("ground draining away lies below the level beside the lake");
+                } else if water(j) && key(j) < level - tolerance {
+                    // No rim between it and lower water: a step in the water surface.
+                    return Err("water beside the lake lies below its level");
                 }
             }
             k += 1;
@@ -551,19 +600,8 @@ pub(super) fn fill_to_spill(
     if pieces.is_empty() {
         return Err("no ground below the level");
     }
-    // Near the seam water no deeper than the step the seam checks allow (less a margin).
-    let seam_end = if fixed_rows > 0 {
-        fixed_rows + super::report::SEAM_CHECK_ROWS
-    } else {
-        0
-    };
-    let deep = super::report::SEAM_STEP_M - 1.0;
-    if pieces
-        .iter()
-        .flatten()
-        .any(|&i| i / dims.w < seam_end && level - ground[i] > deep)
-    {
-        return Err("too deep at the seam");
+    if pieces.iter().flatten().any(|&i| seam.steps(dims, i, level)) {
+        return Err("it would leave a step at the seam");
     }
     pieces.sort_unstable_by_key(|p| p[0]);
     // Pieces beside the lake it joins become part of it; others lakes of their own at its level.
@@ -644,7 +682,7 @@ pub(super) fn fill_to_spill(
 }
 
 /// Which basins `fill_river_sinks` fills.
-pub(super) struct RiverSinkRule {
+pub(super) struct RiverSinkRule<'a> {
     /// A finer level: sinks fill (from basin index `first`, the ones breaching and the climb
     /// pass left); on the trunk level dry pass-through basins do.
     pub fine: bool,
@@ -654,9 +692,13 @@ pub(super) struct RiverSinkRule {
     /// own spill, where `fill_to_spill` checks that ground.
     pub fixed_rows: usize,
     pub river_km2: f32,
+    /// Coarse river paths, which keep their course.
+    pub keep: &'a dyn Fn(usize) -> bool,
+    pub seam: &'a SeamStep,
 }
 
 /// What `fill_river_sinks` did.
+#[derive(Default)]
 pub(super) struct RiverSinks {
     /// Sinks filled as lakes on a finer level (their receivers changed).
     pub filled: usize,
@@ -667,6 +709,17 @@ pub(super) struct RiverSinks {
     pub joined: u64,
     /// Sinks left dry that `fill_to_spill` could not fill, by reason.
     pub left: std::collections::BTreeMap<&'static str, u64>,
+}
+
+impl RiverSinks {
+    /// Sums with a later pass; the sinks left are those of the last pass.
+    pub fn add(&mut self, pass: RiverSinks) {
+        self.filled += pass.filled;
+        self.spills += pass.spills;
+        self.spill_lakes += pass.spill_lakes;
+        self.joined += pass.joined;
+        self.left = pass.left;
+    }
 }
 
 /// Basins a river (discharge `acc` from `river_km2`) runs into fill as lakes and overflow. On
@@ -686,7 +739,7 @@ pub(super) fn fill_river_sinks(
     kept_basin: &mut Vec<bool>,
     dir: &mut [u8],
     acc: &[f32],
-    rule: RiverSinkRule,
+    rule: RiverSinkRule<'_>,
 ) -> RiverSinks {
     let mut inflow = vec![(0f32, 0usize); basins.len() + 1];
     let mut at_seam = vec![false; basins.len() + 1];
@@ -719,7 +772,7 @@ pub(super) fn fill_river_sinks(
         if !fills || basin.ice || inflow[b + 1].0 < rule.river_km2 || merged.contains(&id) {
             continue;
         }
-        let drained = (!at_seam[b + 1])
+        let drained = (rule.fine && !at_seam[b + 1])
             .then(|| drain_to_exit(dims, body, id, basin.exit, cells[b + 1]))
             .flatten();
         if !rule.fine {
@@ -733,15 +786,7 @@ pub(super) fn fill_river_sinks(
         } else {
             let start = inflow[b + 1].1;
             let spill = fill_to_spill(
-                dims,
-                ground,
-                flags,
-                body,
-                basins,
-                dir,
-                id,
-                start,
-                rule.fixed_rows,
+                dims, ground, flags, body, basins, dir, id, start, rule.keep, rule.seam,
             );
             let spill = match spill {
                 Ok(spill) => spill,
@@ -785,7 +830,8 @@ pub(super) fn fill_river_sinks(
                 let basin = &mut basins[lake as usize - 1];
                 (basin.kind, basin.level, basin.exit) =
                     (Kind::Lake, spill.level, spill.outlet as u32);
-                basin.filled_by_river = true;
+                // Made by a river, not kept beyond a budget (later floods do not take it in).
+                (basin.filled_by_river, basin.over_budget) = (true, false);
             }
             // A hollow it took cells of is not filled again (its counts are stale).
             merged.extend(&spill.merged);
@@ -901,6 +947,8 @@ mod tests {
             first,
             fixed_rows: 0,
             river_km2: 0.05,
+            keep: &|_| false,
+            seam: &SeamStep::none(),
         };
         fill_river_sinks(
             p.dims,
@@ -929,7 +977,8 @@ mod tests {
             &p.dir,
             1,
             at(3),
-            0,
+            &|_| false,
+            &SeamStep::none(),
         )
         .unwrap();
         assert_eq!((spill.level, spill.outlet), (0.3, at(5)));
@@ -944,6 +993,67 @@ mod tests {
         for x in 2..5 {
             assert_eq!(receiver(p.dims, &p.dir, at(x)), Some(at(x + 1)));
         }
+    }
+
+    fn spill_of(p: &Pocket, seam: &SeamStep) -> Result<Spill, &'static str> {
+        let start = 2 * p.dims.w + 3;
+        fill_to_spill(
+            p.dims,
+            &p.ground,
+            &p.flags,
+            &p.body,
+            &p.basins,
+            &p.dir,
+            1,
+            start,
+            &|_| false,
+            seam,
+        )
+    }
+
+    #[test]
+    fn a_spill_takes_in_the_next_hollow_and_joins_a_lake_beside_it() {
+        // Cell 1 is another breach hollow (id 2) at -0.2 m: it fills with the pocket.
+        let mut p = pocket(true);
+        let w = p.dims.w;
+        let at = |x: usize| 2 * w + x;
+        let (a1, a2, a3, a5) = (at(1), at(2), at(3), at(5));
+        p.ground[a1] = -0.2;
+        p.body[a1] = 2;
+        p.basins.push(Basin::kept(Kind::Sink, 0.5, 0));
+        let spill = spill_of(&p, &SeamStep::none()).unwrap();
+        assert_eq!(spill.merged, [2]);
+        assert_eq!(spill.pieces, [vec![a1, a2, a3]]);
+        let done = fill(&mut p, 0);
+        assert_eq!((done.spills, p.body[a1]), (1, 1));
+        // Cell 5 is a lake at 0.4 m draining to the sea: above the 0.3 m rim, it takes the
+        // pocket and the rim in.
+        let mut p = pocket(true);
+        p.body[a5] = 2;
+        p.basins.push(Basin::kept(Kind::Lake, 0.4, at(6) as u32));
+        let spill = spill_of(&p, &SeamStep::none()).unwrap();
+        assert_eq!((spill.level, spill.join), (0.4, Some((2, vec![true]))));
+        assert_eq!(spill.pieces, [vec![a2, a3, at(4)]]);
+    }
+
+    #[test]
+    fn a_spill_lake_leaves_no_step_at_the_seam() {
+        // Rows 0 and 1 are the previous band's, unchanged there; the 0.3 m lake over cell 2,
+        // whose input lay at -6 m, would change the shown height 6.3 m in the first row.
+        let p = pocket(true);
+        let w = p.dims.w;
+        let mut seam = SeamStep {
+            fixed_rows: 2,
+            change: vec![0.0; w],
+            raw: vec![0.0; 4 * w],
+            rise: 0.7,
+        };
+        assert!(spill_of(&p, &seam).is_ok());
+        seam.raw[2] = -6.0;
+        assert_eq!(
+            spill_of(&p, &seam).err(),
+            Some("it would leave a step at the seam")
+        );
     }
 
     #[test]
@@ -965,7 +1075,8 @@ mod tests {
                 &p.dir,
                 1,
                 2 * w + 3,
-                2,
+                &|_| false,
+                &SeamStep::none(),
             )
         };
         assert!(spill(&p).is_ok());
