@@ -574,6 +574,37 @@ fn ahead_exposure(c: &Context) -> Value {
     })
 }
 
+/// River ends (centreline cells of this run whose receiver is a dry sink cell): into a hollow
+/// this level left (`over_budget`: breaching, a climb or a stuck inflow), with examples, and
+/// into a kept dry basin (endorheic by design).
+fn dry_sink_ends(c: &Context) -> Value {
+    let (mut hollow, mut kept) = (Vec::new(), 0u64);
+    let mut sinks = std::collections::HashSet::new();
+    for i in 0..c.ground.len() {
+        if !c.centre(i) || c.fixed(i) {
+            continue;
+        }
+        let Some(r) = receiver(c.dims, c.dir, i) else {
+            continue;
+        };
+        match c.basin(r).filter(|b| b.kind == Kind::Sink) {
+            Some(b) if b.over_budget => {
+                hollow.push(i);
+                sinks.insert(c.body[r]);
+            }
+            Some(_) => kept += 1,
+            None => {}
+        }
+    }
+    let w = c.dims.w;
+    json!({
+        "count": hollow.len(),
+        "sinks": sinks.len(),
+        "at_cells": hollow.iter().take(8).map(|&i| [i % w, i / w]).collect::<Vec<_>>(),
+        "into_kept_dry_basins": kept,
+    })
+}
+
 pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, Value> {
     let n = c.ground.len();
     let sea = (0..n).filter(|&i| c.sea(i)).count();
@@ -641,6 +672,7 @@ pub(super) fn figures(c: &Context, carve: &Carve, extended: u64) -> Map<String, 
         "rivers_to_sea": ends(|e| *e == End::Sea),
         "rivers_to_lakes": ends(|e| matches!(e, End::Lake(_))),
         "rivers_to_sinks": ends(|e| matches!(e, End::Sink(_))),
+        "rivers_ending_in_a_dry_sink": dry_sink_ends(c),
         "rivers_into_ice_basins": ends(|e| matches!(e, End::Dry(_))),
         "mouth_max_drop_m": mouth_drop,
         "rivers_to_grid_edge": ends(|e| *e == End::Edge),
