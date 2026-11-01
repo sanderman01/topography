@@ -600,17 +600,36 @@ pub(super) fn fill_to_spill(
     if pieces.is_empty() {
         return Err("no ground below the level");
     }
-    // The outflow crosses the dry region at the level to the outlet: the previous band's dry
-    // ground beside it, which cannot be raised as a bank, must not lie below it.
-    let low_fixed = |i: usize| {
+    // The outflow crosses the dry region at the level to the outlet, then runs on as a river
+    // whose water stands at about the lowest ground so far: the previous band's dry ground
+    // beside it, which cannot be raised as a bank, must not lie below that water. Every dry
+    // region cell counts (strict: not only those the outflow crosses); beyond the outlet, the
+    // river while it is in the rows the seam checks.
+    let low_fixed = |i: usize, water: f32| {
         dims.neighbours(i).any(|(_, j)| {
             flags[j] & (FIXED | SEA | RIVER) == FIXED
                 && body[j] == 0
-                && ground[j] < level - tolerance
+                && ground[j] < water - tolerance
         })
     };
-    if inside.iter().chain([&outlet]).any(|&i| low_fixed(i)) {
+    if inside.iter().any(|&i| low_fixed(i, level)) {
         return Err("the previous band's ground beside the outflow lies below the level");
+    }
+    if seam.fixed_rows > 0 {
+        let end = seam.fixed_rows + super::report::SEAM_CHECK_ROWS;
+        let (mut c, mut water) = (outlet, ground[outlet]);
+        for _ in 0..4 * end {
+            if c / dims.w >= end || flags[c] & (FIXED | SEA) != 0 || body[c] != 0 {
+                break;
+            }
+            if low_fixed(c, water) {
+                return Err("the previous band's ground beside the outflow lies below its water");
+            }
+            match receiver(dims, dir, c) {
+                Some(r) if !inside.contains(&r) => (c, water) = (r, water.min(ground[r])),
+                _ => break,
+            }
+        }
     }
     if pieces.iter().flatten().any(|&i| seam.steps(dims, i, level)) {
         return Err("it would leave a step at the seam");
@@ -1049,6 +1068,45 @@ mod tests {
     }
 
     #[test]
+    fn a_spill_splits_into_lakes_and_leaves_an_unreached_sink_piece() {
+        // Cell 3 lies at the 0.3 m level between the pit (cell 2) and cell 4 (-0.2 m, draining
+        // back in): two lakes. The sink's other piece, cell 5 of row 4 at 4 m, stays a sink, so
+        // both lakes get new ids.
+        let mut p = pocket(true);
+        let w = p.dims.w;
+        let at = |x: usize| 2 * w + x;
+        let other = 4 * w + 5;
+        (p.ground[at(3)], p.ground[at(4)], p.ground[at(5)]) = (0.3, -0.2, 0.3);
+        (p.body[at(3)], p.body[other], p.ground[other]) = (0, 1, 4.0);
+        (p.acc[at(3)], p.acc[at(2)]) = (0.0, 1.0);
+        p.dir[at(5)] = p.dims.towards(at(5), at(6));
+        let spill = spill_of(&p, &SeamStep::none());
+        let spill = spill.unwrap();
+        assert_eq!(spill.pieces, [vec![at(2)], vec![at(4)]]);
+        assert_eq!(spill.taken, 1);
+        let done = fill(&mut p, 0);
+        assert_eq!((done.spills, done.spill_lakes), (1, 2));
+        assert_eq!((p.body[at(2)], p.body[at(4)], p.body[other]), (2, 3, 1));
+        assert_eq!(p.basins[0].kind, Kind::Sink);
+        assert_eq!((p.basins[1].kind, p.basins[2].level), (Kind::Lake, 0.3));
+    }
+
+    #[test]
+    fn a_sink_cell_above_the_level_in_a_hollow_of_its_own_rejects_the_spill() {
+        // Sink cells below the pit: 0.4 m beside it, then 0.35 m behind that.
+        let mut p = pocket(true);
+        let w = p.dims.w;
+        let (x, y) = (3 * w + 2, 4 * w + 2);
+        (p.ground[x], p.ground[y], p.body[x], p.body[y]) = (0.4, 0.35, 1, 1);
+        assert_eq!(
+            spill_of(&p, &SeamStep::none()).err(),
+            Some("a sink cell above the level lies in a hollow of its own")
+        );
+        p.ground[y] = 0.45;
+        assert_eq!(spill_of(&p, &SeamStep::none()).unwrap().dry, [x, y]);
+    }
+
+    #[test]
     fn a_spill_lake_leaves_no_step_at_the_seam() {
         // Rows 0 and 1 are the previous band's, unchanged there; the 0.3 m lake over cell 2,
         // whose input lay at -6 m, would change the shown height 6.3 m in the first row.
@@ -1104,6 +1162,21 @@ mod tests {
         assert_eq!(
             spill(&p).err(),
             Some("the previous band's ground beside the outflow lies below the level")
+        );
+        // Beside the outlet only (0.1 m, its water): 0.2 m lies above that water, 0.05 m below.
+        p.ground[w + 5] = 5.0;
+        let seam = SeamStep {
+            fixed_rows: 2,
+            change: vec![0.0; w],
+            raw: vec![0.0; 4 * w],
+            rise: 0.7,
+        };
+        p.ground[w + 6] = 0.2;
+        assert!(spill_of(&p, &seam).is_ok());
+        p.ground[w + 6] = 0.05;
+        assert_eq!(
+            spill_of(&p, &seam).err(),
+            Some("the previous band's ground beside the outflow lies below its water")
         );
     }
 

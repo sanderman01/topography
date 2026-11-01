@@ -857,11 +857,13 @@ pub(super) fn route_on(
     // end; and on through those to its end, never back onto the route (a loop).
     let clear = |route: &std::collections::HashSet<usize>, mut x: usize, mut lvl: f32| {
         let mut climbing = true;
+        let mut seen = std::collections::HashSet::new();
         for _ in 0..MAX_WALK {
             let Some(r) = receiver(dims, dir, x) else {
                 return true;
             };
-            if route.contains(&r) {
+            // Back onto the route, or into a cycle already there.
+            if route.contains(&r) || !seen.insert(r) {
                 return false;
             }
             if !free(r) {

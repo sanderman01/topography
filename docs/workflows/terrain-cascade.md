@@ -810,11 +810,12 @@ left in `left_by_reason`). This runs again, up to four passes, while a lake made
 a river on into a further sink. It stays a sink where that is not clean: the flood meets a
 kept sink or other water draining in (such as a coarse lagoon whose outflow ends there) or the
 grid edge; ground draining away, the previous band's included, or water lies below the level
-beside the lake, or that band's ground beside its outflow (that ground cannot be raised; a lake
+beside the lake, or that band's ground beside its outflow (over the dry region at the level,
+then the river's water while in the rows the seam checks; that ground cannot be raised; a lake
 beside lower water would be a step in the surface); or the lake would fail the seam step rule
-above (`seam_steps`, against the input). A sink a climbing river ends in has no spill and stays one. The figure
-`rivers_ending_in_a_dry_sink` counts the river ends still left in such sinks, with examples
-(`at_cells`), apart from those into kept dry basins (endorheic by design).
+above (`seam_steps`, against the input). A sink a climbing river ends in has no spill and
+stays one. The figure `rivers_ending_in_a_dry_sink` counts the river ends still left in such
+sinks, with examples (`at_cells`), apart from those into kept dry basins (endorheic by design).
 
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
