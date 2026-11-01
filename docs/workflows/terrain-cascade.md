@@ -792,11 +792,23 @@ as a figure.
 
 On finer levels a sink that breaching left (not a coarse dry basin) that a river runs into
 fills to its spill as a lake draining over it, so a river does not end in a dry hollow (such
-as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached),
-unless it reaches the first three rows after the seam: a lake there would meet the previous
-band's dry ground, which cannot be raised. It also stays a sink when not all of its cells drain
-to its spill: a sink a climbing river ends in has no spill, and a pocket below 0 m left inside
-a breached depression does not reach it. A river can still end in such a sink.
+as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached).
+A sink whose cells do not all drain to that spill (a pocket below 0 m left inside a breached
+depression, or a basin trench widening split), or that reaches the first three rows after the
+seam, fills to its own lowest spill instead: a priority flood from its lowest cell takes ground
+in rising order, and lower ground draining back in, until lower ground drains away to water, a
+dry pass-through basin or an edge. Other hollows breaching left, and a lake breaching left that
+drains in, fill with it; a lake beside it at or above the level takes it in; the previous
+band's cells are a wall. The cells below that level become lakes at it, draining over the
+spill, and sink cells above it dry ground draining onto them
+(`river_sinks_filled_to_own_spill`, with the reasons sinks were left in `left_by_reason`). It
+stays a sink where that is not clean: the flood meets a kept sink or other water draining in
+(such as a coarse lagoon whose outflow ends there) or the grid edge; ground draining away,
+the previous band's included, lies below the level beside the lake (that band's dry ground
+cannot be raised); or the lake would be more than 4 m deep in the first four rows after the
+seam (the seam step check allows 5 m). A sink a climbing river ends in has no spill and stays
+one. The figure `rivers_ending_in_a_dry_sink` counts the river ends still left in such sinks,
+with examples (`at_cells`), apart from those into kept dry basins (endorheic by design).
 
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may

@@ -1,6 +1,6 @@
 //! Depressions of the filled surface, and which of them stay as lakes or dry basins.
 
-use super::flood::{Dims, FIXED, SEA, receiver};
+use super::flood::{Dims, FIXED, OUTLET, RIVER, SEA, receiver};
 use super::water::Table;
 
 /// Judgment constants: the smallest kept lake, and dry basins (compact and deep, as the
@@ -301,6 +301,506 @@ pub(super) fn drain_to_exit(
     (moves.len() == cells).then_some(moves)
 }
 
+/// A sink filled to its own lowest spill (`fill_to_spill`).
+pub(super) struct Spill {
+    pub level: f32,
+    /// Where the water leaves: the first cell beyond the spill.
+    pub outlet: usize,
+    /// Cells below the level, in 8-connected pieces (one lake each).
+    pub pieces: Vec<Vec<usize>>,
+    /// New receivers: the flooded region towards the outlet, sink cells above the level onto it.
+    pub moves: Vec<(usize, u8)>,
+    /// Sink cells that are dry ground now (at or above the level).
+    pub dry: Vec<usize>,
+    /// Sink cells it took (in a piece or dry); others stay in the sink.
+    pub taken: usize,
+    /// Other hollows (basin ids) it took cells of.
+    pub merged: Vec<u32>,
+    /// The lake (body id) it joins: the region lies below its level. Per piece, whether it lies
+    /// beside that lake and joins it (else it is a lake of its own at that level).
+    pub join: Option<(u32, Vec<bool>)>,
+}
+
+/// Min-heap entry by ground, then index.
+struct Low(f32, usize);
+impl PartialEq for Low {
+    fn eq(&self, o: &Self) -> bool {
+        self.cmp(o).is_eq()
+    }
+}
+impl Eq for Low {}
+impl Ord for Low {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        o.0.total_cmp(&self.0).then(o.1.cmp(&self.1))
+    }
+}
+impl PartialOrd for Low {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+/// Sink basin `id`, which a river enters at `start` but which cannot fill to its recorded exit
+/// (a pocket below 0 m inside a breached depression, or a basin trench widening split): the
+/// lake its piece holding `start` makes when filled to its own lowest spill. A priority flood
+/// from the piece's lowest cell takes ground in rising order, and lower ground that drains back
+/// in, until it reaches lower ground draining away to water, a dry pass-through basin or an
+/// edge. Other such hollows it reaches, and lakes breaching left that drain in, fill with it
+/// (`merged`); a lake at or above the level beside it takes it in (`join`). An error (the
+/// reason) where that is not clean: the flood meets a kept sink, a climb's sink, a basin above
+/// its level or other water draining in, or the grid edge; ground draining away (the previous
+/// band's, of the first `fixed_rows`, included: it is a wall) lies below the level beside the
+/// lake; the lake is deeper near the seam than its checks allow; or a sink cell above the level
+/// cannot drain onto it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fill_to_spill(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    basins: &[Basin],
+    dir: &[u8],
+    id: u32,
+    start: usize,
+    fixed_rows: usize,
+) -> Result<Spill, &'static str> {
+    use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+    const MAX_CELLS: usize = 1 << 22;
+    const MAX_WALK: usize = 1 << 20;
+    // The sink's piece holding `start`, and its lowest cell.
+    let mut piece = HashSet::from([start]);
+    let mut stack = vec![start];
+    let mut pit = start;
+    while let Some(a) = stack.pop() {
+        if ground[a] < ground[pit] {
+            pit = a;
+        }
+        for (_, j) in dims.neighbours(a) {
+            if body[j] == id && piece.insert(j) {
+                stack.push(j);
+            }
+        }
+    }
+    let closed = |i: usize| dims.is_edge(i);
+    // Another hollow breaching or the climb pass left (such as the next pocket below 0 m) is
+    // ground to fill, like this sink's own cells.
+    let absorbed = std::cell::RefCell::new(HashSet::<u32>::new());
+    let mut absorbed_cells: Vec<usize> = Vec::new();
+    let hollow = |i: usize| {
+        let b = body[i];
+        b != 0 && flags[i] & SEA == 0 && {
+            let basin = &basins[b as usize - 1];
+            b == id
+                || (basin.kind == Kind::Sink && basin.over_budget && basin.exit != NO_EXIT)
+                || absorbed.borrow().contains(&b)
+        }
+    };
+    let foreign = |i: usize| flags[i] & SEA != 0 || (body[i] != 0 && !hollow(i));
+    let water = |i: usize| {
+        flags[i] & SEA != 0 || (foreign(i) && basins[body[i] as usize - 1].kind == Kind::Lake)
+    };
+    let key = |i: usize| {
+        if flags[i] & SEA != 0 {
+            0.0
+        } else if foreign(i) {
+            basins[body[i] as usize - 1].level
+        } else {
+            ground[i]
+        }
+    };
+    // Where the routing from `x` goes, through lakes and pass-through basins: back in
+    // (Some(true)), away to the sea, an edge or a lake without an exit here (Some(false)), or
+    // into another sink or a dead end (None).
+    let walk = |inside: &HashSet<usize>, x: usize| {
+        let mut c = x;
+        for _ in 0..MAX_WALK {
+            if inside.contains(&c) || hollow(c) {
+                return Some(true);
+            }
+            if flags[c] & (SEA | OUTLET) != 0 || (flags[c] & FIXED != 0 && flags[c] & RIVER != 0) {
+                return Some(false);
+            }
+            let kind = (body[c] != 0).then(|| basins[body[c] as usize - 1].kind);
+            if kind == Some(Kind::Sink) {
+                return None;
+            }
+            match receiver(dims, dir, c) {
+                Some(r) => c = r,
+                None => return (kind == Some(Kind::Lake)).then_some(false),
+            }
+        }
+        None
+    };
+    let mut inside: HashSet<usize> = HashSet::new();
+    let mut seen = HashSet::from([pit]);
+    let mut heap = BinaryHeap::from([Low(ground[pit], pit)]);
+    let mut level = f32::NEG_INFINITY;
+    let (mut outlet, mut join) = (None, None);
+    while let Some(Low(z, x)) = heap.pop() {
+        if outlet.is_some() && z >= level {
+            break;
+        }
+        if foreign(x) {
+            // Water or a pass-through basin below the level takes the spill; afterwards
+            // water beside the region is left as it is. A lake at or above the level (all the
+            // region is below it, the rest of the rim higher) takes the region in.
+            let kind = (flags[x] & SEA == 0).then(|| basins[body[x] as usize - 1].kind);
+            match walk(&inside, x) {
+                _ if outlet.is_some() => {}
+                Some(false) => {}
+                // A lake breaching left that drains in (a lagoon whose outflow ends here)
+                // is part of the hollow: its cells are ground to fill.
+                Some(true)
+                    if kind == Some(Kind::Lake) && basins[body[x] as usize - 1].over_budget =>
+                {
+                    let lake = body[x];
+                    let mut cells = vec![x];
+                    let mut k = 0;
+                    let mut found = HashSet::from([x]);
+                    while k < cells.len() {
+                        for (_, j) in dims.neighbours(cells[k]) {
+                            if body[j] == lake && flags[j] & SEA == 0 && found.insert(j) {
+                                cells.push(j);
+                            }
+                        }
+                        k += 1;
+                    }
+                    absorbed.borrow_mut().insert(lake);
+                    absorbed_cells.extend(cells);
+                    heap.push(Low(ground[x], x));
+                    continue;
+                }
+                _ => return Err("water beside it drains into it"),
+            }
+            match outlet {
+                None if kind != Some(Kind::Sink) && z < level => outlet = Some(x),
+                None if kind == Some(Kind::Lake) => {
+                    (outlet, join, level) = (Some(x), Some(body[x]), z);
+                    break;
+                }
+                None => return Err("meets a kept sink or a basin above the level"),
+                Some(_) => {}
+            }
+            continue;
+        }
+        if z != ground[x] {
+            // Pushed at its lake's level before that lake was taken in.
+            heap.push(Low(ground[x], x));
+            continue;
+        }
+        if flags[x] & FIXED != 0 {
+            // The previous band's cells are a wall, checked against the level below (no flow
+            // goes back across the seam).
+            continue;
+        }
+        if closed(x) {
+            return Err("meets the grid edge");
+        }
+        if z < level || outlet.is_some() {
+            match walk(&inside, x) {
+                Some(true) => {}
+                Some(false) if outlet.is_none() => {
+                    outlet = Some(x);
+                    continue;
+                }
+                Some(false) => continue,
+                None => return Err("ground below the level drains into a kept sink or a dead end"),
+            }
+        }
+        inside.insert(x);
+        level = level.max(z);
+        for (_, j) in dims.neighbours(x) {
+            if seen.insert(j) {
+                heap.push(Low(key(j), j));
+            }
+        }
+        if inside.len() > MAX_CELLS {
+            return Err("too large");
+        }
+    }
+    let Some(outlet) = outlet else {
+        return Err("no spill");
+    };
+    if absorbed_cells.iter().any(|i| !inside.contains(i)) {
+        return Err("a lake draining in is only partly below the spill");
+    }
+    // The lake: region cells below the level; no ground draining away below it beside them.
+    let below = |i: usize| inside.contains(&i) && ground[i] < level;
+    let tolerance = super::report::BANK_TOLERANCE_M;
+    let mut pieces = Vec::new();
+    let mut taken: HashSet<usize> = HashSet::new();
+    for &s in &inside {
+        if !below(s) || !taken.insert(s) {
+            continue;
+        }
+        let mut cells = vec![s];
+        let mut k = 0;
+        while k < cells.len() {
+            for (_, j) in dims.neighbours(cells[k]) {
+                if below(j) && taken.insert(j) {
+                    cells.push(j);
+                } else if !inside.contains(&j) && !water(j) && ground[j] < level - tolerance {
+                    return Err("ground draining away lies below the level beside the lake");
+                }
+            }
+            k += 1;
+        }
+        cells.sort_unstable();
+        pieces.push(cells);
+    }
+    if pieces.is_empty() {
+        return Err("no ground below the level");
+    }
+    // Near the seam water no deeper than the step the seam checks allow (less a margin).
+    let seam_end = if fixed_rows > 0 {
+        fixed_rows + super::report::SEAM_CHECK_ROWS
+    } else {
+        0
+    };
+    let deep = super::report::SEAM_STEP_M - 1.0;
+    if pieces
+        .iter()
+        .flatten()
+        .any(|&i| i / dims.w < seam_end && level - ground[i] > deep)
+    {
+        return Err("too deep at the seam");
+    }
+    pieces.sort_unstable_by_key(|p| p[0]);
+    // Pieces beside the lake it joins become part of it; others lakes of their own at its level.
+    let join = join.map(|lake| {
+        let touches = |p: &Vec<usize>| {
+            p.iter().any(|&i| {
+                dims.neighbours(i)
+                    .any(|(_, j)| body[j] == lake && flags[j] & SEA == 0)
+            })
+        };
+        (lake, pieces.iter().map(touches).collect::<Vec<bool>>())
+    });
+    // Receivers: breadth first from the outlet over the region.
+    let mut moves = Vec::new();
+    let mut done = HashSet::from([outlet]);
+    let mut queue = VecDeque::from([outlet]);
+    while let Some(c) = queue.pop_front() {
+        for (_, j) in dims.neighbours(c) {
+            if inside.contains(&j) && done.insert(j) {
+                moves.push((j, dims.towards(j, c)));
+                queue.push_back(j);
+            }
+        }
+    }
+    // Sink cells above the level drain onto the region, never uphill.
+    let mut dry: Vec<usize> = inside
+        .iter()
+        .copied()
+        .filter(|&i| body[i] != 0 && !below(i))
+        .collect();
+    let mut taken = inside.iter().filter(|&&i| body[i] == id).count();
+    let mut merged: Vec<u32> = inside
+        .iter()
+        .map(|&i| body[i])
+        .filter(|&b| b != 0 && b != id)
+        .collect();
+    merged.sort_unstable();
+    merged.dedup();
+    let mut from: HashMap<usize, usize> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+    for &i in &piece {
+        if !inside.contains(&i) {
+            if let Some((_, p)) = dims.neighbours(i).find(|(_, j)| inside.contains(j)) {
+                from.insert(i, p);
+                heap.push(Low(ground[i], i));
+            }
+        }
+    }
+    while let Some(Low(z, x)) = heap.pop() {
+        if z < ground[from[&x]] {
+            return Err("a sink cell above the level lies in a hollow of its own");
+        }
+        moves.push((x, dims.towards(x, from[&x])));
+        dry.push(x);
+        for (_, j) in dims.neighbours(x) {
+            if piece.contains(&j) && !inside.contains(&j) && !from.contains_key(&j) {
+                from.insert(j, x);
+                heap.push(Low(ground[j], j));
+            }
+        }
+    }
+    if from.len() + inside.iter().filter(|i| piece.contains(i)).count() != piece.len() {
+        return Err("a sink cell above the level cannot drain onto the lake");
+    }
+    taken += from.len();
+    moves.sort_unstable();
+    dry.sort_unstable();
+    Ok(Spill {
+        level,
+        outlet,
+        pieces,
+        moves,
+        dry,
+        taken,
+        merged,
+        join,
+    })
+}
+
+/// Which basins `fill_river_sinks` fills.
+pub(super) struct RiverSinkRule {
+    /// A finer level: sinks fill (from basin index `first`, the ones breaching and the climb
+    /// pass left); on the trunk level dry pass-through basins do.
+    pub fine: bool,
+    pub first: usize,
+    /// Rows copied from the previous band. A sink reaching the rows just after them does not
+    /// fill to its recorded spill (a lake there would meet that band's dry ground), only to its
+    /// own spill, where `fill_to_spill` checks that ground.
+    pub fixed_rows: usize,
+    pub river_km2: f32,
+}
+
+/// What `fill_river_sinks` did.
+pub(super) struct RiverSinks {
+    /// Sinks filled as lakes on a finer level (their receivers changed).
+    pub filled: usize,
+    /// Sinks filled to their own spill, and the lakes they became.
+    pub spills: u64,
+    pub spill_lakes: u64,
+    /// Lake pieces that joined a lake beside them instead.
+    pub joined: u64,
+    /// Sinks left dry that `fill_to_spill` could not fill, by reason.
+    pub left: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// Basins a river (discharge `acc` from `river_km2`) runs into fill as lakes and overflow. On
+/// the trunk level a dry pass-through basin (not ice). On finer levels a sink breaching left:
+/// it had no receivers, and its cells now drain breadth first to where the flood reached it
+/// (`drain_to_exit`); one whose cells do not all drain there, such as a pocket below 0 m left
+/// inside a breached depression or a basin trench widening split, fills to its own lowest
+/// spill (`fill_to_spill`). A sink a climbing or stuck river ends in (no exit) stays one, as
+/// does one where neither is clean.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fill_river_sinks(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &mut [u32],
+    basins: &mut Vec<Basin>,
+    kept_basin: &mut Vec<bool>,
+    dir: &mut [u8],
+    acc: &[f32],
+    rule: RiverSinkRule,
+) -> RiverSinks {
+    let mut inflow = vec![(0f32, 0usize); basins.len() + 1];
+    let mut at_seam = vec![false; basins.len() + 1];
+    let mut cells = vec![0usize; basins.len() + 1];
+    for i in 0..body.len() {
+        let b = body[i] as usize;
+        if acc[i] > inflow[b].0 {
+            inflow[b] = (acc[i], i);
+        }
+        cells[b] += 1;
+        at_seam[b] |=
+            rule.fixed_rows > 0 && i / dims.w < rule.fixed_rows + super::SEAM_LAKE_GAP_ROWS;
+    }
+    let mut done = RiverSinks {
+        filled: 0,
+        spills: 0,
+        spill_lakes: 0,
+        joined: 0,
+        left: std::collections::BTreeMap::new(),
+    };
+    let mut merged: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for b in 0..cells.len() - 1 {
+        let basin = &basins[b];
+        let fills = if rule.fine {
+            basin.kind == Kind::Sink && b >= rule.first
+        } else {
+            basin.kind == Kind::Dry
+        };
+        let id = b as u32 + 1;
+        if !fills || basin.ice || inflow[b + 1].0 < rule.river_km2 || merged.contains(&id) {
+            continue;
+        }
+        let drained = (!at_seam[b + 1])
+            .then(|| drain_to_exit(dims, body, id, basin.exit, cells[b + 1]))
+            .flatten();
+        if !rule.fine {
+        } else if let Some(moves) = drained {
+            for (j, d) in moves {
+                dir[j] = d;
+            }
+        } else if basin.exit == NO_EXIT {
+            // A climbing or stuck river ends here: the water arriving, not a hollow's spill.
+            continue;
+        } else {
+            let start = inflow[b + 1].1;
+            let spill = fill_to_spill(
+                dims,
+                ground,
+                flags,
+                body,
+                basins,
+                dir,
+                id,
+                start,
+                rule.fixed_rows,
+            );
+            let spill = match spill {
+                Ok(spill) => spill,
+                Err(why) => {
+                    *done.left.entry(why).or_insert(0) += 1;
+                    continue;
+                }
+            };
+            for &(j, d) in &spill.moves {
+                dir[j] = d;
+            }
+            for &j in &spill.dry {
+                body[j] = 0;
+            }
+            // The first lake keeps the sink's id unless some of its cells stay a sink.
+            let mut keep_id = spill.taken == cells[b + 1];
+            for (k, piece) in spill.pieces.iter().enumerate() {
+                let lake = match &spill.join {
+                    Some((lake, beside)) if beside[k] => {
+                        done.joined += 1;
+                        *lake
+                    }
+                    _ if keep_id => {
+                        keep_id = false;
+                        done.spill_lakes += 1;
+                        id
+                    }
+                    _ => {
+                        basins.push(Basin::kept(Kind::Lake, spill.level, NO_EXIT));
+                        kept_basin.push(true);
+                        done.spill_lakes += 1;
+                        basins.len() as u32
+                    }
+                };
+                for &j in piece {
+                    body[j] = lake;
+                }
+                if spill.join.as_ref().is_some_and(|(l, _)| *l == lake) {
+                    continue;
+                }
+                let basin = &mut basins[lake as usize - 1];
+                (basin.kind, basin.level, basin.exit) =
+                    (Kind::Lake, spill.level, spill.outlet as u32);
+                basin.filled_by_river = true;
+            }
+            // A hollow it took cells of is not filled again (its counts are stale).
+            merged.extend(&spill.merged);
+            done.spills += 1;
+            done.filled += 1;
+            continue;
+        }
+        let basin = &mut basins[b];
+        basin.kind = Kind::Lake;
+        basin.filled_by_river = true;
+        done.filled += usize::from(rule.fine);
+    }
+    done
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +834,166 @@ mod tests {
         // A pocket not beside its exit (dry cell 1 between), and a sink with no exit.
         assert!(drain_to_exit(dims, &[0, 0, 1, 1], 1, 0, 2).is_none());
         assert!(drain_to_exit(dims, &[0, 1, 0, 0], 1, NO_EXIT, 1).is_none());
+        // Partly reached: cell 1 is beside the exit, cell 3 behind dry cell 2.
+        assert!(drain_to_exit(dims, &[0, 1, 0, 1], 1, 0, 2).is_none());
+        // 8-way: on a 3 x 3 grid, cells 4 and 8 reach exit 0 only along the diagonal.
+        let dims = Dims { w: 3, h: 3 };
+        let body = [0, 0, 0, 0, 1, 0, 0, 0, 1];
+        let moves = drain_to_exit(dims, &body, 1, 0, 2).unwrap();
+        assert_eq!(moves, [(4, dims.towards(4, 0)), (8, dims.towards(8, 4))]);
+    }
+
+    /// A 7 x 5 grid with walls at 5 m around row 2: dry cell 1 (0.5 m), sink cells 2 and 3
+    /// (-1 and -0.5 m, id 1), rim cell 4 (0.3 m), cell 5 (0.1 m) draining east into cell 6.
+    /// The sink's exit is cell 0 of row 1, which it does not touch.
+    struct Pocket {
+        dims: Dims,
+        ground: Vec<f32>,
+        flags: Vec<u8>,
+        body: Vec<u32>,
+        dir: Vec<u8>,
+        acc: Vec<f32>,
+        basins: Vec<Basin>,
+    }
+
+    fn pocket(sea: bool) -> Pocket {
+        let dims = Dims { w: 7, h: 5 };
+        let at = |x: usize| 2 * dims.w + x;
+        let mut ground = vec![5.0f32; 35];
+        for (x, g) in [
+            (1, 0.5),
+            (2, -1.0),
+            (3, -0.5),
+            (4, 0.3),
+            (5, 0.1),
+            (6, -2.0),
+        ] {
+            ground[at(x)] = g;
+        }
+        let mut flags = vec![0u8; 35];
+        if sea {
+            flags[at(6)] = SEA;
+        }
+        let mut body = vec![0u32; 35];
+        body[at(2)] = 1;
+        body[at(3)] = 1;
+        let mut dir = vec![0u8; 35];
+        dir[at(5)] = dims.towards(at(5), at(6));
+        dir[at(4)] = dims.towards(at(4), at(3));
+        let mut acc = vec![0f32; 35];
+        acc[at(3)] = 1.0;
+        let basins = vec![Basin::kept(Kind::Sink, 0.5, dims.w as u32)];
+        Pocket {
+            dims,
+            ground,
+            flags,
+            body,
+            dir,
+            acc,
+            basins,
+        }
+    }
+
+    fn fill(p: &mut Pocket, first: usize) -> RiverSinks {
+        let mut kept = vec![true; p.basins.len()];
+        let rule = RiverSinkRule {
+            fine: true,
+            first,
+            fixed_rows: 0,
+            river_km2: 0.05,
+        };
+        fill_river_sinks(
+            p.dims,
+            &p.ground,
+            &p.flags,
+            &mut p.body,
+            &mut p.basins,
+            &mut kept,
+            &mut p.dir,
+            &p.acc,
+            rule,
+        )
+    }
+
+    #[test]
+    fn a_pocket_not_beside_its_exit_fills_to_its_own_spill() {
+        let mut p = pocket(true);
+        let w = p.dims.w;
+        let at = |x: usize| 2 * w + x;
+        let spill = fill_to_spill(
+            p.dims,
+            &p.ground,
+            &p.flags,
+            &p.body,
+            &p.basins,
+            &p.dir,
+            1,
+            at(3),
+            0,
+        )
+        .unwrap();
+        assert_eq!((spill.level, spill.outlet), (0.3, at(5)));
+        assert_eq!(spill.pieces, [vec![at(2), at(3)]]);
+        assert_eq!(spill.taken, 2);
+        let done = fill(&mut p, 0);
+        assert_eq!((done.filled, done.spills, done.spill_lakes), (1, 1, 1));
+        let lake = &p.basins[0];
+        assert_eq!((lake.kind, lake.level), (Kind::Lake, 0.3));
+        assert!(lake.filled_by_river);
+        // The lake drains east over the rim to the outlet.
+        for x in 2..5 {
+            assert_eq!(receiver(p.dims, &p.dir, at(x)), Some(at(x + 1)));
+        }
+    }
+
+    #[test]
+    fn a_spill_lake_does_not_stand_above_the_previous_band() {
+        // Rows 0 and 1 come from the previous band: a wall, but its cell beside the pocket lies
+        // at 0 m, below the 0.3 m spill.
+        let mut p = pocket(true);
+        let w = p.dims.w;
+        for f in &mut p.flags[..2 * w] {
+            *f |= FIXED;
+        }
+        let spill = |p: &Pocket| {
+            fill_to_spill(
+                p.dims,
+                &p.ground,
+                &p.flags,
+                &p.body,
+                &p.basins,
+                &p.dir,
+                1,
+                2 * w + 3,
+                2,
+            )
+        };
+        assert!(spill(&p).is_ok());
+        p.ground[w + 2] = 0.0;
+        assert_eq!(
+            spill(&p).err(),
+            Some("ground draining away lies below the level beside the lake")
+        );
+    }
+
+    #[test]
+    fn a_rejected_river_sink_stays_a_sink() {
+        // The spill would drain into a dead end (cell 6 is dry land without a receiver).
+        let mut p = pocket(false);
+        let (body, dir) = (p.body.clone(), p.dir.clone());
+        let done = fill(&mut p, 0);
+        assert_eq!((done.filled, done.spills), (0, 0));
+        assert_eq!(p.basins[0].kind, Kind::Sink);
+        assert!(!p.basins[0].filled_by_river);
+        assert_eq!((p.body, p.dir), (body, dir));
+        // A sink a climbing river ends in (no exit) stays one too.
+        let mut p = pocket(true);
+        p.basins[0].exit = NO_EXIT;
+        let done = fill(&mut p, 0);
+        assert_eq!((done.filled, p.basins[0].kind), (0, Kind::Sink));
+        // And so does one kept by the budget (index below `first`).
+        let mut p = pocket(true);
+        let done = fill(&mut p, 1);
+        assert_eq!((done.filled, p.basins[0].kind), (0, Kind::Sink));
     }
 }

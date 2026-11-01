@@ -29,9 +29,9 @@ pub const DEFAULT_RIVER_KM2: f64 = 10.0;
 /// Judgment constant: the deepest cut breaching may make below a depression's spill. Deeper
 /// depressions are kept (lakes at the spill lowered by this much, or dry sinks).
 pub const BREACH_MAX_M: f32 = 30.0;
-/// Judgment constant: a sink a river runs into fills as a lake unless it reaches this many
-/// rows after the seam.
-const SEAM_LAKE_GAP_ROWS: usize = 3;
+/// Judgment constant: a sink a river runs into reaching this many rows after the seam does not
+/// fill to its recorded spill, only to its own (`lakes::fill_to_spill`).
+pub(super) const SEAM_LAKE_GAP_ROWS: usize = 3;
 /// Judgment constant: the most a coarse lake's dry exit is notched down to the lake level.
 const NOTCH_MAX_M: f32 = 0.5;
 
@@ -763,50 +763,26 @@ pub fn run(options: &Options) -> Result<Outcome> {
 
     // A dry pass-through basin that a river flows into fills as a lake (not glacier basins;
     // on finer levels coarse dry basins stay dry). On finer levels a sink breaching left (not
-    // the coarse network's) that a river runs into fills to its spill and overflows too: a
-    // river does not end in a dry hollow, such as one below sea level behind a lagoon's rim.
-    let mut inflow_by_basin = vec![0f32; basins.len() + 1];
-    // Basins reaching the seam's first rows (a lake there would meet the previous band's dry
-    // ground, which cannot be raised); the bank checks catch one that grows there.
-    let mut at_seam = vec![false; basins.len() + 1];
-    let mut cells_by_basin = vec![0usize; basins.len() + 1];
-    for i in 0..n {
-        inflow_by_basin[body[i] as usize] = inflow_by_basin[body[i] as usize].max(acc[i]);
-        cells_by_basin[body[i] as usize] += 1;
-        if i / w < fixed_rows + SEAM_LAKE_GAP_ROWS {
-            at_seam[body[i] as usize] = true;
-        }
-    }
-    // Such a sink had no receivers: its cells now drain to where the flood reached it (its
-    // spill), breadth first, and the discharge is summed again so it overflows onward. One
-    // whose cells do not all drain there stays a sink (`lakes::drain_to_exit`).
-    let mut filled = Vec::new();
-    for (b, basin) in basins.iter_mut().enumerate() {
-        let fills = if fine_level {
-            basin.kind == Kind::Sink && b >= kept_by_budget && !(fixed_rows > 0 && at_seam[b + 1])
-        } else {
-            basin.kind == Kind::Dry
-        };
-        if !(fills && !basin.ice && inflow_by_basin[b + 1] >= river_km2) {
-            continue;
-        }
-        if fine_level {
-            let id = b as u32 + 1;
-            match lakes::drain_to_exit(dims, &body, id, basin.exit, cells_by_basin[b + 1]) {
-                Some(moves) => {
-                    for (j, d) in moves {
-                        dir[j] = d;
-                    }
-                    filled.push(b);
-                }
-                None => continue,
-            }
-        }
-        basin.kind = Kind::Lake;
-        basin.filled_by_river = true;
-    }
-    drop(cells_by_basin);
-    if !filled.is_empty() {
+    // the coarse network's) that a river runs into fills to its spill (or its own lowest one)
+    // and overflows too: a river does not end in a dry hollow, such as one below sea level
+    // behind a lagoon's rim.
+    let river_sinks = lakes::fill_river_sinks(
+        dims,
+        &ground,
+        &flags,
+        &mut body,
+        &mut basins,
+        &mut kept_basin,
+        &mut dir,
+        &acc,
+        lakes::RiverSinkRule {
+            fine: fine_level,
+            first: kept_by_budget,
+            fixed_rows,
+            river_km2,
+        },
+    );
+    if river_sinks.filled > 0 {
         cycles = cycles.max(flood::accumulate(dims, &dir, weight, &mut acc));
         if let Some(im) = &imprint {
             for (&cell, &q) in &im.q {
@@ -1349,6 +1325,15 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("receivers_spilled".into(), json!(receivers_spilled));
     figures.insert("river_climbs_turned".into(), json!(climbs_turned));
     figures.insert("river_climbs_ended_in_a_sink".into(), json!(climbs_ended));
+    figures.insert(
+        "river_sinks_filled_to_own_spill".into(),
+        json!({
+            "sinks": river_sinks.spills,
+            "lakes": river_sinks.spill_lakes,
+            "joined_a_lake": river_sinks.joined,
+            "left_by_reason": river_sinks.left,
+        }),
+    );
     figures.insert("lip_cells_raised".into(), json!(lips.cells));
     figures.insert("lip_max_raise_m".into(), json!(lips.max_m));
     figures.insert("lip_raise_volume_m3".into(), json!(lips.volume_m3.round()));
