@@ -545,7 +545,7 @@ pub(super) struct Reroute {
 }
 
 /// Max-heap entry: the highest water level first, then the lowest ground, then the lowest index.
-struct Widest(f32, f32, usize);
+pub(super) struct Widest(pub f32, pub f32, pub usize);
 impl PartialEq for Widest {
     fn eq(&self, o: &Self) -> bool {
         self.cmp(o).is_eq()

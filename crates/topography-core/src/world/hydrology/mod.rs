@@ -656,8 +656,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     // A river whose water would have to climb past what its carve floor lets carving lower
     // (near the seam, any rise of the previous band's ground beside it) takes its steepest
-    // other way down, or ends there in a sink: no trench below the floor.
-    let (mut climbs_turned, mut climbs_ended) = (0u64, 0u64);
+    // other way down, goes on where a channel can be cut to its water, or ends there in a
+    // sink: no trench below the floor.
+    let (mut climbs_turned, mut climbs_routed, mut climbs_ended) = (0u64, 0u64, 0u64);
     if coarse.is_some() {
         let mut path = vec![false; n];
         for p in imprint.iter().flat_map(|im| &im.paths) {
@@ -681,7 +682,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             if at.is_empty() {
                 break;
             }
-            for c in at {
+            for (c, level) in at {
                 let r = receiver(dims, &dir, c);
                 let to = dims
                     .neighbours(c)
@@ -703,6 +704,26 @@ pub fn run(options: &Options) -> Result<Outcome> {
                         climbs_turned += 1;
                     }
                     None if body[c] == 0 => {
+                        // Across a flat filled where the floor kept the breach from cutting:
+                        // on through cells a channel can be cut in to the water level.
+                        let route = rivers::route_on(
+                            dims,
+                            &ground,
+                            &flags,
+                            &body,
+                            &dir,
+                            &carve_floor,
+                            |i| path[i],
+                            c,
+                            level,
+                        );
+                        if let Some(route) = route {
+                            for p in route.windows(2) {
+                                dir[p[0]] = dims.towards(p[0], p[1]);
+                            }
+                            climbs_routed += 1;
+                            continue;
+                        }
                         basins.push(lakes::Basin::kept(Kind::Sink, ground[c], lakes::NO_EXIT));
                         kept_basin.push(true);
                         body[c] = basins.len() as u32;
@@ -1324,6 +1345,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("receivers_set_by_steepest_descent".into(), json!(resteered));
     figures.insert("receivers_spilled".into(), json!(receivers_spilled));
     figures.insert("river_climbs_turned".into(), json!(climbs_turned));
+    figures.insert("river_climbs_routed_on".into(), json!(climbs_routed));
     figures.insert("river_climbs_ended_in_a_sink".into(), json!(climbs_ended));
     figures.insert(
         "river_sinks_filled_to_own_spill".into(),

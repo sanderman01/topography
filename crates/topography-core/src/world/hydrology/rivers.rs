@@ -772,6 +772,7 @@ fn cells_to_sea(dims: Dims, dir: &[u8], flags: &[u8], i: usize) -> Option<usize>
 /// free dry cell they drain into has its carve floor (`floor`) above the water level arriving
 /// there (the lowest ground, or lake level, on the way down), so only a trench below the floor
 /// could carry it on. Not cells taken from the previous band, nor `keep` ones (coarse paths).
+/// Each comes with its water level.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn climbs(
     dims: Dims,
@@ -784,7 +785,7 @@ pub(super) fn climbs(
     river_km2: f32,
     floor: &[f32],
     keep: impl Fn(usize) -> bool,
-) -> Vec<usize> {
+) -> Vec<(usize, f32)> {
     const DONE: u8 = u8::MAX;
     let n = ground.len();
     if floor.len() != n {
@@ -819,7 +820,7 @@ pub(super) fn climbs(
                 && body[r] == 0
                 && floor[r] > level[c] + 0.01
             {
-                out.push(c);
+                out.push((c, level[c]));
             } else {
                 level[r] = level[r].min(level[c]);
             }
@@ -828,6 +829,75 @@ pub(super) fn climbs(
         }
     }
     out
+}
+
+/// For a river at `c` that would climb (`climbs`) with its water at `level` and no lower
+/// neighbour to turn to: the way on whose water level stays highest, over free dry cells whose
+/// carve floor is not above that level (a channel can be cut to it, no trench), to the first
+/// cell from which the routing goes on without climbing. Returns the route from `c`, or None
+/// (the river ends at `c`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn route_on(
+    dims: Dims,
+    ground: &[f32],
+    flags: &[u8],
+    body: &[u32],
+    dir: &[u8],
+    floor: &[f32],
+    keep: impl Fn(usize) -> bool,
+    c: usize,
+    level: f32,
+) -> Option<Vec<usize>> {
+    // Cells a search may visit, and routing cells a check may follow, before giving up.
+    const MAX_CELLS: usize = 1 << 16;
+    const MAX_WALK: usize = 1 << 20;
+    const TOLERANCE_M: f32 = 0.01;
+    let free = |j: usize| flags[j] & (FIXED | SEA) == 0 && !keep(j) && body[j] == 0;
+    // The routing from `x` on, as `climbs` follows it: no climb before water, a basin or an end.
+    let clear = |route: &std::collections::HashSet<usize>, mut x: usize, mut lvl: f32| {
+        for _ in 0..MAX_WALK {
+            let Some(r) = receiver(dims, dir, x) else {
+                return true;
+            };
+            if route.contains(&r) {
+                return false;
+            }
+            if !free(r) {
+                return true;
+            }
+            if floor[r] > lvl + TOLERANCE_M {
+                return false;
+            }
+            lvl = lvl.min(ground[r]);
+            x = r;
+        }
+        false
+    };
+    let mut from: HashMap<usize, usize> = HashMap::from([(c, c)]);
+    let mut heap = std::collections::BinaryHeap::from([super::band::Widest(level, ground[c], c)]);
+    while let Some(super::band::Widest(lvl, _, x)) = heap.pop() {
+        if x != c {
+            let mut route = vec![x];
+            while route[route.len() - 1] != c {
+                route.push(from[&route[route.len() - 1]]);
+            }
+            route.reverse();
+            if clear(&route.iter().copied().collect(), x, lvl) {
+                return Some(route);
+            }
+        }
+        for (_, j) in dims.neighbours(x) {
+            if from.contains_key(&j) || !free(j) || floor[j] > lvl + TOLERANCE_M {
+                continue;
+            }
+            from.insert(j, x);
+            heap.push(super::band::Widest(lvl.min(ground[j]), ground[j], j));
+        }
+        if from.len() > MAX_CELLS {
+            break;
+        }
+    }
+    None
 }
 
 /// A dry cell more than this below every adjacent water surface is a hole.
@@ -1129,6 +1199,48 @@ pub(super) fn entered_basin(dims: Dims, dir: &[u8], flags: &[u8], body: &[u32], 
 mod tests {
     use super::super::lakes::NO_EXIT;
     use super::*;
+
+    #[test]
+    fn a_climbing_river_goes_on_where_a_channel_can_be_cut() {
+        // A 1 m flat on a 5 x 3 grid; the river's water at cell 6 stands at 0.5 m. Its
+        // receiver 7 may not be cut below 1 m; cells 12, 13 and 14 may, and drain on east.
+        let dims = Dims { w: 5, h: 3 };
+        let ground = vec![1.0f32; 15];
+        let mut floor = vec![1.0f32; 15];
+        for i in [12, 13, 14] {
+            floor[i] = 0.0;
+        }
+        let mut dir = vec![0u8; 15];
+        dir[6] = dims.towards(6, 7);
+        dir[12] = dims.towards(12, 13);
+        dir[13] = dims.towards(13, 14);
+        let (flags, body) = (vec![0u8; 15], vec![0u32; 15]);
+        let route = route_on(
+            dims,
+            &ground,
+            &flags,
+            &body,
+            &dir,
+            &floor,
+            |_| false,
+            6,
+            0.5,
+        );
+        assert_eq!(route, Some(vec![6, 12]));
+        // No cell a channel can be cut in: the river ends there.
+        let route = route_on(
+            dims,
+            &ground,
+            &flags,
+            &body,
+            &dir,
+            &[1.0; 15],
+            |_| false,
+            6,
+            0.5,
+        );
+        assert_eq!(route, None);
+    }
 
     #[test]
     fn a_coarse_path_crosses_a_dry_basin_and_continues_off_dry_land() {

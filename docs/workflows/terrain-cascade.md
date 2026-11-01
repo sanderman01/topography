@@ -778,8 +778,11 @@ laid again along the way to its end that climbs least, keeping off the seam ther
 cut below the floor); cells of a path away from its coarse river get no surface cap (the coarse
 surface says nothing of the ground there), so the burn only keeps them descending. Other
 river routes whose water would have to climb past what the floor lets carving lower turn to
-their steepest other way down, or end there in a sink (`river_climbs_turned`,
-`river_climbs_ended_in_a_sink`). Checks,
+their steepest other way down (`river_climbs_turned`). With no lower neighbour (a flat the
+breach filled where the floor kept it from cutting), such a river goes on along the way whose
+water level stays highest, over cells a channel can be cut in to that level, to where its
+routing no longer climbs (`river_climbs_routed_on`); with no such way it ends there in a sink
+(`river_climbs_ended_in_a_sink`). Checks,
 with figures under `carving`: `ground_below_carve_floor` (dry ground below the floor),
 `river_beds_below_carve_floor` (river cells more than 5 m below it, coarse paths included,
 so a path burn deeper than about 35 m fails), `ground_raised_over_limit` (ground raised more
