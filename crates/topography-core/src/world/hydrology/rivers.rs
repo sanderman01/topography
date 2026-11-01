@@ -438,10 +438,13 @@ pub(super) fn extract(
             // Nor below its carve floor: the bed stops there, so the water stands on it (a
             // backwater upstream, banks raised later) instead of in a trench below it; but
             // not above the previous band's dry ground beside it (that cannot be raised) nor
-            // a coarse path's cap.
-            let floor = carve_floor.get(i).map_or(f32::NEG_INFINITY, |&f| {
-                (f + MIN_DEPTH_M).min(ceiling(flags, body, ground, i))
-            });
+            // a coarse path's cap. A lake exit stays at the lake's level.
+            let floor = carve_floor
+                .get(i)
+                .filter(|_| !sills.contains_key(&(i as u32)))
+                .map_or(f32::NEG_INFINITY, |&f| {
+                    (f + MIN_DEPTH_M).min(ceiling(flags, body, ground, i))
+                });
             let level = beside.max(below).max(floor);
             if surface[i] < level {
                 surface[i] = level;

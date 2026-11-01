@@ -29,6 +29,9 @@ pub const DEFAULT_RIVER_KM2: f64 = 10.0;
 /// Judgment constant: the deepest cut breaching may make below a depression's spill. Deeper
 /// depressions are kept (lakes at the spill lowered by this much, or dry sinks).
 pub const BREACH_MAX_M: f32 = 30.0;
+/// Judgment constant: a sink a river runs into fills as a lake unless it reaches this many
+/// rows after the seam.
+const SEAM_LAKE_GAP_ROWS: usize = 3;
 /// Judgment constant: the most a coarse lake's dry exit is notched down to the lake level.
 const NOTCH_MAX_M: f32 = 0.5;
 
@@ -763,11 +766,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // the coarse network's) that a river runs into fills to its spill and overflows too: a
     // river does not end in a dry hollow, such as one below sea level behind a lagoon's rim.
     let mut inflow_by_basin = vec![0f32; basins.len() + 1];
-    // Basins within the seam blend (a lake there would meet the previous band's dry ground).
+    // Basins reaching the seam's first rows (a lake there would meet the previous band's dry
+    // ground, which cannot be raised); the bank checks catch one that grows there.
     let mut at_seam = vec![false; basins.len() + 1];
     for i in 0..n {
         inflow_by_basin[body[i] as usize] = inflow_by_basin[body[i] as usize].max(acc[i]);
-        if i / w < fixed_rows + band::SEAM_BLEND_ROWS {
+        if i / w < fixed_rows + SEAM_LAKE_GAP_ROWS {
             at_seam[body[i] as usize] = true;
         }
     }
