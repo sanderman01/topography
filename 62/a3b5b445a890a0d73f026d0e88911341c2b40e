@@ -1,0 +1,22 @@
+docs/workflows/cover-acquisition.md
+  s_8c1b40ea9c1e0d::t_098b92bc28a7fc 45,48
+  s_8c1b40ea9c1e0d::t_1dcb9c27735b86 46-47
+crates/topography-core/src/acquisition/http.rs
+  s_8c1b40ea9c1e0d::t_0c333909aed382 127-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62a3b5b445a890a0d73f026d0e88911341c2b40e",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
