@@ -395,6 +395,8 @@ def main():
         server = cover_fixtures.CoverServer(Path(temporary) / "cover-server")
         try:
             cover_env = server.policy("grassland")
+            # Every CLI call (batch review too) must use the loopback cover, never live services.
+            os.environ.update(cover_env)
             (Path(temporary) / "check").mkdir()
             check(args.binary.resolve(), Path(temporary) / "check", cover_env)
             (Path(temporary) / "interrupted").mkdir()

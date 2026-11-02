@@ -62,7 +62,8 @@ a profile without cover descriptors, automatic upgrades of legacy and
 strict-evidence products (vote kept, no extra records on restart), a vote carried
 to a metadata successor, tile coordinates and a source failure leaving the tile
 needing attention. It needs GDAL, curl and OpenSSL and contacts no external
-service. `check_automatic_preparation.py` uses the same fixtures.
+service. `check_automatic_preparation.py` uses the same fixtures for every CLI
+call it makes, including `batch review`.
 
 For an acquired source and one or more newly generated review crops:
 
