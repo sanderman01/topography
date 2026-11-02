@@ -4,6 +4,32 @@ set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$project_root"
 
+# Run offline: re-exec in a network namespace with only loopback, so any web request fails.
+if [[ -z "${TOPOGRAPHY_CHECK_NETNS:-}" ]]; then
+  if command -v unshare >/dev/null && unshare -rn true 2>/dev/null; then
+    export TOPOGRAPHY_CHECK_NETNS=1
+    exec unshare -rn bash "${BASH_SOURCE[0]}" "$@"
+  elif [[ "${TOPOGRAPHY_CHECK_ALLOW_NETWORK:-}" == 1 ]]; then
+    printf 'Warning: running without network isolation (TOPOGRAPHY_CHECK_ALLOW_NETWORK=1).\n' >&2
+  else
+    printf 'check.sh needs unprivileged network namespaces (unshare -rn) to block web requests.\n' >&2
+    printf 'Set TOPOGRAPHY_CHECK_ALLOW_NETWORK=1 to run without isolation.\n' >&2
+    exit 1
+  fi
+elif [[ "$TOPOGRAPHY_CHECK_NETNS" == 1 ]]; then
+  if command -v ip >/dev/null; then
+    ip link set lo up
+  else
+    python3 - <<'EOF'
+import fcntl, socket, struct
+s = socket.socket()
+req = struct.pack("16sH22x", b"lo", 0)
+flags = struct.unpack("16sH22x", fcntl.ioctl(s, 0x8913, req))[1]  # SIOCGIFFLAGS
+fcntl.ioctl(s, 0x8914, struct.pack("16sH22x", b"lo", flags | 1))  # SIOCSIFFLAGS, IFF_UP
+EOF
+  fi
+fi
+
 cargo fmt --all --check
 cargo build --workspace --locked --offline
 cargo clippy --workspace --all-targets --locked --offline -- -D warnings
