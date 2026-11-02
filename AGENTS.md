@@ -152,7 +152,9 @@ bash scripts/check.sh
 It checks formatting, builds the workspace, runs Clippy with warnings denied,
 and exercises CLI help/version and valid/invalid contract inputs using locked
 offline Cargo resolution. With GDAL and Python 3.11+ installed it also exercises
-small local import/review workflows. Fetch Rust dependencies with `cargo fetch --locked`.
+small local import/review workflows. It runs in a loopback-only network namespace
+and never makes web requests; real-service acquisition checks stay separate and
+opt-in. Fetch Rust dependencies with `cargo fetch --locked`.
 Full acquisition checks (including a loopback HTTPS server) are documented in
 [scripts/README.md](scripts/README.md). No formal test runner or ML environment is
 configured; geospatial tools are not required for contract validation.

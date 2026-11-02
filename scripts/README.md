@@ -3,6 +3,14 @@
 Run `bash scripts/check.sh` from the repository root to check the Rust workspace.
 It can also be invoked by path from another working directory.
 
+`check.sh` never makes web requests. It re-executes itself under `unshare -rn`
+in a network namespace with only loopback up, so any non-loopback connection
+fails at once; fixtures are served from loopback servers. It exits with an error
+if unprivileged network namespaces are unavailable; set
+`TOPOGRAPHY_CHECK_ALLOW_NETWORK=1` to run without isolation. Checks against real
+services (such as the [real-data workflow](../docs/workflows/dem-acquisition.md))
+stay separate and opt-in.
+
 Fetch dependencies once with `cargo fetch --locked`; checks keep locked offline
 resolution. Use `CARGO_BUILD_JOBS=1 bash scripts/check.sh` for one build job. The
 script checks formatting, builds, runs Clippy, and exercises help/version and the
