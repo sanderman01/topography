@@ -42,6 +42,10 @@ class of each cell (0 outside coverage) so renderers can choose materials.
   note in `cover.json` records this judgment.
 - If WorldCover, GLIMS or Overpass cannot be reached after retries, or
   Overpass reports an incomplete result, the job fails as a technical error.
+  GLIMS and Overpass queries stop retrying once their time limit has passed, so
+  a service that accepts connections but never answers fails per query within
+  five to ten minutes (GLIMS) instead of hanging. Missing glacier outlines are not
+  replaced by a guess: snow/ice without GLIMS would silently drop glaciers.
   The tile shows *needs attention* and the worker retries it at the next service start.
 
 ## Output

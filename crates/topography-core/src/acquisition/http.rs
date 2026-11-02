@@ -124,6 +124,9 @@ pub(super) fn query_large(url: &str, user_agent: &str, max_time_s: u64) -> Resul
             "--retry",
             "8",
             "--retry-connrefused",
+            // No retry starts after max_time_s, so a hung service fails in about that time.
+            "--retry-max-time",
+            &time,
             "--max-time",
             &time,
             "--user-agent",
