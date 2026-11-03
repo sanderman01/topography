@@ -821,6 +821,28 @@ pub fn run(options: &Options) -> Result<Outcome> {
         seam_step.surface = b.surface[last..last + w].to_vec();
         seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
     }
+    // How high a coarse path's water may stand: its cap and the previous band's dry ground
+    // beside it (`rivers::extract`), there and upstream (water downstream stands no higher).
+    let taken_bank = |i: usize| {
+        dims.neighbours(i)
+            .filter(|&(_, k)| {
+                flags[k] & (FIXED | SEA | RIVER) == FIXED && fixed_kind(k) != Some(BodyKind::Lake)
+            })
+            .map(|(_, k)| ground[k])
+            .fold(f32::INFINITY, f32::min)
+    };
+    let mut path_held: HashMap<u32, f32> = HashMap::new();
+    if let Some(im) = &imprint {
+        for p in &im.paths {
+            let mut held = f32::INFINITY;
+            for &c in &p.cells {
+                let cap = im.cap.get(&c).copied().unwrap_or(f32::INFINITY);
+                held = held.min(cap).min(taken_bank(c as usize));
+                let e = path_held.entry(c).or_insert(f32::INFINITY);
+                *e = e.min(held);
+            }
+        }
+    }
     // Again while a lake filled this way sends a river on into a further sink.
     let mut river_sinks = lakes::RiverSinks::default();
     for _ in 0..4 {
@@ -839,6 +861,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 fixed_rows,
                 river_km2,
                 keep: &|i| on_path[i],
+                cap: &|i| path_held.get(&(i as u32)).copied().unwrap_or(f32::INFINITY),
                 seam: &seam_step,
             },
         );

@@ -804,6 +804,9 @@ as a figure.
 On finer levels a sink that breaching left (not a coarse dry basin) that a river runs into
 fills to its spill as a lake draining over it, so a river does not end in a dry hollow (such
 as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached).
+Neither way does it fill above a coarse river path beside it whose water is held lower (by its
+surface cap or the previous band's dry ground beside it, there or upstream): no lake grows over
+a path cell, so the lake would stand above the river.
 A sink whose cells do not all drain to that spill (a pocket below 0 m left inside a breached
 depression, or a basin trench widening split), or that reaches the first three rows after the
 seam, fills to its own lowest spill instead: a priority flood from its lowest cell takes ground

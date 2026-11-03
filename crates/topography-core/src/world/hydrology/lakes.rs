@@ -737,6 +737,9 @@ pub(super) fn fill_to_spill(
     })
 }
 
+/// Why `fill_river_sinks` leaves a sink whose lake would stand above a coarse path beside it.
+const PATH_CAPPED: &str = "a coarse river path beside it is held below the level";
+
 /// Which basins `fill_river_sinks` fills.
 pub(super) struct RiverSinkRule<'a> {
     /// A finer level: sinks fill (from basin index `first`, the ones breaching and the climb
@@ -750,6 +753,8 @@ pub(super) struct RiverSinkRule<'a> {
     pub river_km2: f32,
     /// Coarse river paths, which keep their course.
     pub keep: &'a dyn Fn(usize) -> bool,
+    /// The highest a coarse path cell's water may stand (+inf elsewhere).
+    pub cap: &'a dyn Fn(usize) -> f32,
     pub seam: &'a SeamStep,
 }
 
@@ -800,8 +805,20 @@ pub(super) fn fill_river_sinks(
     let mut inflow = vec![(0f32, 0usize); basins.len() + 1];
     let mut at_seam = vec![false; basins.len() + 1];
     let mut cells = vec![0usize; basins.len() + 1];
+    // Per basin, the lowest cap of a coarse path beside it: a lake above that would stand
+    // above the river beside it, whose water the cap holds lower.
+    let path_cap = |i: usize| {
+        dims.neighbours(i)
+            .filter(|&(_, j)| (rule.keep)(j))
+            .map(|(_, j)| (rule.cap)(j))
+            .fold(f32::INFINITY, f32::min)
+    };
+    let mut capped = vec![f32::INFINITY; basins.len() + 1];
     for i in 0..body.len() {
         let b = body[i] as usize;
+        if b != 0 {
+            capped[b] = capped[b].min(path_cap(i));
+        }
         if acc[i] > inflow[b].0 {
             inflow[b] = (acc[i], i);
         }
@@ -831,8 +848,13 @@ pub(super) fn fill_river_sinks(
         let drained = (rule.fine && !at_seam[b + 1])
             .then(|| drain_to_exit(dims, body, id, basin.exit, cells[b + 1]))
             .flatten();
+        let tolerance = super::report::BANK_TOLERANCE_M;
         if !rule.fine {
         } else if let Some(moves) = drained {
+            if capped[b + 1] < basin.level - tolerance {
+                *done.left.entry(PATH_CAPPED).or_insert(0) += 1;
+                continue;
+            }
             for (j, d) in moves {
                 dir[j] = d;
             }
@@ -851,6 +873,11 @@ pub(super) fn fill_river_sinks(
                     continue;
                 }
             };
+            let low_path = |i: &usize| path_cap(*i) < spill.level - tolerance;
+            if spill.pieces.iter().flatten().any(low_path) {
+                *done.left.entry(PATH_CAPPED).or_insert(0) += 1;
+                continue;
+            }
             for &(j, d) in &spill.moves {
                 dir[j] = d;
             }
@@ -1004,6 +1031,7 @@ mod tests {
             fixed_rows: 0,
             river_km2: 0.05,
             keep: &|_| false,
+            cap: &|_| f32::INFINITY,
             seam: &SeamStep::none(),
         };
         fill_river_sinks(
