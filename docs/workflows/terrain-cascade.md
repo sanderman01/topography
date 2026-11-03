@@ -726,7 +726,9 @@ window edge is an outlet only at the world's edge or where the coarse flow leave
 - **Coarse lakes** keep their id and level. Wet is fine ground below the level connected to
   the coarse lake's cells; no ground is dug out. A branch that leaks (grows more than a few
   coarse cells, or reaches the sea, an edge or a lower lake) is cut by a sill at the level;
-  dry ground beside a lake below its level is raised (a shore).
+  dry ground beside a lake below its level is raised (a shore). A lake of the previous band
+  that the coarse level lacks (one made at this level, such as a river sink filled to its
+  spill) goes on across the seam the same way, from that band's cells at its level.
 - **Coarse rivers** keep their id and get a fine centreline: a priority flood over a corridor
   around the river's coarse cells starts where the coarse river ends and climbs upstream; each
   coarse head follows it down. Paths cross dry basin floors, a path ending in a coarse dry basin

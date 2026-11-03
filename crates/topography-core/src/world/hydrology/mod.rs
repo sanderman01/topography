@@ -266,7 +266,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let (lake_figures, imprint) = match &coarse {
         Some(c) => {
             let figures = fine::lakes(dims, &mut ground, &flags, &mut body, &mut basins, c, |i| {
-                (fixed_kind(i) == Some(BodyKind::Lake)).then(|| fixed_id(i))
+                (fixed_kind(i) == Some(BodyKind::Lake)).then(|| {
+                    let level = north.as_ref().map_or(f32::NAN, |b| b.surface[i]);
+                    (fixed_id(i), level)
+                })
             });
             let inflows: Vec<fine::Inflow> = inflow
                 .iter()

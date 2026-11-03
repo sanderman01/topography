@@ -27,9 +27,10 @@ pub(super) const SURFACE_TOLERANCE_M: f32 = 0.01;
 /// below the level, unless it leaks to the sea, the world's edge, the grid's edge or a lake
 /// with another level: then the leaking branch is cut more than one coarse cell out from the
 /// seeds by a sill raised to the level plus `SHORE_M` (a leak nearer the seeds is raised where
-/// it is, but not on a band edge). `fixed_lake` gives the coarse lake id of cells copied from
-/// the previous band (seeds too). Coarse lake cells whose fine ground is above the level stay
-/// dry.
+/// it is, but not on a band edge). `fixed_lake` gives the lake id and level of cells copied
+/// from the previous band (seeds too); that band's lakes the coarse level lacks (made at this
+/// level, such as a river sink filled to its spill) go on here the same way. Coarse lake cells
+/// whose fine ground is above the level stay dry.
 pub(super) fn lakes(
     dims: Dims,
     ground: &mut [f32],
@@ -37,16 +38,28 @@ pub(super) fn lakes(
     body: &mut [u32],
     basins: &mut Vec<Basin>,
     c: &Coarse,
-    fixed_lake: impl Fn(usize) -> Option<u32>,
+    fixed_lake: impl Fn(usize) -> Option<(u32, f32)>,
 ) -> Value {
     let (n, w, h) = (ground.len(), dims.w, dims.h);
     let mut ids: Vec<u32> = (0..c.body.len()).filter_map(|q| c.lake(q)).collect();
     ids.sort_unstable();
     ids.dedup();
+    let mut taken: Vec<(u32, f32)> = (0..n)
+        .filter(|&i| flags[i] & FIXED != 0)
+        .filter_map(&fixed_lake)
+        .filter(|(id, _)| !c.lakes.contains_key(id))
+        .collect();
+    taken.sort_unstable_by_key(|&(id, _)| id);
+    taken.dedup_by_key(|&mut (id, _)| id);
+    let fixed_lake = |i: usize| fixed_lake(i).map(|(id, _)| id);
     let mut index: HashMap<u32, u32> = HashMap::new();
     let first = basins.len() as u32;
-    for &id in &ids {
-        let mut basin = Basin::kept(Kind::Lake, c.lakes[&id].level, NO_EXIT);
+    let levels = ids
+        .iter()
+        .map(|id| (*id, c.lakes[id].level))
+        .chain(taken.iter().copied());
+    for (id, level) in levels.collect::<Vec<_>>() {
+        let mut basin = Basin::kept(Kind::Lake, level, NO_EXIT);
         basin.over_budget = false;
         basin.id = id;
         basins.push(basin);
@@ -303,6 +316,7 @@ pub(super) fn lakes(
     }
     json!({
         "coarse_lakes": ids.len(),
+        "lakes_from_previous_band": taken.len(),
         "lakes_given_one_cell": restored,
         "bed_max_lowering_m": bed_max,
         "bed_max_lowering_at_cell": [bed_at % w, bed_at / w],
