@@ -457,7 +457,11 @@ the old code.
 of the Python hydrology code (`hydrology.py` and the band step): the same command resumes
 after the last band it finished while both are unchanged, and starts again from band 0 when
 either changed (a code fix), when the last attempt failed its seam audit, or with
-`--restart`. A failure while finishing (not the audit) only finishes again. So after a
+`--restart`. A band that fails its checks does not stop the rerun: its grid and north band
+are copied to `hydrology/failed/band-NNN/` as a repro, the next band takes its output as the
+north, and the rerun exits 1 after the last band listing every failed band without finishing,
+so one pass finds every failing band. The next rerun starts again from band 0. A failure
+while finishing (not the audit) only finishes again. So after a
 hydrology fix, rerun the same command. While a rerun is in progress or failed, the full
 command refuses to run, so it cannot finish over half-rerun bands. The manifest is moved
 aside while the rerun goes, so a half-rerun world does not look finished; its `game` entry is

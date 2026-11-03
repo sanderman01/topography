@@ -103,9 +103,22 @@ def _hydro_band(c: SimpleNamespace, j: int, state: dict) -> None:
     grid = hydrology.write_grid(c.hyd / "grid", np.asarray(c.raw[top:bot]), 1.0, c.origin, cls,
                                 offset_m=(c.east, c.south + top), core_rows=(a - top, b - top), classes_cell_m=4.0)
     out, north = c.hyd / f"band-{j:03d}", (c.hyd / f"band-{j - 1:03d}" if j else None)
-    hydrology.run(grid, out, coarse=c.coarse_dir, north=north)
-    if north is not None:
-        hydrology.seam(north, out)
+    try:
+        hydrology.run(grid, out, coarse=c.coarse_dir, north=north)
+        if north is not None:
+            hydrology.seam(north, out)
+    except RuntimeError as e:
+        # A finished band that failed its checks: keep its inputs as a repro and go on, so one
+        # pass finds every failing band. A crash or timeout leaves no usable outputs.
+        if not (getattr(c, "keep_going", False) and (out / "bodies.json").exists()):
+            raise
+        failed = c.hyd / "failed" / f"band-{j:03d}"
+        shutil.rmtree(failed, ignore_errors=True)
+        shutil.copytree(c.hyd / "grid", failed / "grid")
+        if north is not None:
+            shutil.copytree(north, failed / "north")
+        state.setdefault("failed", {})[str(j)] = str(e)[-2000:]
+        print(f"hydrology FAILED on band {j + 1}/{len(c.bands)} (repro in {failed}): {str(e)[-300:]}", flush=True)
     shutil.copy(out / "report.json", c.hyd / f"report-{j:03d}.json")
     o = hydrology.read(out, slice(a - top, b - top))
     c.elev[a:b], c.surface_out[a:b], c.body_out[a:b] = o.ground, o.surface, o.body
@@ -334,6 +347,7 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
         why = ("--restart" if restart else "the hydrology binary changed" if state.get("binary") != binary
                else "the hydrology Python code changed" if state.get("code") != code
                else "the last attempt failed its seam audit" if state.get("audit_failed")
+               else "bands failed in the last attempt" if state.get("failed") and done == len(c.bands)
                else "the band to resume from is gone"
                if 0 < done < len(c.bands) and not (c.hyd / f"band-{done - 1:03d}").exists()
                else None)
@@ -347,6 +361,7 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
         for name in ("manifest.json", MANIFEST_FAILED):
             if old is None and (out / name).exists():
                 old = json.loads((out / name).read_text())
+        shutil.rmtree(c.hyd / "failed", ignore_errors=True)
         state = progress["rerun"] = {"hydrology_done": 0, "hydrology_s": [], "bodies": {}, "binary": binary,
                                      "code": code, "manifest": old}
     # The raw surface is what diffusion wrote: checked against its recorded digest.
@@ -366,8 +381,14 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     save()
     (out / "manifest.json").unlink(missing_ok=True)
     print(f"hydrology only: {len(c.bands)} bands; resuming after band {state['hydrology_done']}", flush=True)
+    c.keep_going = True
     while state["hydrology_done"] < len(c.bands):
         _hydro_band(c, state["hydrology_done"], state)
+    if state.get("failed"):
+        bands = ", ".join(str(int(j) + 1) for j in state["failed"])
+        print(f"error: hydrology failed on bands {bands} of {len(c.bands)}; repros in {c.hyd / 'failed'}; "
+              "fix hydrology and rerun with --hydrology-only", file=sys.stderr)
+        return 1
     manifest = state.get("manifest") or {}
     # Fields of the diffusion that stay true; game layers follow the ground and are marked stale.
     extra = {k: manifest[k] for k in ("peak_vram_gb", "deep_sea_bands", "windows", "game") if k in manifest}
