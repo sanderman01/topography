@@ -782,41 +782,59 @@ pub(super) fn unclimb(
     dir: &mut [u8],
 ) -> Vec<(usize, u8)> {
     let plain = |j: usize| flags[j] & SEA == 0 && (flags[j] & RIVER != 0 || body[j] == 0);
+    // Followed to its end (a long river's too); a cycle not through `to` does not return.
     let returns = |dir: &[u8], from: usize, to: usize| {
+        let mut seen = std::collections::HashSet::new();
         let mut c = from;
-        for _ in 0..4096 {
+        loop {
             if c == to {
                 return true;
+            }
+            if !seen.insert(c) {
+                return false;
             }
             match receiver(dims, dir, c) {
                 Some(r) => c = r,
                 None => return false,
             }
         }
-        true
     };
     let mut changed = Vec::new();
-    for i in 0..ground.len() {
-        if flags[i] & (FIXED | SEA | RIVER) != 0 || body[i] != 0 {
-            continue;
-        }
-        if !receiver(dims, dir, i).is_some_and(|r| plain(r) && ground[r] > ground[i]) {
-            continue;
-        }
-        let mut best: Option<(f32, u8)> = None;
-        for (k, j) in dims.neighbours(i) {
-            let d = k as u8 + 1;
-            let slope = (ground[i] - ground[j]) / Dims::step(d) as f32;
-            let receives = flags[j] & FIXED == 0 || flags[j] & OUTLET != 0;
-            if receives && slope > 0.0 && best.is_none_or(|(s, _)| slope > s) && !returns(dir, j, i)
-            {
-                best = Some((slope, d));
+    // A cell whose lower neighbours all drain back to it through a cell still draining uphill
+    // (turned later in the pass) tries again once that one turned.
+    let mut todo: Vec<usize> = (0..ground.len())
+        .filter(|&i| flags[i] & (FIXED | SEA | RIVER) == 0 && body[i] == 0)
+        .filter(|&i| receiver(dims, dir, i).is_some_and(|r| plain(r) && ground[r] > ground[i]))
+        .collect();
+    loop {
+        let mut stuck = Vec::new();
+        let before = changed.len();
+        for &i in &todo {
+            let mut best: Option<(f32, u8)> = None;
+            for (k, j) in dims.neighbours(i) {
+                let d = k as u8 + 1;
+                let slope = (ground[i] - ground[j]) / Dims::step(d) as f32;
+                let receives = flags[j] & FIXED == 0 || flags[j] & OUTLET != 0;
+                if receives
+                    && slope > 0.0
+                    && best.is_none_or(|(s, _)| slope > s)
+                    && !returns(dir, j, i)
+                {
+                    best = Some((slope, d));
+                }
+            }
+            match best {
+                Some((_, d)) => {
+                    dir[i] = d;
+                    changed.push((i, d));
+                }
+                None => stuck.push(i),
             }
         }
-        if let Some((_, d)) = best {
-            dir[i] = d;
-            changed.push((i, d));
+        if stuck.is_empty() || changed.len() == before {
+            break;
         }
+        todo = stuck;
     }
     changed
 }
