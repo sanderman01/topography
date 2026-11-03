@@ -731,7 +731,8 @@ window edge is an outlet only at the world's edge or where the coarse flow leave
   spill) goes on across the seam the same way, from that band's cells at its level.
 - **Coarse rivers** keep their id and get a fine centreline: a priority flood over a corridor
   around the river's coarse cells starts where the coarse river ends and climbs upstream; each
-  coarse head follows it down. Paths cross dry basin floors, a path ending in a coarse dry basin
+  coarse head follows it down (a head whose fine cells are all sea starts at the first coarse
+  cell down the river with land). Paths cross dry basin floors, a path ending in a coarse dry basin
   with no fine hollow continues down the routing, and the path is burned below a cap from the
   coarse surfaces. Its discharge is the coarse one.
 - **Depressions**: tarns at 4 m within `tarn_share`; at 1 m no new lakes and no new dry basins

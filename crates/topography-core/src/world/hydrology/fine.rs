@@ -1326,9 +1326,32 @@ pub(super) fn rivers(
             }
             false
         };
-        let mut stranded: Vec<Vec<usize>> = own
+        // A head whose fine cells are all sea at this level (a mouth the fine coast moved
+        // inland) starts at the first coarse cell down the river that has land.
+        let land = |q: usize| c.fine_cells(q, w, h).any(|i| flags[i] & (SEA | FIXED) == 0);
+        let start = |q: usize| {
+            let mut p = q;
+            for _ in 0..=own.len() {
+                if land(p) || fully_fixed(p) {
+                    return Some(p);
+                }
+                p = (c.dir(p) != 0)
+                    .then(|| cd.neighbour(p, c.dir(p) as usize - 1))
+                    .flatten()
+                    .filter(|&n| on_line(n))?;
+            }
+            None
+        };
+        let mut starts: Vec<usize> = own
             .iter()
-            .filter(|&&q| is_head(q) && due(q))
+            .filter(|&&q| is_head(q))
+            .filter_map(|&q| start(q))
+            .collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut stranded: Vec<Vec<usize>> = starts
+            .iter()
+            .filter(|&&q| due(q))
             .map(|&q| c.fine_cells(q, w, h).collect::<Vec<_>>())
             .filter(|cells| !cells.iter().any(|&i| recv.contains_key(&(i as u32))))
             .collect();
@@ -1363,10 +1386,7 @@ pub(super) fn rivers(
         // (cell, lake it leaves, entering surface and discharge)
         type Head = (u32, u32, Option<(f32, f32)>);
         let mut heads: Vec<Head> = Vec::new();
-        for &q in own {
-            if !is_head(q) {
-                continue;
-            }
+        for &q in &starts {
             let source = exits
                 .get(&c.abs(q))
                 .and_then(|l| lake_basin.get(l))
