@@ -763,7 +763,8 @@ levels no cut goes deeper than
 `BREACH_MAX_M` (30 m) below that starting ground, and near the seam no cut goes below the
 previous band's dry ground in its last row less the 35° side slope over the distance (down to a
 taken river's or lake's bed beside it): the carve floor. Breaching keeps a depression it
-cannot drain within that as a sink and fills a pocket instead; trench walls, seam joins and
+cannot drain within that as a sink and fills a pocket instead (one whose fill would fail the
+seam step rule below stays a sink); trench walls, seam joins and
 channel beds stop there. Where a river's water would stand below the floor (a low bank
 downstream, a route over a rise), its bed stays on the floor and the water is raised to stand
 on it, upstream too (a backwater), and the dry banks beside are raised to the water (on a
@@ -783,7 +784,10 @@ or runs along the first 16 rows more than 16 columns from where its river crosse
 laid again along the way to its end that climbs least, keeping off the seam there
 (`paths_relaid`; along the seam any such way is taken, since a climb there could only be
 cut below the floor); cells of a path away from its coarse river get no surface cap (the coarse
-surface says nothing of the ground there), so the burn only keeps them descending. Other
+surface says nothing of the ground there), so the burn only keeps them descending. A coarse
+head the corridor flood misses (its river crosses the seam where the previous band laid it,
+off the coarse cells) takes the way that climbs least to that band's water of its own river
+before any lowest way to other water. Other
 river routes whose water would have to climb past what the floor lets carving lower turn to
 their steepest other way down (`river_climbs_turned`). With no lower neighbour (a flat the
 breach filled where the floor kept it from cutting), such a river goes on along the way whose
