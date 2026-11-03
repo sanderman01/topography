@@ -364,8 +364,9 @@ impl SeamStep {
             surface: Vec::new(),
         }
     }
-    /// Water at `level` over cell `i` would differ across the seam by more than the rule allows.
-    fn steps(&self, dims: Dims, i: usize, level: f32) -> bool {
+    /// Water (or ground) at `level` over cell `i` would differ across the seam by more than
+    /// the rule allows.
+    pub fn steps(&self, dims: Dims, i: usize, level: f32) -> bool {
         self.limit(dims, i)
             .is_some_and(|(mid, by)| (level - mid).abs() > by)
     }

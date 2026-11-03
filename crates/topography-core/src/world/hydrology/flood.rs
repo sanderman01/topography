@@ -327,6 +327,7 @@ pub(super) fn breach(
     cap_m: f32,
     floor: &[f32],
     fine: bool,
+    seam_steps: impl Fn(usize, f32) -> bool,
     keep_kind: impl Fn(usize, bool) -> Kind,
 ) -> u64 {
     let value = |g: &[f32], body: &[u32], basins: &[Basin], i: usize| match body[i] {
@@ -475,6 +476,27 @@ pub(super) fn breach(
             }
             flags[n] |= SEEN;
             dir[n] = OPPOSITE[k] + 1;
+            // A cell the way out cannot be cut down to is filled to it, except where that
+            // would leave a step at the seam: there it and the unseen ground below it stay a
+            // sink.
+            if body[n] == 0
+                && ground[n] < z
+                && seam_steps(n, z)
+                && blocked(dims, ground, flags, body, dir, floor, c, ground[n])
+            {
+                basins.push(Basin::kept(Kind::Sink, z, c as u32));
+                let id = basins.len() as u32;
+                body[n] = id;
+                stack.push(n as u32);
+                while let Some(b) = stack.pop() {
+                    for (_, m) in dims.neighbours(b as usize) {
+                        if flags[m] & (SEEN | SEA | FIXED) == 0 && body[m] == 0 && ground[m] < z {
+                            body[m] = id;
+                            stack.push(m as u32);
+                        }
+                    }
+                }
+            }
             if body[n] != 0 {
                 // Basin: breadth first from where the flood entered it, cut to its level there.
                 let basin = &basins[body[n] as usize - 1];
@@ -928,6 +950,7 @@ mod tests {
             30.0,
             &[f32::NEG_INFINITY; 64],
             false,
+            |_, _| false,
             |_, _| Kind::Lake,
         );
         assert!(basins.is_empty(), "a 4 m deep pit is breached");
@@ -974,6 +997,7 @@ mod tests {
                 2.0,
                 &[f32::NEG_INFINITY; 64],
                 false,
+                |_, _| false,
                 |_, deep| if deep { kind } else { Kind::Lake },
             );
             assert_eq!(basins.len(), 1);
@@ -1198,6 +1222,7 @@ mod tests {
             30.0,
             &[f32::NEG_INFINITY; 64],
             true,
+            |_, _| false,
             |_, _| Kind::Sink,
         );
         for i in 0..36 {

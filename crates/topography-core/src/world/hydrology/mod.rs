@@ -469,6 +469,29 @@ pub fn run(options: &Options) -> Result<Outcome> {
 
     // Breach every other depression up to the cap, then route over the result.
     let fine_level = coarse.is_some();
+    // The seam step rule's inputs: pockets breaching fills, lakes filled and rivers raised
+    // near the seam.
+    let mut seam_step = lakes::SeamStep::none();
+    if let (Some(b), true) = (&north, fine_level && fixed_rows > 0) {
+        let last = (fixed_rows - 1) * w;
+        let mut raw_last = Vec::new();
+        grid::for_each_input_row(&options.grid, grid.w, |y, row| {
+            if y + 1 == fixed_rows {
+                raw_last.extend_from_slice(row);
+            } else if y >= fixed_rows && y < fixed_rows + report::SEAM_CHECK_ROWS {
+                seam_step.raw.extend_from_slice(row);
+            }
+        })?;
+        seam_step.change = (0..w)
+            .map(|x| {
+                let s = b.surface[last + x];
+                (if s.is_nan() { ground[last + x] } else { s }) - raw_last[x]
+            })
+            .collect();
+        seam_step.fixed_rows = fixed_rows;
+        seam_step.surface = b.surface[last..last + w].to_vec();
+        seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
+    }
     let carved = flood::breach(
         dims,
         &mut ground,
@@ -479,6 +502,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         BREACH_MAX_M,
         &carve_floor,
         coarse.is_some(),
+        |i, level| seam_step.steps(dims, i, level),
         |pit, deep| {
             let class = class_at(pit);
             let arid =
@@ -798,28 +822,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 on_path[c as usize] = true;
             }
         }
-    }
-    // The seam step rule's inputs, for lakes filled near the seam.
-    let mut seam_step = lakes::SeamStep::none();
-    if let (Some(b), true) = (&north, fine_level && fixed_rows > 0) {
-        let last = (fixed_rows - 1) * w;
-        let mut raw_last = Vec::new();
-        grid::for_each_input_row(&options.grid, grid.w, |y, row| {
-            if y + 1 == fixed_rows {
-                raw_last.extend_from_slice(row);
-            } else if y >= fixed_rows && y < fixed_rows + report::SEAM_CHECK_ROWS {
-                seam_step.raw.extend_from_slice(row);
-            }
-        })?;
-        seam_step.change = (0..w)
-            .map(|x| {
-                let s = b.surface[last + x];
-                (if s.is_nan() { ground[last + x] } else { s }) - raw_last[x]
-            })
-            .collect();
-        seam_step.fixed_rows = fixed_rows;
-        seam_step.surface = b.surface[last..last + w].to_vec();
-        seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
     }
     // How high a coarse path's water may stand: its cap and the previous band's dry ground
     // beside it (`rivers::extract`), there and upstream (water downstream stands no higher).
