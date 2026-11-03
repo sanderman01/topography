@@ -523,6 +523,24 @@ impl PartialOrd for Item {
     }
 }
 
+/// Min-heap item of a lowest way: the highest ground so far, then the cell's own ground (on a
+/// way below its start, down the fall line rather than by index), then the cell.
+#[derive(PartialEq)]
+struct Way(f32, f32, u32);
+impl Eq for Way {}
+impl Ord for Way {
+    fn cmp(&self, o: &Self) -> Ordering {
+        o.0.total_cmp(&self.0)
+            .then(o.1.total_cmp(&self.1))
+            .then(o.2.cmp(&self.2))
+    }
+}
+impl PartialOrd for Way {
+    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
 /// A head entering from the previous band: the free cell a fixed centreline of coarse river
 /// `id` drains into, with that cell's surface and discharge.
 pub(super) struct Inflow {
@@ -745,8 +763,8 @@ fn route_round(
             && !avoid(i)
     };
     let mut from: HashMap<usize, usize> = HashMap::from([(head, head)]);
-    let mut heap = BinaryHeap::from([Item(ground[head], head as u32)]);
-    while let Some(Item(z, c)) = heap.pop() {
+    let mut heap = BinaryHeap::from([Way(ground[head], ground[head], head as u32)]);
+    while let Some(Way(z, _, c)) = heap.pop() {
         let c = c as usize;
         for (_, j) in dims.neighbours(c) {
             if end(j) {
@@ -761,7 +779,7 @@ fn route_round(
             }
             if !from.contains_key(&j) && open(j) {
                 from.insert(j, c);
-                heap.push(Item(ground[j].max(z), j as u32));
+                heap.push(Way(ground[j].max(z), ground[j], j as u32));
             }
         }
         if from.len() > MAX_CELLS {
@@ -775,8 +793,10 @@ fn route_round(
 /// (least highest ground) over free land to the nearest end: a cell already routed (`recv`),
 /// the sea, a lake, another river's path (`claimed`), the previous band's water whose flow
 /// does not come back here unrouted (`back`), or a grid-edge outlet (or the bottom edge of
-/// the halo from row `halo`). The way joins `recv` and `corridor`; ends outside the corridor
-/// join `seeds`, new edge outlets `outlets`.
+/// the halo from row `halo`). Where the previous band holds this river's own water (`own`, a
+/// river flowing north out of the grid whose path that band laid off its coarse cells), the
+/// way that climbs least to it or a routed cell comes first. The way joins `recv` and
+/// `corridor`; ends outside the corridor join `seeds`, new edge outlets `outlets`.
 #[allow(clippy::too_many_arguments)]
 fn route_stranded(
     dims: Dims,
@@ -788,6 +808,7 @@ fn route_stranded(
     claimed: impl Fn(usize) -> bool,
     back: &impl Fn(usize) -> Option<usize>,
     halo: usize,
+    own: Option<&dyn Fn(usize) -> bool>,
     recv: &mut HashMap<u32, u32>,
     seeds: &mut HashSet<u32>,
     corridor: &mut HashSet<u32>,
@@ -803,19 +824,64 @@ fn route_stranded(
     let lake = |i: usize| {
         flags[i] & FIXED == 0 && body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake
     };
-    let mut from: HashMap<usize, usize> = HashMap::new();
-    let mut heap = BinaryHeap::new();
     // Never from a routed cell or seed: a new receiver there could close a loop.
-    for &s in sources
+    let starts: Vec<usize> = sources
         .iter()
-        .filter(|&&s| open(s) && !recv.contains_key(&(s as u32)) && !seeds.contains(&(s as u32)))
-    {
-        from.insert(s, s);
-        heap.push(Item(ground[s], s as u32));
-    }
+        .copied()
+        .filter(|&s| open(s) && !recv.contains_key(&(s as u32)) && !seeds.contains(&(s as u32)))
+        .collect();
+    let mut from: HashMap<usize, usize> = HashMap::new();
     // (last cell of the way, the end it drains into: None for an edge outlet)
     let mut end: Option<(usize, Option<usize>)> = None;
-    'search: while let Some(Item(z, c)) = heap.pop() {
+    // This river's own water first: the way that climbs least (rises summed, then length).
+    if let Some(own) = own.filter(|_| !starts.is_empty()) {
+        const PER_CELL: f32 = 1e-3;
+        let mut cost: HashMap<usize, f32> = starts.iter().map(|&s| (s, 0.0)).collect();
+        from.extend(starts.iter().map(|&s| (s, s)));
+        let mut heap: BinaryHeap<Item> = starts.iter().map(|&s| Item(0.0, s as u32)).collect();
+        let mut found = false;
+        'own: while let Some(Item(k, c)) = heap.pop() {
+            let c = c as usize;
+            if k > cost[&c] {
+                continue;
+            }
+            for (d, j) in dims.neighbours(c) {
+                let mine = flags[j] & (FIXED | RIVER) == FIXED | RIVER
+                    && own(j)
+                    && back(j).is_none_or(|r| recv.contains_key(&(r as u32)));
+                if mine || (!cost.contains_key(&j) && recv.contains_key(&(j as u32))) {
+                    end = Some((c, Some(j)));
+                    found = true;
+                    break 'own;
+                }
+                if !open(j) || seeds.contains(&(j as u32)) {
+                    continue;
+                }
+                let kj = k
+                    + (ground[j] - ground[c]).max(0.0)
+                    + Dims::step(d as u8 + 1) as f32 * PER_CELL;
+                if cost.get(&j).is_none_or(|&old| kj < old) {
+                    cost.insert(j, kj);
+                    from.insert(j, c);
+                    heap.push(Item(kj, j as u32));
+                }
+            }
+            if cost.len() > MAX_CELLS {
+                break;
+            }
+        }
+        if !found {
+            from.clear();
+        }
+    }
+    let mut heap = BinaryHeap::new();
+    if end.is_none() {
+        for &s in &starts {
+            from.insert(s, s);
+            heap.push(Way(ground[s], ground[s], s as u32));
+        }
+    }
+    'search: while let Some(Way(z, _, c)) = heap.pop() {
         let c = c as usize;
         let edge =
             dims.is_edge(c) && (flags[c] & OUTLET != 0 || (c / w + 1 == dims.h && c / w >= halo));
@@ -844,7 +910,7 @@ fn route_stranded(
             }
             if open(j) {
                 from.insert(j, c);
-                heap.push(Item(ground[j].max(z), j as u32));
+                heap.push(Way(ground[j].max(z), ground[j], j as u32));
             }
         }
         if from.len() > MAX_CELLS {
@@ -1287,6 +1353,7 @@ pub(super) fn rivers(
                 |j| claimed.contains_key(&(j as u32)),
                 &back,
                 core_rows[1],
+                north_end.then_some(&|j| fixed_id(j) == id),
                 &mut recv,
                 &mut seeds,
                 &mut corridor,
@@ -1951,6 +2018,7 @@ mod tests {
                 |_| false,
                 &|_| None,
                 3,
+                None,
                 &mut recv,
                 &mut seeds,
                 &mut corridor,
