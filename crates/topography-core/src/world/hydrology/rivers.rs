@@ -424,7 +424,8 @@ pub(super) fn extract(
             .fold(f32::INFINITY, f32::min)
     };
     // A raised river's dry neighbours rise to its water (`raise_lips`); in the rows the seam
-    // step rule checks no higher than it allows, so the water rises no higher either.
+    // step rule checks no higher than it allows, so the water rises no higher either, nor above
+    // what the rule allows over its own cells.
     let mut seam_cap: HashMap<u32, f32> = HashMap::new();
     if seam.fixed_rows > 0 {
         let wet = (0..n)
@@ -442,6 +443,11 @@ pub(super) fn extract(
                     let e = seam_cap.entry(o as u32).or_insert(f32::INFINITY);
                     *e = e.min(top.max(ground[k]));
                 }
+            }
+            let top = seam.top(dims, j);
+            if top.is_finite() {
+                let e = seam_cap.entry(o as u32).or_insert(f32::INFINITY);
+                *e = e.min(top.max(ground[j] + MIN_DEPTH_M));
             }
         }
     }
