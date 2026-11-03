@@ -350,6 +350,8 @@ pub(super) struct SeamStep {
     pub raw: Vec<f32>,
     /// The side slope's rise per row.
     pub rise: f32,
+    /// The previous band's water surface in its last row (NaN where dry).
+    pub surface: Vec<f32>,
 }
 
 impl SeamStep {
@@ -359,6 +361,7 @@ impl SeamStep {
             change: Vec::new(),
             raw: Vec::new(),
             rise: 0.0,
+            surface: Vec::new(),
         }
     }
     /// Water at `level` over cell `i` would differ across the seam by more than the rule allows.
@@ -388,8 +391,9 @@ impl SeamStep {
 /// reason) where that is not clean: the flood meets a kept sink, a climb's sink, a basin above
 /// its level or other water draining in, or the grid edge; ground draining away (the previous
 /// band's and `keep` cells, coarse river paths, included: they are walls, though a path below
-/// the level may take the spill) or water lies below the level beside the lake; the lake would
-/// leave a step at the seam (`seam`); or a sink cell above the level cannot drain onto it.
+/// the level may take the spill) or water lies below the level beside the lake; the previous
+/// band's water its outflow runs into lies above the level; the lake would leave a step at the
+/// seam (`seam`); or a sink cell above the level cannot drain onto it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fill_to_spill(
     dims: Dims,
@@ -619,6 +623,15 @@ pub(super) fn fill_to_spill(
         let end = seam.fixed_rows + super::report::SEAM_CHECK_ROWS;
         let (mut c, mut water) = (outlet, ground[outlet]);
         for _ in 0..4 * end {
+            // Nor may the previous band's water it runs into stand above the level.
+            if c / dims.w + 1 == seam.fixed_rows
+                && seam
+                    .surface
+                    .get(c % dims.w)
+                    .is_some_and(|&s| s > level + tolerance)
+            {
+                return Err("the previous band's water the outflow runs into lies above the level");
+            }
             if c / dims.w >= end || flags[c] & (FIXED | SEA) != 0 || body[c] != 0 {
                 break;
             }
@@ -1117,6 +1130,7 @@ mod tests {
             change: vec![0.0; w],
             raw: vec![0.0; 4 * w],
             rise: 0.7,
+            surface: vec![f32::NAN; w],
         };
         assert!(spill_of(&p, &seam).is_ok());
         seam.raw[2] = -6.0;
@@ -1170,6 +1184,7 @@ mod tests {
             change: vec![0.0; w],
             raw: vec![0.0; 4 * w],
             rise: 0.7,
+            surface: vec![f32::NAN; w],
         };
         p.ground[w + 6] = 0.2;
         assert!(spill_of(&p, &seam).is_ok());
@@ -1177,6 +1192,19 @@ mod tests {
         assert_eq!(
             spill_of(&p, &seam).err(),
             Some("the previous band's ground beside the outflow lies below its water")
+        );
+        // The outflow runs into the previous band's river above it: its water may not stand
+        // above the 0.3 m level.
+        p.ground[w + 6] = 5.0;
+        p.flags[w + 5] |= RIVER;
+        p.dir[2 * w + 5] = p.dims.towards(2 * w + 5, w + 5);
+        let mut seam = seam;
+        seam.surface[5] = 0.2;
+        assert!(spill_of(&p, &seam).is_ok());
+        seam.surface[5] = 0.5;
+        assert_eq!(
+            spill_of(&p, &seam).err(),
+            Some("the previous band's water the outflow runs into lies above the level")
         );
     }
 

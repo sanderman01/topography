@@ -815,6 +815,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
             })
             .collect();
         seam_step.fixed_rows = fixed_rows;
+        seam_step.surface = b.surface[last..last + w].to_vec();
         seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
     }
     // Again while a lake filled this way sends a river on into a further sink.

@@ -816,8 +816,9 @@ kept sink or other water draining in (such as a coarse lagoon whose outflow ends
 grid edge; ground draining away, the previous band's included, or water lies below the level
 beside the lake, or that band's ground beside its outflow (over the dry region at the level,
 then the river's water while in the rows the seam checks; that ground cannot be raised; a lake
-beside lower water would be a step in the surface); or the lake would fail the seam step rule
-above (`seam_steps`, against the input). A sink a climbing river ends in has no spill and
+beside lower water would be a step in the surface), or that band's water its outflow runs into
+stands above the level (the outflow would climb off it); or the lake would fail the seam step
+rule above (`seam_steps`, against the input). A sink a climbing river ends in has no spill and
 stays one. The figure `rivers_ending_in_a_dry_sink` counts the river ends still left in such
 sinks, with examples (`at_cells`), apart from those into kept dry basins (endorheic by design).
 
