@@ -216,11 +216,11 @@ pub(super) fn seam_limit(
             out[(dy - 1) * w + x] = dry.min(wet);
         }
     }
-    for x in 0..rows.min(1) * w {
+    for (x, o) in out.iter_mut().enumerate().take(rows.min(1) * w) {
         let (a, b) = (x.saturating_sub(1), (x + 1).min(w - 1));
         for s in a..=b {
             if let Some(level) = still(last + s) {
-                out[x] = out[x].min(level);
+                *o = o.min(level);
             }
         }
     }
