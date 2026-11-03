@@ -1342,9 +1342,24 @@ pub(super) fn rivers(
             }
             None
         };
-        let mut starts: Vec<usize> = own
+        // A head whose coarse river comes from the previous band, which did not hand it over
+        // (that band routed the water its own way), is no head while another one is.
+        let taken_above = |q: usize| {
+            my_inflows.is_empty()
+                && cd.neighbours(q).any(|(_, p)| {
+                    c.centre(p)
+                        && c.body[p] == id
+                        && c.dir(p) != 0
+                        && cd.neighbour(p, c.dir(p) as usize - 1) == Some(q)
+                        && inside(p)
+                        && fully_fixed(p)
+                })
+        };
+        let heads_here: Vec<usize> = own.iter().copied().filter(|&q| is_head(q)).collect();
+        let own_head = heads_here.iter().any(|&q| !taken_above(q));
+        let mut starts: Vec<usize> = heads_here
             .iter()
-            .filter(|&&q| is_head(q))
+            .filter(|&&q| !own_head || !taken_above(q))
             .filter_map(|&q| start(q))
             .collect();
         starts.sort_unstable();
@@ -1501,10 +1516,12 @@ pub(super) fn rivers(
             let runs_along = fixed_rows > 0 && cells.iter().any(|&c| along(c));
             let climbs = climb(ground, &cells);
             if let Some(end) = next.filter(|_| climbs > PATH_CLIMB_M || runs_along) {
-                // Near its end (on the seam too, where it joins another river) it may reach it.
-                let near_end = |i: usize| (i % w).abs_diff(end as usize % w) <= SEAM_STRIP;
+                // Near its end (on the seam too, where it joins another river) it may reach it,
+                // and near a head on the seam it may leave it.
+                let near = |i: usize, at: usize| (i % w).abs_diff(at % w) <= SEAM_STRIP;
                 let open = |i: usize| {
-                    !claimed.contains_key(&(i as u32)) && (!along(i as u32) || near_end(i))
+                    !claimed.contains_key(&(i as u32))
+                        && (!along(i as u32) || near(i, end as usize) || near(i, head as usize))
                 };
                 if let Some(way) = route_descending(
                     dims,

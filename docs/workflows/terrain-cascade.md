@@ -789,7 +789,9 @@ cut below the floor); cells of a path away from its coarse river get no surface 
 surface says nothing of the ground there), so the burn only keeps them descending. A coarse
 head the corridor flood misses (its river crosses the seam where the previous band laid it,
 off the coarse cells) takes the way that climbs least to that band's water of its own river
-before any lowest way to other water. Other
+before any lowest way to other water. A head whose coarse river comes from the previous band,
+which did not hand it over, is no head while the river has another, and a path laid again off
+the seam may leave the seam strip near its head as near its end. Other
 river routes whose water would have to climb past what the floor lets carving lower turn to
 their steepest other way down (`river_climbs_turned`). With no lower neighbour (a flat the
 breach filled where the floor kept it from cutting), such a river goes on along the way whose
