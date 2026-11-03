@@ -181,11 +181,17 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 _ => {}
             }
         }
+        let still = |i: usize| match fixed_kind(i) {
+            Some(BodyKind::Sea) => Some(0.0),
+            Some(BodyKind::Lake) => Some(b.surface[i]),
+            _ => None,
+        };
         let limit = band::seam_limit(
             dims,
             fixed_rows,
             &ground,
             |i| flags[i] & (RIVER | SEA) != 0 || fixed_kind(i) == Some(BodyKind::Lake),
+            still,
             BREACH_MAX_M,
             erosion::SIDE_SLOPE_DEG.to_radians().tan(),
             grid.spacing_m,
@@ -242,11 +248,18 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // On finer levels no cut goes deeper than BREACH_MAX_M below the ground here, nor leaves a
     // step at the seam (`band::ground_floor`); the trunk level carves as it did.
     let (carve_floor, seam_floor): (Vec<f32>, Vec<f32>) = if coarse.is_some() {
+        // Beside the previous band's lake or sea in its last row: down to that level.
+        let still = |i: usize| match fixed_kind(i) {
+            Some(BodyKind::Sea) => Some(0.0),
+            Some(BodyKind::Lake) => north.as_ref().map(|b| b.surface[i]),
+            _ => None,
+        };
         band::ground_floor(
             dims,
             fixed_rows,
             &ground,
             |i| flags[i] & (RIVER | SEA) != 0 || fixed_kind(i) == Some(BodyKind::Lake),
+            still,
             BREACH_MAX_M,
             erosion::SIDE_SLOPE_DEG.to_radians().tan(),
             grid.spacing_m,

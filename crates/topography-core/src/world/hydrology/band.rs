@@ -159,12 +159,15 @@ pub(super) fn blend_seam(
 /// The seam limit over the free rows after `fixed_rows` (whole rows, as far as a carve
 /// `depth_m` deep can matter): the previous band's dry ground in its last row less the side
 /// slope (`tan`) over the distance, or beside water there (`wet`) that water's bed plus the
-/// slope, where lower.
+/// slope, where lower; right beside a lake or the sea there (`still`, its level) no higher than
+/// that level (a shore at the level is no step).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn seam_limit(
     dims: Dims,
     fixed_rows: usize,
     ground: &[f32],
     wet: impl Fn(usize) -> bool,
+    still: impl Fn(usize) -> Option<f32>,
     depth_m: f32,
     tan: f32,
     spacing_m: f64,
@@ -213,6 +216,14 @@ pub(super) fn seam_limit(
             out[(dy - 1) * w + x] = dry.min(wet);
         }
     }
+    for x in 0..rows.min(1) * w {
+        let (a, b) = (x.saturating_sub(1), (x + 1).min(w - 1));
+        for s in a..=b {
+            if let Some(level) = still(last + s) {
+                out[x] = out[x].min(level);
+            }
+        }
+    }
     out
 }
 
@@ -223,11 +234,13 @@ pub(super) fn seam_limit(
 /// cross the seam at their own beds. Fixed cells get +inf (never carved). Also the seam limit
 /// alone over the rows it reaches after `fixed_rows` (whole rows; coarse river paths keep only
 /// that one, as the coarse network sets where they run).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn ground_floor(
     dims: Dims,
     fixed_rows: usize,
     ground: &[f32],
     wet: impl Fn(usize) -> bool,
+    still: impl Fn(usize) -> Option<f32>,
     depth_m: f32,
     tan: f32,
     spacing_m: f64,
@@ -235,7 +248,9 @@ pub(super) fn ground_floor(
     let w = dims.w;
     let mut floor: Vec<f32> = ground.iter().map(|&g| g - depth_m).collect();
     floor[..fixed_rows * w].fill(f32::INFINITY);
-    let mut seam_rows = seam_limit(dims, fixed_rows, ground, wet, depth_m, tan, spacing_m);
+    let mut seam_rows = seam_limit(
+        dims, fixed_rows, ground, wet, still, depth_m, tan, spacing_m,
+    );
     for (k, seam) in seam_rows.iter_mut().enumerate() {
         let i = fixed_rows * w + k;
         // Never above the cell's own ground (natural slopes steeper than `tan` stay).
@@ -988,7 +1003,7 @@ mod tests {
         let dims = Dims { w, h };
         let mut ground = vec![100.0f32; w * h];
         ground[0] = 90.0;
-        let (floor, seam) = ground_floor(dims, 1, &ground, |i| i == 0, 30.0, 1.0, 1.0);
+        let (floor, seam) = ground_floor(dims, 1, &ground, |i| i == 0, |_| None, 30.0, 1.0, 1.0);
         assert!(
             floor[..w].iter().all(|f| f.is_infinite()),
             "taken cells are never carved"
