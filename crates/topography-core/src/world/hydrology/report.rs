@@ -436,9 +436,16 @@ pub(super) fn carving(
     let rise = super::erosion::SIDE_SLOPE_DEG.to_radians().tan() * c.spacing_m as f32;
     let raw = &slots.raw_seam;
     if fixed_rows >= 1 && raw.len() >= 2 * w {
+        // A lake's or the sea's depth is no change of the land: their ground counts there.
         let d = |k: usize, x: usize| {
             let i = (fixed_rows - 1 + k) * w + x;
-            shown(c.ground, c.surface, i) - raw[k * w + x]
+            let still = c.sea(i) || c.lake(i).is_some();
+            let h = if still {
+                c.ground[i]
+            } else {
+                shown(c.ground, c.surface, i)
+            };
+            h - raw[k * w + x]
         };
         let rows = (raw.len() / w).min(c.dims.h + 1 - fixed_rows);
         for x in 0..w {

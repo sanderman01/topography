@@ -405,8 +405,8 @@ impl SeamStep {
 /// its level or other water draining in, or the grid edge; ground draining away (the previous
 /// band's and `keep` cells, coarse river paths, included: they are walls, though a path below
 /// the level may take the spill) or water lies below the level beside the lake; the previous
-/// band's water its outflow runs into lies above the level; the lake would leave a step at the
-/// seam (`seam`); or a sink cell above the level cannot drain onto it.
+/// band's water its outflow runs into lies above the level (`seam`); or a sink cell above the
+/// level cannot drain onto it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fill_to_spill(
     dims: Dims,
@@ -656,9 +656,6 @@ pub(super) fn fill_to_spill(
                 _ => break,
             }
         }
-    }
-    if pieces.iter().flatten().any(|&i| seam.steps(dims, i, level)) {
-        return Err("it would leave a step at the seam");
     }
     pieces.sort_unstable_by_key(|p| p[0]);
     // Pieces beside the lake it joins become part of it; others lakes of their own at its level.
@@ -1161,9 +1158,9 @@ mod tests {
     }
 
     #[test]
-    fn a_spill_lake_leaves_no_step_at_the_seam() {
+    fn a_spill_lake_deep_at_the_seam_is_no_step() {
         // Rows 0 and 1 are the previous band's, unchanged there; the 0.3 m lake over cell 2,
-        // whose input lay at -6 m, would change the shown height 6.3 m in the first row.
+        // whose input lay at -6 m, is 6.3 m deep: water depth is no change of the land.
         let p = pocket(true);
         let w = p.dims.w;
         let mut seam = SeamStep {
@@ -1173,12 +1170,8 @@ mod tests {
             rise: 0.7,
             surface: vec![f32::NAN; w],
         };
-        assert!(spill_of(&p, &seam).is_ok());
         seam.raw[2] = -6.0;
-        assert_eq!(
-            spill_of(&p, &seam).err(),
-            Some("it would leave a step at the seam")
-        );
+        assert!(spill_of(&p, &seam).is_ok());
     }
 
     #[test]

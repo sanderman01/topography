@@ -801,7 +801,8 @@ so a path burn deeper than about 35 m fails), `ground_raised_over_limit` (ground
 than 60 m above the input by any fill), `seam_steps` (columns where the change hydrology made,
 shown height less the input, differs between the taken last row and one of the first four
 rows by more than 5 m plus the side slope's rise per further row, except where both cells are
-water of one body) and `seam_slots` (cells in those rows whose change lies 5 m below both
+water of one body; a lake's or the sea's depth is no change of the land, so their ground counts
+there) and `seam_slots` (cells in those rows whose change lies 5 m below both
 neighbours, north and south or west and east). `slots` counts such cells over the whole band
 as a figure.
 
@@ -827,8 +828,7 @@ grid edge; ground draining away, the previous band's included, or water lies bel
 beside the lake, or that band's ground beside its outflow (over the dry region at the level,
 then the river's water while in the rows the seam checks; that ground cannot be raised; a lake
 beside lower water would be a step in the surface), or that band's water its outflow runs into
-stands above the level (the outflow would climb off it); or the lake would fail the seam step
-rule above (`seam_steps`, against the input). A sink a climbing river ends in has no spill and
+stands above the level (the outflow would climb off it). A sink a climbing river ends in has no spill and
 stays one. The figure `rivers_ending_in_a_dry_sink` counts the river ends still left in such
 sinks, with examples (`at_cells`), apart from those into kept dry basins (endorheic by design).
 

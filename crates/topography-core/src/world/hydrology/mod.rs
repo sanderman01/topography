@@ -482,10 +482,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 seam_step.raw.extend_from_slice(row);
             }
         })?;
+        // As the report's step rule: a lake's or the sea's depth is no change of the land.
         seam_step.change = (0..w)
             .map(|x| {
-                let s = b.surface[last + x];
-                (if s.is_nan() { ground[last + x] } else { s }) - raw_last[x]
+                let (i, s) = (last + x, b.surface[last + x]);
+                let still = flags[i] & SEA != 0 || fixed_kind(i) == Some(BodyKind::Lake);
+                (if s.is_nan() || still { ground[i] } else { s }) - raw_last[x]
             })
             .collect();
         seam_step.fixed_rows = fixed_rows;
