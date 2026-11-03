@@ -1575,9 +1575,11 @@ pub(super) fn rivers(
                         })
                 };
                 if cells.iter().any(|&x| low_bank(x as usize)) {
+                    // This river's water there, or that of the river the path ends in.
+                    let into = next.map_or(id, |r| fixed_id(r as usize));
                     let end = |j: usize| {
                         flags[j] & (FIXED | RIVER) == FIXED | RIVER
-                            && fixed_id(j) == id
+                            && (fixed_id(j) == id || fixed_id(j) == into)
                             && back(j).is_none()
                     };
                     let avoid = |i: usize| low_bank(i) || claimed.contains_key(&(i as u32));
