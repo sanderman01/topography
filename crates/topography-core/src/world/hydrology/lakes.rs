@@ -366,17 +366,29 @@ impl SeamStep {
     }
     /// Water at `level` over cell `i` would differ across the seam by more than the rule allows.
     fn steps(&self, dims: Dims, i: usize, level: f32) -> bool {
+        self.limit(dims, i)
+            .is_some_and(|(mid, by)| (level - mid).abs() > by)
+    }
+    /// The highest the shown height of cell `i` may stand under the rule (+inf outside the
+    /// rows it checks), less the report's tolerance.
+    pub fn top(&self, dims: Dims, i: usize) -> f32 {
+        self.limit(dims, i).map_or(f32::INFINITY, |(mid, by)| {
+            mid + by - super::report::BANK_TOLERANCE_M
+        })
+    }
+    /// The shown height with no step at cell `i` and the step allowed around it.
+    fn limit(&self, dims: Dims, i: usize) -> Option<(f32, f32)> {
         let (y, x) = (i / dims.w, i % dims.w);
         if self.change.len() != dims.w || y < self.fixed_rows {
-            return false;
+            return None;
         }
         let k = y - self.fixed_rows;
         match self.raw.get(k * dims.w + x) {
-            Some(&raw) if k < super::report::SEAM_CHECK_ROWS => {
-                let step = (level - raw - self.change[x]).abs();
-                step > super::report::SEAM_STEP_M + self.rise * k as f32
-            }
-            _ => false,
+            Some(&raw) if k < super::report::SEAM_CHECK_ROWS => Some((
+                raw + self.change[x],
+                super::report::SEAM_STEP_M + self.rise * k as f32,
+            )),
+            _ => None,
         }
     }
 }

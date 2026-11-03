@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use super::flood::{CENTRE, Dims, FIXED, RIVER, SEA, receiver};
-use super::lakes::{Basin, Kind};
+use super::lakes::{Basin, Kind, SeamStep};
 
 /// Judgment constants: width W = WIDTH_A · Q^0.5 and depth D = DEPTH_B · Q^0.4 (m), with Q
 /// the discharge in km² at mean rain: 8 m by 1.3 m at 10 km², 33 m by 4 m at 178 km².
@@ -151,6 +151,7 @@ pub(super) fn extract(
     surface: &mut [f32],
     given: Given,
     carve_floor: &[f32],
+    seam: &SeamStep,
 ) -> (Vec<River>, Vec<Band>, Channels) {
     let n = ground.len();
     let l = spacing_m as f32;
@@ -422,10 +423,34 @@ pub(super) fn extract(
             .map(|(_, k)| ground[k])
             .fold(f32::INFINITY, f32::min)
     };
-    // How high a raise may lift a cell's water: that ground, and a coarse path's cap.
+    // A raised river's dry neighbours rise to its water (`raise_lips`); in the rows the seam
+    // step rule checks no higher than it allows, so the water rises no higher either.
+    let mut seam_cap: HashMap<u32, f32> = HashMap::new();
+    if seam.fixed_rows > 0 {
+        let wet = (0..n)
+            .filter(|&i| centre(flags, i) && !fixed(flags, i))
+            .map(|i| (i, i))
+            .chain(band.iter().map(|b| (b.cell as usize, b.owner as usize)));
+        for (j, o) in wet.collect::<Vec<_>>() {
+            if sills.contains_key(&(o as u32)) {
+                continue;
+            }
+            for (_, k) in dims.neighbours(j) {
+                let top = seam.top(dims, k);
+                if top.is_finite() && flags[k] & (SEA | RIVER | FIXED) == 0 && !lake(flags, body, k)
+                {
+                    let e = seam_cap.entry(o as u32).or_insert(f32::INFINITY);
+                    *e = e.min(top.max(ground[k]));
+                }
+            }
+        }
+    }
+    // How high a raise may lift a cell's water: that ground, a coarse path's cap and the
+    // seam's.
     let ceiling = |flags: &[u8], body: &[u32], ground: &[f32], i: usize| {
         let cap = given.cap.get(&(i as u32)).copied().unwrap_or(f32::INFINITY);
-        taken_bank(flags, body, ground, i).min(cap)
+        let at_seam = seam_cap.get(&(i as u32)).copied().unwrap_or(f32::INFINITY);
+        taken_bank(flags, body, ground, i).min(cap).min(at_seam)
     };
     let mut stack: Vec<usize> = Vec::new();
     for i in 0..n {
@@ -551,8 +576,8 @@ pub(super) fn extract(
     // Beds: the centreline below its surface by the cell's mean depth, reaching below 0 m
     // over the last cells to the sea.
     // A channel bed not below the carve floor (`band::ground_floor`; empty: none): the water
-    // was raised to stand on it. Only beside the previous band's lower dry ground may the
-    // water `s` stand lower (the bed just below it; `river_beds_below_carve_floor` bounds that).
+    // was raised to stand on it. Only where the raise stopped (`ceiling`) may the water `s`
+    // stand lower (the bed just below it; `river_beds_below_carve_floor` bounds that).
     let floored = |i: usize, bed: f32, s: f32| {
         carve_floor
             .get(i)
@@ -1326,6 +1351,7 @@ mod tests {
             &mut surface,
             given,
             &[],
+            &SeamStep::none(),
         );
         for i in [4, 7, 10, 13] {
             assert!(flags[i] & CENTRE != 0, "cell {i} is on the river");
@@ -1371,6 +1397,7 @@ mod tests {
             &mut surface,
             Given::default(),
             &floor,
+            &SeamStep::none(),
         );
         for i in [1, 4, 7] {
             assert!(flags[i] & CENTRE != 0);
@@ -1427,6 +1454,7 @@ mod tests {
             &mut surface,
             given,
             &[],
+            &SeamStep::none(),
         );
         assert_eq!(ch.streams_pruned, 1);
         assert!([5, 9, 13].iter().all(|&i| flags[i] & RIVER == 0));

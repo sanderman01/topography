@@ -766,9 +766,10 @@ channel beds stop there. Where a river's water would stand below the floor (a lo
 downstream, a route over a rise), its bed stays on the floor and the water is raised to stand
 on it, upstream too (a backwater), and the dry banks beside are raised to the water (on a
 river over a high rise this fills the valley behind it); not above the previous band's dry
-ground beside it or a coarse path's surface cap, where the bed goes just below the water
-instead (bounded by `river_beds_below_carve_floor`). A channel cell beside the centreline
-whose bed cannot reach below the water stays dry. A river
+ground beside it, a coarse path's surface cap, or, in the first four rows after the seam, the
+height the seam step rule (below) allows for any dry cell beside its channel, where the bed
+goes just below the water instead (bounded by `river_beds_below_carve_floor`). A channel cell
+beside the centreline whose bed cannot reach below the water stays dry. A river
 entering from the previous band that must be rerouted takes only a way whose cells can be
 lowered to its water level within their floor (it never climbs); with no such way it ends at
 its entry in a sink (`inflows_ended_in_a_sink`). Seam joins that would climb are not made.

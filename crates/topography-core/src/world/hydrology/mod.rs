@@ -854,7 +854,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
             acc[..fixed_rows * w].copy_from_slice(&b.discharge);
         }
     }
-    drop(seam_step);
     let extended = lakes::extend(dims, &ground, &dir, &flags, &mut body, &basins, |i| {
         on_path[i]
     });
@@ -995,6 +994,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &mut surface,
         given,
         &carve_floor,
+        &seam_step,
     );
     // Channel cuts deeper than one cell's rise widen as trenches do, from the water surface.
     let cuts = std::mem::take(&mut channels.cuts);
