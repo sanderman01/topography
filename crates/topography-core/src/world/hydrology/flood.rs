@@ -771,9 +771,9 @@ pub(super) fn spill_cycles(
 }
 
 /// Dry land cells (not fixed, wet or in a basin) that drain uphill onto plain land take their
-/// steepest lower neighbour whose flow does not come back to them: a receiver restored on a
-/// cycle can lie above a cell lowered after the flood. Returns the cells changed and their
-/// new direction bytes.
+/// steepest lower neighbour (else a level one) whose flow does not come back to them: a
+/// receiver restored on a cycle can lie above a cell lowered after the flood. Returns the
+/// cells changed and their new direction bytes.
 pub(super) fn unclimb(
     dims: Dims,
     ground: &[f32],
@@ -810,13 +810,14 @@ pub(super) fn unclimb(
         let mut stuck = Vec::new();
         let before = changed.len();
         for &i in &todo {
+            // The steepest lower neighbour, else (on a flat) a level one.
             let mut best: Option<(f32, u8)> = None;
             for (k, j) in dims.neighbours(i) {
                 let d = k as u8 + 1;
                 let slope = (ground[i] - ground[j]) / Dims::step(d) as f32;
                 let receives = flags[j] & FIXED == 0 || flags[j] & OUTLET != 0;
                 if receives
-                    && slope > 0.0
+                    && slope >= 0.0
                     && best.is_none_or(|(s, _)| slope > s)
                     && !returns(dir, j, i)
                 {
