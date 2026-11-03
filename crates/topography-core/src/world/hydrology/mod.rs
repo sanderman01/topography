@@ -879,6 +879,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 river_km2,
                 keep: &|i| on_path[i],
                 cap: &|i| path_held.get(&(i as u32)).copied().unwrap_or(f32::INFINITY),
+                floor: &carve_floor,
                 seam: &seam_step,
             },
         );
