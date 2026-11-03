@@ -414,11 +414,15 @@ pub(super) fn extract(
             .map(|(_, j)| basins[body[j] as usize - 1].level)
             .fold(f32::NEG_INFINITY, f32::max)
     };
-    // The previous band's dry ground beside a cell (it cannot be raised).
+    // The previous band's dry ground beside a cell (it cannot be raised), not ahead along its
+    // flow (as banks: that is the next cross-section's).
     let taken_bank = |flags: &[u8], body: &[u32], ground: &[f32], i: usize| {
         dims.neighbours(i)
             .filter(|&(_, k)| {
-                fixed(flags, k) && flags[k] & (SEA | RIVER) == 0 && !lake(flags, body, k)
+                fixed(flags, k)
+                    && flags[k] & (SEA | RIVER) == 0
+                    && !lake(flags, body, k)
+                    && !dims.ahead(dir[i], i, k)
             })
             .map(|(_, k)| ground[k])
             .fold(f32::INFINITY, f32::min)

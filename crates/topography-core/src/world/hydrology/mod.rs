@@ -843,7 +843,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let taken_bank = |i: usize| {
         dims.neighbours(i)
             .filter(|&(_, k)| {
-                flags[k] & (FIXED | SEA | RIVER) == FIXED && fixed_kind(k) != Some(BodyKind::Lake)
+                flags[k] & (FIXED | SEA | RIVER) == FIXED
+                    && fixed_kind(k) != Some(BodyKind::Lake)
+                    && !dims.ahead(dir[i], i, k)
             })
             .map(|(_, k)| ground[k])
             .fold(f32::INFINITY, f32::min)
