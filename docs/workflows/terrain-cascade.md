@@ -844,7 +844,7 @@ lake or the sea, and a lake keeps one level.
 ### Checks
 
 All must be 0: lakes in more than one piece or with ground at or above their level, lake
-exits off the level, river cells below an adjacent lake, wet cells whose surface is not above
+exits off the level (by more than 1 cm, plus 1 mm of f32 rounding), river cells below an adjacent lake, wet cells whose surface is not above
 the ground, centreline surfaces rising downstream, rivers ending on dry land, dry land
 draining uphill, dry cells more than 1 cm below an adjacent lake, sea or river (river banks
 as above), dry cells in holes, on finer levels the carving and seam checks (above), and the

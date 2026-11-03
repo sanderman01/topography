@@ -8,6 +8,9 @@ use serde_json::{Map, Value, json};
 /// Dry ground may sit this far below adjacent water (f32 rounding of carved rims). The repairs
 /// that keep banks above water use it too.
 pub(super) const BANK_TOLERANCE_M: f32 = 0.01;
+/// f32 rounding at mountain heights: an exit river's water stands its minimum depth (the
+/// tolerance) over a carve floor at the lake's level, give or take this.
+const ROUNDING_M: f32 = 0.001;
 /// A centreline bed may rise this much into the next centreline cell (f32 rounding).
 const BED_TOLERANCE_M: f32 = 0.01;
 
@@ -235,7 +238,7 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
             let off = if c.sea(e) || c.lake(e).is_some() {
                 false
             } else if c.river(e) {
-                (c.surface[e] - b.level).abs() > BANK_TOLERANCE_M
+                (c.surface[e] - b.level).abs() > BANK_TOLERANCE_M + ROUNDING_M
             } else {
                 c.ground[e] > b.level + BANK_TOLERANCE_M
             };
