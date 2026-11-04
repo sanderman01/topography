@@ -819,8 +819,8 @@ fills to its spill as a lake draining over it, so a river does not end in a dry 
 as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached).
 Neither way does it fill above a coarse river path beside it whose water is held lower (by its
 surface cap or the previous band's dry ground beside it, there or upstream): no lake grows over
-a path cell, so the lake would stand above the river. Nor where its outflow runs into a coarse path whose water is held above the level
-(on its bed floors, or at the previous band's water it ends in).
+a path cell, so the lake would stand above the river. Nor where its outflow runs into, or the lake lies beside, a coarse path whose water is held
+above the level (on its bed floors or carve floor, or at the previous band's water it ends in).
 A sink whose cells do not all drain to that spill (a pocket below 0 m left inside a breached
 depression, or a basin trench widening split), or that reaches the first three rows after the
 seam, fills to its own lowest spill instead: a priority flood from its lowest cell takes ground

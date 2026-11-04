@@ -921,7 +921,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 .unwrap_or(f32::NEG_INFINITY);
             let mut low = end;
             for (k, &c) in p.cells.iter().enumerate().rev() {
-                low = low.max(p.floors[k]);
+                // On its floors, and on the carve floor (the water stands on it).
+                low = low
+                    .max(p.floors[k])
+                    .max(carve_floor[c as usize] + rivers::MIN_DEPTH_M);
                 let e = path_low.entry(c).or_insert(f32::NEG_INFINITY);
                 *e = e.max(low);
             }

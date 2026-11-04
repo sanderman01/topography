@@ -822,11 +822,20 @@ pub(super) fn fill_river_sinks(
             .map(|(_, j)| (rule.cap)(j))
             .fold(f32::INFINITY, f32::min)
     };
+    // And the highest least water of one: a lake below that would sit below the river beside.
+    let path_low = |i: usize| {
+        dims.neighbours(i)
+            .filter(|&(_, j)| (rule.keep)(j))
+            .map(|(_, j)| (rule.low)(j))
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
     let mut capped = vec![f32::INFINITY; basins.len() + 1];
+    let mut held = vec![f32::NEG_INFINITY; basins.len() + 1];
     for i in 0..body.len() {
         let b = body[i] as usize;
         if b != 0 {
             capped[b] = capped[b].min(path_cap(i));
+            held[b] = held[b].max(path_low(i));
         }
         if acc[i] > inflow[b].0 {
             inflow[b] = (acc[i], i);
@@ -872,7 +881,9 @@ pub(super) fn fill_river_sinks(
                 *done.left.entry(PATH_CAPPED).or_insert(0) += 1;
                 continue;
             }
-            if basin.exit != NO_EXIT && path_held_up(basin.exit as usize, basin.level) {
+            if held[b + 1] > basin.level + tolerance
+                || (basin.exit != NO_EXIT && path_held_up(basin.exit as usize, basin.level))
+            {
                 *done.left.entry(PATH_HELD_UP).or_insert(0) += 1;
                 continue;
             }
@@ -899,7 +910,10 @@ pub(super) fn fill_river_sinks(
                 *done.left.entry(PATH_CAPPED).or_insert(0) += 1;
                 continue;
             }
-            if path_held_up(spill.outlet, spill.level) {
+            let high_path = |i: &usize| path_low(*i) > spill.level + tolerance;
+            if path_held_up(spill.outlet, spill.level)
+                || spill.pieces.iter().flatten().any(high_path)
+            {
                 *done.left.entry(PATH_HELD_UP).or_insert(0) += 1;
                 continue;
             }
