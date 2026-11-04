@@ -1,0 +1,19 @@
+crates/topography-core/src/world/hydrology/fine.rs
+  s_43a0e0d8fbb765::t_5514543e47793e 836-837,841,862-867,870
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c71a607bac2ded5700c9e1faf5d2a9a8336a566a",
+  "prompts": {},
+  "sessions": {
+    "s_43a0e0d8fbb765": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a39db54a5c1f92f17",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
