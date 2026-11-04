@@ -817,7 +817,8 @@ fills to its spill as a lake draining over it, so a river does not end in a dry 
 as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached).
 Neither way does it fill above a coarse river path beside it whose water is held lower (by its
 surface cap or the previous band's dry ground beside it, there or upstream): no lake grows over
-a path cell, so the lake would stand above the river.
+a path cell, so the lake would stand above the river. Nor where its outflow runs into a coarse path whose water is held above the level
+(on its bed floors, or at the previous band's water it ends in).
 A sink whose cells do not all drain to that spill (a pocket below 0 m left inside a breached
 depression, or a basin trench widening split), or that reaches the first three rows after the
 seam, fills to its own lowest spill instead: a priority flood from its lowest cell takes ground
@@ -849,7 +850,8 @@ and a lake keeps one level.
 
 Near the seam (judgment rules): a river joining the previous band's water in the first four rows
 may stand up to `SEAM_JOIN_STEP_M` (1 m) below it (channel cells of that band's river hold
-it too) where a taken bank or the seam step rule over the cell holds it down; a coarse path ending in a cell of that water that
+it too) where a taken bank, the seam step rule over the cell or a dry cell beside it, or a coarse
+path's surface cap holds it down (also into a join cell of this band that joins it); a coarse path ending in a cell of that water that
 cascades more than that onto a lower cell beside it goes on one free cell to the lower one (figure
 `seam_join_steps`, count and largest; more fails `river_cells_rising_downstream`). Dry cells
 beside the previous band's river are raised to its water, except on its cascade side, where they
