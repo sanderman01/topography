@@ -228,21 +228,37 @@ pub(super) fn seam_limit(
 }
 
 /// The side-slope limit over the `rows` rows above row `below` (the next band's first row):
-/// that row's ground less the side slope (`tan`) over the distance, the most of these over
-/// the cells within reach (`depth_m`), as `seam_limit` for the rows after a seam. Rows in
-/// order, whole rows.
+/// that row's dry ground less the side slope (`tan`) over the distance, the most of these over
+/// the cells within reach (`depth_m`); or, beside the coarse network's water there (`water`,
+/// its level or surface; NaN where none), that water plus the slope, where lower; as
+/// `seam_limit` for the rows after a seam. Rows in order, whole rows.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn held_limit(
     dims: Dims,
     below: usize,
     rows: usize,
     ground: &[f32],
+    water: &[f32],
     depth_m: f32,
     tan: f32,
     spacing_m: f64,
 ) -> Vec<f32> {
     let w = dims.w;
     let reach = (depth_m / (tan * spacing_m as f32)).ceil() as usize + 1;
-    let source = &ground[below * w..(below + 1) * w];
+    let row = &ground[below * w..(below + 1) * w];
+    let wet = |x: usize| water.get(x).is_some_and(|v| v.is_finite());
+    let source: Vec<f32> = (0..w)
+        .map(|x| if wet(x) { f32::NEG_INFINITY } else { row[x] })
+        .collect();
+    let sink: Vec<f32> = (0..w)
+        .map(|x| {
+            if wet(x) {
+                water[x].min(row[x])
+            } else {
+                f32::INFINITY
+            }
+        })
+        .collect();
     let mut out = vec![f32::NEG_INFINITY; rows * w];
     for k in 0..rows {
         let dy = rows - k;
@@ -251,9 +267,13 @@ pub(super) fn held_limit(
             .collect();
         for x in 0..w {
             let (a, b) = (x.saturating_sub(reach), (x + reach).min(w - 1));
-            out[k * w + x] = (a..=b)
+            let dry = (a..=b)
                 .map(|s| source[s] - drop[s.abs_diff(x)])
                 .fold(f32::NEG_INFINITY, f32::max);
+            let wet = (a..=b)
+                .map(|s| sink[s] + drop[s.abs_diff(x)])
+                .fold(f32::INFINITY, f32::min);
+            out[k * w + x] = dry.min(wet);
         }
     }
     out

@@ -859,8 +859,9 @@ cascades more than that onto a lower cell beside it goes on one free cell to the
 beside the previous band's river are raised to its water, except on its cascade side, where they
 rise only as far as the seam step rule allows. Carving in the core's last four rows (which the
 next band takes) keeps the 35° side slope below the next band's first row, as that band's first
-rows do, river beds and coarse paths included (rivers cross the seam no deeper; water and
-banks are raised as needed). The seam blend and the carve floor in the first four
+rows do, river beds included (rivers cross the seam no deeper; water and banks are raised as
+needed); beside water in that row (a lake grown there, a coarse path at its cap) the limit
+goes down to it plus the slope, and coarse river paths keep the coarse network's level there. The seam blend and the carve floor in the first four
 rows never go below what the seam step rule allows. A lake exits over its main outflow (most flow; a coarse lake's dry main exit above its level is
 notched to it by up to 0.5 m, or further where the carve floor allows); among
 exits carrying that outflow (within 1 %), one where its water can go at its level (water, or

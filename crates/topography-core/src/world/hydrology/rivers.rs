@@ -21,7 +21,7 @@ const SEAM_BANK_TOLERANCE_M: f32 = super::report::BANK_TOLERANCE_M;
 /// Judgment constant: a surface drop forced by a low bank tapers upstream by this slope.
 pub(super) const GRADE_SLOPE: f32 = 0.05;
 /// Shallowest centreline water, so the surface stays above the bed in f32.
-const MIN_DEPTH_M: f32 = 0.01;
+pub(super) const MIN_DEPTH_M: f32 = 0.01;
 
 pub(super) fn width_m(q_km2: f32) -> f32 {
     WIDTH_A * q_km2.max(0.0).sqrt()

@@ -312,7 +312,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     }
     // Nor, in the core's last rows (which the next band takes), steeper than the side slope
     // below its first row's ground, as that band's own first rows: river beds and coarse paths
-    // too, so rivers cross the seam no deeper (`held_floor`, those rows' floor).
+    // too (applied once lakes and coarse paths are known, below).
     let held = if coarse.is_some() && grid.core_rows[1] < dims.h {
         [
             grid.core_rows[1].saturating_sub(report::SEAM_CHECK_ROWS),
@@ -321,35 +321,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
     } else {
         [0, 0]
     };
-    if held[1] > held[0] {
-        let limit = band::held_limit(
-            dims,
-            held[1],
-            held[1] - held[0],
-            &ground,
-            BREACH_MAX_M,
-            erosion::SIDE_SLOPE_DEG.to_radians().tan(),
-            grid.spacing_m,
-        );
-        for (k, &l) in limit.iter().enumerate() {
-            let i = held[0] * w + k;
-            carve_floor[i] = carve_floor[i].max(l.min(ground[i]));
-        }
-    }
-    let held_floor = carve_floor[held[0] * w..held[1] * w].to_vec();
-    // Coarse river paths keep only the seam limits (`band::ground_floor`, `held_floor`).
-    let path_floor = |i: usize| {
-        let seam = i
-            .checked_sub(fixed_rows * w)
-            .and_then(|k| seam_floor.get(k).copied())
-            .unwrap_or(f32::NEG_INFINITY);
-        let held = i
-            .checked_sub(held[0] * w)
-            .and_then(|k| held_floor.get(k).copied())
-            .unwrap_or(f32::NEG_INFINITY);
-        seam.max(held)
-    };
-
     // The coarse network on the fine ground: lakes at their level, river paths burned in.
     let mut basins = Vec::new();
     let (lake_figures, imprint) = match &coarse {
@@ -376,6 +347,13 @@ pub fn run(options: &Options) -> Result<Outcome> {
                     }
                 },
             );
+            // Coarse river paths keep only the seam limit (`band::ground_floor`); in the core's
+            // last rows they keep the coarse level (below).
+            let path_floor = |i: usize| {
+                i.checked_sub(fixed_rows * w)
+                    .and_then(|k| seam_floor.get(k).copied())
+                    .unwrap_or(f32::NEG_INFINITY)
+            };
             let inflows: Vec<fine::Inflow> = inflow
                 .iter()
                 .filter(|&&(i, _)| flags[i] & CENTRE != 0 && c.rivers.contains_key(&fixed_id(i)))
@@ -1102,6 +1080,42 @@ pub fn run(options: &Options) -> Result<Outcome> {
         given.cap = im.cap;
         unrouted = im.unrouted;
     }
+    if held[1] > held[0] {
+        // Water in the next band's first row (lakes grown here, coarse river paths at their
+        // cap): rivers and lakes cross there.
+        let water: Vec<f32> = (0..w)
+            .map(|x| {
+                let i = held[1] * w + x;
+                if body[i] != 0 && basins[body[i] as usize - 1].kind == Kind::Lake {
+                    basins[body[i] as usize - 1].level
+                } else {
+                    path_cap.get(&(i as u32)).copied().unwrap_or(f32::NAN)
+                }
+            })
+            .collect();
+        let limit = band::held_limit(
+            dims,
+            held[1],
+            held[1] - held[0],
+            &ground,
+            &water,
+            BREACH_MAX_M,
+            erosion::SIDE_SLOPE_DEG.to_radians().tan(),
+            grid.spacing_m,
+        );
+        for (k, &l) in limit.iter().enumerate() {
+            let i = held[0] * w + k;
+            carve_floor[i] = carve_floor[i].max(l.min(ground[i]));
+        }
+    }
+    // A coarse river path keeps the coarse network's level in the core's last rows: where its
+    // surface cap lies below the side-slope floor there, its bed may go to just below the cap.
+    for (&c, &cap) in &path_cap {
+        let i = c as usize;
+        if (held[0] * w..held[1] * w).contains(&i) {
+            carve_floor[i] = carve_floor[i].min(cap - rivers::MIN_DEPTH_M);
+        }
+    }
     let mut seam_inflow = 0u64;
     if north.is_some() {
         let mut index: HashMap<u32, u32> = given
@@ -1441,7 +1455,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         let (carving, carving_figures) = report::carving(
             &ctx,
             &carve_floor,
-            &held_floor,
+            &carve_floor[held[0] * w..held[1] * w],
             fixed_rows,
             &body_id,
             &carve,
