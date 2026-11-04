@@ -789,7 +789,13 @@ climbs no more allows. A coarse path that climbs more than 5 m above its lowest 
 or runs along the first 16 rows more than 16 columns from where its river crosses the seam, is
 laid again along the way to its end that climbs least, keeping off the seam there
 (`paths_relaid`; along the seam any such way is taken, since a climb there could only be
-cut below the floor); cells of a path away from its coarse river get no surface cap (the coarse
+cut below the floor). A coarse path whose ground in the core rises more than the 30 m carve
+depth above its lowest point upstream (the halo's rows are laid again by the next band) ends
+before that rise, flowing into that lowest cell; where the water there finds no way down but
+back into the path, that cell is a river sink, which the river-sink rules fill to a lake at its
+spill or keep dry (`paths_ended_before_a_deep_rise`, `path_hollows_ended_in_a_sink`). A path
+whose head is that lowest point is left out (`paths_dropped_before_a_deep_rise`). Cells of a
+path away from its coarse river get no surface cap (the coarse
 surface says nothing of the ground there), so the burn only keeps them descending. A coarse
 head the corridor flood misses (its river crosses the seam where the previous band laid it,
 off the coarse cells) takes the way that climbs least to that band's water of its own river

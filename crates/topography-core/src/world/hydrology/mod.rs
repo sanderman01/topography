@@ -347,8 +347,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
                     }
                 },
             );
-            // Coarse river paths keep only the seam limit (`band::ground_floor`); in the core's
-            // last rows they keep the coarse level (below).
+            // Coarse river paths keep the seam limit (`band::ground_floor`, downstream too) and,
+            // cell by cell, the carve depth (`fine::rivers`).
             let path_floor = |i: usize| {
                 i.checked_sub(fixed_rows * w)
                     .and_then(|k| seam_floor.get(k).copied())
@@ -670,6 +670,41 @@ pub fn run(options: &Options) -> Result<Outcome> {
     });
     for f in frozen.iter_mut().take(fixed_rows * w) {
         *f = true;
+    }
+    // A path ended before a deep rise drains into its hollow's lowest cell: where the water
+    // there finds no way down but back into the path, the hollow is a river sink (filled to a
+    // lake at its spill or kept dry by the river sinks below).
+    let mut hollow_sinks = 0u64;
+    for &(h, p) in imprint.iter().flat_map(|im| &im.hollows) {
+        let h = h as usize;
+        let own: std::collections::HashSet<u32> = imprint.as_ref().expect("hollows").paths[p]
+            .cells
+            .iter()
+            .copied()
+            .collect();
+        // Down the receivers until water, a basin, an outlet or the previous band; back into
+        // the path, climbing, ending or circling (no end within the grid's cells) is no way.
+        let (mut at, mut back) = (h, true);
+        for _ in 0..n {
+            let Some(r) = receiver(dims, &dir, at).filter(|&r| ground[r] <= ground[at]) else {
+                break;
+            };
+            if own.contains(&(r as u32)) {
+                break;
+            }
+            if body[r] != 0 || flags[r] & (SEA | FIXED | OUTLET) != 0 {
+                back = false;
+                break;
+            }
+            at = r;
+        }
+        if back && body[h] == 0 && flags[h] & (SEA | FIXED | OUTLET) == 0 {
+            basins.push(lakes::Basin::kept(Kind::Sink, ground[h], lakes::NO_EXIT));
+            kept_basin.push(true);
+            body[h] = basins.len() as u32;
+            dir[h] = 0;
+            hollow_sinks += 1;
+        }
     }
     // Coarse river paths keep their own course, descending (widening may have lowered cells).
     if let Some(im) = &imprint {
@@ -1077,6 +1112,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "path_fill_after_breach_cells": fill_again.cells,
             "receiver_loops": im.receiver_loops,
             "paths_relaid": im.relaid,
+            "paths_ended_before_a_deep_rise": im.hollows.len(),
+            "paths_dropped_before_a_deep_rise": im.dropped,
             "unrouted_rivers": im.unrouted,
         });
         path_cap = im.cap.clone();
@@ -1112,11 +1149,14 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }
     }
     // A coarse river path keeps the coarse network's level in the core's last rows: where its
-    // surface cap lies below the side-slope floor there, its bed may go to just below the cap.
+    // surface cap lies below the side-slope floor there, its bed may go to just below the cap,
+    // though no deeper than the carve depth.
     for (&c, &cap) in &path_cap {
         let i = c as usize;
         if (held[0] * w..held[1] * w).contains(&i) {
-            carve_floor[i] = carve_floor[i].min(cap - rivers::MIN_DEPTH_M);
+            carve_floor[i] = carve_floor[i]
+                .min(cap - rivers::MIN_DEPTH_M)
+                .max(ground[i] - BREACH_MAX_M);
         }
     }
     let mut seam_inflow = 0u64;
@@ -1583,6 +1623,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
     figures.insert("river_climbs_turned".into(), json!(climbs_turned));
     figures.insert("river_climbs_routed_on".into(), json!(climbs_routed));
     figures.insert("river_climbs_ended_in_a_sink".into(), json!(climbs_ended));
+    figures.insert("path_hollows_ended_in_a_sink".into(), json!(hollow_sinks));
     figures.insert(
         "river_sinks_filled_to_own_spill".into(),
         json!({

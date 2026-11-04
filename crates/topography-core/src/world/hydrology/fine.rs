@@ -519,6 +519,11 @@ pub(super) struct Imprint {
     pub receiver_loops: u64,
     /// Paths laid again along the way that climbs least (`PATH_CLIMB_M`).
     pub relaid: u64,
+    /// Lowest cells of the hollows paths end in before a rise deeper than the carve depth,
+    /// with the index of the path.
+    pub hollows: Vec<(u32, usize)>,
+    /// Paths left out whose head is the lowest point before such a rise.
+    pub dropped: u64,
     /// Grid edge cells that become outlets where a coarse river leaves the grid.
     pub outlets: Vec<u32>,
 }
@@ -1032,6 +1037,8 @@ pub(super) fn rivers(
         fill: Fill::default(),
         receiver_loops: 0,
         relaid: 0,
+        hollows: Vec::new(),
+        dropped: 0,
         outlets: Vec::new(),
     };
     for id in ids {
@@ -1504,7 +1511,7 @@ pub(super) fn rivers(
             }
             let mut cells = Vec::new();
             let mut at = head;
-            let next = loop {
+            let mut next = loop {
                 cells.push(at);
                 // A loop in the receivers or a cell without one (neither is made) counts as
                 // unrouted instead of hanging or panicking.
@@ -1533,8 +1540,8 @@ pub(super) fn rivers(
                 let c = c as usize;
                 (fixed_rows..fixed_rows + SEAM_STRIP).contains(&(c / w)) && !near_cross[c % w]
             };
-            let runs_along = fixed_rows > 0 && cells.iter().any(|&c| along(c));
             let climbs = climb(ground, &cells);
+            let runs_along = fixed_rows > 0 && cells.iter().any(|&c| along(c));
             if let Some(end) = next.filter(|_| climbs > PATH_CLIMB_M || runs_along) {
                 // Near its end (on the seam too, where it joins another river) it may reach it,
                 // and near a head on the seam it may leave it.
@@ -1569,7 +1576,6 @@ pub(super) fn rivers(
             // Ending in the previous band's water (surface `end_s`): a way beside that band's
             // dry ground below it (which cannot be raised) goes round, to this river's water
             // there; the path stands at least at that surface and its bed at the end's.
-            let mut next = next;
             let end_s = next
                 .filter(|&r| flags[r as usize] & FIXED != 0)
                 .map(|r| fixed_surface(r as usize))
@@ -1643,6 +1649,33 @@ pub(super) fn rivers(
                     }
                 }
             }
+            // A path whose ground rises more than the carve depth above its lowest point
+            // upstream (the coarse network's way out over ground this level holds far higher)
+            // ends before that rise, in the hollow it leaves (breaching and the river sinks
+            // make that a sink or a lake at its own spill): no trench deeper than the floor.
+            // (It ends just above the hollow's lowest point so far, which the hollow keeps.)
+            // Only the core counts: the next band lays the halo's rows again.
+            let (mut low, mut pit) = (f32::INFINITY, 0usize);
+            if cells.iter().enumerate().any(|(k, &c)| {
+                if c as usize / w >= core_rows[1] {
+                    return false;
+                }
+                if ground[c as usize] < low {
+                    (low, pit) = (ground[c as usize], k);
+                }
+                ground[c as usize] - low > super::BREACH_MAX_M
+            }) {
+                if pit == 0 {
+                    // Its head is that lowest point: no path (the water there ends as the
+                    // ground has it).
+                    out.dropped += 1;
+                    continue;
+                }
+                // Into that lowest cell, which the hollow keeps (a sink or a lake there).
+                next = Some(cells[pit]);
+                out.hollows.push((cells[pit], out.paths.len()));
+                cells.truncate(pit);
+            }
             let end_s = next
                 .filter(|&r| flags[r as usize] & FIXED != 0)
                 .map(|r| fixed_surface(r as usize))
@@ -1658,7 +1691,9 @@ pub(super) fn rivers(
             let mut low = end_bed;
             for k in (0..cells.len()).rev() {
                 low = low.max(path_floor(cells[k] as usize));
-                floors[k] = low;
+                // No burn deeper than the carve depth: where the coarse surface lies lower,
+                // the water stands on the floor (a backwater behind the rim).
+                floors[k] = low.max(ground[cells[k] as usize] - super::BREACH_MAX_M);
             }
             // Cap: coarse surfaces at the middle of each run through one coarse cell of
             // this river, linear between them by path length.
