@@ -166,13 +166,15 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
             };
             // A join into the previous band's water near the seam may step up a little.
             // Only into the previous band's river, where a taken bank (not ahead along the
-            // flow) holds the water below it, as `rivers::extract` makes it.
-            let held_down = c.dims.neighbours(i).any(|(_, k)| {
-                c.fixed(k)
-                    && !c.wet(k)
-                    && !c.dims.ahead(c.dir[i], i, k)
-                    && c.ground[k] + BANK_TOLERANCE_M < below
-            });
+            // flow) or the seam step rule over this cell holds the water below it, as
+            // `rivers::extract` makes it.
+            let held_down = c.seam.top(c.dims, i) < below
+                || c.dims.neighbours(i).any(|(_, k)| {
+                    c.fixed(k)
+                        && !c.wet(k)
+                        && !c.dims.ahead(c.dir[i], i, k)
+                        && c.ground[k] + BANK_TOLERANCE_M < below
+                });
             let join = r.is_some_and(|r| {
                 c.fixed(r)
                     && c.river(r)
