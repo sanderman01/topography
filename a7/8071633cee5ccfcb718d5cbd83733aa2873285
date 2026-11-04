@@ -1,0 +1,26 @@
+crates/topography-core/src/world/hydrology/report.rs
+  s_8c1b40ea9c1e0d::t_d1d59216157e71 5,213-214,218-225
+crates/topography-core/src/world/hydrology/rivers.rs
+  s_8c1b40ea9c1e0d::t_d1d59216157e71 1097-1098,1136-1137,1142,1144-1154,1239-1247
+  s_8c1b40ea9c1e0d::t_1302e3645cbb42 1248-1249
+crates/topography-core/src/world/hydrology/band.rs
+  s_8c1b40ea9c1e0d::t_d1d59216157e71 702,721-725,727-742,772
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_bde0ef4ea59017 1170-1171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a78071633cee5ccfcb718d5cbd83733aa2873285",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
