@@ -109,6 +109,9 @@ pub(super) struct Given {
     pub follow: Vec<(u32, u32)>,
     /// Highest surface per centreline cell (the coarse surface along coarse paths).
     pub cap: HashMap<u32, f32>,
+    /// Rows whose banks hold even ahead along a river's flow (`is_bank`): the core's last
+    /// rows, which the next band takes.
+    pub held: [usize; 2],
 }
 
 /// Channel figures.
@@ -347,7 +350,7 @@ pub(super) fn extract(
         }
         let entered = entered_basin(dims, dir, flags, body, o);
         for (_, k) in dims.neighbours(j) {
-            if is_bank(dims, dir, flags, body, basins, entered, o, j, k) {
+            if is_bank(dims, dir, flags, body, basins, entered, o, j, k, given.held) {
                 surface[o] = surface[o].min(ground[k]);
             }
         }
@@ -548,7 +551,7 @@ pub(super) fn extract(
         dims.neighbours(j).any(|(_, k)| {
             fixed(flags, k)
                 && ground[k] + SEAM_BANK_TOLERANCE_M < surface[o]
-                && is_bank(dims, dir, flags, body, basins, entered, o, j, k)
+                && is_bank(dims, dir, flags, body, basins, entered, o, j, k, given.held)
         })
     };
     let mut keep: Vec<bool> = Vec::with_capacity(band.len());
@@ -710,7 +713,8 @@ pub(super) fn extract(
 }
 
 /// Dry ground `k` beside river cell `j` (centreline `o`) that the surface must not exceed:
-/// not water, not the basin the river enters and not ahead along the flow.
+/// not water, not the basin the river enters and not ahead along the flow, except in the
+/// `held` rows (the core's last rows, which the next band takes as they are).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn is_bank(
     dims: Dims,
@@ -722,6 +726,7 @@ pub(super) fn is_bank(
     o: usize,
     j: usize,
     k: usize,
+    held: [usize; 2],
 ) -> bool {
     let lake = flags[k] & (SEA | RIVER) == 0
         && body[k] != 0
@@ -729,7 +734,7 @@ pub(super) fn is_bank(
     flags[k] & (SEA | RIVER) == 0
         && !lake
         && (body[k] == 0 || body[k] != entered)
-        && !dims.ahead(dir[o], j, k)
+        && (!dims.ahead(dir[o], j, k) || (held[0]..held[1]).contains(&(k / dims.w)))
 }
 
 /// Cells beside the centreline within the channel width: each goes to its nearest
@@ -1074,6 +1079,7 @@ pub(super) fn raise_lips(
     band: &[Band],
     surface: &[f32],
     raised: &[u32],
+    held: [usize; 2],
     spacing_m: f64,
 ) -> Lips {
     // Dry: not water (dry basin cells count).
@@ -1144,7 +1150,7 @@ pub(super) fn raise_lips(
         for (_, j) in dims.neighbours(x) {
             if dry(j)
                 && ground[j] + slack < surface[o]
-                && is_bank(dims, dir, flags, body, basins, entered, o, x, j)
+                && is_bank(dims, dir, flags, body, basins, entered, o, x, j, held)
             {
                 raise(ground, j, surface[o], &mut stack);
                 late_banks += u64::from(slack > 0.0);

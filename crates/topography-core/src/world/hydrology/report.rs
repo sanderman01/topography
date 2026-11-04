@@ -35,6 +35,8 @@ pub(super) struct Context<'a> {
     pub fixed_rows: usize,
     /// Lowest ground carving may reach per cell (`band::ground_floor`); empty: none.
     pub carve_floor: &'a [f32],
+    /// Rows whose banks hold even ahead along a river's flow (`rivers::is_bank`).
+    pub held: [usize; 2],
 }
 
 impl Context<'_> {
@@ -206,7 +208,9 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                     && c.surface[j] > g
                     && owner(c.flags, c.band, j).is_some_and(|o| {
                         let entered = entered_basin(c.dims, c.dir, c.flags, c.body, o);
-                        is_bank(c.dims, c.dir, c.flags, c.body, c.basins, entered, o, j, i)
+                        is_bank(
+                            c.dims, c.dir, c.flags, c.body, c.basins, entered, o, j, i, c.held,
+                        )
                     })
             }) {
                 below_river += 1;
@@ -920,6 +924,7 @@ mod tests {
             open_rows: [false, false],
             fixed_rows: 0,
             carve_floor: &[],
+            held: [0, 0],
         };
         checks(&c, 0).0
     }
@@ -969,6 +974,7 @@ mod tests {
             open_rows: [false, false],
             fixed_rows: 2,
             carve_floor: &[],
+            held: [0, 0],
         };
         let floor = vec![f32::NEG_INFINITY; w * h];
         let (m, _) = carving(&c, &floor, 2, &|_| 0, &carve, &slots);

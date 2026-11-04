@@ -939,6 +939,17 @@ pub fn run(options: &Options) -> Result<Outcome> {
 
     // Rivers with given ids: coarse rivers along their paths, then the previous band's.
     let mut given = rivers::Given::default();
+    // The core's last rows, which the next band takes: banks there hold even ahead along a
+    // river's flow, so that band gets water and banks that agree.
+    let held = if fine_level && grid.core_rows[1] < dims.h {
+        [
+            grid.core_rows[1].saturating_sub(report::SEAM_CHECK_ROWS),
+            grid.core_rows[1],
+        ]
+    } else {
+        [0, 0]
+    };
+    given.held = held;
     let mut path_figures = Value::Null;
     let mut unrouted: Vec<u32> = Vec::new();
     let mut path_cap: HashMap<u32, f32> = HashMap::new();
@@ -1057,7 +1068,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
     // ahead along its flow, as the bank check) and no hole below every river beside it.
     let flow = dir.clone();
     let bank_of = |i: usize, j: usize| {
-        rivers::owner(&flags, &band, j).is_none_or(|o| !dims.ahead(flow[o], j, i))
+        rivers::owner(&flags, &band, j)
+            .is_none_or(|o| !dims.ahead(flow[o], j, i) || (held[0]..held[1]).contains(&(i / w)))
     };
     let floor = |i: usize| {
         let (mut f, mut lowest) = (0f32, f32::INFINITY);
@@ -1121,6 +1133,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &band,
         &surface,
         &channels.raised,
+        held,
         grid.spacing_m,
     );
     for &(j, b) in &lips.joins {
@@ -1300,6 +1313,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         open_rows,
         fixed_rows,
         carve_floor: &carve_floor,
+        held,
     };
     // Cycles on this run's final routing (taken cells end it), before accumulation, or in
     // the routing stitched with the previous band's (a loop across the seam: the previous band

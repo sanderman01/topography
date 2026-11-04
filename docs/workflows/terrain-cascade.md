@@ -704,7 +704,8 @@ land. Timings and peak memory go to stderr only, so identical inputs give identi
   2.5 m · Q^0.5, depth 0.5 m · Q^0.4 (Q in km² at mean rain), a parabolic section; the
   surface never rises downstream and stands at most at every dry bank beside or behind a
   channel cell (ground ahead along the flow is the next section's bank, a ruling: figure
-  `river_ahead_exemptions`). Lake exits hold the lake level (a sill), rivers never stand below
+  `river_ahead_exemptions`; not in the core's last four rows, which the next band takes, so it
+  gets water and banks that agree). Lake exits hold the lake level (a sill), rivers never stand below
   an adjacent lake or the water they flow into, mouths ramp into the seabed, carved channels
   deeper than a cell's rise widen like trenches, and holes (dry cells over 0.5 m below every
   adjacent water) are raised.
