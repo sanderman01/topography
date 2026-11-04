@@ -1,7 +1,7 @@
 //! Validation checks, figures and the body list.
 
 use super::flood::{CENTRE, Dims, FIXED, OUTLET, RIVER, SEA, receiver};
-use super::lakes::{Basin, Kind, NO_EXIT};
+use super::lakes::{Basin, Kind, NO_EXIT, SeamStep};
 use super::rivers::{Band, End, River, cascade_side, entered_basin, hole, is_bank, owner};
 use serde_json::{Map, Value, json};
 
@@ -39,6 +39,8 @@ pub(super) struct Context<'a> {
     pub held: [usize; 2],
     /// The previous band's ground over this band's first row (`rivers::cascade_side`).
     pub halo: &'a [f32],
+    /// The seam step rule (`lakes::SeamStep::top` caps bank raises on a cascade side).
+    pub seam: &'a SeamStep,
 }
 
 impl Context<'_> {
@@ -213,11 +215,13 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
             }
             // Banks as in `rivers::is_bank`: not the basin the river enters (see
             // `mouth_max_drop_m`), not ground ahead along the flow; beside the previous band's
-            // river only on its cascade side (`rivers::cascade_side`), as the seam check.
+            // river on its cascade side (`rivers::cascade_side`) up to what the seam step rule
+            // allows there (`SeamStep::top`), as the bank raise caps it.
             if c.dims.neighbours(i).any(|(_, j)| {
                 near(j)
                     && c.surface[j] > g
                     && (!c.fixed(j)
+                        || c.seam.top(c.dims, i) > g
                         || !cascade_side(
                             c.dims,
                             c.dir[j],
@@ -228,7 +232,7 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                             j,
                             i,
                         ))
-                    && (c.fixed(j) && !fixed
+                    && (c.fixed(j) && !fixed && c.river(j)
                         || owner(c.flags, c.band, j).is_some_and(|o| {
                             let entered = entered_basin(c.dims, c.dir, c.flags, c.body, o);
                             is_bank(
@@ -969,6 +973,7 @@ mod tests {
             carve_floor: &[],
             held: [0, 0],
             halo: &[],
+            seam: &SeamStep::none(),
         };
         checks(&c, 0).0
     }
@@ -1020,6 +1025,7 @@ mod tests {
             carve_floor: &[],
             held: [0, 0],
             halo: &[],
+            seam: &SeamStep::none(),
         };
         let floor = vec![f32::NEG_INFINITY; w * h];
         let (m, _) = carving(&c, &floor, &[], 2, &|_| 0, &carve, &slots);

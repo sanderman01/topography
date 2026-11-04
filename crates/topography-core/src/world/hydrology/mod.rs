@@ -1379,6 +1379,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         carve_floor: &carve_floor,
         held,
         halo: halo_row,
+        seam: &seam_step,
     };
     // Cycles on this run's final routing (taken cells end it), before accumulation, or in
     // the routing stitched with the previous band's (a loop across the seam: the previous band

@@ -738,7 +738,9 @@ fn compare(
                                 };
                                 at < sq - 0.01
                             });
-                        if !drops {
+                        // On the cascade side no deeper than the seam step allows (the southern
+                        // band caps it by its input there; without the input, by the step).
+                        if !drops || sq - gp > super::report::SEAM_STEP_M + 0.01 {
                             taken_river_steps += 1;
                             if step_at.len() < 5 {
                                 step_at.push([p % w, t + p / w]);
