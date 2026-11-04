@@ -514,8 +514,10 @@ pub(super) fn extract(
     let held_below = |flags: &[u8], surface: &[f32], i: usize| {
         receiver(dims, dir, i)
             .filter(|&r| {
+                // The previous band's water, channel cells too, stays as it is.
                 flags[r] & SEA != 0
-                    || (centre(flags, r) && (fixed(flags, r) || sills.contains_key(&(r as u32))))
+                    || (fixed(flags, r) && flags[r] & RIVER != 0)
+                    || (centre(flags, r) && sills.contains_key(&(r as u32)))
             })
             .map(|r| {
                 if flags[r] & SEA != 0 {
