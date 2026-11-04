@@ -841,12 +841,26 @@ sinks, with examples (`at_cells`), apart from those into kept dry basins (endorh
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
 flow onto dry ground that is not a basin, no dry cell may sit more than 1 cm below an adjacent
-lake or the sea, and a lake keeps one level.
+lake or the sea, nor below the northern band's river beside it except on that river's cascade
+side (ahead along its flow where its water drops; the southern band's own check is the same),
+and a lake keeps one level.
+
+Near the seam (judgment rules): a river joining the previous band's water in the first four rows
+may stand up to `SEAM_JOIN_STEP_M` (1 m) below it where a taken bank holds it down (figure
+`seam_join_steps`, count and largest; more fails `river_cells_rising_downstream`). Dry cells
+beside the previous band's river are raised to its water, except on its cascade side, where they
+rise only as far as the seam step rule allows. Carving in the core's last four rows (which the
+next band takes) keeps the 35° side slope below the next band's first row, as that band's first
+rows do (rivers keep their own floor there). The seam blend and the carve floor in the first four
+rows never go below what the seam step rule allows. A lake exits where its water can go at its
+level (water, or ground not above it) before any other cell; an exit on a band edge row is not
+checked against the level (the lake may go on beyond it).
 
 ### Checks
 
 All must be 0: lakes in more than one piece or with ground at or above their level, lake
-exits off the level (by more than 1 cm, plus 1 mm of f32 rounding), river cells below an adjacent lake, wet cells whose surface is not above
+exits off the level (by more than 1 cm, plus 1 mm of f32 rounding), river cells below an
+adjacent lake, wet cells whose surface is not above
 the ground, centreline surfaces rising downstream, rivers ending on dry land, dry land
 draining uphill, dry cells more than 1 cm below an adjacent lake, sea or river (river banks
 as above), dry cells in holes, on finer levels the carving and seam checks (above), and the
