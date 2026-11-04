@@ -913,6 +913,26 @@ pub fn run(options: &Options) -> Result<Outcome> {
             }
         }
     }
+    // How low it may stand: on its bed floors, and at least at the previous band's water it
+    // ends in, there and upstream (water upstream stands no lower).
+    let mut path_low: HashMap<u32, f32> = HashMap::new();
+    if let (Some(im), Some(b)) = (&imprint, &north) {
+        for p in &im.paths {
+            let end = p
+                .next
+                .map(|r| r as usize)
+                .filter(|&r| r < fixed_rows * w)
+                .map(|r| b.surface[r])
+                .filter(|s| s.is_finite())
+                .unwrap_or(f32::NEG_INFINITY);
+            let mut low = end;
+            for (k, &c) in p.cells.iter().enumerate().rev() {
+                low = low.max(p.floors[k]);
+                let e = path_low.entry(c).or_insert(f32::NEG_INFINITY);
+                *e = e.max(low);
+            }
+        }
+    }
     // Again while a lake filled this way sends a river on into a further sink.
     let mut river_sinks = lakes::RiverSinks::default();
     for _ in 0..4 {
@@ -932,6 +952,12 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 river_km2,
                 keep: &|i| on_path[i],
                 cap: &|i| path_held.get(&(i as u32)).copied().unwrap_or(f32::INFINITY),
+                low: &|i| {
+                    path_low
+                        .get(&(i as u32))
+                        .copied()
+                        .unwrap_or(f32::NEG_INFINITY)
+                },
                 seam: &seam_step,
             },
         );
