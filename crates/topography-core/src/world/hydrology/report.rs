@@ -403,6 +403,7 @@ impl Slots {
 pub(super) fn carving(
     c: &Context,
     floor: &[f32],
+    held_rivers: &[f32],
     fixed_rows: usize,
     body_id: &dyn Fn(usize) -> u32,
     carve: &Carve,
@@ -418,7 +419,14 @@ pub(super) fn carving(
         }
         let by = f - c.ground[i];
         // Channel beds may lie below it by about their depth; lakes and the sea are not carved.
+        // In the core's last rows rivers keep their own floor (`held_rivers`).
         if c.river(i) {
+            let f = (c.held[0] * w..c.held[1] * w)
+                .contains(&i)
+                .then(|| held_rivers.get(i - c.held[0] * w).copied())
+                .flatten()
+                .unwrap_or(f);
+            let by = f - c.ground[i];
             if by > RIVER_FLOOR_SLACK_M {
                 beds += 1;
                 beds_deepest = beds_deepest.max(by);
@@ -977,7 +985,7 @@ mod tests {
             held: [0, 0],
         };
         let floor = vec![f32::NEG_INFINITY; w * h];
-        let (m, _) = carving(&c, &floor, 2, &|_| 0, &carve, &slots);
+        let (m, _) = carving(&c, &floor, &[], 2, &|_| 0, &carve, &slots);
         for name in ["seam_slots", "seam_steps", "ground_raised_over_limit"] {
             assert_eq!(m[name], json!(1), "{name}: {m:?}");
         }

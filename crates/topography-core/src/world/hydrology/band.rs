@@ -227,6 +227,38 @@ pub(super) fn seam_limit(
     out
 }
 
+/// The side-slope limit over the `rows` rows above row `below` (the next band's first row):
+/// that row's ground less the side slope (`tan`) over the distance, the most of these over
+/// the cells within reach (`depth_m`), as `seam_limit` for the rows after a seam. Rows in
+/// order, whole rows.
+pub(super) fn held_limit(
+    dims: Dims,
+    below: usize,
+    rows: usize,
+    ground: &[f32],
+    depth_m: f32,
+    tan: f32,
+    spacing_m: f64,
+) -> Vec<f32> {
+    let w = dims.w;
+    let reach = (depth_m / (tan * spacing_m as f32)).ceil() as usize + 1;
+    let source = &ground[below * w..(below + 1) * w];
+    let mut out = vec![f32::NEG_INFINITY; rows * w];
+    for k in 0..rows {
+        let dy = rows - k;
+        let drop: Vec<f32> = (0..=reach)
+            .map(|dx| tan * ((dx * dx + dy * dy) as f32).sqrt() * spacing_m as f32)
+            .collect();
+        for x in 0..w {
+            let (a, b) = (x.saturating_sub(reach), (x + reach).min(w - 1));
+            out[k * w + x] = (a..=b)
+                .map(|s| source[s] - drop[s.abs_diff(x)])
+                .fold(f32::NEG_INFINITY, f32::max);
+        }
+    }
+    out
+}
+
 /// Lowest ground each free cell may be carved to: at most `depth_m` below its ground now, and
 /// near the seam not below the previous band's dry ground in its last row less the side slope
 /// (`tan`) over the distance, so no cut leaves a step at the seam. Beside water there (`wet`)
