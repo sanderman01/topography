@@ -27,10 +27,12 @@ pub(super) const SURFACE_TOLERANCE_M: f32 = 0.01;
 /// below the level, unless it leaks to the sea, the world's edge, the grid's edge or a lake
 /// with another level: then the leaking branch is cut more than one coarse cell out from the
 /// seeds by a sill raised to the level plus `SHORE_M` (a leak nearer the seeds is raised where
-/// it is, but not on a band edge). `fixed_lake` gives the lake id and level of cells copied
+/// it is, but not on a band edge); so does one beside the previous band's lower ground or water
+/// (`taken_height`: its water, else its ground). `fixed_lake` gives the lake id and level of cells copied
 /// from the previous band (seeds too); that band's lakes the coarse level lacks (made at this
 /// level, such as a river sink filled to its spill) go on here the same way. Coarse lake cells
 /// whose fine ground is above the level stay dry.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn lakes(
     dims: Dims,
     ground: &mut [f32],
@@ -39,6 +41,7 @@ pub(super) fn lakes(
     basins: &mut Vec<Basin>,
     c: &Coarse,
     fixed_lake: impl Fn(usize) -> Option<(u32, f32)>,
+    taken_height: impl Fn(usize) -> f32,
 ) -> Value {
     let (n, w, h) = (ground.len(), dims.w, dims.h);
     let mut ids: Vec<u32> = (0..c.body.len()).filter_map(|q| c.lake(q)).collect();
@@ -164,6 +167,17 @@ pub(super) fn lakes(
         // Leaks: water beside the sea, at an edge, beside a lake with a lower level, or still
         // growing at the bound.
         let mut leaks = leak_cells(dims, flags, body, first, &levels, |_| true);
+        // Beside the previous band's ground or water lower than the level (`taken`, not this
+        // lake's own cells there): the water would run back across the seam.
+        leaks.extend((0..n).filter(|&i| {
+            body[i] > first
+                && flags[i] & FIXED == 0
+                && dims.neighbours(i).any(|(_, j)| {
+                    flags[j] & FIXED != 0
+                        && body[j] != body[i]
+                        && taken_height(j) < level_of(body[i]) - super::report::BANK_TOLERANCE_M
+                })
+        }));
         leaks.extend((0..n).filter(|&i| {
             body[i] > first
                 && depth[i] == bound

@@ -354,12 +354,28 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let mut basins = Vec::new();
     let (lake_figures, imprint) = match &coarse {
         Some(c) => {
-            let figures = fine::lakes(dims, &mut ground, &flags, &mut body, &mut basins, c, |i| {
-                (fixed_kind(i) == Some(BodyKind::Lake)).then(|| {
-                    let level = north.as_ref().map_or(f32::NAN, |b| b.surface[i]);
-                    (fixed_id(i), level)
-                })
-            });
+            let figures = fine::lakes(
+                dims,
+                &mut ground,
+                &flags,
+                &mut body,
+                &mut basins,
+                c,
+                |i| {
+                    (fixed_kind(i) == Some(BodyKind::Lake)).then(|| {
+                        let level = north.as_ref().map_or(f32::NAN, |b| b.surface[i]);
+                        (fixed_id(i), level)
+                    })
+                },
+                |i| {
+                    let s = north.as_ref().map_or(f32::NAN, |b| b.surface[i]);
+                    if s.is_finite() {
+                        s
+                    } else {
+                        north.as_ref().map_or(f32::INFINITY, |b| b.ground[i])
+                    }
+                },
+            );
             let inflows: Vec<fine::Inflow> = inflow
                 .iter()
                 .filter(|&&(i, _)| flags[i] & CENTRE != 0 && c.rivers.contains_key(&fixed_id(i)))
