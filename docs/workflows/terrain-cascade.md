@@ -764,7 +764,8 @@ levels no cut goes deeper than
 `BREACH_MAX_M` (30 m) below that starting ground, and near the seam no cut goes below the
 previous band's dry ground in its last row less the 35° side slope over the distance (down to a
 taken river's or lake's bed beside it, and right beside a taken lake or the sea down to its
-level, such as a lake's exit notched to it): the carve floor. Breaching keeps a depression it
+level, such as a lake's exit notched to it), and in the first four rows after the seam never
+below what the seam step rule (below) allows: the carve floor. Breaching keeps a depression it
 cannot drain within that as a sink and fills a pocket instead (one whose fill would fail the
 seam step rule below stays a sink); trench walls, seam joins and
 channel beds stop there. Where a river's water would stand below the floor (a low bank

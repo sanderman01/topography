@@ -245,9 +245,34 @@ pub fn run(options: &Options) -> Result<Outcome> {
         None => flood::open_sea(dims, &ground, |i| dims.is_edge(i), |_| false, &mut flags),
     }
 
+    // The seam step rule's inputs: carve floors, pockets breaching fills, lakes filled and
+    // rivers raised near the seam.
+    let mut seam_step = lakes::SeamStep::none();
+    if let (Some(b), true) = (&north, coarse.is_some() && fixed_rows > 0) {
+        let last = (fixed_rows - 1) * w;
+        let mut raw_last = Vec::new();
+        grid::for_each_input_row(&options.grid, grid.w, |y, row| {
+            if y + 1 == fixed_rows {
+                raw_last.extend_from_slice(row);
+            } else if y >= fixed_rows && y < fixed_rows + report::SEAM_CHECK_ROWS {
+                seam_step.raw.extend_from_slice(row);
+            }
+        })?;
+        // As the report's step rule: a lake's or the sea's depth is no change of the land.
+        seam_step.change = (0..w)
+            .map(|x| {
+                let (i, s) = (last + x, b.surface[last + x]);
+                let still = flags[i] & SEA != 0 || fixed_kind(i) == Some(BodyKind::Lake);
+                (if s.is_nan() || still { ground[i] } else { s }) - raw_last[x]
+            })
+            .collect();
+        seam_step.fixed_rows = fixed_rows;
+        seam_step.surface = b.surface[last..last + w].to_vec();
+        seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
+    }
     // On finer levels no cut goes deeper than BREACH_MAX_M below the ground here, nor leaves a
     // step at the seam (`band::ground_floor`); the trunk level carves as it did.
-    let (carve_floor, seam_floor): (Vec<f32>, Vec<f32>) = if coarse.is_some() {
+    let (mut carve_floor, mut seam_floor): (Vec<f32>, Vec<f32>) = if coarse.is_some() {
         // Beside the previous band's lake or sea in its last row: down to that level.
         let still = |i: usize| match fixed_kind(i) {
             Some(BodyKind::Sea) => Some(0.0),
@@ -267,6 +292,13 @@ pub fn run(options: &Options) -> Result<Outcome> {
     } else {
         (vec![f32::NEG_INFINITY; n], Vec::new())
     };
+    // Nor, in the rows the seam step rule checks, below what that rule allows.
+    for (k, f) in seam_floor.iter_mut().enumerate() {
+        let i = fixed_rows * w + k;
+        let bottom = seam_step.bottom(dims, i).min(ground[i]);
+        *f = f.max(bottom);
+        carve_floor[i] = carve_floor[i].max(bottom);
+    }
     // Coarse river paths keep only the seam limit (`band::ground_floor`).
     let path_floor = |i: usize| {
         i.checked_sub(fixed_rows * w)
@@ -482,31 +514,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
 
     // Breach every other depression up to the cap, then route over the result.
     let fine_level = coarse.is_some();
-    // The seam step rule's inputs: pockets breaching fills, lakes filled and rivers raised
-    // near the seam.
-    let mut seam_step = lakes::SeamStep::none();
-    if let (Some(b), true) = (&north, fine_level && fixed_rows > 0) {
-        let last = (fixed_rows - 1) * w;
-        let mut raw_last = Vec::new();
-        grid::for_each_input_row(&options.grid, grid.w, |y, row| {
-            if y + 1 == fixed_rows {
-                raw_last.extend_from_slice(row);
-            } else if y >= fixed_rows && y < fixed_rows + report::SEAM_CHECK_ROWS {
-                seam_step.raw.extend_from_slice(row);
-            }
-        })?;
-        // As the report's step rule: a lake's or the sea's depth is no change of the land.
-        seam_step.change = (0..w)
-            .map(|x| {
-                let (i, s) = (last + x, b.surface[last + x]);
-                let still = flags[i] & SEA != 0 || fixed_kind(i) == Some(BodyKind::Lake);
-                (if s.is_nan() || still { ground[i] } else { s }) - raw_last[x]
-            })
-            .collect();
-        seam_step.fixed_rows = fixed_rows;
-        seam_step.surface = b.surface[last..last + w].to_vec();
-        seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
-    }
     let carved = flood::breach(
         dims,
         &mut ground,

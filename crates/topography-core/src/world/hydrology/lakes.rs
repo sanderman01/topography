@@ -377,6 +377,13 @@ impl SeamStep {
             mid + by - super::report::BANK_TOLERANCE_M
         })
     }
+    /// The lowest the shown height of cell `i` may stand under the rule (-inf outside the rows
+    /// it checks), plus the report's tolerance.
+    pub fn bottom(&self, dims: Dims, i: usize) -> f32 {
+        self.limit(dims, i).map_or(f32::NEG_INFINITY, |(mid, by)| {
+            mid - by + super::report::BANK_TOLERANCE_M
+        })
+    }
     /// The shown height with no step at cell `i` and the step allowed around it.
     fn limit(&self, dims: Dims, i: usize) -> Option<(f32, f32)> {
         let (y, x) = (i / dims.w, i % dims.w);
