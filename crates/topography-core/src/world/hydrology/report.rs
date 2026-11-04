@@ -165,9 +165,20 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                 _ => f32::NEG_INFINITY,
             };
             // A join into the previous band's water near the seam may step up a little.
-            let join = r.is_some_and(|r| {
-                c.fixed(r) && c.fixed_rows > 0 && i / c.dims.w < c.fixed_rows + SEAM_CHECK_ROWS
+            // Only into the previous band's river, where a taken bank (not ahead along the
+            // flow) holds the water below it, as `rivers::extract` makes it.
+            let held_down = c.dims.neighbours(i).any(|(_, k)| {
+                c.fixed(k)
+                    && !c.wet(k)
+                    && !c.dims.ahead(c.dir[i], i, k)
+                    && c.ground[k] + BANK_TOLERANCE_M < below
             });
+            let join = r.is_some_and(|r| {
+                c.fixed(r)
+                    && c.river(r)
+                    && c.fixed_rows > 0
+                    && i / c.dims.w < c.fixed_rows + SEAM_CHECK_ROWS
+            }) && held_down;
             if join && below > s && below <= s + SEAM_JOIN_STEP_M + BANK_TOLERANCE_M {
                 join_steps += 1;
                 join_step_max = join_step_max.max(below - s);
