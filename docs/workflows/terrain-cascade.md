@@ -841,9 +841,10 @@ sinks, with examples (`at_cells`), apart from those into kept dry basins (endorh
 `hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
 flow onto dry ground that is not a basin, no dry cell may sit more than 1 cm below an adjacent
-lake or the sea, nor below the northern band's river beside it except on that river's cascade
+lake or the sea, nor below the northern band's river beside it, except on that river's cascade
 side (ahead along its flow where its water drops, judged by the northern band's own water or
-ground there, its halo for a southern cell; the southern band's own check is the same),
+ground there, its halo for a southern cell) down to the seam step rule's limit (the southern
+band's own check uses that limit; `hydrology-seam`, without the input, allows 5 m there),
 and a lake keeps one level.
 
 Near the seam (judgment rules): a river joining the previous band's water in the first four rows
@@ -856,8 +857,9 @@ rise only as far as the seam step rule allows. Carving in the core's last four r
 next band takes) keeps the 35° side slope below the next band's first row, as that band's first
 rows do, river beds and coarse paths included (rivers cross the seam no deeper; water and
 banks are raised as needed). The seam blend and the carve floor in the first four
-rows never go below what the seam step rule allows. A lake exits where its water can go at its
-level (water, or ground not above it) before any other cell; an exit on a band edge row is not
+rows never go below what the seam step rule allows. A lake exits over its main outflow (most flow); among
+exits carrying that outflow (within 1 %), one where its water can go at its level (water, or
+ground not above it) comes first; an exit on a band edge row is not
 checked against the level (the lake may go on beyond it).
 
 ### Checks
