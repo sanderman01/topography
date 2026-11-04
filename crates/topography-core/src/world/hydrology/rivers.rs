@@ -659,8 +659,9 @@ pub(super) fn extract(
         if let Some(k) = cells_to_sea(dims, dir, flags, i).filter(|_| s <= MOUTH_CELLS as f32 * d) {
             bed = bed.min(-d * (MOUTH_CELLS - k) as f32 / MOUTH_CELLS as f32);
         }
+        // (Not up to the water: where a taken bank holds it lower, the bed stays below it.)
         if let Some(&f) = floor.get(&(i as u32)) {
-            bed = bed.max(f);
+            bed = bed.max(f.min(s - MIN_DEPTH_M));
         }
         cut(ground, i, floored(i, bed, s), &mut ch);
     }
