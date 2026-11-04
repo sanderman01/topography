@@ -166,6 +166,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
         .as_ref()
         .map_or_else(Vec::new, |b| band::reentry(dims, &b.flow, fixed_rows));
     let reenters: Vec<bool> = reentry.iter().map(|&r| r != band::NO_ENTRY).collect();
+    // The seam step rule's inputs: blends, carve floors, pockets breaching fills, lakes filled
+    // and rivers raised near the seam.
+    let mut seam_step = lakes::SeamStep::none();
     if let Some(b) = &north {
         for i in 0..fixed_rows * w {
             ground[i] = b.ground[i];
@@ -180,6 +183,28 @@ pub fn run(options: &Options) -> Result<Outcome> {
                 }
                 _ => {}
             }
+        }
+        if coarse.is_some() && fixed_rows > 0 {
+            let last = (fixed_rows - 1) * w;
+            let mut raw_last = Vec::new();
+            grid::for_each_input_row(&options.grid, grid.w, |y, row| {
+                if y + 1 == fixed_rows {
+                    raw_last.extend_from_slice(row);
+                } else if y >= fixed_rows && y < fixed_rows + report::SEAM_CHECK_ROWS {
+                    seam_step.raw.extend_from_slice(row);
+                }
+            })?;
+            // As the report's step rule: a lake's or the sea's depth is no change of the land.
+            seam_step.change = (0..w)
+                .map(|x| {
+                    let (i, s) = (last + x, b.surface[last + x]);
+                    let still = flags[i] & SEA != 0 || fixed_kind(i) == Some(BodyKind::Lake);
+                    (if s.is_nan() || still { ground[i] } else { s }) - raw_last[x]
+                })
+                .collect();
+            seam_step.fixed_rows = fixed_rows;
+            seam_step.surface = b.surface[last..last + w].to_vec();
+            seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
         }
         let still = |i: usize| match fixed_kind(i) {
             Some(BodyKind::Sea) => Some(0.0),
@@ -196,6 +221,15 @@ pub fn run(options: &Options) -> Result<Outcome> {
             erosion::SIDE_SLOPE_DEG.to_radians().tan(),
             grid.spacing_m,
         );
+        // Nor below what the seam step rule allows in the rows it checks.
+        let mut limit = limit;
+        for (k, l) in limit
+            .iter_mut()
+            .enumerate()
+            .take(report::SEAM_CHECK_ROWS * w)
+        {
+            *l = l.max(seam_step.bottom(dims, fixed_rows * w + k));
+        }
         band::blend_seam(dims, fixed_rows, &mut ground, &b.halo_ground, &limit);
         // Fixed cells draining into this run's cells feed it; the others beside them are
         // outlets, unless their flow in the previous band comes back here (a loop).
@@ -245,31 +279,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
         None => flood::open_sea(dims, &ground, |i| dims.is_edge(i), |_| false, &mut flags),
     }
 
-    // The seam step rule's inputs: carve floors, pockets breaching fills, lakes filled and
-    // rivers raised near the seam.
-    let mut seam_step = lakes::SeamStep::none();
-    if let (Some(b), true) = (&north, coarse.is_some() && fixed_rows > 0) {
-        let last = (fixed_rows - 1) * w;
-        let mut raw_last = Vec::new();
-        grid::for_each_input_row(&options.grid, grid.w, |y, row| {
-            if y + 1 == fixed_rows {
-                raw_last.extend_from_slice(row);
-            } else if y >= fixed_rows && y < fixed_rows + report::SEAM_CHECK_ROWS {
-                seam_step.raw.extend_from_slice(row);
-            }
-        })?;
-        // As the report's step rule: a lake's or the sea's depth is no change of the land.
-        seam_step.change = (0..w)
-            .map(|x| {
-                let (i, s) = (last + x, b.surface[last + x]);
-                let still = flags[i] & SEA != 0 || fixed_kind(i) == Some(BodyKind::Lake);
-                (if s.is_nan() || still { ground[i] } else { s }) - raw_last[x]
-            })
-            .collect();
-        seam_step.fixed_rows = fixed_rows;
-        seam_step.surface = b.surface[last..last + w].to_vec();
-        seam_step.rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
-    }
     // On finer levels no cut goes deeper than BREACH_MAX_M below the ground here, nor leaves a
     // step at the seam (`band::ground_floor`); the trunk level carves as it did.
     let (mut carve_floor, mut seam_floor): (Vec<f32>, Vec<f32>) = if coarse.is_some() {
