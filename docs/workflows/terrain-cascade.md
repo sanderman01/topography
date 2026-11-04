@@ -842,11 +842,13 @@ sinks, with examples (`at_cells`), apart from those into kept dry basins (endorh
 match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
 flow onto dry ground that is not a basin, no dry cell may sit more than 1 cm below an adjacent
 lake or the sea, nor below the northern band's river beside it except on that river's cascade
-side (ahead along its flow where its water drops; the southern band's own check is the same),
+side (ahead along its flow where its water drops, judged by the northern band's own water or
+ground there, its halo for a southern cell; the southern band's own check is the same),
 and a lake keeps one level.
 
 Near the seam (judgment rules): a river joining the previous band's water in the first four rows
-may stand up to `SEAM_JOIN_STEP_M` (1 m) below it where a taken bank holds it down (figure
+may stand up to `SEAM_JOIN_STEP_M` (1 m) below it (channel cells of that band's river hold
+it too) where a taken bank holds it down (figure
 `seam_join_steps`, count and largest; more fails `river_cells_rising_downstream`). Dry cells
 beside the previous band's river are raised to its water, except on its cascade side, where they
 rise only as far as the seam step rule allows. Carving in the core's last four rows (which the
