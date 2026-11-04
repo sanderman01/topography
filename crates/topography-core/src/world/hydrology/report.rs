@@ -2,7 +2,7 @@
 
 use super::flood::{CENTRE, Dims, FIXED, OUTLET, RIVER, SEA, receiver};
 use super::lakes::{Basin, Kind, NO_EXIT};
-use super::rivers::{Band, End, River, entered_basin, hole, is_bank, owner};
+use super::rivers::{Band, End, River, cascade_side, entered_basin, hole, is_bank, owner};
 use serde_json::{Map, Value, json};
 
 /// Dry ground may sit this far below adjacent water (f32 rounding of carved rims). The repairs
@@ -210,16 +210,19 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                 note("dry_cells_below_adjacent_sea", i);
             }
             // Banks as in `rivers::is_bank`: not the basin the river enters (see
-            // `mouth_max_drop_m`), not ground ahead along the flow.
+            // `mouth_max_drop_m`), not ground ahead along the flow; beside the previous band's
+            // river only on its cascade side (`rivers::cascade_side`), as the seam check.
             if c.dims.neighbours(i).any(|(_, j)| {
                 near(j)
                     && c.surface[j] > g
-                    && owner(c.flags, c.band, j).is_some_and(|o| {
-                        let entered = entered_basin(c.dims, c.dir, c.flags, c.body, o);
-                        is_bank(
-                            c.dims, c.dir, c.flags, c.body, c.basins, entered, o, j, i, c.held,
-                        )
-                    })
+                    && (!c.fixed(j) || !cascade_side(c.dims, c.dir[j], c.surface, j, i))
+                    && (c.fixed(j) && !fixed
+                        || owner(c.flags, c.band, j).is_some_and(|o| {
+                            let entered = entered_basin(c.dims, c.dir, c.flags, c.body, o);
+                            is_bank(
+                                c.dims, c.dir, c.flags, c.body, c.basins, entered, o, j, i, c.held,
+                            )
+                        }))
             }) {
                 below_river += 1;
                 note("dry_cells_below_adjacent_river", i);

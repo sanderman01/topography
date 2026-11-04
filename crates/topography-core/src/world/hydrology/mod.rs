@@ -1167,6 +1167,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &surface,
         &channels.raised,
         held,
+        north.as_ref().map_or(&[][..], |b| &b.flow[..]),
+        &seam_step,
         grid.spacing_m,
     );
     for &(j, b) in &lips.joins {

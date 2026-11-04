@@ -699,7 +699,7 @@ fn compare(
     let dims = Dims { w, h: overlap };
     let (mut cut, mut steps, mut levels) = (0u64, 0u64, 0u64);
     let mut step_at: Vec<[usize; 2]> = Vec::new();
-    let mut river_steps = 0u64;
+    let (mut river_steps, mut taken_river_steps) = (0u64, 0u64);
     let mut lake_level: HashMap<u32, f32> = HashMap::new();
     for x in 0..w {
         let i = (rows - 1) * w + x;
@@ -718,11 +718,28 @@ fn compare(
                 if bp != 0 || bq == 0 || sq <= gp + 0.01 {
                     continue;
                 }
-                // Lakes and the sea strictly. Beside rivers the southern band's own checks
-                // decide (its grid holds both sides, with each channel cell's centreline);
-                // here only cells not ahead of the wet cell's own flow are counted, as a figure.
+                // Lakes and the sea strictly, and the northern band's rivers too except on their
+                // cascade side (as the southern band's check, `rivers::cascade_side`). Beside the
+                // southern band's rivers its own checks decide (its grid holds both sides, with
+                // each channel cell's centreline); here only cells not ahead of the wet cell's
+                // own flow are counted, as a figure.
                 if bk.get(&bq) == Some(&BodyKind::River) {
-                    let fq = if q / w < rows { fa[q] } else { fb[q] };
+                    if q / w < rows {
+                        let d = fa[q] & 15;
+                        let drops = d != 0
+                            && dims.ahead(d, q, p)
+                            && dims
+                                .neighbour(q, d as usize - 1)
+                                .is_some_and(|r| pick(r).1 < sq - 0.01);
+                        if !drops {
+                            taken_river_steps += 1;
+                            if step_at.len() < 5 {
+                                step_at.push([p % w, t + p / w]);
+                            }
+                        }
+                        continue;
+                    }
+                    let fq = fb[q];
                     river_steps += u64::from(fq & 15 == 0 || !dims.ahead(fq & 15, q, p));
                     continue;
                 }
@@ -752,6 +769,7 @@ fn compare(
         "shared_core_body_differs": body_diff,
         "centrelines_cut_at_seam": cut,
         "dry_cells_below_lake_or_sea_across_seam": steps,
+        "dry_cells_below_a_taken_river_across_seam": taken_river_steps,
         "lakes_with_two_levels_at_seam": levels,
     });
     let passed = checks

@@ -1094,6 +1094,8 @@ pub(super) fn raise_lips(
     surface: &[f32],
     raised: &[u32],
     held: [usize; 2],
+    fixed_flow: &[u8],
+    seam: &SeamStep,
     spacing_m: f64,
 ) -> Lips {
     // Dry: not water (dry basin cells count).
@@ -1131,14 +1133,25 @@ pub(super) fn raise_lips(
         }
     }
     // The previous band's river cells hold their surface: dry cells of this band beside one
-    // stand at least at it (that band's halo saw them as its banks).
+    // stand at least at it (that band's halo saw them as its banks), but no higher than the
+    // seam step rule allows on the cascade side of one (`cascade_side`).
     for x in (0..ground.len()).filter(|&x| flags[x] & (FIXED | RIVER) == FIXED | RIVER) {
         if surface[x].is_nan() {
             continue;
         }
+        let d = fixed_flow.get(x).copied().unwrap_or(0);
         for (_, j) in dims.neighbours(x) {
-            if dry(j) && ground[j] < surface[x] {
-                raise(ground, j, surface[x], &mut stack);
+            if !dry(j) || ground[j] >= surface[x] {
+                continue;
+            }
+            let top = seam.top(dims, j);
+            let to = if surface[x] > top && cascade_side(dims, d, surface, x, j) {
+                top
+            } else {
+                surface[x]
+            };
+            if ground[j] < to {
+                raise(ground, j, to, &mut stack);
             }
         }
     }
@@ -1221,6 +1234,17 @@ pub(super) fn raise_lips(
     lips.joins = joins;
     lips.late_banks = late_banks;
     lips
+}
+
+/// Dry cell `i` beside the previous band's river cell `x` (flow `d` there) on its cascade side:
+/// ahead along that flow, where the water drops. Only there may it stand below that water.
+pub(super) fn cascade_side(dims: Dims, d: u8, surface: &[f32], x: usize, i: usize) -> bool {
+    let d = d & 15;
+    d != 0
+        && dims.ahead(d, x, i)
+        && dims.neighbour(x, d as usize - 1).is_some_and(|r| {
+            surface[r].is_finite() && surface[r] < surface[x] - super::report::BANK_TOLERANCE_M
+        })
 }
 
 /// A centreline cell some lake drains into (a lake exit): that lake's level.
