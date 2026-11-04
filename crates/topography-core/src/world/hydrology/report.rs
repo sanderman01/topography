@@ -37,6 +37,8 @@ pub(super) struct Context<'a> {
     pub carve_floor: &'a [f32],
     /// Rows whose banks hold even ahead along a river's flow (`rivers::is_bank`).
     pub held: [usize; 2],
+    /// The previous band's ground over this band's first row (`rivers::cascade_side`).
+    pub halo: &'a [f32],
 }
 
 impl Context<'_> {
@@ -215,7 +217,17 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
             if c.dims.neighbours(i).any(|(_, j)| {
                 near(j)
                     && c.surface[j] > g
-                    && (!c.fixed(j) || !cascade_side(c.dims, c.dir[j], c.surface, j, i))
+                    && (!c.fixed(j)
+                        || !cascade_side(
+                            c.dims,
+                            c.dir[j],
+                            c.surface,
+                            c.ground,
+                            c.fixed_rows,
+                            c.halo,
+                            j,
+                            i,
+                        ))
                     && (c.fixed(j) && !fixed
                         || owner(c.flags, c.band, j).is_some_and(|o| {
                             let entered = entered_basin(c.dims, c.dir, c.flags, c.body, o);
@@ -955,6 +967,7 @@ mod tests {
             fixed_rows: 0,
             carve_floor: &[],
             held: [0, 0],
+            halo: &[],
         };
         checks(&c, 0).0
     }
@@ -1005,6 +1018,7 @@ mod tests {
             fixed_rows: 2,
             carve_floor: &[],
             held: [0, 0],
+            halo: &[],
         };
         let floor = vec![f32::NEG_INFINITY; w * h];
         let (m, _) = carving(&c, &floor, &[], 2, &|_| 0, &carve, &slots);

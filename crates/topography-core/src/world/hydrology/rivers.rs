@@ -1095,6 +1095,7 @@ pub(super) fn raise_lips(
     raised: &[u32],
     held: [usize; 2],
     fixed_flow: &[u8],
+    halo: &[f32],
     seam: &SeamStep,
     spacing_m: f64,
 ) -> Lips {
@@ -1145,7 +1146,9 @@ pub(super) fn raise_lips(
                 continue;
             }
             let top = seam.top(dims, j);
-            let to = if surface[x] > top && cascade_side(dims, d, surface, x, j) {
+            let to = if surface[x] > top
+                && cascade_side(dims, d, surface, ground, seam.fixed_rows, halo, x, j)
+            {
                 top
             } else {
                 surface[x]
@@ -1237,13 +1240,36 @@ pub(super) fn raise_lips(
 }
 
 /// Dry cell `i` beside the previous band's river cell `x` (flow `d` there) on its cascade side:
-/// ahead along that flow, where the water drops. Only there may it stand below that water.
-pub(super) fn cascade_side(dims: Dims, d: u8, surface: &[f32], x: usize, i: usize) -> bool {
+/// ahead along that flow, where the water drops: to its receiver's water or ground in that
+/// band (`halo`: that band's ground over this band's first row, for a receiver there). Only
+/// there may it stand below that water.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn cascade_side(
+    dims: Dims,
+    d: u8,
+    surface: &[f32],
+    ground: &[f32],
+    fixed_rows: usize,
+    halo: &[f32],
+    x: usize,
+    i: usize,
+) -> bool {
     let d = d & 15;
     d != 0
         && dims.ahead(d, x, i)
         && dims.neighbour(x, d as usize - 1).is_some_and(|r| {
-            surface[r].is_finite() && surface[r] < surface[x] - super::report::BANK_TOLERANCE_M
+            let at = if r < fixed_rows * dims.w {
+                if surface[r].is_finite() {
+                    surface[r]
+                } else {
+                    ground[r]
+                }
+            } else {
+                halo.get(r - fixed_rows * dims.w)
+                    .copied()
+                    .unwrap_or(f32::INFINITY)
+            };
+            at < surface[x] - super::report::BANK_TOLERANCE_M
         })
 }
 

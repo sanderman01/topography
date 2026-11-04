@@ -1162,6 +1162,10 @@ pub fn run(options: &Options) -> Result<Outcome> {
         m.insert("basin_cells_lowered".into(), json!(left_basins));
         m.insert("cycle_cells_spilled".into(), json!(spilled));
     }
+    // The previous band's ground over this band's first row (its halo).
+    let halo_row: &[f32] = north
+        .as_ref()
+        .map_or(&[][..], |b| &b.halo_ground[..b.halo_ground.len().min(w)]);
     let lips = rivers::raise_lips(
         dims,
         &mut ground,
@@ -1174,6 +1178,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         &channels.raised,
         held,
         north.as_ref().map_or(&[][..], |b| &b.flow[..]),
+        halo_row,
         &seam_step,
         grid.spacing_m,
     );
@@ -1355,6 +1360,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         fixed_rows,
         carve_floor: &carve_floor,
         held,
+        halo: halo_row,
     };
     // Cycles on this run's final routing (taken cells end it), before accumulation, or in
     // the routing stitched with the previous band's (a loop across the seam: the previous band

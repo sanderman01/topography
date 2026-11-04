@@ -728,9 +728,16 @@ fn compare(
                         let d = fa[q] & 15;
                         let drops = d != 0
                             && dims.ahead(d, q, p)
-                            && dims
-                                .neighbour(q, d as usize - 1)
-                                .is_some_and(|r| pick(r).1 < sq - 0.01);
+                            && dims.neighbour(q, d as usize - 1).is_some_and(|r| {
+                                // The northern band's own water or ground there (its
+                                // halo for a southern cell).
+                                let at = if r / w < rows && sa[r].is_finite() {
+                                    sa[r]
+                                } else {
+                                    ga[r]
+                                };
+                                at < sq - 0.01
+                            });
                         if !drops {
                             taken_river_steps += 1;
                             if step_at.len() < 5 {
