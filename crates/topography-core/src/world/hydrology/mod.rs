@@ -948,16 +948,22 @@ pub fn run(options: &Options) -> Result<Outcome> {
         on_path[i]
     });
     drop(on_path);
-    // Where routed flow leaves each basin: the exit with the most flow.
-    let mut exit_acc = vec![-1f32; basins.len() + 1];
+    // Where routed flow leaves each basin: the exit with the most flow; for a lake, one that
+    // can take its water at the level (water, or ground not above it) before any other.
+    let mut exit_acc = vec![(false, -1f32); basins.len() + 1];
     for i in 0..n {
         let b = body[i] as usize;
         if b == 0 || flags[i] & FIXED != 0 {
             continue;
         }
         if let Some(r) = receiver(dims, &dir, i).filter(|&r| body[r] as usize != b) {
-            if acc[r] > exit_acc[b] {
-                exit_acc[b] = acc[r];
+            let basin = &basins[b - 1];
+            let takes = basin.kind == Kind::Lake
+                && (flags[r] & (SEA | RIVER) != 0
+                    || (body[r] != 0 && basins[body[r] as usize - 1].kind == Kind::Lake)
+                    || ground[r] <= basin.level + report::BANK_TOLERANCE_M);
+            if (takes, acc[r]) > exit_acc[b] {
+                exit_acc[b] = (takes, acc[r]);
                 basins[b - 1].exit = r as u32;
             }
         }

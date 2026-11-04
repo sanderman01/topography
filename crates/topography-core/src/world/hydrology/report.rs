@@ -250,7 +250,9 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
         .filter(|b| b.kind == Kind::Lake && b.exit != NO_EXIT)
         .filter(|b| {
             let e = b.exit as usize;
-            let off = if c.sea(e) || c.lake(e).is_some() {
+            // An exit on a band edge row: the lake may go on beyond it.
+            let edge = (c.open_rows[0] && e < c.dims.w) || (c.open_rows[1] && e >= n - c.dims.w);
+            let off = if c.sea(e) || c.lake(e).is_some() || edge {
                 false
             } else if c.river(e) {
                 (c.surface[e] - b.level).abs() > BANK_TOLERANCE_M + ROUNDING_M
