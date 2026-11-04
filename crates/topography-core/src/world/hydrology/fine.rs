@@ -833,10 +833,12 @@ fn route_stranded(
     let mut from: HashMap<usize, usize> = HashMap::new();
     // (last cell of the way, the end it drains into: None for an edge outlet)
     let mut end: Option<(usize, Option<usize>)> = None;
-    // This river's own water first: the way that climbs least (rises summed, then length).
+    // This river's own water first: the way that climbs least (rises summed, then length), and
+    // no more than `PATH_CLIMB_M` in all (else the lowest way below).
     if let Some(own) = own.filter(|_| !starts.is_empty()) {
         const PER_CELL: f32 = 1e-3;
         let mut cost: HashMap<usize, f32> = starts.iter().map(|&s| (s, 0.0)).collect();
+        let mut rise: HashMap<usize, f32> = starts.iter().map(|&s| (s, 0.0)).collect();
         from.extend(starts.iter().map(|&s| (s, s)));
         let mut heap: BinaryHeap<Item> = starts.iter().map(|&s| Item(0.0, s as u32)).collect();
         let mut found = false;
@@ -857,11 +859,15 @@ fn route_stranded(
                 if !open(j) || seeds.contains(&(j as u32)) {
                     continue;
                 }
-                let kj = k
-                    + (ground[j] - ground[c]).max(0.0)
-                    + Dims::step(d as u8 + 1) as f32 * PER_CELL;
+                let up = (ground[j] - ground[c]).max(0.0);
+                let rj = rise[&c] + up;
+                if rj > PATH_CLIMB_M {
+                    continue;
+                }
+                let kj = k + up + Dims::step(d as u8 + 1) as f32 * PER_CELL;
                 if cost.get(&j).is_none_or(|&old| kj < old) {
                     cost.insert(j, kj);
+                    rise.insert(j, rj);
                     from.insert(j, c);
                     heap.push(Item(kj, j as u32));
                 }
