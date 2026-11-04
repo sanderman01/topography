@@ -453,7 +453,8 @@ pub(super) fn carving(
         }
         let by = f - c.ground[i];
         // Channel beds may lie below it by about their depth; lakes and the sea are not carved.
-        // In the core's last rows rivers keep their own floor (`held_rivers`).
+        // In the core's last rows their floor there (`held_rivers`, the same since rivers keep
+        // the side slope too).
         if c.river(i) {
             let f = (c.held[0] * w..c.held[1] * w)
                 .contains(&i)

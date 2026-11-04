@@ -309,8 +309,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
         carve_floor[i] = carve_floor[i].max(bottom);
     }
     // Nor, in the core's last rows (which the next band takes), steeper than the side slope
-    // below its first row's ground, as that band's own first rows (rivers keep their own
-    // floor there: `held_rivers`, the floor without it, swapped in for them).
+    // below its first row's ground, as that band's own first rows: river beds and coarse paths
+    // too, so rivers cross the seam no deeper (`held_floor`, those rows' floor).
     let held = if coarse.is_some() && grid.core_rows[1] < dims.h {
         [
             grid.core_rows[1].saturating_sub(report::SEAM_CHECK_ROWS),
@@ -319,7 +319,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
     } else {
         [0, 0]
     };
-    let mut held_rivers = carve_floor[held[0] * w..held[1] * w].to_vec();
     if held[1] > held[0] {
         let limit = band::held_limit(
             dims,
@@ -335,11 +334,18 @@ pub fn run(options: &Options) -> Result<Outcome> {
             carve_floor[i] = carve_floor[i].max(l.min(ground[i]));
         }
     }
-    // Coarse river paths keep only the seam limit (`band::ground_floor`).
+    let held_floor = carve_floor[held[0] * w..held[1] * w].to_vec();
+    // Coarse river paths keep only the seam limits (`band::ground_floor`, `held_floor`).
     let path_floor = |i: usize| {
-        i.checked_sub(fixed_rows * w)
+        let seam = i
+            .checked_sub(fixed_rows * w)
             .and_then(|k| seam_floor.get(k).copied())
-            .unwrap_or(f32::NEG_INFINITY)
+            .unwrap_or(f32::NEG_INFINITY);
+        let held = i
+            .checked_sub(held[0] * w)
+            .and_then(|k| held_floor.get(k).copied())
+            .unwrap_or(f32::NEG_INFINITY);
+        seam.max(held)
     };
 
     // The coarse network on the fine ground: lakes at their level, river paths burned in.
@@ -702,8 +708,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
     lap("trenches", &mut t);
     let mut acc = vec![0f32; n];
     let mut cycles = flood::accumulate(dims, &dir, weight, &mut acc);
-    // Rivers keep their own floor in the core's last rows (until channel widening).
-    carve_floor[held[0] * w..held[1] * w].swap_with_slice(&mut held_rivers);
     // Streams turning back across the seam beside the previous band's river are led into it.
     let seam_joins = band::join_seam_rivers(
         dims,
@@ -1102,7 +1106,6 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let one_rise = erosion::SIDE_SLOPE_DEG.to_radians().tan() * grid.spacing_m as f32;
     let deep_cut = |i: usize| cuts.get(&(i as u32)).copied().filter(|&c| c > one_rise);
     let open = |b: u32| open_basin(&basins, &kept_basin, fine_level, b);
-    carve_floor[held[0] * w..held[1] * w].swap_with_slice(&mut held_rivers);
     // Floor: kept basin levels, the surface of each river a cell is a bank of (not ground
     // ahead along its flow, as the bank check) and no hole below every river beside it.
     let flow = dir.clone();
@@ -1378,7 +1381,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         let (carving, carving_figures) = report::carving(
             &ctx,
             &carve_floor,
-            &held_rivers,
+            &held_floor,
             fixed_rows,
             &body_id,
             &carve,
