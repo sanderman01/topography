@@ -848,7 +848,8 @@ and a lake keeps one level.
 
 Near the seam (judgment rules): a river joining the previous band's water in the first four rows
 may stand up to `SEAM_JOIN_STEP_M` (1 m) below it (channel cells of that band's river hold
-it too) where a taken bank holds it down (figure
+it too) where a taken bank holds it down; a coarse path ending in a cell of that water that
+cascades more than that onto a lower cell beside it goes on one free cell to the lower one (figure
 `seam_join_steps`, count and largest; more fails `river_cells_rising_downstream`). Dry cells
 beside the previous band's river are raised to its water, except on its cascade side, where they
 rise only as far as the seam step rule allows. Carving in the core's last four rows (which the

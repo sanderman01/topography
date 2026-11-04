@@ -1594,6 +1594,35 @@ pub(super) fn rivers(
                     }
                 }
             }
+            // Into a cascade of the previous band's water: on to its lower cell beside, one
+            // free cell along the seam, when the join would step up more than the seam allows.
+            if let Some(r) = next.map(|r| r as usize).filter(|&r| flags[r] & FIXED != 0) {
+                let s = fixed_surface(r);
+                let lower = dims
+                    .neighbours(r)
+                    .map(|(_, k)| k)
+                    .filter(|&k| {
+                        flags[k] & (FIXED | RIVER) == FIXED | RIVER
+                            && fixed_id(k) == fixed_id(r)
+                            && back(k).is_none()
+                            && fixed_surface(k) < s - super::report::SEAM_JOIN_STEP_M
+                    })
+                    .min_by(|&a, &b| fixed_surface(a).total_cmp(&fixed_surface(b)));
+                let last = cells[cells.len() - 1] as usize;
+                if let Some(k) = lower {
+                    let step = dims.neighbours(k).map(|(_, m)| m).find(|&m| {
+                        flags[m] & (SEA | FIXED) == 0
+                            && body[m] == 0
+                            && !claimed.contains_key(&(m as u32))
+                            && !cells.contains(&(m as u32))
+                            && dims.neighbours(last).any(|(_, q)| q == m)
+                    });
+                    if let Some(m) = step {
+                        cells.push(m as u32);
+                        next = Some(k as u32);
+                    }
+                }
+            }
             let end_s = next
                 .filter(|&r| flags[r as usize] & FIXED != 0)
                 .map(|r| fixed_surface(r as usize))
