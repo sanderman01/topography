@@ -1354,7 +1354,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
     let cycles = cycles
         .max(flood::cycle_cells(dims, &dir))
         .max(flood::cycle_cells(dims, &check_dir));
-    let (mut checks, examples) = report::checks(&ctx, cycles);
+    let (mut checks, mut examples) = report::checks(&ctx, cycles);
+    let join_steps = examples.remove("seam_join_steps");
     let mut bodies = report::bodies(&ctx, &body_id);
     // The next free id: the next band and finer level start above it.
     bodies["next_id"] = json!(next);
@@ -1459,6 +1460,9 @@ pub fn run(options: &Options) -> Result<Outcome> {
         );
     }
     figures.insert("check_examples".into(), Value::Object(examples));
+    if let Some(v) = join_steps {
+        figures.insert("seam_join_steps".into(), v);
+    }
     figures.insert("depressions".into(), json!(deps.len()));
     figures.insert("kept_by_budget".into(), json!(kept_by_budget));
     figures.insert(

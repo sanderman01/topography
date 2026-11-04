@@ -508,13 +508,27 @@ pub(super) fn extract(
     // stops at it (not below a lake beside, nor below water it flows into that stays: the sea,
     // a fixed cell, a sill), and the water downstream stands no higher (its beds go just
     // below it).
+    // A join into the previous band's water in the rows the seam checks may stand up to
+    // `SEAM_JOIN_STEP_M` below it where a taken bank holds it down (a small step up).
+    let join_rows = seam.fixed_rows..seam.fixed_rows + super::report::SEAM_CHECK_ROWS;
     let held_below = |flags: &[u8], surface: &[f32], i: usize| {
         receiver(dims, dir, i)
             .filter(|&r| {
                 flags[r] & SEA != 0
                     || (centre(flags, r) && (fixed(flags, r) || sills.contains_key(&(r as u32))))
             })
-            .map(|r| if flags[r] & SEA != 0 { 0.0 } else { surface[r] })
+            .map(|r| {
+                if flags[r] & SEA != 0 {
+                    0.0
+                } else if fixed(flags, r)
+                    && seam.fixed_rows > 0
+                    && join_rows.contains(&(i / dims.w))
+                {
+                    surface[r] - super::report::SEAM_JOIN_STEP_M
+                } else {
+                    surface[r]
+                }
+            })
             .filter(|s| !s.is_nan())
             .unwrap_or(f32::NEG_INFINITY)
     };

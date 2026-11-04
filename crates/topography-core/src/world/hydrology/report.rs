@@ -112,6 +112,7 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
     let (mut uphill, mut not_above, mut rises, mut not_below_level) = (0u64, 0u64, 0u64, 0u64);
     let (mut below_lake, mut below_sea, mut below_river) = (0u64, 0u64, 0u64);
     let (mut river_below_lake, mut bed_rises, mut holes) = (0u64, 0u64, 0u64);
+    let (mut join_steps, mut join_step_max) = (0u64, 0f32);
     let mut lake_range = vec![(f32::INFINITY, f32::NEG_INFINITY); c.basins.len() + 1];
     // Up to three failing cells per check, [column, row].
     let mut examples = Map::new();
@@ -159,7 +160,14 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                 Some(r) if c.wet(r) => c.surface[r],
                 _ => f32::NEG_INFINITY,
             };
-            if below > s {
+            // A join into the previous band's water near the seam may step up a little.
+            let join = r.is_some_and(|r| {
+                c.fixed(r) && c.fixed_rows > 0 && i / c.dims.w < c.fixed_rows + SEAM_CHECK_ROWS
+            });
+            if join && below > s && below <= s + SEAM_JOIN_STEP_M + BANK_TOLERANCE_M {
+                join_steps += 1;
+                join_step_max = join_step_max.max(below - s);
+            } else if below > s {
                 rises += 1;
                 note("river_cells_rising_downstream", i);
             }
@@ -284,6 +292,11 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
         json!(not_above),
     );
     m.insert("river_cells_rising_downstream".into(), json!(rises));
+    // Taken out as a figure by the caller.
+    examples.insert(
+        "seam_join_steps".into(),
+        json!({"count": join_steps, "max_m": join_step_max}),
+    );
     m.insert(
         "guard_river_beds_rising_downstream".into(),
         json!(bed_rises),
@@ -301,6 +314,10 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
 pub(super) const SEAM_STEP_M: f32 = 5.0;
 /// Rows after the seam the step rule compares with the previous band's last row.
 pub(super) const SEAM_CHECK_ROWS: usize = 4;
+/// Judgment constant: in those rows a river joining the previous band's water may stand this
+/// far below it where a taken bank holds it down (a step up into the join, reported as
+/// `seam_join_steps`); more fails `river_cells_rising_downstream`.
+pub(super) const SEAM_JOIN_STEP_M: f32 = 1.0;
 /// Judgment constant: a cell whose hydrology change lies this far below that of both cells
 /// beside it (north and south, or west and east) is a slot.
 pub(super) const SLOT_M: f32 = 5.0;
