@@ -1407,6 +1407,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
         held,
         halo: halo_row,
         seam: &seam_step,
+        path_cap: &path_cap,
     };
     // Cycles on this run's final routing (taken cells end it), before accumulation, or in
     // the routing stitched with the previous band's (a loop across the seam: the previous band

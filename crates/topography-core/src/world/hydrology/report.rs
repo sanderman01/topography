@@ -41,6 +41,8 @@ pub(super) struct Context<'a> {
     pub halo: &'a [f32],
     /// The seam step rule (`lakes::SeamStep::top` caps bank raises on a cascade side).
     pub seam: &'a SeamStep,
+    /// Coarse paths' surface caps by cell (they may hold a join's water down).
+    pub path_cap: &'a std::collections::HashMap<u32, f32>,
 }
 
 impl Context<'_> {
@@ -165,9 +167,9 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                 _ => f32::NEG_INFINITY,
             };
             // A join into the previous band's water near the seam may step up a little.
-            // Only into the previous band's river, where a taken bank (not ahead along the
-            // flow) or the seam step rule over this cell or a dry cell beside it holds the water
-            // below it, as
+            // Only into the previous band's river (or into a join cell of this band that does),
+            // where a taken bank (not ahead along the flow), the seam step rule over this cell or
+            // a dry cell beside it, or a coarse path's surface cap holds the water below it, as
             // `rivers::extract` makes it.
             let step_cap = c
                 .dims
@@ -176,17 +178,23 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                 .map(|(_, k)| c.seam.top(c.dims, k).max(c.ground[k]))
                 .fold(c.seam.top(c.dims, i), f32::min);
             let held_down = step_cap < below
+                || c.path_cap.get(&(i as u32)).is_some_and(|&p| p < below)
                 || c.dims.neighbours(i).any(|(_, k)| {
                     c.fixed(k)
                         && !c.wet(k)
                         && !c.dims.ahead(c.dir[i], i, k)
                         && c.ground[k] + BANK_TOLERANCE_M < below
                 });
+            let near_seam = |x: usize| {
+                c.fixed_rows > 0 && x / c.dims.w < c.fixed_rows + SEAM_CHECK_ROWS && !c.fixed(x)
+            };
+            let into_taken = |x: usize| c.fixed(x) && c.river(x);
             let join = r.is_some_and(|r| {
-                c.fixed(r)
-                    && c.river(r)
-                    && c.fixed_rows > 0
-                    && i / c.dims.w < c.fixed_rows + SEAM_CHECK_ROWS
+                near_seam(i)
+                    && (into_taken(r)
+                        || (near_seam(r)
+                            && c.river(r)
+                            && receiver(c.dims, c.dir, r).is_some_and(into_taken)))
             }) && held_down;
             if join && below > s && below <= s + SEAM_JOIN_STEP_M + BANK_TOLERANCE_M {
                 join_steps += 1;
@@ -994,6 +1002,7 @@ mod tests {
             held: [0, 0],
             halo: &[],
             seam: &SeamStep::none(),
+            path_cap: &std::collections::HashMap::new(),
         };
         checks(&c, 0).0
     }
@@ -1046,6 +1055,7 @@ mod tests {
             held: [0, 0],
             halo: &[],
             seam: &SeamStep::none(),
+            path_cap: &std::collections::HashMap::new(),
         };
         let floor = vec![f32::NEG_INFINITY; w * h];
         let (m, _) = carving(&c, &floor, &[], 2, &|_| 0, &carve, &slots);
