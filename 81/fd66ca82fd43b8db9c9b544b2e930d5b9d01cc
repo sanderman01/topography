@@ -1,0 +1,23 @@
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_1aa27d040785b8 312-313,337-338,340-341,343-348,1384
+crates/topography-core/src/world/hydrology/report.rs
+  s_8c1b40ea9c1e0d::t_2a4b1a28e98e8e 456-457
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_d308fae5887771 857-858
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81fd66ca82fd43b8db9c9b544b2e930d5b9d01cc",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
