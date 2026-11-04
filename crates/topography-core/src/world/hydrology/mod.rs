@@ -988,14 +988,15 @@ pub fn run(options: &Options) -> Result<Outcome> {
         }
     }
     // A coarse lake spills at its level: a dry exit a little above it (the fine rim beside a
-    // lake that misses its coarse outflow) is notched down to it.
+    // lake that misses its coarse outflow) is notched down to it, by up to `NOTCH_MAX_M`, or
+    // further where the carve floor allows (its main outflow, a single cell).
     for b in basins.iter().take(coarse_lakes as usize) {
         let e = b.exit as usize;
         let dry = b.exit != lakes::NO_EXIT
             && flags[e] & (SEA | FIXED) == 0
             && (body[e] == 0 || basins[body[e] as usize - 1].kind != Kind::Lake);
-        if b.kind == Kind::Lake && dry && ground[e] > b.level && ground[e] <= b.level + NOTCH_MAX_M
-        {
+        let reach = |e: usize| ground[e] <= b.level + NOTCH_MAX_M || carve_floor[e] <= b.level;
+        if b.kind == Kind::Lake && dry && ground[e] > b.level && reach(e) {
             ground[e] = b.level;
         }
     }
