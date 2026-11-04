@@ -189,13 +189,32 @@ pub(super) fn checks(c: &Context, cycles: u64) -> (Map<String, Value>, Map<Strin
                 c.fixed_rows > 0 && x / c.dims.w < c.fixed_rows + SEAM_CHECK_ROWS && !c.fixed(x)
             };
             let into_taken = |x: usize| c.fixed(x) && c.river(x);
-            let join = r.is_some_and(|r| {
-                near_seam(i)
-                    && (into_taken(r)
-                        || (near_seam(r)
-                            && c.river(r)
-                            && receiver(c.dims, c.dir, r).is_some_and(into_taken)))
-            }) && held_down;
+            // Down this band's river cells near the seam to the previous band's water.
+            let reaches_taken = |r: usize| {
+                let mut x = r;
+                for _ in 0..=SEAM_CHECK_ROWS {
+                    if into_taken(x) {
+                        return true;
+                    }
+                    if !(near_seam(x) && c.river(x)) {
+                        return false;
+                    }
+                    match receiver(c.dims, c.dir, x) {
+                        Some(n) => x = n,
+                        None => return false,
+                    }
+                }
+                false
+            };
+            // Or water upstream held lower (a raise does not lift it past that).
+            let held_upstream = c.dims.neighbours(i).any(|(_, d)| {
+                c.centre(d)
+                    && !c.fixed(d)
+                    && receiver(c.dims, c.dir, d) == Some(i)
+                    && c.surface[d] + BANK_TOLERANCE_M < below
+            });
+            let join =
+                r.is_some_and(|r| near_seam(i) && reaches_taken(r)) && (held_down || held_upstream);
             if join && below > s && below <= s + SEAM_JOIN_STEP_M + BANK_TOLERANCE_M {
                 join_steps += 1;
                 join_step_max = join_step_max.max(below - s);
