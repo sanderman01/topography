@@ -34,6 +34,8 @@ pub const BREACH_MAX_M: f32 = 30.0;
 pub(super) const SEAM_LAKE_GAP_ROWS: usize = 3;
 /// Judgment constant: the most a coarse lake's dry exit is notched down to the lake level.
 const NOTCH_MAX_M: f32 = 0.5;
+/// Judgment constant: exits within this share of a lake's main outflow carry it too.
+const EXIT_SHARE: f32 = 0.01;
 
 /// Default river start by grid spacing: 10 km² at 32 m and coarser, 0.5 km² at 4 m (from
 /// 2 m), 0.05 km² at 1 m.
@@ -952,17 +954,30 @@ pub fn run(options: &Options) -> Result<Outcome> {
         on_path[i]
     });
     drop(on_path);
-    // Where routed flow leaves each basin: the exit with the most flow; for a lake, one that
-    // can take its water at the level (water, or ground not above it) before any other.
+    // Where routed flow leaves each basin: the exit with the most flow. For a lake, among exits
+    // carrying that outflow (within `EXIT_SHARE` of it), one that takes its water at the level
+    // (water, or ground not above it) first; a main outflow above the level stays the exit.
+    let exit_of = |i: usize| receiver(dims, &dir, i).filter(|&r| body[r] != body[i]);
+    let mut most = vec![-1f32; basins.len() + 1];
+    for i in 0..n {
+        let b = body[i] as usize;
+        if b == 0 || flags[i] & FIXED != 0 {
+            continue;
+        }
+        if let Some(r) = exit_of(i) {
+            most[b] = most[b].max(acc[r]);
+        }
+    }
     let mut exit_acc = vec![(false, -1f32); basins.len() + 1];
     for i in 0..n {
         let b = body[i] as usize;
         if b == 0 || flags[i] & FIXED != 0 {
             continue;
         }
-        if let Some(r) = receiver(dims, &dir, i).filter(|&r| body[r] as usize != b) {
+        if let Some(r) = exit_of(i) {
             let basin = &basins[b - 1];
             let takes = basin.kind == Kind::Lake
+                && acc[r] >= most[b] * (1.0 - EXIT_SHARE)
                 && (flags[r] & (SEA | RIVER) != 0
                     || (body[r] != 0 && basins[body[r] as usize - 1].kind == Kind::Lake)
                     || ground[r] <= basin.level + report::BANK_TOLERANCE_M);
