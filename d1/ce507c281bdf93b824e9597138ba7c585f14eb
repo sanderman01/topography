@@ -1,0 +1,33 @@
+crates/topography-core/src/world/hydrology/mod.rs
+  s_8c1b40ea9c1e0d::t_5a3de4330deac7 1152-1153,1157-1159
+  s_8c1b40ea9c1e0d::t_fc77e4f9ec0f2a 1115,1626
+  s_8c1b40ea9c1e0d::t_a98fbe54d32bcb 679-693,695-700
+  s_8c1b40ea9c1e0d::t_1bf7c67d6c9a82 350-351
+  s_8c1b40ea9c1e0d::t_a9c2258852df18 1116
+  s_8c1b40ea9c1e0d::t_3aba3721c9ec8d 674-678,694,701-708
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_1120e33f6b9c4b 796-797
+  s_8c1b40ea9c1e0d::t_7db1ae6fac7d38 792-795,798
+crates/topography-core/src/world/hydrology/fine.rs
+  s_8c1b40ea9c1e0d::t_fc77e4f9ec0f2a 1040
+  s_8c1b40ea9c1e0d::t_a9c2258852df18 525-526,1041,1662,1667-1673
+  s_8c1b40ea9c1e0d::t_3aba3721c9ec8d 522-524,1676
+  s_8c1b40ea9c1e0d::t_1bf7c67d6c9a82 1514,1544,1652-1655,1665,1678,1694-1696
+  s_8c1b40ea9c1e0d::t_12e55823303fe4 1656-1661,1663-1664,1666,1674-1675,1677
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1ce507c281bdf93b824e9597138ba7c585f14eb",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
