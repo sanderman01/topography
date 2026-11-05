@@ -45,14 +45,14 @@ Project constraints from AGENTS.md that every task also obeys:
 - Keep the 16 GB VRAM ceiling; the host has 15 GB RAM: run every real-data job under `systemd-run --user --scope -q -p MemoryMax=<cap>`.
 - Before any heavy run (the 16,384² window, the whole world, GPU relaxation of the world), stop and warn the user with the workload, expected memory and duration (stating uncertainty), and wait for their go. Rust builds and downloads need no warning.
 - Never overwrite `data/worlds/fujix-55-l4v2`; open its `elevation-raw.f32` read-only.
-- Plan A removes no v2 code and must not change the 32 m / 4 m v2 path: `cargo test -p topography-core hydrology` and `bash scripts/check.sh` stay green after every task.
+- Plan A removes no v2 code and must not change the 32 m / 4 m v2 path. Every task ends with the task-finish block below, including `cargo test -p topography-core hydrology`. `bash scripts/check.sh` runs in full from Task 14 on, the first task where the module is wired to the CLI with no dead-code allowance (N5).
 - Commits: small Conventional Commits ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not commit plan or task files.
 
 ---
 
 ## Rulings on spec ambiguities
 
-The spec leaves these open; the plan implements the ruling given. The owner may overrule any of them before execution. Rulings R25–R31, and the changes to R2, R5, R6, R7, R9, R14, R16, R17, R19 and R21, apply the plan review (`scratch/hydrology-v3-plan-a-review.md`) as the coordinator ruled on it. R21 replaces the spec's "Barnes 2014 flat resolution" for ponds with a priority flood from the outlet, keeping Barnes 2014's mask as the tie-break (review I2). The Global Constraints above keep the spec's wording.
+The spec leaves these open; the plan implements the ruling given. The owner may overrule any of them before execution. Rulings R25–R31, and the changes to R2, R5, R6, R7, R9, R14, R16, R17, R19 and R21, apply the plan review (`scratch/hydrology-v3-plan-a-review.md`) as the coordinator ruled on it. R32 and the changes to R6, R22 and R25 apply the pre-flight scan (`.superpowers/sdd/2026-11-05-hydrology-v3-a-water-model/preflight-scan.md`). R21 replaces the spec's "Barnes 2014 flat resolution" for ponds with a priority flood from the outlet, keeping Barnes 2014's mask as the tie-break (review I2). The Global Constraints above keep the spec's wording.
 
 | # | Question | Ruling |
 | --- | --- | --- |
@@ -61,7 +61,7 @@ The spec leaves these open; the plan implements the ruling given. The owner may 
 | R3 | Which r when a catchment spans classes? | Supply = Σ over catchment cells of r(class of the cell). For one class this is exactly r · A_catchment. Overflow from upstream basins adds in the same units. |
 | R4 | Bit-identical tiling with float sums | Every sum across cells is an integer: supplies in thousandths of a cell, Q in units of 10⁻¹² km² (u64; 4,300 km² is 4.3·10¹⁵), volumes in mm·cells (i64). Min/max of floats are order-free. Only these are combined across tiles, so the tile split cannot change a result. |
 | R5 | Q → m³/s factor | A game setting, `m3s_per_km2` in `water-v2.toml` (I8): **0.56 m³/s per km² at mean rain**, chosen so the largest river (about 177 km², the 4 m world's largest) is about 30 m wide (w = 29.9 m, d = 1.9 m). Typical widths: 0.05 km² → 0.5 m, 1 km² → 2.2 m, 10 km² → 7.1 m, the canyon trunk (≈ 100 km²) → 22 m. The model's literal rain (0.657) is 20 m/yr and not used. |
-| R6 | River cells | A river cell is a thalweg cell (Q ≥ the level's threshold, 0.05 km² at 1 m) or a cell of a channel section that ends up under water. A cell within several thalwegs' half-widths belongs to the one with the larger Q, then the nearest (I3b): a tributary thalweg inside a larger river's section joins that river there. Breach gorges are at least 3 cells wide. A small full pool on a river is labelled as that river (R26). |
+| R6 | River cells | A river cell is a thalweg cell (Q ≥ the level's threshold, 0.05 km² at 1 m) or a cell of a channel section that ends up under water. A cell within several thalwegs' half-widths belongs to the one with the larger Q, then the nearest (I3b): a tributary thalweg inside a larger river's section joins that river there, and a river cell whose surface lies below that of the river cell it flows into is raised to it for up to 16 cells upstream (backwater, N18; ground untouched, `drainage_rises` catches anything longer). Breach gorges are at least 3 cells wide. A small full pool on a river is labelled as that river (R26). |
 | R7 | Standing water below the lake label ("ponds") | A node is a labelled lake only when it is at least 0.3 m deep **and** at least `lake_min_m2` (500 m², a setting in `water-v2.toml`; about 31 cells at 4 m) in area (C2.1). Smaller or shallower nodes are ponds: routed like lakes but unlabelled (`water-surface.f32` NaN, `water-body.u32` 0) except on the river cells that cross them. Full ponds are routed by a priority flood from their outlet over their own ground (I2, R21), so rivers follow the pond's lowest ground at the pond level. The drainage check measures the routing surface D (labelled water at its surface, ponds at their level, else ground); ponds are reported as figures. |
 | R8 | Sea and the map edge | Sea = cells whose priority-flood level from the world edge is ≤ 0 m (ground ≤ 0 connected to the edge through ground ≤ 0). World-edge land cells are outlets: water leaves the map there, and the drainage check accepts them. Below-zero ground behind a rim is a lake at its balance level (a lagoon). |
 | R9 | Breaching at 1 m | Only depressions a river flows into (node inflow Q ≥ the river threshold), all or nothing: the gorge is cut when its deepest cut stays within `CHANNEL_CAP_M` (2 m) for every river, whatever its size (I1); the channel then cuts only what remains above the raw − 2 m clamp, so breach plus channel never lowers a cell more than 2 m; its length is at least 20 × the cut, and it removes less volume than the depression would fill (Lindsay 2016). Otherwise the pool stays at its spill. Caps at coarser spacings, used only in Plan A's gate-1 windows: 20 m at 32 m, 5 m at 4 m (judgement; Plan B revisits). |
@@ -77,15 +77,16 @@ The spec leaves these open; the plan implements the ruling given. The owner may 
 | R19 | Relaxation scope | Only dry corridor cells (within 8 cells of a carved wet section cell) move, only down, never below adjacent water, raw − 2.5 m (tapered to 0 at the corridor edge), or **their receiver + 1 mm** (strict, I7: no flats, no `drainage_stuck`). Beds under water stay as carved. 48 Jacobi iterations, stencil radius 1, halo 64. The stencil is built from shifted slices added in a fixed order (no `conv2d`, whose MIOpen algorithm depends on the shape), with `torch.use_deterministic_algorithms(True)`. |
 | R20 | Closed-lake level | The k-th lowest cell of the depression with k = ⌈supply / 1000⌉ (area in whole cells). |
 | R21 | Flats | Equal adjacent pit cells form one pit. Lakes are single nodes. Full ponds are routed by a priority flood from their outlet over the pond's own ground, ascending z, ties by the Barnes 2014 mask; each cell's receiver is the cell that flooded it (I2), so paths follow the pond's lowest ground instead of BFS geodesics. Whole pond inside a tile: solved there; else gathered and solved once (the result depends only on the cells, their ground and the outlet). |
-| R22 | Change budget "for all cells" at 1 m | As written: p99 of \|Δ\| over all cells ≤ 1 m and max ≤ 2.5 m; the p99 over changed cells is a figure. |
+| R22 | Change budget "for all cells" at 1 m | As written: p99 of \|Δ\| over all cells ≤ 1 m and max ≤ the level's breach cap + 0.5 m (2.5 m at 1 m); the p99 over changed cells is a figure. River starts and breach caps are per level in `water-v2.toml` (`[levels.*]`, N19), so the 4 m and 32 m gate-1 windows are judged with their own caps (5.5 m and 20.5 m), not the 1 m ones. |
 | R23 | Python tests | `unittest` from the standard library, run with the diffusion env's Python (`$P -m unittest`), since the env has no pytest. |
 | R24 | Tiles check | The graph passes are exact by construction (Task 9 and the gate-1 16,384² run prove it). "Recomputed overlaps identical within 1 mm" applies to the GPU relaxation, the only stencil pass in Plan A. |
-| R25 | Global graph size (C3) | Exact per-tile contraction, always on. A tile settles its local depression trees whose merges all lie strictly below their **frontier**: the lowest saddle by which the tree touches anything outside it, meaning a ring pit, a cell draining out of the tile or to the world edge, or one of its own ring cells. Every frontier is at or above the tile ring's minimum ground, so this includes the coordinator's ring-minimum rule as the special case and is exact by the same argument. It settles at least as much. Each tree reaches the global step as one super-leaf keyed by its smallest pit. The global Fill-Spill-Merge treats it as a leaf and records the pours into it. That is exact for fullness and overflow, because water reaches a depression's own level only when everything below it is full. Pass L re-solves its inside in the tile. Leaves, ring cells, pit roots and edges are sorted `Vec`s with binary search, not HashMaps. Task 8b's test shows that every depression and spill survives; Task 9's test proves every raster and the node table bit-identical with contraction on and off. |
+| R25 | Global graph size (C3) | Exact per-tile contraction, always on. A tile settles its local depression trees whose merges all lie strictly below their **frontier**: the lowest saddle by which the tree touches anything outside it, meaning a ring pit, a cell draining out of the tile or to the world edge, or one of its own ring cells. Every frontier is at or above the tile ring's minimum ground, so this includes the coordinator's ring-minimum rule as the special case and is exact by the same argument. It settles at least as much. Each tree reaches the global step as one super-leaf keyed by its smallest pit. The global Fill-Spill-Merge treats it as a leaf and records the pours into it. That is exact for fullness and overflow, because water reaches a depression's own level only when everything below it is full. A tree whose super-leaf holds water without being full needs its inside solved: pass L does it in the tile only when the whole tree lies there, its held-cell count equal to the global one and every pour entering there (B2); otherwise pass L2 gathers the tree's cells and pours from every tile, each mapped to the tree's local leaf by following its path to the tree tile's ring (the ring cells' pre-contraction pits are kept in `Frag`, B1), and solves it at the global step. Leaves, ring cells, pit roots and edges are sorted `Vec`s with binary search, not HashMaps. Task 8b's test shows that every depression and spill survives; Task 9's tests prove every raster and the node table bit-identical with contraction on and off, including an arid closed lake solved in its tile and one whose tree holds cells across a seam (pass L2). |
 | R26 | Pools on a river (C2.2) | A full lake node with river inflow (Q ≥ the river start) and area below 20 · w(Q)² is labelled as the river leaving it (the body of its outlet cell), surface at the pool level; it is not listed as a lake. Labels only; routing is unchanged. |
 | R27 | Third model run (I3c) | `water-finish` reruns the model on the final ground (tag `m3`). `discharge.f32`, `flow.u8` and the drainage, pond and river checks use it; the hard check `label_agreement` requires the written rivers' thalwegs (m2) and m3's thalwegs to agree within one cell at 0.95 or more (a tolerant IoU: matched cells of both over all cells of both). About 50 % more graph time. |
 | R28 | Node identity | A water node (lake, pond, closed basin) is named by its smallest pit cell's world index, which is the same at any tiling and with contraction; `Nodes` is the sorted table of all nodes (global and settled in tiles) with level, low, area, fullness, outlet, fill volume and the lake flag. The `node` raster holds 2 + the node's ordinal in that table. |
 | R29 | Parallel rivers (I4) | Hard check `parallel_rivers`: along a river with Q ≥ 1 km², a different flow line with Q ≥ 0.002 km² (below the canyon's 0.0036 km² second channel) running within 10 m and parallel (direction cosine ≥ 0.7) for more than 100 m, unless that line joins the river within 100 m downstream. The 20 m pair length stays a figure. |
 | R30 | Straight rivers (I6) | Besides the global 5 % share: hard check `straight_runs`, a river run longer than 150 m in one D8 direction, unless the raw thalweg is straight there too (at 90 % or more of the run's cells the lowest raw cell within ±3 cells across lies on the run). The 20 longest runs are listed with cells and get review crops. |
+| R32 | Flats with an outlet (N15) | A depression of zero depth (spill equal to its lowest ground, a flat with an outlet) is never a closed basin: it is full by definition and drains on through flat routing, whatever its class's r. It is a pond node (depth below 0.3 m), so its cells get receivers from the outlet priority flood (R21). |
 | R31 | Dams without raw (I5, M5) | Figures `dam_drops_any` (D drops over 1.5 m between adjacent cells within 50 m below each exit, raw ignored, with cells) and `dam_rims_any` (exit-side cells over level + 0.5 m on the final ground). Gate 2 must show the three dam spots and E43966 in `dam_drops_any`, which validates the detector; Plan B makes it hard on the 4 m hand-off and the L4 strip. `dam_rims` stays a hard guard that v3 cannot fail, since ground is never raised. |
 
 ## File structure
@@ -122,7 +123,7 @@ Other Rust changes:
 | File | Change |
 | --- | --- |
 | `crates/topography-core/src/world/mod.rs` | `pub mod water;` |
-| `crates/topography-core/src/world/hydrology/grid.rs` | `Stage` becomes `pub(crate)`; new `Stage::link` (hard-link a big file into the stage) |
+| `crates/topography-core/src/world/hydrology/grid.rs` | `Stage` becomes `pub(crate)`; new `Stage::copy` (reflink-or-copy a big file into the stage, never a hard link) |
 | `crates/topography-cli/src/main.rs` | `world water` and `world water-finish` commands and usage lines |
 | `configs/hydrology/water-v2.toml` | New: r per class, `lake_min_m2`, `m3s_per_km2` |
 | `scripts/check.sh` | `cargo test … world::water` and a usage-error check |
@@ -183,6 +184,21 @@ bash scripts/check.sh
 
 Each Rust test step below gives its exact filter. Real-terrain probes are `#[ignore]` tests run with `-- --ignored --nocapture`; they skip (print "no data") when `data/worlds/fujix-55-l4v2` is absent.
 
+### Task-finish block (before every commit, review N5)
+
+```bash
+cargo fmt --all
+"${CAP6[@]}" cargo clippy -p topography-core -p topography-cli --all-targets --locked --offline -- -D warnings
+"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet world::water   # the task's focused tests
+"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet hydrology     # v2 stays green
+# Python tasks (15–17) instead or in addition:
+PYTHONPATH=training/src $P -m unittest discover -s training/tests -p 'test_water_*.py'
+# From Task 14 on:
+bash scripts/check.sh
+```
+
+All must pass; fix the code (never the check) and rerun. Every real-data run in this plan goes through `systemd-run --user --scope -q -p MemoryMax=<cap>` with the cap it names (N13).
+
 ---
 ## Task 1: Water table v2 and the module skeleton
 
@@ -195,7 +211,7 @@ Each Rust test step below gives its exact filter. Real-terrain probes are `#[ign
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `water::table::{Table, DEFAULT, MILLI}` with `Table::parse(&str) -> Result<Table>`, `Table::r_milli(u8) -> u32` and the public fields `lake_min_m2: f64`, `m3s_per_km2: f64`; `water::{Params, params(spacing_m: f64, river_km2: Option<f64>) -> Params}` and the constants `LAKE_DEPTH_M`, `CHANNEL_CAP_M`, `GORGE_RATIO`, `BREACH_RADIUS`, `MAIN_RIVER_KM2`, `BODY_BUDGET`, `DEFAULT_TILE`.
+- Produces: `water::table::{Table, Level { river_km2: f64, breach_cap_m: f32 }, DEFAULT, MILLI}` with `Table::parse(&str) -> Result<Table>`, `Table::r_milli(u8) -> u32`, `Table::level(spacing_m: f64) -> Level` and the public fields `lake_min_m2: f64`, `m3s_per_km2: f64`; `water::{Params { river_km2, breach_cap_m, breach_radius: u64, channels }, Params::change_max_m() -> f32, params(table: &Table, spacing_m: f64, river_km2: Option<f64>) -> Params}` and the constants `LAKE_DEPTH_M`, `CHANNEL_CAP_M`, `GORGE_RATIO`, `BREACH_RADIUS` (the default `breach_radius`), `MAIN_RIVER_KM2`, `BODY_BUDGET`, `DEFAULT_TILE`. Per-level thresholds live in the config (review N19).
 
 - [ ] **Step 1: Create the branch state check**
 
@@ -222,6 +238,19 @@ lake_min_m2 = 500.0
 # Discharge (km² at mean rain) to m³/s for channel width and depth: chosen so the largest
 # river (about 177 km²) is about 30 m wide; the model's literal rain would give 0.657.
 m3s_per_km2 = 0.56
+
+# Per level (grid spacing in m): river start (km² at mean rain, v2's values) and the deepest
+# breach cut (at 1 m the channel cap). `change_max` allows the breach cap + 0.5 m. The 4 m and
+# 32 m values serve Plan A's gate-1 windows only; Plan B revisits them.
+[levels.1]
+river_km2 = 0.05
+breach_cap_m = 2.0
+[levels.4]
+river_km2 = 0.5
+breach_cap_m = 5.0
+[levels.32]
+river_km2 = 10.0
+breach_cap_m = 20.0
 
 [classes.0]  # unlabelled
 r = 1.0
@@ -285,21 +314,27 @@ mod tests {
         assert_eq!(t.r_milli(200), 1000, "missing classes take class 0");
         assert_eq!(t.lake_min_m2, 500.0);
         assert_eq!(t.m3s_per_km2, 0.56);
+        assert_eq!(t.level(1.0), Level { river_km2: 0.05, breach_cap_m: 2.0 });
+        assert_eq!(t.level(4.0), Level { river_km2: 0.5, breach_cap_m: 5.0 });
+        assert_eq!(t.level(32.0), Level { river_km2: 10.0, breach_cap_m: 20.0 });
+        assert_eq!(t.level(2.0).breach_cap_m, 2.0, "the largest level not coarser than the grid");
     }
 
     #[test]
     fn a_v1_table_or_a_bad_value_is_refused() {
+        let levels = "[levels.1]\nriver_km2 = 0.05\nbreach_cap_m = 2.0\n";
         let head = "schema_version = 2\nkind = \"water_table\"\nlegend = \"x\"\nlake_min_m2 = 500.0\nm3s_per_km2 = 0.5\n";
-        assert!(Table::parse(&format!("{head}[classes.0]\nr = 1.0\n")).is_ok());
-        let v1 = "schema_version = 1\nkind = \"water_table\"\nlegend = \"x\"\nlake_min_m2 = 500.0\nm3s_per_km2 = 0.5\n[classes.0]\nr = 1.0\n";
-        assert!(Table::parse(v1).is_err());
-        assert!(Table::parse(&format!("{head}[classes.0]\nr = -1.0\n")).is_err());
-        assert!(Table::parse(&format!("{head}[classes.3]\nr = 1.0\n")).is_err(), "no class 0");
-        assert!(Table::parse(&format!("{head}[classes.0]\nlake_share = 0.1\n")).is_err(), "v1 fields are unknown here");
-        let no_settings = "schema_version = 2\nkind = \"water_table\"\nlegend = \"x\"\n[classes.0]\nr = 1.0\n";
-        assert!(Table::parse(no_settings).is_err());
-        let zero = "schema_version = 2\nkind = \"water_table\"\nlegend = \"x\"\nlake_min_m2 = 500.0\nm3s_per_km2 = 0.0\n[classes.0]\nr = 1.0\n";
-        assert!(Table::parse(zero).is_err(), "the m³/s factor must be positive");
+        assert!(Table::parse(&format!("{head}{levels}[classes.0]\nr = 1.0\n")).is_ok());
+        let v1 = format!("schema_version = 1\nkind = \"water_table\"\nlegend = \"x\"\nlake_min_m2 = 500.0\nm3s_per_km2 = 0.5\n{levels}[classes.0]\nr = 1.0\n");
+        assert!(Table::parse(&v1).is_err());
+        assert!(Table::parse(&format!("{head}{levels}[classes.0]\nr = -1.0\n")).is_err());
+        assert!(Table::parse(&format!("{head}{levels}[classes.3]\nr = 1.0\n")).is_err(), "no class 0");
+        assert!(Table::parse(&format!("{head}{levels}[classes.0]\nlake_share = 0.1\n")).is_err(), "v1 fields are unknown here");
+        assert!(Table::parse(&format!("{head}[classes.0]\nr = 1.0\n")).is_err(), "no levels");
+        let no_settings = format!("schema_version = 2\nkind = \"water_table\"\nlegend = \"x\"\n{levels}[classes.0]\nr = 1.0\n");
+        assert!(Table::parse(&no_settings).is_err());
+        let zero = format!("schema_version = 2\nkind = \"water_table\"\nlegend = \"x\"\nlake_min_m2 = 500.0\nm3s_per_km2 = 0.0\n{levels}[classes.0]\nr = 1.0\n");
+        assert!(Table::parse(&zero).is_err(), "the m³/s factor must be positive");
     }
 }
 ```
@@ -313,10 +348,13 @@ mod tests {
 
     #[test]
     fn params_follow_the_spacing() {
-        assert_eq!(params(32.0, None), Params { river_km2: 10.0, breach_cap_m: 20.0, channels: false });
-        assert_eq!(params(4.0, None), Params { river_km2: 0.5, breach_cap_m: 5.0, channels: false });
-        assert_eq!(params(1.0, None), Params { river_km2: 0.05, breach_cap_m: 2.0, channels: true });
-        assert_eq!(params(1.0, Some(0.2)).river_km2, 0.2);
+        let t = table::Table::parse(table::DEFAULT).expect("table");
+        let p = |s, r| params(&t, s, r);
+        assert_eq!(p(32.0, None), Params { river_km2: 10.0, breach_cap_m: 20.0, breach_radius: BREACH_RADIUS, channels: false });
+        assert_eq!(p(4.0, None), Params { river_km2: 0.5, breach_cap_m: 5.0, breach_radius: BREACH_RADIUS, channels: false });
+        assert_eq!(p(1.0, None), Params { river_km2: 0.05, breach_cap_m: 2.0, breach_radius: BREACH_RADIUS, channels: true });
+        assert_eq!(p(1.0, Some(0.2)).river_km2, 0.2);
+        assert_eq!(p(4.0, None).change_max_m(), 5.5, "each level's own breach cap + 0.5 m");
     }
 }
 ```
@@ -359,17 +397,28 @@ struct File {
     legend: String,
     lake_min_m2: f64,
     m3s_per_km2: f64,
+    levels: BTreeMap<String, Level>,
     classes: BTreeMap<String, Class>,
 }
 
-/// r in thousandths by class id (0 to 255; ids missing from the file take class 0), and the
-/// game settings.
+/// Per-level thresholds (review N19): river start and breach cap.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Level {
+    pub river_km2: f64,
+    pub breach_cap_m: f32,
+}
+
+/// r in thousandths by class id (0 to 255; ids missing from the file take class 0), the game
+/// settings and the per-level thresholds.
 pub(crate) struct Table {
     r: Vec<u32>,
     /// Standing water is a labelled lake from this area (and 0.3 m deep).
     pub lake_min_m2: f64,
     /// m³/s per km² at mean rain, for hydraulic geometry.
     pub m3s_per_km2: f64,
+    /// (spacing m, thresholds), ascending.
+    levels: Vec<(f64, Level)>,
 }
 
 impl Table {
@@ -402,16 +451,36 @@ impl Table {
         let base = *by_id
             .get(&0)
             .ok_or_else(|| AcquisitionError::Invalid("water table needs class 0".into()))?;
+        let mut levels = Vec::new();
+        for (key, l) in file.levels {
+            let spacing: f64 = key
+                .parse()
+                .map_err(|_| AcquisitionError::Invalid(format!("water table level {key}")))?;
+            ensure(
+                spacing > 0.0 && l.river_km2 > 0.0 && l.breach_cap_m >= 0.0,
+                format!("water table level {key}: positive spacing and river start, cap 0 or more"),
+            )?;
+            levels.push((spacing, l));
+        }
+        levels.sort_by(|a, b| a.0.total_cmp(&b.0));
+        ensure(!levels.is_empty(), "water table needs at least one level")?;
         Ok(Self {
             r: (0..=255u8).map(|c| by_id.get(&c).copied().unwrap_or(base)).collect(),
             lake_min_m2: file.lake_min_m2,
             m3s_per_km2: file.m3s_per_km2,
+            levels,
         })
     }
 
     /// r of a class in thousandths.
     pub fn r_milli(&self, class: u8) -> u32 {
         self.r[class as usize]
+    }
+
+    /// The thresholds of the largest level not coarser than `spacing_m` (the finest level
+    /// for grids finer than every level).
+    pub fn level(&self, spacing_m: f64) -> Level {
+        self.levels.iter().rev().find(|l| l.0 <= spacing_m).unwrap_or(&self.levels[0]).1
     }
 }
 ```
@@ -447,29 +516,34 @@ pub(crate) const BODY_BUDGET: usize = 50_000;
 /// Default tile side in cells.
 pub const DEFAULT_TILE: u64 = 4096;
 
-/// Judgment values by grid spacing; the 32 m and 4 m ones serve Plan A's test windows only.
+/// A run's thresholds: the table's level for the grid spacing (review N19).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Params {
-    /// River start, km² at mean rain (v2's values).
+    /// River start, km² at mean rain.
     pub river_km2: f64,
     /// Deepest breach cut (at 1 m the channel cap: breach plus channel stay within it through
     /// the channels' raw − 2 m clamp).
     pub breach_cap_m: f32,
+    /// Gorge cells lie within this many cells of their spill cell (tests lower it so a gorge
+    /// crosses a tile seam).
+    pub breach_radius: u64,
     /// Carve channels (1 m only).
     pub channels: bool,
 }
 
-pub(crate) fn params(spacing_m: f64, river_km2: Option<f64>) -> Params {
-    let (river, cap) = if spacing_m >= 16.0 {
-        (10.0, 20.0)
-    } else if spacing_m >= 2.0 {
-        (0.5, 5.0)
-    } else {
-        (0.05, CHANNEL_CAP_M)
-    };
+impl Params {
+    /// The `change_max` check's bound: this level's breach cap + 0.5 m.
+    pub fn change_max_m(&self) -> f32 {
+        self.breach_cap_m + 0.5
+    }
+}
+
+pub(crate) fn params(table: &table::Table, spacing_m: f64, river_km2: Option<f64>) -> Params {
+    let level = table.level(spacing_m);
     Params {
-        river_km2: river_km2.unwrap_or(river),
-        breach_cap_m: cap,
+        river_km2: river_km2.unwrap_or(level.river_km2),
+        breach_cap_m: level.breach_cap_m,
+        breach_radius: BREACH_RADIUS,
         channels: spacing_m < 2.0,
     }
 }
@@ -491,6 +565,8 @@ Run: `"${CAP6[@]}" cargo clippy --workspace --all-targets --locked --offline -- 
 Expected: no warnings.
 
 - [ ] **Step 7: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add configs/hydrology/water-v2.toml crates/topography-core/src/world/water crates/topography-core/src/world/mod.rs scripts/check.sh
@@ -1300,10 +1376,12 @@ Add to `mod.rs`: `mod geom; mod layers; mod rain; mod store;`.
 - [ ] **Step 7: Run the tests to see them pass**
 
 Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet world::water`
-Expected: all tests pass (3 from Task 1, 8 new).
+Expected: all tests pass (3 from Task 1, 9 new).
 Run clippy as in the shared commands. Expected: clean.
 
 - [ ] **Step 8: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add crates/topography-core/src/world/water
@@ -1399,9 +1477,9 @@ mod tests {
                 .map(|k| { let (x, y) = win.world_xy(k); z[all.local(x, y).expect("in")] })
                 .collect();
             let part = receivers(world, win, &zw, core);
-            for k in 0..core.cells() {
+            for (k, &p) in part.iter().enumerate() {
                 let (x, y) = core.world_xy(k);
-                assert_eq!(part[k], whole[all.local(x, y).expect("in")]);
+                assert_eq!(p, whole[all.local(x, y).expect("in")]);
             }
         }
     }
@@ -1595,6 +1673,8 @@ Run clippy. Expected: clean.
 
 - [ ] **Step 6: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add crates/topography-core/src/world/water
 git commit -m "feat(water): fall-line receivers on world coordinates and real-window probes
@@ -1627,7 +1707,7 @@ Expert review protocol. Real-terrain output: the probe's printed shares and `scr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::water::geom::{OFFSETS, Rect, World, tiles};
+    use crate::world::water::geom::{Rect, World, tiles};
 
     /// A slope falling east with noise; cells of the block x 5..9, y 5..9 are node 7, which
     /// leaves by (10, 7). Receivers: the lowest lower neighbour; edge cells end.
@@ -1683,10 +1763,10 @@ mod tests {
             let (end, cycles) = ends(core.cells(), &next);
             assert_eq!(cycles + local.cycles, 0);
             let mut port_end = BTreeMap::new();
-            for k in 0..core.cells() {
+            for (k, &e) in end.iter().enumerate() {
                 let (x, y) = core.world_xy(k);
                 if core.on_ring(x, y) || world.index(x, y) == world.index(10, 7) {
-                    port_end.insert(world.index(x, y), end[k]);
+                    port_end.insert(world.index(x, y), e);
                 }
             }
             reports.push(Report { out: local.out, node_in: local.node_in, port_end });
@@ -1703,11 +1783,11 @@ mod tests {
                 })
                 .collect();
             add_inflows(&mut local, &ports, &next);
-            for k in 0..core.cells() {
+            for (k, &lq) in local.iter().enumerate() {
                 let (x, y) = core.world_xy(k);
                 q[world.index(x, y) as usize] = match next(k) {
                     Next::Node(n) => solved.node_total[&n],
-                    _ => local[k],
+                    _ => lq,
                 };
             }
         }
@@ -1720,8 +1800,14 @@ mod tests {
         let whole = discharge(world, 64);
         assert_eq!(discharge(world, 8), whole);
         assert_eq!(discharge(world, 5), whole);
-        // Mass: everything not on an edge cell reaches an edge cell; the total arriving at
-        // edge cells (End) equals all rain.
+        // Mass: every cell's water ends in a cell whose next is End (the edge or a dry pit), so
+        // their discharges sum to all the rain (3 per cell) (N9).
+        let (_, global) = case(world);
+        let arriving: u64 = (0..world.w * world.h)
+            .filter(|&i| global(i % world.w, i / world.w) == Some(Next::End))
+            .map(|i| whole[i as usize])
+            .sum();
+        assert_eq!(arriving, 3 * world.w * world.h);
         assert!(whole.iter().any(|&q| q > 3 * 50), "the node's water flows on");
     }
 
@@ -1748,7 +1834,6 @@ mod tests {
 }
 ```
 
-(`OFFSETS` is unused in this test; drop it from the `use` if clippy complains.)
 
 - [ ] **Step 2: Run the tests to see them fail**
 
@@ -2011,6 +2096,8 @@ Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet worl
 Expected: 3 pass. Clippy clean.
 
 - [ ] **Step 5: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add crates/topography-core/src/world/water
@@ -2321,6 +2408,8 @@ Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet worl
 Expected: 3 pass. Clippy clean.
 
 - [ ] **Step 5: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add crates/topography-core/src/world/water
@@ -2697,6 +2786,8 @@ Expected: 2 pass. Clippy clean.
 
 - [ ] **Step 5: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add crates/topography-core/src/world/water
 git commit -m "feat(water): depression hierarchy from the joined spill graph, alike at every tiling
@@ -2800,6 +2891,18 @@ mod tests {
         assert_eq!(b.area_cells(&h, 0), 3);
         assert!(b.is_lake(&h, 0, 3), "3 m deep over 3 cells");
         assert!(!b.is_lake(&h, 0, 4), "smaller than the lake minimum: a pond");
+    }
+
+    #[test]
+    fn a_flat_with_an_outlet_is_never_a_closed_basin() {
+        // Leaf 1 is a flat at 5 m whose spill is its own level: zero depth, no supply (r = 0).
+        let (mut h, c) = handmade([0, 0], 7.0);
+        h.low[1] = 5.0;
+        let b = solve(&h, &c, true);
+        assert!(b.full[1], "zero depth: full by definition (R32)");
+        assert_eq!(b.node[1], 1, "a node with an outlet, so flow crosses it");
+        assert_eq!(b.level[1], 5.0);
+        assert!(!b.full[0], "leaf 0 has depth and no water: dry");
     }
 
     #[test]
@@ -3053,7 +3156,9 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Balance {
         sea: sea.clone(),
         top_of,
         taken: vec![false; nd],
-        full: vec![false; nd],
+        // A depression of zero depth (a flat with an outlet) holds no water: it is full from
+        // the start and drains on, whatever its r (R32, review N15).
+        full: (0..nd).map(|d| !sea[d] && h.spill[d] <= h.low[d]).collect(),
         own: vec![0; nd],
         pending: h.supply.clone(),
         to_sea: 0,
@@ -3162,9 +3267,11 @@ Add `mod balance;`.
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet world::water::balance`
-Expected: 7 pass. Clippy clean.
+Expected: 8 pass. Clippy clean.
 
 - [ ] **Step 5: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add crates/topography-core/src/world/water
@@ -3349,6 +3456,8 @@ Expected: 2 pass. Clippy clean.
 
 - [ ] **Step 5: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add crates/topography-core/src/world/water
 git commit -m "feat(water): route full ponds by a priority flood from their outlet
@@ -3381,14 +3490,15 @@ exact by the same proof.
 - Create: `crates/topography-core/src/world/water/contract.rs`
 - Create: `crates/topography-core/src/world/water/nodes.rs`
 - Modify: `crates/topography-core/src/world/water/mod.rs` (`mod contract; mod nodes;`)
+- Modify: `crates/topography-core/src/world/water/watershed.rs` (Step 6 extends its canyon probe)
 
 **Interfaces:**
 - Consumes: `watershed::{TileGraph, Edge, EDGE_KEY, drain, tile_graph}`, `hierarchy::{Hierarchy, NONE, build}`, `balance::{Balance, Counts, solve}`, `geom::UnionFind`, `store::Blob`.
 - Produces:
-  - `contract::Frag { h: Hierarchy, tree: Vec<u64>, size: Vec<u32> }` (`Blob`, `PartialEq`). Its leaves are the tile's candidate pits (not ring pits), with keys in `h.leaf_pit`; its metas are their settled merges. Each local depression knows its tree's key (the tree's smallest pit) and the number of pits in the tree. A tree's top has `parent == NONE` and spill +∞ until the global step sets it.
+  - `contract::Frag { h: Hierarchy, tree: Vec<u64>, size: Vec<u32>, ring_pit: Vec<(u64, u64)> }` (`Blob`, `PartialEq`) with `leaf(pit: u64) -> Option<u32>` and `ring_leaf(cell: u64) -> Option<u32>`. `ring_pit` keeps each ring cell's pre-contraction pit, so a path entering the tile reaches the right local leaf (B1). Its leaves are the tile's candidate pits (not ring pits), with keys in `h.leaf_pit`; its metas are their settled merges. Each local depression knows its tree's key (the tree's smallest pit) and the number of pits in the tree. A tree's top has `parent == NONE` and spill +∞ until the global step sets it.
   - `contract::contract(g: TileGraph) -> (TileGraph, Frag)`: the remapped graph (super-leaf keys in place of their pits; supplies summed, edges re-minimised, ring ends remapped) and the fragment.
   - `contract::min_pits(h: &Hierarchy) -> Vec<u64>` (the smallest pit key under each depression: its node key, R28).
-  - `contract::solve_local(frag: &Frag, spill: &BTreeMap<u64, f32>, extra: &[(u32, u64)], counts: &Counts) -> Balance`: the inside of the trees listed in `spill` (tree key → that super-leaf's global spill), with `extra` water poured into local leaves.
+  - `contract::Tops = BTreeMap<u64, (f32, [u64; 2])>` (tree key → its super-leaf's global spill and spill edge), `contract::with_spills(frag: &Frag, tops: &Tops) -> Hierarchy` (listed tops get the global spill and outlet, N7; unlisted ones −∞), `contract::solve_local(frag: &Frag, tops: &Tops, extra: &[(u32, u64)], counts: &Counts) -> Balance`: the inside of the listed trees, with `extra` water poured into local leaves. `counts` must hold every cell the listed trees hold, from every tile (B2; Task 9 decides where).
   - `nodes::Node { key: u64, level: f32, low: f32, full: bool, lake: bool, outlet: [u64; 2], cells: u64, vfill_mm: i64, need: u64, bbox: [u64; 4] }` and `nodes::Nodes(pub Vec<Node>)` (sorted by key; `Blob`, `PartialEq`) with `ordinal(key) -> Option<u32>`, `get(key) -> Option<&Node>`, `at(ordinal) -> &Node`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -3400,6 +3510,7 @@ exact by the same proof.
 mod tests {
     use super::*;
     use crate::world::water::geom::{Rect, World, tiles};
+    use crate::world::water::hierarchy::build;
     use crate::world::water::hierarchy::tests::{graph_for, rough};
     use crate::world::water::watershed::{drain, ordered, tile_graph};
 
@@ -3519,15 +3630,18 @@ pub(crate) struct Frag {
     pub h: Hierarchy,
     pub tree: Vec<u64>,
     pub size: Vec<u32>,
+    /// Ring cells draining to a candidate pit, with that pit as it was before the remap
+    /// (sorted by cell): a path entering the tile there reaches that pit's leaf (B1).
+    pub ring_pit: Vec<(u64, u64)>,
 }
 
 impl Blob for Frag {
     fn put(&self, e: &mut Enc) {
-        (self.h.clone(), self.tree.clone(), self.size.clone()).put(e);
+        (self.h.clone(), self.tree.clone(), self.size.clone(), self.ring_pit.clone()).put(e);
     }
     fn get(d: &mut Dec) -> Result<Self> {
-        let (h, tree, size) = Blob::get(d)?;
-        Ok(Self { h, tree, size })
+        let (h, tree, size, ring_pit) = Blob::get(d)?;
+        Ok(Self { h, tree, size, ring_pit })
     }
 }
 
@@ -3535,6 +3649,11 @@ impl Frag {
     /// The local leaf of a pit key, if it is a candidate of this tile.
     pub fn leaf(&self, pit: u64) -> Option<u32> {
         self.h.leaf_pit.binary_search(&pit).ok().map(|i| i as u32)
+    }
+    /// The local leaf a ring cell of this tile drains to, if a candidate pit.
+    pub fn ring_leaf(&self, cell: u64) -> Option<u32> {
+        let i = self.ring_pit.binary_search_by_key(&cell, |r| r.0).ok()?;
+        self.leaf(self.ring_pit[i].1)
     }
 }
 
@@ -3664,26 +3783,51 @@ pub(crate) fn contract(g: TileGraph) -> (TileGraph, Frag) {
         let e = low.entry(k).or_insert(z);
         *e = e.min(z);
     }
+    let ring_pit: Vec<(u64, u64)> = g
+        .ring
+        .iter()
+        .filter_map(|r| match r.end {
+            Next::Node(p) if slot(r.end).is_some() => Some((r.cell, p)),
+            _ => None,
+        })
+        .collect::<BTreeMap<u64, u64>>()
+        .into_iter()
+        .collect();
     let graph = TileGraph { ring, pits: low.into_iter().collect(), supply, edges, cycles: g.cycles };
-    (graph, Frag { h, tree, size })
+    (graph, Frag { h, tree, size, ring_pit })
 }
 
-/// Solves the inside of the trees in `spill` (tree key → the super-leaf's global spill). Their
-/// leaves get their own supply plus `extra` (local leaf, water poured in from outside); other
-/// trees are left dry. `counts` holds the tile's cells by local holding depression, with each
-/// top's spill set to its global spill.
-pub(crate) fn solve_local(frag: &Frag, spill: &BTreeMap<u64, f32>, extra: &[(u32, u64)], counts: &Counts) -> Balance {
+/// A tree's global facts, by tree key: its super-leaf's spill and spill edge.
+pub(crate) type Tops = BTreeMap<u64, (f32, [u64; 2])>;
+
+/// The fragment's hierarchy with each listed tree's top given its super-leaf's global spill
+/// and outlet (N7: a full top's node then matches the uncontracted run's), unlisted tops −∞ so
+/// `holding` finds nothing in them.
+pub(crate) fn with_spills(frag: &Frag, tops: &Tops) -> Hierarchy {
     let mut h = frag.h.clone();
     for d in 0..h.len() {
         if h.parent[d] == NONE {
-            if let Some(&s) = spill.get(&frag.tree[d]) {
-                h.spill[d] = s;
-                h.ocean_order.push(d as u32);
+            match tops.get(&frag.tree[d]) {
+                Some(&(spill, outlet)) => (h.spill[d], h.outlet[d]) = (spill, outlet),
+                None => h.spill[d] = f32::NEG_INFINITY,
             }
         }
     }
+    h
+}
+
+/// Solves the inside of the trees in `tops`. Their leaves get their own supply plus `extra`
+/// (local leaf, water poured in from outside); other trees are left dry. `counts` holds every
+/// cell the listed trees hold (from every tile) by local holding depression.
+pub(crate) fn solve_local(frag: &Frag, tops: &Tops, extra: &[(u32, u64)], counts: &Counts) -> Balance {
+    let mut h = with_spills(frag, tops);
+    for d in 0..h.len() {
+        if h.parent[d] == NONE && tops.contains_key(&frag.tree[d]) {
+            h.ocean_order.push(d as u32);
+        }
+    }
     for l in 0..h.leaves {
-        if !spill.contains_key(&frag.tree[l]) {
+        if !tops.contains_key(&frag.tree[l]) {
             h.supply[l] = 0;
         }
     }
@@ -3692,20 +3836,7 @@ pub(crate) fn solve_local(frag: &Frag, spill: &BTreeMap<u64, f32>, extra: &[(u32
     }
     solve(&h, counts, false)
 }
-
-/// The fragment's hierarchy with each listed tree's top spill set (for local holding).
-pub(crate) fn with_spills(frag: &Frag, spill: &BTreeMap<u64, f32>) -> Hierarchy {
-    let mut h = frag.h.clone();
-    for d in 0..h.len() {
-        if h.parent[d] == NONE {
-            h.spill[d] = spill.get(&frag.tree[d]).copied().unwrap_or(f32::NEG_INFINITY);
-        }
-    }
-    h
-}
 ```
-
-A tree that is not listed gets top spill −∞ in `with_spills`, so `holding` finds nothing there and its cells use the global hierarchy.
 
 `nodes.rs`:
 
@@ -3780,6 +3911,8 @@ Expected: 2 + 1 pass. Clippy clean.
 
 - [ ] **Step 5: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add crates/topography-core/src/world/water
 git commit -m "feat(water): exact per-tile contraction of settled depression trees and the node table
@@ -3805,9 +3938,9 @@ Expert review protocol. Real-terrain output: extend Task 5's canyon probe (`prob
 - Consumes: everything from Tasks 2–8b.
 - Produces:
   - `pipeline::Setup { world, nw_m: [f64; 2], spacing_m, tile: u64, threads: usize, classes: Option<Classes>, table: Table, rain: Rain, params: Params, contract: bool }` with `tiles()`, `cell_km2()`, `lake_min_cells() -> u64`, `centre(x, y) -> (f64, f64)`, `rain_units(core: Rect) -> Vec<u64>`, `supply(core: Rect) -> Result<Vec<u64>>`, `river_km2() -> f32`. `contract` is on in every real run; off only in the test that proves it changes nothing.
-  - `pipeline::Wet { Dry, Sea, Lake(u32), Pond(u32) }` (the `u32` is the node's ordinal in `Nodes`), `pipeline::Water { h: Hierarchy, resolver: Resolver, top: Vec<f32>, bal: Balance, minpit: Vec<u64>, nodes: Nodes, solved: Vec<u64> }`, `pipeline::Local { frag: Frag, h: Hierarchy, top: Vec<f32>, bal: Balance, minpit: Vec<u64>, solved: BTreeMap<u64, f32> }` (`Blob`; a tile's settled trees and the inside of those it solved, pass L), `pipeline::Model { water: Water, ponds: HashMap<u64, u8>, flow: Solved, cycles: u64, locals: Vec<Local> }` (`locals` filled only without a work directory; `Model::local(work, tag, i) -> Result<Local>` reads either).
+  - `pipeline::Wet { Dry, Sea, Lake(u32), Pond(u32) }` (the `u32` is the node's ordinal in `Nodes`), `pipeline::Water { h: Hierarchy, resolver: Resolver, top: Vec<f32>, bal: Balance, minpit: Vec<u64>, nodes: Nodes, solved: Vec<u64>, remote: Vec<Local>, remote_of: BTreeMap<u64, u32> }`, `pipeline::Local { frag: Frag, h: Hierarchy, top: Vec<f32>, bal: Balance, minpit: Vec<u64>, solved: Tops }` (`Blob`; a tile's settled trees and the inside of those solved apart) with `remap(Next) -> Next`, `solved_leaf(Next) -> Option<u32>` and `leaf_of_end(&Resolver, Next) -> Option<u32>` (follows an `Out` path to the tree's ring entry, B1), `pipeline::Model { water: Water, ponds: HashMap<u64, u8>, flow: Solved, cycles: u64, locals: Vec<Local> }` (`locals` filled only without a work directory; `Model::local(work, tag, i) -> Result<Local>` reads either, decoding the cached `(Local, Nodes, Vec<u64>)`, N6), `pipeline::crop<T: Copy>(win, values, core) -> Vec<T>` (shared, N16). Pass L solves a tree in its tile only when the tree's held cell count there equals the global one and every pour into it enters there; pass L2 solves the rest from cells and pours gathered in every tile (B2).
   - `pipeline::Rasters { level: Layer<f32>, node: Layer<u32>, discharge: Layer<f32>, flow: Layer<u8> }` with `Rasters::memory(World)` and `Rasters::files(World, dir: &Path, tag: &str) -> Result<Rasters>`. Encodings: `level` the water level where wet (sea 0, ponds their level), NaN dry; `node` 0 dry, 1 sea, `2 + ordinal` of the node in `Water::nodes` (R28; the same at any tiling); `discharge` km² at mean rain (f32); `flow` v2 bits (low 4 the receiver, 16 thalweg, 32 dry basin, 64 endorheic).
-  - `pipeline::model(s: &Setup, ground: &Layer<f32>, work: Option<&Work>, tag: &str, out: Option<&Rasters>) -> Result<Model>` with passes A (label graphs and contraction), B (global counts), L (settled trees solved in their tile), C (closed levels), D (ponds across tiles), E (flow reports), F (rasters).
+  - `pipeline::model(s: &Setup, ground: &Layer<f32>, work: Option<&Work>, tag: &str, out: Option<&Rasters>) -> Result<Model>` with passes A (label graphs and contraction), B (global counts), L (settled trees solved in their tile when wholly there), L2 (the other settled trees, from every tile's cells), C (closed levels), D (ponds across tiles), E (flow reports), F (rasters).
   - `pipeline::state(s, w: &Water, local: &Local, core, win, zw: &[f32]) -> TileState` and `TileState { core, z, dir, wet: Vec<Wet>, held: Vec<bool>, level: Vec<f32> }` (used again by breach, Task 11).
   - Test-only `testing::{terrain(World) -> Vec<f32>, classes(World) -> Vec<u8>, setup(World, tile: u64, river_km2: f64) -> Setup}`.
 
@@ -3859,6 +3992,7 @@ pub(crate) fn classes(world: World) -> Vec<u8> {
 pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
     let mut table = Table::parse(DEFAULT).expect("table");
     table.lake_min_m2 = 4.0;
+    let params = params(&table, 1.0, Some(river_km2));
     Setup {
         world,
         nw_m: [0.0, world.h as f64],
@@ -3868,7 +4002,7 @@ pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
         classes: Some(Classes { layer: Layer::memory(world, classes(world)), k: 1 }),
         table,
         rain: Rain::uniform(2.0),
-        params: params(1.0, Some(river_km2)),
+        params,
         contract: true,
     }
 }
@@ -3916,6 +4050,67 @@ mod tests {
             assert_eq!(f, wf, "flow, {at}");
             assert_eq!(m.water.nodes, wm.water.nodes, "nodes, {at}");
             assert_eq!(m.cycles, 0);
+        }
+    }
+
+    /// An arid (r = 0.1) closed basin with two pits inside tile x 32..48, y 16..32 of a 64 x 48
+    /// world, spilling east through a notch. `elongated`: its floor ramps west across the seam
+    /// at x = 32, so cells in the neighbouring tile are held by the settled tree (pass L2);
+    /// otherwise every held cell lies in the tile (pass L).
+    fn basin(elongated: bool) -> (Setup, Layer<f32>) {
+        let world = World { w: 64, h: 48 };
+        let z: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                let mut z = 25.0 + 0.01 * (50.0 - x) + ((i * 7919) % 13) as f32 * 0.001;
+                if x > 50.0 {
+                    z -= 2.0 * (x - 50.0);
+                }
+                let rx = if x < 40.0 && elongated { 14.0 } else { 6.0 };
+                let d2 = ((x - 40.0) / rx).powi(2) + ((y - 24.0) / 5.0).powi(2);
+                if d2 < 1.0 {
+                    z -= 5.0 * (1.0 - d2);
+                    for px in [38.0, 42.0] {
+                        z -= (-((x - px).powi(2) + (y - 24.0).powi(2)) / 2.0).exp();
+                    }
+                }
+                if y == 24.0 && x >= 44.0 {
+                    z = z.min(23.0 - 0.1 * (x - 44.0));
+                }
+                z
+            })
+            .collect();
+        let mut s = setup(world, 16, 1e-5);
+        s.classes = Some(Classes { layer: Layer::memory(world, vec![2; (world.w * world.h) as usize]), k: 1 });
+        (s, Layer::memory(world, z))
+    }
+
+    /// Pass L and L2 against the uncontracted whole (B2): a closed lake inside a settled tree,
+    /// once wholly in its tile and once holding cells across a seam.
+    #[test]
+    fn settled_trees_solved_in_their_tile_or_across_seams_match_the_whole() {
+        for elongated in [false, true] {
+            let run = |tile: u64, contract: bool| {
+                let (mut s, ground) = basin(elongated);
+                (s.tile, s.contract) = (tile, contract);
+                let r = Rasters::memory(s.world);
+                let m = model(&s, &ground, None, "m", Some(&r)).expect("model");
+                let bits = |v: Vec<f32>| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                (m, bits(r.level.to_vec().unwrap()), r.node.to_vec().unwrap(), bits(r.discharge.to_vec().unwrap()), r.flow.to_vec().unwrap())
+            };
+            let whole = run(64, false);
+            let tiled = run(16, true);
+            assert_eq!(tiled.1, whole.1, "levels, elongated {elongated}");
+            assert_eq!(tiled.2, whole.2, "labels, elongated {elongated}");
+            assert_eq!(tiled.3, whole.3, "discharge, elongated {elongated}");
+            assert_eq!(tiled.4, whole.4, "flow, elongated {elongated}");
+            assert_eq!(tiled.0.water.nodes, whole.0.water.nodes, "nodes (outlets included, N7)");
+            assert!(whole.0.water.nodes.0.iter().any(|n| !n.full && n.need > 0), "the basin holds a closed lake");
+            if elongated {
+                assert!(!tiled.0.water.remote.is_empty(), "the tree holds cells across the seam: pass L2");
+            } else {
+                assert!(tiled.0.water.remote.is_empty() && !tiled.0.water.solved.is_empty(), "solved in its tile");
+            }
         }
     }
 
@@ -4011,7 +4206,7 @@ impl Blob for Solved {
 //! one tile; water nodes are named by their smallest pit (R28), so nothing depends on the split.
 
 use super::balance::{Balance, Counts, TileCounts, count, holding, solve, top_spill};
-use super::contract::{Frag, contract, min_pits, solve_local, with_spills};
+use super::contract::{Frag, Tops, contract, min_pits, solve_local, with_spills};
 use super::flats;
 use super::flow::{Next, Report, Solved, accumulate, add_inflows, ends, solve as solve_flow};
 use super::geom::{Rect, World, tiles};
@@ -4096,8 +4291,12 @@ pub(crate) struct Water {
     pub minpit: Vec<u64>,
     /// Every node, global and settled in tiles, by key.
     pub nodes: Nodes,
-    /// Keys of super-leaves whose water was solved in their tile (sorted); they are not dry.
+    /// Keys of super-leaves whose inside was solved apart, in their tile or in pass L2
+    /// (sorted); they are not dry basins.
     pub solved: Vec<u64>,
+    /// Trees solved in pass L2 from cells of every tile (B2), and their index by tree key.
+    pub remote: Vec<Local>,
+    pub remote_of: BTreeMap<u64, u32>,
 }
 
 /// A tile's settled trees (pass A) and the inside of those it solves (pass L).
@@ -4109,8 +4308,8 @@ pub(crate) struct Local {
     pub top: Vec<f32>,
     pub bal: Balance,
     pub minpit: Vec<u64>,
-    /// Trees solved here: tree key → the super-leaf's global spill.
-    pub solved: BTreeMap<u64, f32>,
+    /// Trees solved in this `Local`: tree key → the super-leaf's global spill and spill edge.
+    pub solved: Tops,
 }
 
 impl Local {
@@ -4121,23 +4320,57 @@ impl Local {
             other => other,
         }
     }
-    /// The local leaf of an end inside a tree solved here.
+    /// The local leaf of an in-tile end inside a tree solved here.
     pub fn solved_leaf(&self, t: Next) -> Option<u32> {
         let Next::Node(p) = t else { return None };
         let l = self.frag.leaf(p)?;
         self.solved.contains_key(&self.frag.tree[l as usize]).then_some(l)
     }
+    /// The local leaf a cell's flow reaches in this tile's fragment, from the cell's own
+    /// in-tile end (pre-contraction), in any tile: an `Out` path is followed through the
+    /// resolver's ring ends until it enters this tile at a ring cell, whose pre-contraction pit
+    /// gives the leaf (B1). None when the path ends elsewhere.
+    pub fn leaf_of_end(&self, resolver: &Resolver, end: Next) -> Option<u32> {
+        let mut t = match end {
+            Next::Node(p) => return self.frag.leaf(p),
+            Next::Out(c) => c,
+            _ => return None,
+        };
+        loop {
+            if let Some(l) = self.frag.ring_leaf(t) {
+                return Some(l);
+            }
+            match resolver.ring_end(t)? {
+                Next::Out(c) => t = c,
+                _ => return None,
+            }
+        }
+    }
+    /// (held, node key and level) of a cell at `z` on local leaf `l` of a tree solved here.
+    fn water_at(&self, l: u32, z: f32) -> (bool, Option<(u64, f32)>) {
+        water_in(&self.h, &self.top, &self.bal, &self.minpit, l, z)
+    }
+}
+
+/// (held, node key and level) of a cell at `z` on `leaf` of a hierarchy (N16: one helper for
+/// the global, in-tile and remote cases).
+fn water_in(h: &Hierarchy, top: &[f32], bal: &Balance, minpit: &[u64], leaf: u32, z: f32) -> (bool, Option<(u64, f32)>) {
+    let h0 = holding(h, top, leaf, z);
+    let nd = if h0 == NONE { NONE } else { bal.node[h0 as usize] };
+    (h0 != NONE, (nd != NONE).then(|| (minpit[nd as usize], bal.level[nd as usize])))
 }
 
 impl Blob for Local {
     fn put(&self, e: &mut Enc) {
-        let solved: Vec<(u64, f32)> = self.solved.iter().map(|(&k, &v)| (k, v)).collect();
+        let solved: Vec<(u64, f32, u64, u64)> = self.solved.iter().map(|(&k, &(s, o))| (k, s, o[0], o[1])).collect();
         (self.frag.clone(), self.h.clone(), self.top.clone(), self.bal.clone(), (self.minpit.clone(), solved)).put(e);
     }
     fn get(d: &mut Dec) -> Result<Self> {
-        let (frag, h, top, bal, (minpit, solved)): (Frag, Hierarchy, Vec<f32>, Balance, (Vec<u64>, Vec<(u64, f32)>)) =
+        #[allow(clippy::type_complexity)]
+        let (frag, h, top, bal, (minpit, solved)): (Frag, Hierarchy, Vec<f32>, Balance, (Vec<u64>, Vec<(u64, f32, u64, u64)>)) =
             Blob::get(d)?;
-        Ok(Self { frag, h, top, bal, minpit, solved: solved.into_iter().collect() })
+        let solved = solved.into_iter().map(|(k, s, o0, o1)| (k, (s, [o0, o1]))).collect();
+        Ok(Self { frag, h, top, bal, minpit, solved })
     }
 }
 
@@ -4154,9 +4387,11 @@ pub(crate) struct Model {
 impl Model {
     pub fn local(&self, work: Option<&Work>, tag: &str, i: usize) -> Result<Local> {
         match work {
-            Some(w) => w.cached(&format!("{tag}/l/{i:05}"), || {
-                Err(AcquisitionError::Invalid("pass L result missing from the work directory".into()))
-            }),
+            Some(w) => Ok(w
+                .cached::<(Local, Nodes, Vec<u64>)>(&format!("{tag}/l/{i:05}"), || {
+                    Err(AcquisitionError::Invalid("pass L result missing from the work directory".into()))
+                })?
+                .0),
             None => Ok(self.locals[i].clone()),
         }
     }
@@ -4198,7 +4433,8 @@ pub(crate) struct TileState {
     pub level: Vec<f32>,
 }
 
-fn crop(win: Rect, zw: &[f32], core: Rect) -> Vec<f32> {
+/// The `core` part of a window's values (shared by every pass that reads a halo, N16).
+pub(crate) fn crop<T: Copy>(win: Rect, zw: &[T], core: Rect) -> Vec<T> {
     (0..core.cells())
         .map(|k| {
             let (x, y) = core.world_xy(k);
@@ -4213,7 +4449,8 @@ fn inside(b: [u64; 4], core: Rect) -> bool {
 
 /// Every core cell's water: sea (fill level at or below 0 m from the world edge), a node's
 /// water (lake or pond) where the ground is at or below its level, else dry. Cells of a tree
-/// this tile solved use its local hierarchy; all others the global one.
+/// solved apart (in its tile or in pass L2) use that tree's local hierarchy; all others the
+/// global one.
 pub(crate) fn state(s: &Setup, w: &Water, local: &Local, core: Rect, win: Rect, zw: &[f32]) -> TileState {
     let d = drain(s.world, win, zw, core);
     let z = crop(win, zw, core);
@@ -4225,18 +4462,21 @@ pub(crate) fn state(s: &Setup, w: &Water, local: &Local, core: Rect, win: Rect, 
             (wet[k], level[k]) = (Wet::Sea, 0.0);
             continue;
         }
-        // (node key, level) of the water over this cell, if any.
-        let water = if let Some(l) = local.solved_leaf(d.end[k]) {
-            let h0 = holding(&local.h, &local.top, l, z[k]);
-            held[k] = h0 != NONE;
-            let nd = if h0 == NONE { NONE } else { local.bal.node[h0 as usize] };
-            (nd != NONE).then(|| (local.minpit[nd as usize], local.bal.level[nd as usize]))
-        } else {
-            let h0 = holding(&w.h, &w.top, leaf, z[k]);
-            held[k] = h0 != NONE;
-            let nd = if h0 == NONE { NONE } else { w.bal.node[h0 as usize] };
-            (nd != NONE).then(|| (w.minpit[nd as usize], w.bal.level[nd as usize]))
+        // (held, node key and level) of the water over this cell: a tree solved in pass L2 (any
+        // tile), a tree solved in this tile, else the global hierarchy.
+        let remote = (leaf != NONE)
+            .then(|| w.remote_of.get(&w.resolver.leaf_pit[leaf as usize]))
+            .flatten()
+            .map(|&r| &w.remote[r as usize]);
+        let (is_held, water) = match (remote, local.solved_leaf(d.end[k])) {
+            (Some(r), _) => match r.leaf_of_end(&w.resolver, d.end[k]) {
+                Some(l) => r.water_at(l, z[k]),
+                None => (false, None),
+            },
+            (None, Some(l)) => local.water_at(l, z[k]),
+            (None, None) => water_in(&w.h, &w.top, &w.bal, &w.minpit, leaf, z[k]),
         };
+        held[k] = is_held;
         if let Some((key, lv)) = water {
             if z[k] <= lv {
                 let o = w.nodes.ordinal(key).expect("every node is in the table");
@@ -4283,6 +4523,44 @@ fn byte_of(w: &Water, st: &TileState, flat: &HashMap<u32, u8>, k: usize) -> u8 {
         Wet::Pond(o) if w.nodes.at(o).full => flat.get(&(k as u32)).copied().unwrap_or(0),
         _ => 0,
     }
+}
+
+/// Solves the listed trees of one tile's fragment from the cells they hold (local leaf, z, x,
+/// y; from every tile) and the water poured in (local leaf, amount); returns the `Local` and
+/// its nodes. Shared by the in-tile and the L2 cases.
+fn solve_trees(
+    frag: Frag,
+    tops: Tops,
+    cells: &[(u32, f32, u64, u64)],
+    extra: &[(u32, u64)],
+    min_cells: u64,
+) -> Result<(Local, Nodes)> {
+    let lh = with_spills(&frag, &tops);
+    let ltop = top_spill(&lh);
+    let mut t = TileCounts::new();
+    let mut held = Vec::new();
+    for &(l, z, x, y) in cells {
+        let h0 = holding(&lh, &ltop, l, z);
+        if h0 != NONE {
+            count(&mut t, h0, z, x, y);
+            held.push((h0, z));
+        }
+    }
+    let mut lbal = solve_local(&frag, &tops, extra, &Counts::dense(lh.len(), &[t]));
+    let gathered: Vec<(u32, f32)> = held
+        .iter()
+        .filter_map(|&(h0, z)| {
+            let nd = lbal.node[h0 as usize];
+            (nd != NONE && lbal.need[nd as usize] > 0).then_some((nd, z))
+        })
+        .collect();
+    lbal.set_closed_levels(&gathered)?;
+    let minpit = min_pits(&lh);
+    let nodes = (0..lh.len() as u32)
+        .filter(|&d| lbal.node[d as usize] == d)
+        .map(|d| node_of(&lh, &lbal, &minpit, d, min_cells))
+        .collect();
+    Ok((Local { frag, h: lh, top: ltop, bal: lbal, minpit, solved: tops }, Nodes(nodes)))
 }
 
 /// A node depression's row in the node table.
@@ -4373,87 +4651,163 @@ pub(crate) fn model(s: &Setup, ground: &Layer<f32>, work: Option<&Work>, tag: &s
     drop(counts);
 
     // L: a settled tree whose super-leaf holds water without being full keeps that water
-    // inside; the tile solves where it stands (exact: globally it was one leaf).
+    // inside, and its inside must be solved apart (globally it was one leaf). A tile solves
+    // such a tree itself only when every cell the tree holds lies in the tile (its count equals
+    // the global one) and every pour into it enters there; every other such tree goes to pass
+    // L2, which gathers its cells and pours from all tiles (B2). Exact either way.
     let min_cells = s.lake_min_cells();
-    let solved_parts: Vec<(Vec<u64>, Vec<Node>, Local)> = for_tiles(&tiles, s.threads, &format!("{tag} L"), |i, core| {
-        let (local, nodes) = cached(work, &format!("{tag}/l/{i:05}"), || {
+    let pours_into = |sl: u32| {
+        let from = bal.pours.partition_point(|p| p.0 < sl);
+        bal.pours[from..].iter().take_while(move |p| p.0 == sl)
+    };
+    let wanted = |frag: &Frag| -> Tops {
+        (0..frag.h.len())
+            .filter(|&d| frag.h.parent[d] == NONE && frag.size[d] >= 2)
+            .filter_map(|d| {
+                let sl = resolver.leaf_index(frag.tree[d]) as usize;
+                (bal.node[sl] == sl as u32 && !bal.full[sl]).then_some((frag.tree[d], (h.spill[sl], h.outlet[sl])))
+            })
+            .collect()
+    };
+    #[allow(clippy::type_complexity)]
+    let part_l: Vec<(Vec<u64>, Vec<u64>, Vec<Node>, Local)> = for_tiles(&tiles, s.threads, &format!("{tag} L"), |i, core| {
+        let (local, nodes, remote) = cached(work, &format!("{tag}/l/{i:05}"), || {
             let frag = frag_at(i)?;
-            let mut solved = BTreeMap::new();
-            for d in 0..frag.h.len() {
-                if frag.h.parent[d] == NONE && frag.size[d] >= 2 {
-                    let sl = resolver.leaf_index(frag.tree[d]) as usize;
-                    if bal.node[sl] == sl as u32 && !bal.full[sl] {
-                        solved.insert(frag.tree[d], h.spill[sl]);
-                    }
-                }
-            }
-            if solved.is_empty() {
-                return Ok((Local { frag, ..Default::default() }, Nodes::default()));
+            let want = wanted(&frag);
+            if want.is_empty() {
+                return Ok((Local { frag, ..Default::default() }, Nodes::default(), Vec::new()));
             }
             let (win, zw) = read(core)?;
             let d = drain(world, win, &zw, core);
-            let lh = with_spills(&frag, &solved);
-            let ltop = top_spill(&lh);
-            let mut local = Local { frag, h: lh, top: ltop, solved, ..Default::default() };
-            let mut t = TileCounts::new();
-            let mut held = Vec::new();
+            let probe = Local { frag: frag.clone(), solved: want.clone(), ..Default::default() };
+            let mut cells: BTreeMap<u64, Vec<(u32, f32, u64, u64)>> = BTreeMap::new();
             for k in 0..core.cells() {
-                let Some(l) = local.solved_leaf(d.end[k]) else { continue };
+                let Some(l) = probe.solved_leaf(d.end[k]) else { continue };
+                let key = frag.tree[l as usize];
                 let (x, y) = core.world_xy(k);
                 let z = zw[win.local(x, y).expect("in")];
-                let h0 = holding(&local.h, &local.top, l, z);
-                if h0 != NONE {
-                    count(&mut t, h0, z, x, y);
-                    held.push((h0, z));
+                if z <= want[&key].0 {
+                    cells.entry(key).or_default().push((l, z, x, y));
                 }
             }
-            // Water poured into a solved super-leaf enters at its entry cell's local leaf.
-            let mut extra = Vec::new();
-            for &key in local.solved.keys() {
+            let (mut here, mut remote, mut extra) = (Tops::new(), Vec::new(), Vec::new());
+            for (&key, &top_info) in &want {
                 let sl = resolver.leaf_index(key);
-                let from = bal.pours.partition_point(|p| p.0 < sl);
-                for &(_, cell, amount) in bal.pours[from..].iter().take_while(|p| p.0 == sl) {
+                let mut inside = cells.get(&key).map_or(0, Vec::len) as u64 == bal.n[sl as usize];
+                let mut entries = Vec::new();
+                for &(_, cell, amount) in pours_into(sl) {
                     let (cx, cy) = world.xy(cell);
-                    let k = core.local(cx, cy).expect("a pour enters its super-leaf in its own tile");
-                    extra.push((local.solved_leaf(d.end[k]).expect("the entry cell drains into the tree"), amount));
+                    match core.local(cx, cy).and_then(|k| probe.leaf_of_end(&resolver, d.end[k])) {
+                        Some(l) => entries.push((l, amount)),
+                        None => inside = false,
+                    }
+                }
+                if inside {
+                    here.insert(key, top_info);
+                    extra.extend(entries);
+                } else {
+                    remote.push(key);
                 }
             }
-            let mut lbal = solve_local(&local.frag, &local.solved, &extra, &Counts::dense(local.h.len(), &[t]));
-            let gathered: Vec<(u32, f32)> = held
-                .iter()
-                .filter_map(|&(h0, z)| {
-                    let nd = lbal.node[h0 as usize];
-                    (nd != NONE && lbal.need[nd as usize] > 0).then_some((nd, z))
-                })
-                .collect();
-            lbal.set_closed_levels(&gathered)?;
-            local.minpit = min_pits(&local.h);
-            let nodes = (0..local.h.len() as u32)
-                .filter(|&d| lbal.node[d as usize] == d)
-                .map(|d| node_of(&local.h, &lbal, &local.minpit, d, min_cells))
-                .collect();
-            local.bal = lbal;
-            Ok((local, Nodes(nodes)))
+            if here.is_empty() {
+                return Ok((Local { frag, ..Default::default() }, Nodes::default(), remote));
+            }
+            let mine: Vec<(u32, f32, u64, u64)> = here.keys().flat_map(|k| cells.remove(k).unwrap_or_default()).collect();
+            let (local, nodes) = solve_trees(frag, here, &mine, &extra, min_cells)?;
+            Ok((local, nodes, remote))
         })?;
         let keys = local.solved.keys().copied().collect();
-        Ok((keys, nodes.0, if work.is_some() { Local::default() } else { local }))
+        Ok((keys, remote, nodes.0, if work.is_some() { Local::default() } else { local }))
     })?;
-    // A solved super-leaf is no global node: its water is its local nodes'.
-    let mut solved: Vec<u64> = solved_parts.iter().flat_map(|p| p.0.iter().copied()).collect();
+
+    // L2: the remaining trees, solved from the cells and pours of every tile.
+    let mut by_tile: BTreeMap<usize, Tops> = BTreeMap::new();
+    for (i, p) in part_l.iter().enumerate() {
+        for &key in &p.1 {
+            let sl = resolver.leaf_index(key) as usize;
+            by_tile.entry(i).or_default().insert(key, (h.spill[sl], h.outlet[sl]));
+        }
+    }
+    let mut remote: Vec<Local> = Vec::new();
+    let mut remote_of: BTreeMap<u64, u32> = BTreeMap::new();
+    let mut remote_nodes: Vec<Node> = Vec::new();
+    if !by_tile.is_empty() {
+        let probes: Vec<Local> = by_tile
+            .iter()
+            .map(|(&i, tops)| Ok(Local { frag: frag_at(i)?, solved: tops.clone(), ..Default::default() }))
+            .collect::<Result<_>>()?;
+        for (r, p) in probes.iter().enumerate() {
+            for &key in p.solved.keys() {
+                remote_of.insert(key, r as u32);
+            }
+        }
+        #[allow(clippy::type_complexity)]
+        let gathered: Vec<(Vec<(u64, u32, f32, u64, u64)>, Vec<(u64, u32, u64)>)> =
+            for_tiles(&tiles, s.threads, &format!("{tag} L2"), |i, core| {
+                cached(work, &format!("{tag}/l2/{i:05}"), || {
+                    let (win, zw) = read(core)?;
+                    let d = drain(world, win, &zw, core);
+                    let own = Local { frag: frag_at(i)?, ..Default::default() };
+                    let lost = || AcquisitionError::Invalid("a cell of a remote tree does not reach it".into());
+                    let mut cells = Vec::new();
+                    for k in 0..core.cells() {
+                        let sl = resolver.leaf_of(own.remap(d.end[k]));
+                        if sl == NONE {
+                            continue;
+                        }
+                        let key = resolver.leaf_pit[sl as usize];
+                        let Some(&r) = remote_of.get(&key) else { continue };
+                        let (x, y) = core.world_xy(k);
+                        let z = zw[win.local(x, y).expect("in")];
+                        if z <= h.spill[sl as usize] {
+                            let l = probes[r as usize].leaf_of_end(&resolver, d.end[k]).ok_or_else(lost)?;
+                            cells.push((key, l, z, x, y));
+                        }
+                    }
+                    let mut pours = Vec::new();
+                    for (&key, &r) in &remote_of {
+                        for &(_, cell, amount) in pours_into(resolver.leaf_index(key)) {
+                            let (cx, cy) = world.xy(cell);
+                            if let Some(k) = core.local(cx, cy) {
+                                let l = probes[r as usize].leaf_of_end(&resolver, d.end[k]).ok_or_else(lost)?;
+                                pours.push((key, l, amount));
+                            }
+                        }
+                    }
+                    Ok((cells, pours))
+                })
+            })?;
+        for p in probes {
+            let mine: Vec<(u32, f32, u64, u64)> = gathered
+                .iter()
+                .flat_map(|g| g.0.iter())
+                .filter(|c| p.solved.contains_key(&c.0))
+                .map(|c| (c.1, c.2, c.3, c.4))
+                .collect();
+            let extra: Vec<(u32, u64)> =
+                gathered.iter().flat_map(|g| g.1.iter()).filter(|c| p.solved.contains_key(&c.0)).map(|c| (c.1, c.2)).collect();
+            let (local, nodes) = solve_trees(p.frag, p.solved, &mine, &extra, min_cells)?;
+            remote_nodes.extend(nodes.0);
+            remote.push(local);
+        }
+    }
+
+    // A super-leaf solved apart is no global node: its water is its local nodes'.
+    let mut solved: Vec<u64> = part_l.iter().flat_map(|p| p.0.iter().chain(&p.1).copied()).collect();
     solved.sort_unstable();
     for &k in &solved {
         let sl = resolver.leaf_index(k) as usize;
         (bal.node[sl], bal.need[sl]) = (NONE, 0);
     }
-    let mut table: Vec<Node> = Vec::new();
+    let mut table: Vec<Node> = remote_nodes;
     let mut mem_locals: Vec<Local> = Vec::new();
-    for (_, nodes, local) in solved_parts {
+    for (_, _, nodes, local) in part_l {
         table.extend(nodes);
         mem_locals.push(local);
     }
     let local_of = |i: usize| -> Result<Local> {
         match work {
-            Some(wk) => Ok(wk.cached::<(Local, Nodes)>(&format!("{tag}/l/{i:05}"), || Err(missing("pass L")))?.0),
+            Some(wk) => Ok(wk.cached::<(Local, Nodes, Vec<u64>)>(&format!("{tag}/l/{i:05}"), || Err(missing("pass L")))?.0),
             None => Ok(mem_locals[i].clone()),
         }
     };
@@ -4493,7 +4847,7 @@ pub(crate) fn model(s: &Setup, ground: &Layer<f32>, work: Option<&Work>, tag: &s
     let minpit = min_pits(&h);
     table.extend((0..h.len() as u32).filter(|&d| bal.node[d as usize] == d).map(|d| node_of(&h, &bal, &minpit, d, min_cells)));
     table.sort_unstable_by_key(|n| n.key);
-    let water = Water { h, resolver, top, bal, minpit, nodes: Nodes(table), solved };
+    let water = Water { h, resolver, top, bal, minpit, nodes: Nodes(table), solved, remote, remote_of };
     let w = &water;
 
     // D: full ponds that cross tiles, solved once.
@@ -4624,12 +4978,14 @@ Note: results are cached as tuples, `(Hierarchy, Resolver)`, `(TileGraph, Frag)`
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet world::water::pipeline`
-Expected: 2 pass, 1 ignored. If the semantic test fails on the synthetic features (not on exactness), print `level`/`node` around the named cells and adjust the terrain function so the feature exists; never relax the exactness test. The exactness test covers contraction on and off (review C3); if it fails only with contraction on, the fault is in Task 8b's frontier or in pass L, not in the test. Add a rough-terrain case (Task 6's `rough`, 48 × 40) to this test if the synthetic world settles no tree with water inside (check by printing `solved_parts`' key counts once).
+Expected: 2 pass, 1 ignored. If the semantic test fails on the synthetic features (not on exactness), print `level`/`node` around the named cells and adjust the terrain function so the feature exists; never relax the exactness test. The exactness test covers contraction on and off (review C3), and `settled_trees_solved_in_their_tile_or_across_seams_match_the_whole` makes pass L and pass L2 run on an arid closed basin (B2). If either fails only with contraction on, the fault is in Task 8b's frontier or in passes L/L2, not in the test. If the basin case does not reach the pass it names (the `remote`/`solved` asserts), adjust `basin` (ridge, notch, r) until it does; never weaken the equality asserts.
 Run clippy. Expected: clean.
 Run the probe: `"${CAP6[@]}" cargo test --locked --offline -p topography-core world::water::pipeline::tests::probe_model_at_the_dam_spot -- --ignored --nocapture`
 Expected: counts printed, `scratch/hydrology-v3/probes/t9-dam-spot-water.png` written, cycles 0.
 
 - [ ] **Step 6: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add crates/topography-core/src/world/water
@@ -4650,7 +5006,7 @@ Expert review protocol. Real-terrain output: the probe printout and `t9-dam-spot
 - Modify: `crates/topography-core/src/world/water/mod.rs` (`mod bodies;`)
 
 **Interfaces:**
-- Consumes: `pipeline::{Setup, Water, Rasters}`, `flow::{Next, ends}`, `store::{Work, cached, for_tiles}`, `geom::{OFFSETS, step_len}`.
+- Consumes: `pipeline::{Setup, Water, Rasters}`, `flow::{Next, ends}`, `store::{Work, cached, for_tiles}`, `geom::{OFFSETS, Rect, World}`.
 - Produces:
   - `bodies::main_up(world, win: Rect, flow: &[u8], q: &[f32], x, y) -> Option<u64>`: the thalweg neighbour draining into (x, y) with the largest discharge (ties: smaller world index).
   - `bodies::label(s: &Setup, w: &Water, r: &Rasters, body: &Layer<u32>, pools: &BTreeMap<u64, u64>, work: Option<&Work>, tag: &str) -> Result<Value>`: writes `body` (0 none, 1 sea, lake ids, river ids on thalweg cells, and on the cells of the pools in `pools` (node key → outlet cell, R26) the id of the river leaving them) and returns the `bodies.json` value. Lake ids follow node keys (R28), so they are the same at any tiling. `bodies::pools` (which nodes are river pools) comes in Task 11, which has the hydraulic geometry; Task 10's tests pass an empty map.
@@ -5002,6 +5358,8 @@ Expected: 2 pass. Clippy clean.
 
 - [ ] **Step 5: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add crates/topography-core/src/world/water
 git commit -m "feat(water): main-stem river bodies, body ids and the v2-shaped body list
@@ -5022,13 +5380,14 @@ Expert review protocol. Real-terrain output: extend the Task 9 probe (copy it as
 - Create: `crates/topography-core/src/world/water/breach.rs`
 - Modify: `crates/topography-core/src/world/water/mod.rs` (`mod hydraulic; mod breach;`)
 - Modify: `crates/topography-core/src/world/water/bodies.rs` (add `pools`)
+- Modify: `crates/topography-core/src/world/water/store.rs` (`blob_num!(f64)`)
 
 **Interfaces:**
-- Consumes: `pipeline::{Setup, Model}`, `nodes::Nodes`, `receivers::receivers`, `balance::mm`, `store`, `BREACH_RADIUS`, `GORGE_RATIO`, `CHANNEL_CAP_M`, `Table::m3s_per_km2`.
+- Consumes: `pipeline::{Setup, Model}`, `nodes::Nodes`, `receivers::receivers`, `balance::mm`, `store`, `pipeline::crop`, `Params::{breach_cap_m, breach_radius}`, `GORGE_RATIO`, `CHANNEL_CAP_M`, `Table::m3s_per_km2`.
 - Produces:
   - `hydraulic::Geometry { m3s_per_km2: f64 }` with `new(m3s_per_km2: f64)` (the table's game setting, R5: 0.56), `width_m(q_km2: f64) -> f64` (3·Q^0.5), `depth_m(q_km2: f64) -> f32` (0.3·Q^0.4, at most 2 m).
   - `bodies::pools(s: &Setup, m: &Model, geo: &Geometry) -> BTreeMap<u64, u64>`: river pools (R26), node key → outlet cell: full lake nodes with inflow ≥ the river start and area below 20 · w(Q)².
-  - `breach::Candidate { key: u64, inside: u64, outside: u64, vfill_mm: i64, half: u64, cap: f32 }`, `breach::candidates(s: &Setup, m: &Model, geo: &Geometry) -> Vec<Candidate>`. The cap is `breach_cap_m` (2 m at 1 m) for every river (review I1).
+  - `breach::Candidate { key: u64, inside: u64, outside: u64, vfill_mm: i64, half: u64, cap: f32, radius: u64 }` (`Copy`), `breach::candidates(s: &Setup, m: &Model, geo: &Geometry) -> Vec<Candidate>`. The cap is `breach_cap_m` (2 m at 1 m) for every river (review I1).
   - `breach::Gorge { key: u64, cut: Vec<(u64, f32)>, depth: f32, volume_mm: i64, length_m: f64 }`, `breach::gorge(world, win, zw: &[f32], c: &Candidate, spacing_m: f64) -> Option<Gorge>`. The cross-section is a Euclidean disc of radius `half + 1` cells around each path cell with a parabolic bed: the line at the centre, rising to the ground at the edge (review M1).
   - `breach::breach(s, m, ground: &Layer<f32>, out: &Layer<f32>, geo: &Geometry, work: Option<&Work>, tag: &str) -> Result<Value>` (writes the breached ground, returns the breach figures: count, deepest cut, total volume in m³, the 20 deepest with their cells).
 
@@ -5067,16 +5426,22 @@ mod tests {
     use crate::world::water::testing::{setup, terrain};
 
     /// A V valley falling east 5 cm a cell, dammed at x = 40 by a one-cell wall `dam` m high.
-    fn dammed(dam: f32) -> (World, Vec<f32>) {
-        let world = World { w: 100, h: 21 };
+    /// A V valley `w` cells long falling east 5 cm a cell, walled at its west end (so the pond
+    /// can only leave over the dam, N8) and dammed at `at` by a one-cell wall `dam` m high.
+    fn dammed_at(w: u64, at: f32, dam: f32) -> (World, Vec<f32>) {
+        let world = World { w, h: 21 };
         let z = (0..world.w * world.h)
             .map(|i| {
                 let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
-                let v = 10.0 - 0.05 * x + 0.5 * (y - 10.0).abs();
-                if x == 40.0 && (y - 10.0).abs() <= 6.0 { 10.0 - 0.05 * 39.0 + dam } else { v }
+                let v = 10.0 - 0.05 * x + 0.5 * (y - 10.0).abs() + if x <= 1.0 { 30.0 } else { 0.0 };
+                if x == at && (y - 10.0).abs() <= 6.0 { 10.0 - 0.05 * (at - 1.0) + dam } else { v }
             })
             .collect();
         (world, z)
+    }
+
+    fn dammed(dam: f32) -> (World, Vec<f32>) {
+        dammed_at(100, 40.0, dam)
     }
 
     fn the_candidate(world: World, z: &[f32], cap: f32) -> (Candidate, Rect) {
@@ -5104,9 +5469,16 @@ mod tests {
 
     #[test]
     fn a_dam_above_the_cap_or_worth_less_than_its_cut_stays() {
-        let (world, z) = dammed(3.0);
+        let (world, z) = dammed(2.5);
         let (c, all) = the_candidate(world, &z, 2.0);
-        assert!(gorge(world, all, &z, &c, 1.0).is_none(), "3 m dam, 2 m cap");
+        // The pond leaves over the dam, not off the map: the cap is what refuses it.
+        let (ix, _) = world.xy(c.inside);
+        let (ox, _) = world.xy(c.outside);
+        assert!((39..=41).contains(&ix) && (39..=41).contains(&ox), "outlet at the dam: {ix} {ox}");
+        assert!(gorge(world, all, &z, &c, 1.0).is_none(), "a 2.55 m cut, 2 m cap");
+        let mut wide = c;
+        wide.cap = 3.0;
+        assert!(gorge(world, all, &z, &wide, 1.0).is_some(), "the same dam is cut under a 3 m cap");
         let (world, z) = dammed(1.0);
         let (mut c, all) = the_candidate(world, &z, 2.0);
         c.vfill_mm = 1;
@@ -5115,17 +5487,25 @@ mod tests {
 
     #[test]
     fn breaching_is_alike_at_every_tiling() {
-        let world = World { w: 64, h: 64 };
-        let ground = Layer::memory(world, terrain(world));
+        // A dam on the tile seam at x = 64; a breach radius of 24 keeps the windows (tile + 27)
+        // smaller than the world, so the gorge is cut across tiles (N9).
+        let (world, z) = dammed_at(128, 64.0, 1.0);
+        let ground = Layer::memory(world, z.clone());
         let mut out = Vec::new();
-        for tile in [64, 16] {
-            let s = setup(world, tile, 1e-5);
+        for tile in [128, 32] {
+            let mut s = setup(world, tile, 1e-5);
+            s.classes = None;
+            s.params.breach_radius = 24;
             let m = model(&s, &ground, None, "m", Some(&Rasters::memory(world))).expect("model");
             let breached = Layer::filled(world, 0.0f32);
-            breach(&s, &m, &ground, &breached, &Geometry::new(2.0), None, "b").expect("breach");
-            out.push(breached.to_vec().unwrap().iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+            let figures = breach(&s, &m, &ground, &breached, &Geometry::new(2.0), None, "b").expect("breach");
+            assert_eq!(figures["breaches"], 1, "tile {tile}");
+            out.push(breached.to_vec().unwrap());
         }
-        assert_eq!(out[0], out[1]);
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&out[0]), bits(&out[1]));
+        let cut: Vec<u64> = (0..z.len()).filter(|&k| out[1][k] < z[k]).map(|k| k as u64 % 128).collect();
+        assert!(cut.iter().any(|&x| x < 64) && cut.iter().any(|&x| x >= 64), "the gorge crosses the seam");
     }
 }
 ```
@@ -5170,19 +5550,21 @@ impl Geometry {
 //! gorge drains it for less volume than it would hold: the gorge runs from the depression's
 //! pit up its receivers to the spill and down the outlet's receivers to the first cell below
 //! the pit; its bed falls linearly over at least GORGE_RATIO × its deepest cut, it is at least
-//! 3 cells wide, and its deepest cut stays within the cap (at 1 m: 2 m less the channel's
-//! depth, and only for depressions a river flows into). Otherwise the depression keeps its
-//! water. Gorges lie within BREACH_RADIUS cells of their spill, so every tiling decides alike.
+//! 3 cells wide, and its deepest cut stays within the level's breach cap (at 1 m the 2 m
+//! channel cap for every river, R9; the channels' raw − 2 m clamp keeps breach plus channel
+//! within it; and only depressions a river flows into). Otherwise the depression keeps its
+//! water. Gorges lie within `Params::breach_radius` cells of their spill, so every tiling
+//! decides alike.
 
+use super::GORGE_RATIO;
 use super::balance::mm;
 use super::geom::{Rect, World, step_len};
 use super::hydraulic::Geometry;
 use super::layers::Layer;
-use super::pipeline::{Model, Setup};
+use super::pipeline::{Model, Setup, crop};
 use super::rain::Q_PER_KM2;
 use super::receivers::receivers;
 use super::store::{Work, for_tiles};
-use super::{BREACH_RADIUS, GORGE_RATIO};
 use crate::acquisition::Result;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -5197,6 +5579,8 @@ pub(crate) struct Candidate {
     /// Gorge half-width in cells (at least 1: 3 cells wide).
     pub half: u64,
     pub cap: f32,
+    /// Gorge cells lie within this many cells of `inside`.
+    pub radius: u64,
 }
 
 /// Full nodes (never sea: sea is no node); at 1 m only those a river flows into. The cap is
@@ -5226,6 +5610,7 @@ pub(crate) fn candidates(s: &Setup, m: &Model, geo: &Geometry) -> Vec<Candidate>
                 vfill_mm: n.vfill_mm,
                 half,
                 cap: s.params.breach_cap_m,
+                radius: s.params.breach_radius,
             })
         })
         .collect()
@@ -5245,7 +5630,7 @@ pub(crate) fn gorge(world: World, win: Rect, zw: &[f32], c: &Candidate, spacing_
     // Within the radius, with the 3 x 3 block receivers need inside the window.
     let near = |cell: u64| {
         let (x, y) = world.xy(cell);
-        x.abs_diff(ix).max(y.abs_diff(iy)) <= BREACH_RADIUS
+        x.abs_diff(ix).max(y.abs_diff(iy)) <= c.radius
             && win.contains(x.saturating_sub(1), y.saturating_sub(1))
             && win.contains((x + 1).min(world.w - 1), (y + 1).min(world.h - 1))
     };
@@ -5344,7 +5729,7 @@ pub(crate) fn gorge(world: World, win: Rect, zw: &[f32], c: &Candidate, spacing_
 pub(crate) fn breach(s: &Setup, m: &Model, ground: &Layer<f32>, out: &Layer<f32>, geo: &Geometry, work: Option<&Work>, tag: &str) -> Result<Value> {
     let world = s.world;
     let cands = candidates(s, m, geo);
-    let reach = BREACH_RADIUS + cands.iter().map(|c| c.half).max().unwrap_or(1) + 2;
+    let reach = s.params.breach_radius + cands.iter().map(|c| c.half).max().unwrap_or(1) + 2;
     let halo = reach + 1;
     let per_tile: Vec<Vec<(u64, f32, i64, f64, u64)>> = for_tiles(&s.tiles(), s.threads, &format!("{tag} breach"), |i, core| {
         let name = format!("{tag}/breach/{i:05}");
@@ -5355,7 +5740,7 @@ pub(crate) fn breach(s: &Setup, m: &Model, ground: &Layer<f32>, out: &Layer<f32>
         }
         let win = core.grow(halo, world);
         let zw = ground.read(win)?;
-        let mut new: Vec<f32> = (0..core.cells()).map(|k| { let (x, y) = core.world_xy(k); zw[win.local(x, y).expect("in")] }).collect();
+        let mut new: Vec<f32> = crop(win, &zw, core);
         let reach_rect = core.grow(reach, world);
         let mut figures = Vec::new();
         for c in &cands {
@@ -5456,6 +5841,8 @@ Expected: 1 + 3 pass. If `the_candidate` finds no candidate, print `candidates()
 
 - [ ] **Step 6: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add crates/topography-core/src/world/water
 git commit -m "feat(water): hydraulic geometry and breach-or-fill with graded gorges
@@ -5477,7 +5864,7 @@ Expert review protocol. Real-terrain output: an `#[ignore]` probe `probe_breach_
 **Interfaces:**
 - Consumes: `pipeline::{Setup, Water, Rasters, model}`, `nodes::Nodes`, `bodies::{label, pools}`, `breach::breach`, `hydraulic::Geometry`, `hydrology::grid::shape`, `acquisition::read_small`.
 - Produces:
-  - `channel::{HALO = 64, CORRIDOR = 8}`, `channel::Layers { carved: Layer<f32>, surface: Layer<f32>, body: Layer<u32>, corridor: Layer<u8> }` with `memory(World)` and `files(World, dir)`, `channel::channels(s, w: &Water, raw: &Layer<f32>, ground: &Layer<f32>, r: &Rasters, body: &Layer<u32>, out: &Layers, geo: &Geometry, work, tag) -> Result<Value>`. `corridor`: 0 outside, 1 dry corridor cell (the relaxation may lower it), 2 lowered river cell.
+  - `channel::{HALO = 64, CORRIDOR = 8, BACKWATER = 16}` (a tributary's surface is raised to the river it flows into for up to BACKWATER cells upstream, N18), `channel::Layers { carved: Layer<f32>, surface: Layer<f32>, body: Layer<u32>, corridor: Layer<u8> }` with `memory(World)` and `files(World, dir)`, `channel::channels(s, w: &Water, raw: &Layer<f32>, ground: &Layer<f32>, r: &Rasters, body: &Layer<u32>, out: &Layers, geo: &Geometry, work, tag) -> Result<Value>`. `corridor`: 0 outside, 1 dry corridor cell (the relaxation may lower it), 2 lowered river cell.
   - `water::Options { grid: PathBuf, work: PathBuf, tile: u64, threads: usize, water: Option<PathBuf>, river_km2: Option<f64> }` and `water::run(&Options) -> Result<String>`: the stages model → breach → model → pools and bodies → channels into the work directory (hydraulic geometry from the table's `m3s_per_km2`). `stages.json` also holds the node area and depth histograms and the leaf, settled-tree and node counts (review C2.4, C3). Work files: `breached.f32`, `m2-level.f32`, `m2-node.u32`, `m2-discharge.f32`, `m2-flow.u8`, `body.u32`, `carved.f32`, `water-surface.f32`, `water-body.u32`, `corridor.u8`, `bodies.json`, `stages.json` (figures), `stamp.json`.
   - `water::setup(grid: &Path, tile, threads, water: Option<&Path>, river_km2) -> Result<(Setup, Layer<f32>, Value)>` (the setup, the raw ground and the resume stamp).
 
@@ -5495,16 +5882,23 @@ mod tests {
     use crate::world::water::pipeline::{Rasters, model};
     use crate::world::water::testing::{setup, terrain};
 
+    /// The synthetic world at 256²: with 32-cell tiles a window (tile + 2 · 88) is smaller than
+    /// the world, so window edges fall among the rivers (N9).
     fn run(tile: u64) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<u8>, Vec<u8>) {
-        let world = World { w: 64, h: 64 };
+        let world = World { w: 256, h: 256 };
+        run_on(world, terrain(world), tile)
+    }
+
+    fn run_on(world: World, z: Vec<f32>, tile: u64) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<u8>, Vec<u8>) {
         let s = setup(world, tile, 1e-5);
-        let raw = Layer::memory(world, terrain(world));
+        let raw = Layer::memory(world, z);
         let r = Rasters::memory(world);
         let m = model(&s, &raw, None, "m", Some(&r)).expect("model");
         let body = Layer::filled(world, 0u32);
         label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
         let out = Layers::memory(world);
-        // Wide channels on a small grid: 1e4 m³/s per km².
+        // Wide channels on a small grid: 3.6e4 m³/s per km² (radii up to about 25 cells, inside
+        // HALO with BACKWATER and CORRIDOR).
         let geo = Geometry::new(3.6e4);
         channels(&s, &m.water, &raw, &raw, &r, &body, &out, &geo, None, "c").expect("channels");
         (raw.to_vec().unwrap(), out.carved.to_vec().unwrap(), out.surface.to_vec().unwrap(),
@@ -5513,7 +5907,7 @@ mod tests {
 
     #[test]
     fn only_river_cells_are_lowered_and_never_past_the_cap() {
-        let (raw, carved, surface, body, corridor, _) = run(16);
+        let (raw, carved, surface, body, corridor, _) = run(32);
         let mut lowered = 0;
         for k in 0..raw.len() {
             assert!(carved[k] <= raw[k], "raised at {k}");
@@ -5528,15 +5922,14 @@ mod tests {
         assert!(corridor.iter().any(|&c| c == 1));
     }
 
-    #[test]
-    fn river_surfaces_never_rise_downstream() {
-        let (_, _, surface, _, _, flow) = run(16);
-        for k in 0..surface.len() {
-            if flow[k] & 16 == 0 {
+    /// Every wet cell with a receiver: the receiver's surface is not higher.
+    fn assert_no_rise(w: usize, surface: &[f32], flow: &[u8]) {
+        for (k, &f) in flow.iter().enumerate() {
+            if f & 15 == 0 || !surface[k].is_finite() {
                 continue;
             }
-            let (dy, dx) = OFFSETS[(flow[k] & 15) as usize - 1];
-            let j = ((k / 64) as i64 + dy) as usize * 64 + ((k % 64) as i64 + dx) as usize;
+            let (dy, dx) = OFFSETS[(f & 15) as usize - 1];
+            let j = ((k / w) as i64 + dy) as usize * w + ((k % w) as i64 + dx) as usize;
             if surface[j].is_finite() {
                 assert!(surface[j] <= surface[k] + 1e-5, "rises from {k} to {j}");
             }
@@ -5544,9 +5937,37 @@ mod tests {
     }
 
     #[test]
+    fn river_surfaces_never_rise_downstream() {
+        let (_, _, surface, _, _, flow) = run(32);
+        assert_no_rise(256, &surface, &flow);
+    }
+
+    #[test]
+    fn a_tributary_meets_a_larger_river_at_its_surface() {
+        // A trunk valley along row 40 falling east, a tributary valley down column 80 from the
+        // north, joining it; the trunk's section is wide (3.6e4 m³/s per km²), so the tributary's
+        // last cells lie inside it (N18).
+        let world = World { w: 256, h: 80 };
+        let z: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                let trunk = 50.0 - 0.1 * x + 0.3 * (y - 40.0).abs() + ((i * 7919) % 7) as f32 * 0.002;
+                let trib = if y < 40.0 { 50.0 - 0.1 * 80.0 + 0.05 * (40.0 - y) + 0.3 * (x - 80.0).abs() } else { f32::INFINITY };
+                trunk.min(trib)
+            })
+            .collect();
+        let (_, _, surface, body, _, flow) = run_on(world, z, 32);
+        assert_no_rise(256, &surface, &flow);
+        // The tributary's cell next to the trunk thalweg carries the trunk's body (I3b).
+        let at = |x: usize, y: usize| y * 256 + x;
+        assert!(flow[at(80, 30)] & 16 != 0, "the tributary is a river");
+        assert_eq!(body[at(80, 39)], body[at(100, 40)], "it joins the trunk inside its section");
+    }
+
+    #[test]
     fn channels_are_alike_at_every_tiling() {
-        let a = run(64);
-        let b = run(16);
+        let a = run(256);
+        let b = run(32);
         let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
         assert_eq!(bits(&a.1), bits(&b.1));
         assert_eq!(bits(&a.2), bits(&b.2));
@@ -5633,6 +6054,9 @@ use std::path::Path;
 /// Window halo: the widest section's radius plus the corridor fits well inside it.
 pub(crate) const HALO: u64 = 64;
 pub(crate) const CORRIDOR: u64 = 8;
+/// A river cell's surface is raised to that of the river cell it flows into over at most
+/// this many cells upstream (N18). HALO covers the widest radius + BACKWATER + CORRIDOR.
+pub(crate) const BACKWATER: u64 = 16;
 
 pub(crate) struct Layers {
     pub carved: Layer<f32>,
@@ -5683,7 +6107,7 @@ pub(crate) fn channels(
             }
         }
         let win = core.grow(HALO + CORRIDOR, world);
-        let area = core.grow(CORRIDOR, world);
+        let area = core.grow(CORRIDOR + BACKWATER, world);
         let (g, rw) = (ground.read(win)?, raw.read(win)?);
         let (level, node, flow, q, bw) = (r.level.read(win)?, r.node.read(win)?, r.flow.read(win)?, r.discharge.read(win)?, body.read(win)?);
         // The thalweg every cell of `area` belongs to: (-discharge, distance², thalweg), least
@@ -5718,6 +6142,7 @@ pub(crate) fn channels(
         let is_lake = |j: usize| node[j] >= 2 && w.nodes.at(node[j] - 2).lake;
         let n = area.cells();
         let (mut carved, mut surface, mut ids, mut lowered) = (vec![0f32; n], vec![f32::NAN; n], vec![0u32; n], vec![false; n]);
+        let mut is_river = vec![false; n];
         for a in 0..n {
             let (x, y) = area.world_xy(a);
             let j = win.local(x, y).expect("area in window");
@@ -5751,6 +6176,30 @@ pub(crate) fn channels(
                 carved[a] = cut;
                 surface[a] = river;
                 ids[a] = bw[t];
+                is_river[a] = true;
+            }
+        }
+        // Backwater (N18): where a tributary meets a larger river, a river cell whose surface
+        // lies below that of the river cell it flows into is raised to it, BACKWATER Jacobi
+        // steps upstream (water deepens; ground is not touched). Every core cell's chain lies
+        // in `area`, so every tiling agrees; anything longer is left for `drainage_rises`.
+        for _ in 0..BACKWATER {
+            let before = surface.clone();
+            for a in 0..n {
+                if !is_river[a] {
+                    continue;
+                }
+                let (x, y) = area.world_xy(a);
+                let d = flow[win.local(x, y).expect("area in window")] & 15;
+                let below = (d != 0)
+                    .then(|| world.neighbour(x, y, d as usize - 1))
+                    .flatten()
+                    .and_then(|(nx, ny)| area.local(nx, ny))
+                    .map(|b| before[b])
+                    .filter(|s| s.is_finite());
+                if let Some(s) = below.filter(|&s| s > before[a]) {
+                    surface[a] = s;
+                }
             }
         }
         // The corridor: dry cells within CORRIDOR cells of a lowered river cell.
@@ -5824,7 +6273,7 @@ mod breach;
 mod channel;
 // (with the other mod lines)
 
-use crate::acquisition::{AcquisitionError, Result, ensure, io_context, read_small};
+use crate::acquisition::{Result, ensure, io_context, read_small};
 use serde_json::{Map, Value, json};
 use std::{fs, path::{Path, PathBuf}};
 
@@ -5881,6 +6330,8 @@ pub(crate) fn setup(
         "river_km2": river_km2,
         "version": env!("CARGO_PKG_VERSION"),
     });
+    let table = table::Table::parse(&text)?;
+    let params = params(&table, g.spacing_m, river_km2);
     let s = pipeline::Setup {
         world,
         nw_m: g.nw_m,
@@ -5888,9 +6339,9 @@ pub(crate) fn setup(
         tile,
         threads: threads.max(1),
         classes,
-        table: table::Table::parse(&text)?,
+        table,
         rain,
-        params: params(g.spacing_m, river_km2),
+        params,
         contract: true,
     };
     Ok((s, raw, stamp))
@@ -5962,7 +6413,7 @@ pub fn run(o: &Options) -> Result<String> {
 }
 ```
 
-`AcquisitionError` import is used by Task 13; drop it now if clippy complains.
+Task 13 adds `AcquisitionError` to this `use` line when `finish` needs it.
 
 - [ ] **Step 5: Run the tests to see them pass**
 
@@ -5970,6 +6421,8 @@ Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet worl
 Expected: all pass. Clippy clean.
 
 - [ ] **Step 6: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add crates/topography-core/src/world/water
@@ -5989,15 +6442,15 @@ Expert review protocol. Real-terrain output: build a 2,048² grid at the canyon 
 **Files:**
 - Create: `crates/topography-core/src/world/water/checks.rs`
 - Modify: `crates/topography-core/src/world/water/mod.rs` (`mod checks;`, `FinishOptions`, `Outcome`, `finish`)
-- Modify: `crates/topography-core/src/world/hydrology/grid.rs` (`Stage` → `pub(crate)`, add `Stage::link`)
+- Modify: `crates/topography-core/src/world/hydrology/grid.rs` (`Stage` → `pub(crate)`, add `Stage::copy`)
 
 **Interfaces:**
 - Consumes: the work directory of Task 12, `hydrology::grid::Stage`.
 - Produces:
   - `checks::Tile` (per-tile counts, examples, histogram, facet and straightness tallies, longest runs, dam falls, raw-independent dam drops and rims, lowest lake saddles, label-agreement counts) and `checks::check_tile(s: &Setup, l: &CheckLayers, core: Rect, lakes: &LakeInfo) -> Result<Tile>`; `checks::report(tiles: Vec<Tile>, extra: CheckExtra, figures: Map<String, Value>) -> (Value, bool)`; helpers `planar`, `horn_deg`, `p99_m`, `BINS`.
-  - `checks::CheckLayers { raw, ground, surface, body, level, node, flow, discharge }` (all `Layer`s; `level`, `node`, `flow`, `discharge` are the third model run's on the final ground, R27), `checks::LakeInfo = BTreeMap<u32, (f32 level, bool full, [u64; 2] outlet, u64 need)>` (by lake id), `checks::CheckExtra { cycles: u64, bodies: usize, lake_short: u64, relax: Option<Value> }`.
+  - `checks::CheckLayers { raw, ground, surface, body, level, node, flow, discharge, flow_written }` (all `Layer`s; `level`, `node`, `flow`, `discharge` are the third model run's on the final ground, R27; `flow_written` is m2's flow, the written rivers), `checks::LakeInfo = BTreeMap<u32, (f32 level, bool full, [u64; 2] outlet, u64 need)>` (by lake id), `checks::CheckExtra { cycles: u64, bodies: usize, lake_short: u64, relax: Option<Value>, lakes: LakeInfo }`. `change_max` uses `s.params.change_max_m()` (N19).
   - `water::FinishOptions { grid, work, ground: PathBuf, out: PathBuf, tile, threads, water, river_km2, relax: Option<PathBuf> }`, `water::Outcome { out: PathBuf, passed: bool, summary: String }`, `water::finish(&FinishOptions) -> Result<Outcome>`: reruns the model on the final ground (tag `m3`, R27, cached in the work directory), runs the checks and publishes `out` with `elevation.f32`, `water-surface.f32`, `water-body.u32`, `discharge.f32` and `flow.u8` (both from m3), `bodies.json`, `report.json`, `grid.json`. Outputs are published even when a check fails (`passed` false), as v2.
-  - `hydrology::grid::Stage::link(&mut self, name: &str, src: &Path) -> Result<()>` (hard link, falling back to a copy across file systems, plus its SHA-256).
+  - `hydrology::grid::Stage::copy(&mut self, name: &str, src: &Path) -> Result<()>` (`cp --reflink=auto`: a reflink on btrfs, a copy on other file systems such as the tmpfs the unit tests use; never a hard link, N17; plus its SHA-256).
 
 Check definitions (hard: every count must be 0; thresholds from the spec, rulings R7, R11, R14, R16, R22, R27, R29, R30, R31). D is the water surface where wet, the pond level in ponds (m3), else the final ground:
 
@@ -6020,7 +6473,7 @@ Check definitions (hard: every count must be 0; thresholds from the spec, ruling
 | `facets` | among changed cells (\|Δ\| > 1 cm), more 5×5 windows are planar (fit residual < 2 cm, slope > 5°) in the result than in raw (global; 0 or 1) |
 | `walls` | a changed cell's Horn slope exceeds max(40°, its raw slope) + 0.01° |
 | `change_p99` | p99 of \|Δ\| over all cells > 1 m (global; 0 or 1) |
-| `change_max` | a cell's \|Δ\| > 2.5 m (cap + 0.5 m) |
+| `change_max` | a cell's \|Δ\| > the level's breach cap + 0.5 m (2.5 m at 1 m, 5.5 m at 4 m, 20.5 m at 32 m; N19) |
 | `label_agreement` | the written rivers' thalweg cells (m2 thalweg under a written surface) and the final routing's thalweg cells (m3) agree less than 0.95 within one cell: (written cells with an m3 thalweg within one cell + m3 cells with a written thalweg within one cell) / (all of both) (I3c, R27; a tolerant IoU, since a river is one thalweg cell wide in both; global) |
 | `export_bodies` | lakes + rivers > 50,000 (well under export's 65,535; C2.4, R16; global) |
 | `relax_overlap` | the relaxation's recomputed overlaps differ by more than 1 mm (from `--relax`; global) |
@@ -6105,9 +6558,9 @@ mod tests {
 
     #[test]
     fn the_synthetic_world_passes_its_checks() {
-        use crate::world::water::{Options, FinishOptions, finish, run, testing};
+        use crate::world::water::{FinishOptions, Options, finish, geom::World, run, testing};
         let dir = tempfile::tempdir().expect("temp");
-        let grid = testing::grid_dir(dir.path(), geom::World { w: 64, h: 64 });
+        let grid = testing::grid_dir(dir.path(), World { w: 64, h: 64 });
         let o = Options { grid: grid.clone(), work: dir.path().join("work"), tile: 16, threads: 2, water: Some(grid.join("water.toml")), river_km2: Some(1e-5) };
         run(&o).expect("run");
         let f = FinishOptions {
@@ -6124,9 +6577,9 @@ mod tests {
 
     #[test]
     fn a_raised_rim_below_a_lake_fails_the_dam_check() {
-        use crate::world::water::{Options, FinishOptions, finish, run, testing};
+        use crate::world::water::{FinishOptions, Options, finish, geom::World, run, testing};
         let dir = tempfile::tempdir().expect("temp");
-        let grid = testing::grid_dir(dir.path(), geom::World { w: 64, h: 64 });
+        let grid = testing::grid_dir(dir.path(), World { w: 64, h: 64 });
         let o = Options { grid: grid.clone(), work: dir.path().join("work"), tile: 16, threads: 2, water: Some(grid.join("water.toml")), river_km2: Some(1e-5) };
         run(&o).expect("run");
         // Raise the dry cells beside the humid lake's exit by 2 m in a copy of the ground.
@@ -6159,18 +6612,26 @@ mod tests {
 Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet world::water::checks`
 Expected: compile errors.
 
-- [ ] **Step 3: Add `Stage::link` to `hydrology/grid.rs`**
+- [ ] **Step 3: Add `Stage::copy` to `hydrology/grid.rs`**
 
 Change `pub(super) struct Stage` to `pub(crate) struct Stage` and add:
 
 ```rust
-    /// A finished file (e.g. a 17 GB raster from a work directory) hard-linked into the stage
-    /// (copied across file systems) and digested.
-    pub fn link(&mut self, name: &str, src: &Path) -> Result<()> {
+    /// A finished file (e.g. a 17 GB raster from a work directory) copied into the stage as a
+    /// reflink where the file system has them (btrfs: no extra space), a plain copy elsewhere,
+    /// never a hard link: work rasters are written in place, and a rerun must not change a
+    /// published output behind its digest (N17). Then digested.
+    pub fn copy(&mut self, name: &str, src: &Path) -> Result<()> {
         let dst = self.dir.path().join(name);
-        if fs::hard_link(src, &dst).is_err() {
-            io_context(format!("copy {}", src.display()), fs::copy(src, &dst))?;
-        }
+        let done = std::process::Command::new("cp")
+            .arg("--reflink=auto")
+            .arg(src)
+            .arg(&dst)
+            .status();
+        ensure(
+            io_context(format!("copy {}", src.display()), done)?.success(),
+            format!("copy {} failed", src.display()),
+        )?;
         let mut file = io_context(format!("open {name}"), fs::File::open(&dst))?;
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; 1 << 22];
@@ -6197,7 +6658,7 @@ use super::bodies::main_up;
 use super::geom::{OFFSETS, Rect, step_len};
 use super::layers::Layer;
 use super::pipeline::Setup;
-use super::{BODY_BUDGET, CHANNEL_CAP_M, MAIN_RIVER_KM2};
+use super::{BODY_BUDGET, MAIN_RIVER_KM2};
 use crate::acquisition::Result;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -6407,7 +6868,7 @@ pub(crate) fn check_tile(s: &Setup, l: &CheckLayers, core: Rect, lakes: &LakeInf
         let delta = (z[j] - raw[j]).abs();
         t.hist[((delta * 100.0).round() as usize).min(BINS - 1)] += 1;
         t.max_change = t.max_change.max(delta);
-        if delta > CHANNEL_CAP_M + 0.5 {
+        if delta > s.params.change_max_m() {
             t.fail("change_max", x, y);
         }
         if node[j] >= 2 && surf[j].is_nan() {
@@ -6549,17 +7010,9 @@ pub(crate) fn check_tile(s: &Setup, l: &CheckLayers, core: Rect, lakes: &LakeInf
                 }
             }
             if f64::from(q[j]) >= MAIN_RIVER_KM2 {
-                // Flow direction over 5 steps downstream.
-                let (mut cx, mut cy) = (x, y);
-                for _ in 0..5 {
-                    let Some(c) = at(cx, cy) else { break };
-                    let Some(n) = receiver(cx, cy, c) else { break };
-                    (cx, cy) = n;
-                }
-                let (vx, vy) = (cx as f64 - x as f64, cy as f64 - y as f64);
-                let len = vx.hypot(vy);
-                if len > 0.0 {
-                    let (nx, ny) = (-vy / len, vx / len);
+                // Across the flow direction over 5 steps downstream (the shared helper, N16).
+                if let Some((vx, vy)) = direction(j) {
+                    let (nx, ny) = (-vy, vx);
                     let reach = (ACROSS_M / s.spacing_m).round() as i64;
                     let mut low: Option<(f32, i64, usize)> = None;
                     for i in -reach..=reach {
@@ -6750,6 +7203,8 @@ pub(crate) fn report(tiles: Vec<Tile>, extra: CheckExtra, mut figures: Map<Strin
 
 - [ ] **Step 5: Implement `finish` in `mod.rs`**
 
+Change the `use crate::acquisition::…` line to `use crate::acquisition::{AcquisitionError, Result, ensure, io_context, read_small};`, then add:
+
 ```rust
 pub struct FinishOptions {
     pub grid: PathBuf,
@@ -6833,11 +7288,11 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let (report, passed) = checks::report(tiles, extra, figures);
 
     let mut stage = crate::world::hydrology::grid::Stage::new(&o.out)?;
-    stage.link("elevation.f32", &o.ground)?;
-    stage.link("water-surface.f32", &work.path("water-surface.f32"))?;
-    stage.link("water-body.u32", &work.path("water-body.u32"))?;
-    stage.link("discharge.f32", &work.path(&format!("{m3_tag}-discharge.f32")))?;
-    stage.link("flow.u8", &work.path(&format!("{m3_tag}-flow.u8")))?;
+    stage.copy("elevation.f32", &o.ground)?;
+    stage.copy("water-surface.f32", &work.path("water-surface.f32"))?;
+    stage.copy("water-body.u32", &work.path("water-body.u32"))?;
+    stage.copy("discharge.f32", &work.path(&format!("{m3_tag}-discharge.f32")))?;
+    stage.copy("flow.u8", &work.path(&format!("{m3_tag}-flow.u8")))?;
     stage.json("bodies.json", &bodies)?;
     stage.json("report.json", &report)?;
     let mut manifest: Map<String, Value> = serde_json::from_slice(&read_small(&o.grid.join("grid.json"))?)?;
@@ -6880,6 +7335,8 @@ Run clippy. Expected: clean.
 
 - [ ] **Step 7: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add crates/topography-core/src/world/water crates/topography-core/src/world/hydrology/grid.rs
 git commit -m "feat(water): hard checks, figures and water-finish publishing the run
@@ -6897,25 +7354,53 @@ Expert review protocol. Real-terrain output: rerun Task 12's canyon probe throug
 **Files:**
 - Modify: `crates/topography-cli/src/main.rs` (usage lines after `world hydrology-seam`, two match arms after the `hydrology` arm, two handler functions)
 - Modify: `crates/topography-core/src/world/water/mod.rs` (remove `#![allow(dead_code)]`, delete what is still dead)
-- Modify: `scripts/check.sh` (usage-error checks)
+- Modify: `scripts/check.sh` (real runs on a fixture, usage-error checks)
+- Create: `tests/fixtures/water/grid/` (`grid.json`, `elevation.f32`, `moisture.f32`, `water.toml`: the 64² synthetic world, 16 KB of elevation), written once by an `#[ignore]` test in `water/mod.rs`
 
 **Interfaces:**
-- Consumes: `water::{Options, FinishOptions, Outcome, run, finish, DEFAULT_TILE}`.
+- Consumes: `water::{Options, FinishOptions, Outcome, run, finish, DEFAULT_TILE}`, `testing::grid_dir`.
 - Produces (command lines):
   - `topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]` → exit 0 with a summary line; resumable.
   - `topography world water-finish --grid <grid-dir> --work <work-dir> --ground <final-ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--relax relax.json] [--water water.toml] [--river-km2 0.05]` → exit 0 when every check passes, 1 when one fails (outputs still written), 2 on usage errors.
 
-- [ ] **Step 1: Write the failing check**
+- [ ] **Step 1: Write the fixture and the failing check**
 
-In `scripts/check.sh`, after the `world hydrology` checks (or after `check_success '9 classes…'` if there are none), add:
+Add to the `mod.rs` tests and run it once to write the fixture (commit its output):
+
+```rust
+    /// Writes tests/fixtures/water/grid for scripts/check.sh: cargo test … write_check_fixture -- --ignored
+    #[test]
+    #[ignore]
+    fn write_check_fixture() {
+        let dir = std::path::Path::new("../../tests/fixtures/water");
+        let _ = std::fs::remove_dir_all(dir.join("grid"));
+        testing::grid_dir(dir, geom::World { w: 64, h: 64 });
+    }
+```
+
+Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core world::water::tests::write_check_fixture -- --ignored`
+
+In `scripts/check.sh`, after the `world hydrology` checks (or after `check_success '9 classes…'` if there are none), add. These run the real commands on the fixture and check what they write (N9):
 
 ```bash
+# Hydrology v3 on a 64² fixture: the commands run and write their outputs.
+water_tmp="$(mktemp -d)"
+water_grid=tests/fixtures/water/grid
+water_args=(--tile 16 --threads 2 --water "$water_grid/water.toml" --river-km2 0.00001)
+check_success 'next: relax' world water --grid "$water_grid" --work "$water_tmp/work" "${water_args[@]}"
+check_success 'water passed' world water-finish --grid "$water_grid" --work "$water_tmp/work" \
+  --ground "$water_tmp/work/carved.f32" --out "$water_tmp/out" "${water_args[@]}"
+for f in elevation.f32 water-surface.f32 water-body.u32 discharge.f32 flow.u8 bodies.json report.json grid.json; do
+  test -s "$water_tmp/out/$f" || { printf 'world water-finish wrote no %s\n' "$f" >&2; exit 1; }
+done
+grep -q '"passed": true' "$water_tmp/out/report.json"
+rm -rf "$water_tmp"
 check_failure 2 'Unsupported arguments' world water --grid
 check_failure 2 'Unsupported arguments' world water-finish --grid g --work w
 ```
 
 Run: `bash scripts/check.sh`
-Expected: FAIL at the new lines (today `world water` falls through to the generic usage error with status 2 as well, so if it already passes, confirm with `cargo run -q -p topography-cli -- world water --grid x --work y; echo $?` printing an unsupported-arguments error, then continue).
+Expected: FAIL at the first new line (`world water` is not a command yet).
 
 - [ ] **Step 2: Implement the commands**
 
@@ -7053,8 +7538,8 @@ Expected: passes, including the two new lines.
 Run on the Task 12 probe grid (a real 2,048² canyon window):
 
 ```bash
-target/debug/topography world water --grid scratch/hydrology-v3/probes/t12-canyon-grid --work scratch/hydrology-v3/t14-work --tile 1024 --threads 4
-target/debug/topography world water-finish --grid scratch/hydrology-v3/probes/t12-canyon-grid --work scratch/hydrology-v3/t14-work \
+"${CAP6[@]}" target/debug/topography world water --grid scratch/hydrology-v3/probes/t12-canyon-grid --work scratch/hydrology-v3/t14-work --tile 1024 --threads 4
+"${CAP6[@]}" target/debug/topography world water-finish --grid scratch/hydrology-v3/probes/t12-canyon-grid --work scratch/hydrology-v3/t14-work \
     --ground scratch/hydrology-v3/t14-work/carved.f32 --out scratch/hydrology-v3/t14-out --tile 1024 --threads 4; echo "exit $?"
 ```
 
@@ -7062,8 +7547,10 @@ Expected: the first prints a summary; the second prints `water passed` or `FAILE
 
 - [ ] **Step 4: Commit**
 
+Run the task-finish block first.
+
 ```bash
-git add crates/topography-cli/src/main.rs crates/topography-core/src/world/water scripts/check.sh
+git add crates/topography-cli/src/main.rs crates/topography-core/src/world/water scripts/check.sh tests/fixtures/water
 git commit -m "feat(cli): world water and world water-finish commands
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -7151,13 +7638,17 @@ class RelaxTest(unittest.TestCase):
         g = (g + rng.random(g.shape, np.float32) * 0.3).astype(np.float32)
         raw = g.copy()
         g[:, 28:32] -= 2.0
+        # A corridor from column 10 to 200: the noisy banks move everywhere in it, right up to
+        # the window cut at 30 + HALO, so a halo too small would change the core (N9).
+        c[:, 10:200] = np.where(c[:, 10:200] == 2, 2, 1)
         whole = R.relax(g, raw, s, c, f)
         self.assertTrue(np.array_equal(whole, R.relax(g, raw, s, c, f)))
-        core = slice(0, 150)
-        win = slice(0, 150 + R.HALO)
+        self.assertTrue((whole[:, 90:100] < g[:, 90:100]).any(), "cells move near the cut")
+        core = slice(0, 30)
+        win = slice(0, 30 + R.HALO)
         part = R.relax(g[:, win], raw[:, win], s[:, win], c[:, win], f[:, win])
         self.assertTrue(np.array_equal(part[:, core], whole[:, core]), "core differs")
-        strip = slice(150, 150 + R.STRIP)
+        strip = slice(30, 30 + R.STRIP)
         self.assertLessEqual(float(np.abs(part[:, strip] - whole[:, strip]).max()), 1e-3)
 
 
@@ -7271,6 +7762,8 @@ Expected: 3 tests OK. If `torch.use_deterministic_algorithms(True)` raises for a
 
 - [ ] **Step 5: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add training/src/topography_training/water training/tests/test_water_relax.py
 git commit -m "feat(water): deterministic GPU bank relaxation inside the channel corridor
@@ -7280,7 +7773,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 6: Expert review**
 
-Expert review protocol. Real-terrain output: relax the Task 14 canyon run (`scratch/hydrology-v3/t14-work`) in one window with a short `$P -c` call that memory-maps `carved.f32`, the raw window from the grid's `elevation.f32`, `water-surface.f32`, `corridor.u8` and `m2-flow.u8`, writes `relaxed.f32`, then runs `water-finish` with `--ground …/relaxed.f32` into `scratch/hydrology-v3/t15-out`. Give the reviewer both reports and a hillshade pair (carved vs relaxed) from `review.py` once Task 17 exists, or `cascade_eval.shade` now.
+Expert review protocol. Real-terrain output: relax the Task 14 canyon run (`scratch/hydrology-v3/t14-work`) in one window with a short `"${CAP6[@]}" $P -c` call (6 GB cap) that memory-maps `carved.f32`, the raw window from the grid's `elevation.f32`, `water-surface.f32`, `corridor.u8` and `m2-flow.u8`, writes `relaxed.f32`, then runs `water-finish` with `--ground …/relaxed.f32` into `scratch/hydrology-v3/t15-out`. Give the reviewer both reports and a hillshade pair (carved vs relaxed) from `review.py` once Task 17 exists, or `cascade_eval.shade` now.
 
 ---
 
@@ -7291,14 +7784,14 @@ Expert review protocol. Real-terrain output: relax the Task 14 canyon run (`scra
 - Create: `training/tests/test_water_run.py`
 
 **Interfaces:**
-- Consumes: `relax.relax`, `relax.HALO`, `relax.STRIP`; `diffusion.hydrology.{pin_binary, sha256, link, check_disk}`; `diffusion.cascade.{save_json, block_mean}`; `diffusion.cascade_chain._png`; the Rust commands of Task 14.
+- Consumes: `relax.relax`, `relax.HALO`, `relax.STRIP`; `diffusion.hydrology.{pin_binary, sha256, check_disk, WATER_FILL}`; `diffusion.cascade.{save_json, block_mean}`; `diffusion.cascade_chain._png`; the Rust commands of Task 14.
 - Produces:
   - `run.build_world_grid(src: Path, out: Path) -> Path`: `<out>/hydrology/grid` with `elevation.f32` → `../../elevation-raw.f32` (symlink), `classes.u8` → the source world's 4 m classes (symlink, `classes_cell_m` 4), `moisture.f32` → the source's, and `grid.json` (size, spacing 1, origin, the `moisture` entry, `discharge.mean_land_mm_h` from the source world's `hydrology/4m/grid.json`).
   - `run.build_window_grid(src: Path, level: int, centre: tuple[float, float], size: int, dest: Path) -> Path` (levels 1, 4, 32; see Step 3).
   - `run.relax_tiles(grid: Path, work: Path, tile: int) -> dict` (writes `work/relaxed.f32` and `work/relax.json` with `iterations`, `halo`, `strip`, `tiles_relaxed`, `max_overlap_diff_m`; resumable by per-tile markers).
   - `run.run_world(src: Path, out: Path, tile: int, threads: int) -> int` and `run.run_window(src, level, centre, size, out, tile, threads) -> int` (exit codes: 0 passed, 1 checks failed, 2 refused).
   - CLI: `python -m topography_training.water.run world --source <l4 world> --out <new world> [--tile 4096] [--threads 4]` and `… window --source <world> --level {1,4,32} --centre E,N --size N --out <dir> [--tile N] [--threads N]`.
-  - World layout written: `elevation-raw.f32` (reflink), `elevation.f32`, `water-surface.f32`, `water-body.u32`, `bodies.json` (links into `hydrology/1m`), `water.u8` (255 where the surface is finite), `snow-ice.u8`, `vegetation.u8` (reflinks), `moisture.f32`, `world-input/world.json`, `description.json`/`.md` (copied), `overview.png`, `detail.png`, `progress.json`, and `manifest.json` (or `manifest-failed.json` when a check failed) with `kind: world_preview`, `source_world` (the source's own source world, so export finds the 4 m hydrology), `hydrology_input`, `water`, `moisture`, `layers`.
+  - World layout written: `elevation-raw.f32` (reflink), `elevation.f32`, `water-surface.f32`, `water-body.u32`, `bodies.json` (reflinked copies of `hydrology/1m`'s, never hard links, N17), `water.u8` (255 where the surface is finite), `snow-ice.u8`, `vegetation.u8` (reflinks), `moisture.f32`, `world-input/world.json`, `description.json`/`.md` (copied), `overview.png`, `detail.png`, `progress.json`, and `manifest.json` (or `manifest-failed.json` when a check failed) with `kind: world_preview`, `source_world` (the source's own source world, so export finds the 4 m hydrology), `hydrology_input`, `water`, `moisture`, `layers`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -7313,6 +7806,11 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+
+# The driver reflinks (`cp --reflink=always`, N12), which /tmp (tmpfs) cannot: test worlds
+# live in the repository's scratch directory, on the btrfs /home.
+SCRATCH = Path(__file__).resolve().parents[2] / "scratch" / "test-water"
+SCRATCH.mkdir(parents=True, exist_ok=True)
 
 from topography_training.water import run as W
 
@@ -7347,7 +7845,7 @@ def fake_world(root: Path, n: int = 256) -> Path:
 
 class RunTest(unittest.TestCase):
     def test_a_world_runs_resumes_and_is_assembled(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
             root = Path(tmp)
             src = fake_world(root)
             out = root / "v3"
@@ -7369,7 +7867,7 @@ class RunTest(unittest.TestCase):
             self.assertEqual((out / "elevation.f32").read_bytes(), before)
 
     def test_a_window_grid_is_cut_from_the_raw_surface(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
             src = fake_world(Path(tmp))
             grid = W.build_window_grid(src, 1, (128.0, 128.0), 64, Path(tmp) / "g")
             g = json.loads((grid / "grid.json").read_text())
@@ -7420,9 +7918,13 @@ from ..diffusion import cascade, hydrology
 from . import relax as R
 
 RAW = "elevation-raw.f32"
-# Disk per 1 m cell while running: work rasters (breached, carved, relaxed, level, discharge,
-# surface, body, node: 4 B each; flow, corridor: 1 B), plus the world's water.u8.
-DISK_BYTES = 35
+# Disk per 1 m cell while running (N14): 12 work rasters of 4 B (breached, carved, relaxed,
+# m2 level/node/discharge, body, water-surface, water-body, m3 level/node/discharge), 3 of
+# 1 B (m2 flow, m3 flow, corridor) = 51 B, plus the world's water.u8 (1 B); published copies
+# are reflinks. Required free: this, times 1.1, plus 10 GB.
+DISK_BYTES = 52
+DISK_MARGIN = 1.1
+DISK_SPARE = 10e9
 
 
 def _json(path: Path) -> dict:
@@ -7522,11 +8024,7 @@ def relax_tiles(grid: Path, work: Path, tile: int) -> dict:
     g = _json(grid / "grid.json")
     w, h = g["size"]
     spacing = float(g["spacing_m"])
-    out = work / "relaxed.f32"
-    if not out.exists():
-        tmp = work / "relaxed.f32.tmp"
-        subprocess.run(["cp", "--reflink=auto", str(work / "carved.f32"), str(tmp)], check=True)
-        tmp.replace(out)
+    _reflink(work / "carved.f32", work / "relaxed.f32")
     mm = lambda name, dtype, mode="r": np.memmap(work / name if name != "raw" else grid / "elevation.f32", dtype, mode, shape=(h, w))  # noqa: E731
     carved, raw = mm("carved.f32", "<f4"), mm("raw", "<f4")
     surface, corridor, flow = mm("water-surface.f32", "<f4"), mm("corridor.u8", np.uint8), mm("m2-flow.u8", np.uint8)
@@ -7575,12 +8073,18 @@ def relax_tiles(grid: Path, work: Path, tile: int) -> dict:
     return report
 
 
-def _finish(binary: Path, grid: Path, work: Path, out1m: Path, tile: int, threads: int) -> int:
+def _finish(binary: Path, grid: Path, work: Path, out1m: Path, tile: int, threads: int,
+            relaxed: bool = True) -> int:
+    """`world water-finish` into a fresh `out1m`: on the relaxed ground with its overlap report,
+    or (coarse windows, no relaxation) on the carved ground. One command builder (N16)."""
     if out1m.exists():
         shutil.rmtree(out1m)
-    return _rust([str(binary), "world", "water-finish", "--grid", str(grid), "--work", str(work),
-                  "--ground", str(work / "relaxed.f32"), "--out", str(out1m), "--tile", str(tile),
-                  "--threads", str(threads), "--relax", str(work / "relax.json")])
+    ground = work / ("relaxed.f32" if relaxed else "carved.f32")
+    cmd = [str(binary), "world", "water-finish", "--grid", str(grid), "--work", str(work),
+           "--ground", str(ground), "--out", str(out1m), "--tile", str(tile), "--threads", str(threads)]
+    if relaxed:
+        cmd += ["--relax", str(work / "relax.json")]
+    return _rust(cmd)
 
 
 def _water_u8(surface: Path, dest: Path, n: int) -> None:
@@ -7594,11 +8098,25 @@ def _water_u8(surface: Path, dest: Path, n: int) -> None:
     tmp.replace(dest)
 
 
-def _reflink(src: Path, dst: Path) -> None:
-    if not dst.exists():
-        tmp = dst.with_suffix(dst.suffix + ".tmp")
-        subprocess.run(["cp", "--reflink=auto", str(src), str(tmp)], check=True)
-        tmp.replace(dst)
+def _reflink(src: Path, dst: Path, replace: bool = False) -> None:
+    """A btrfs reflink of `src` at `dst` (R18, N12): no space, and nothing written to one can
+    reach the other. Fails loudly where the file system cannot reflink: a 17 GB copy is never
+    made silently. Kept unless `replace`."""
+    if dst.exists() and not replace:
+        return
+    tmp = dst.with_suffix(dst.suffix + ".tmp")
+    done = subprocess.run(["cp", "--reflink=always", str(src), str(tmp)], capture_output=True, text=True)
+    if done.returncode != 0:
+        raise SystemExit(f"error: cannot reflink {src} to {tmp} ({done.stderr.strip()}); "
+                         "the world must live on the same btrfs file system as its source")
+    tmp.replace(dst)
+
+
+def _publish(src_dir: Path, dst_dir: Path, names) -> dict[str, str]:
+    """Reflinked copies (never hard links, N17) of finished files into a world; their SHA-256."""
+    for name in names:
+        _reflink(src_dir / name, dst_dir / name, replace=True)
+    return {name: hydrology.sha256(dst_dir / name) for name in names}
 
 
 def run_world(src: Path, out: Path, tile: int, threads: int) -> int:
@@ -7617,7 +8135,7 @@ def run_world(src: Path, out: Path, tile: int, threads: int) -> int:
         print(f"error: {out} was started from {progress['source']}", file=sys.stderr)
         return 2
     save = lambda: cascade.save_json(progress_path, progress)  # noqa: E731
-    hydrology.check_disk(out, n * n * DISK_BYTES, "the 1 m water run")
+    hydrology.check_disk(out, n * n * DISK_BYTES * DISK_MARGIN + DISK_SPARE, "the 1 m water run")
     if "raw" not in progress["steps"]:
         _reflink(src / RAW, out / RAW)
         digest = hydrology.sha256(out / RAW)
@@ -7641,12 +8159,12 @@ def run_world(src: Path, out: Path, tile: int, threads: int) -> int:
         return 2
     report = _json(out1m / "report.json")
     # The world: water layers from the 1 m output, the rest from the source.
-    digests = hydrology.link(out1m, out, ("elevation.f32", "water-surface.f32", "water-body.u32", "bodies.json"))
+    digests = _publish(out1m, out, ("elevation.f32", "water-surface.f32", "water-body.u32", "bodies.json"))
     _water_u8(out / "water-surface.f32", out / "water.u8", n)
     for name in ("snow-ice.u8", "vegetation.u8"):
         _reflink(src / name, out / name)
     digests |= {name: hydrology.sha256(out / name) for name in ("water.u8", "snow-ice.u8", "vegetation.u8")}
-    digests |= hydrology.link(src, out, ("moisture.f32",))
+    digests |= _publish(src, out, ("moisture.f32",))
     world_input = out / "world-input"
     world_input.mkdir(exist_ok=True)
     shutil.copy(Path(m["world_input"]) / "world.json", world_input / "world.json")
@@ -7700,12 +8218,7 @@ def run_window(src: Path, level: int, centre: tuple[float, float], size: int, ou
         return 2
     if level == 1:
         relax_tiles(grid, work, tile)
-        return _finish(binary, grid, work, out / "out", tile, threads)
-    if (out / "out").exists():
-        shutil.rmtree(out / "out")
-    return _rust([str(binary), "world", "water-finish", "--grid", str(grid), "--work", str(work),
-                  "--ground", str(work / "carved.f32"), "--out", str(out / "out"), "--tile", str(tile),
-                  "--threads", str(threads)])
+    return _finish(binary, grid, work, out / "out", tile, threads, relaxed=level == 1)
 
 
 def main(argv=None) -> int:
@@ -7742,6 +8255,8 @@ Expected: 5 tests OK (the first run builds the release binary; that is a Rust bu
 
 - [ ] **Step 5: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add training/src/topography_training/water/run.py training/tests/test_water_run.py
 git commit -m "feat(water): resumable 1 m world driver with relaxation and world assembly
@@ -7751,7 +8266,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 6: Expert review**
 
-Expert review protocol. Real-terrain output: `run_window` at level 1 on E49249 N16381 (size 2,048, tile 512, threads 4) into `scratch/hydrology-v3/t16-e49249`: its `out/report.json`, `work/relax.json` and a hillshade of `work/relaxed.f32` with water from `work/water-surface.f32` (use `cascade_eval.shade`). This is a small run (4 M cells, CPU minutes, GPU seconds) and needs no warning.
+Expert review protocol. Real-terrain output: `PYTHONPATH=training/src "${CAP6[@]}" $P -m topography_training.water.run window --source data/worlds/fujix-55-l4v2 --level 1 --centre 49249,16381 --size 2048 --tile 512 --threads 4 --out scratch/hydrology-v3/t16-e49249` (6 GB cap): its `out/report.json`, `work/relax.json` and a hillshade of `work/relaxed.f32` with water from `work/water-surface.f32` (use `cascade_eval.shade`). This is a small run (4 M cells, CPU minutes, GPU seconds) and needs no warning.
 
 ---
 ## Task 17: Review figures: hillshade crops, straight-run crops and the coarse guide
@@ -7769,7 +8284,7 @@ The coarse guide is a figure only in Plan A (R17). Plan B makes "level over 5 m,
   - `review.SPOTS` (the spec's eleven E/N pairs), `review.CROP_M = 512`.
   - `review.crops(world: Path, dest: Path, n: int, origin: list[float], spots=SPOTS) -> list[Path]`: one PNG per spot (reads `elevation-raw.f32`, `elevation.f32`, `water-body.u32`, `bodies.json` of `world`), raw hillshade beside the result (lakes and sea blue, rivers cyan), named `E<e>-N<n>.png`.
   - `review.window_pair(run_dir: Path, dest: Path) -> Path`: the same pair for a window run (`grid/elevation.f32` vs `work/relaxed.f32`, else `work/carved.f32`).
-  - `review.coarse_guide(world: Path, coarse: Path) -> dict`: `lakes_compared`, `level_diff_m` (by coarse lake id), `lakes_over_5m`, `lakes_gone`, `lakes_doubled`, `coarse_river_share_with_fine_river_within_100m`, `hard_failures` (over 5 m, gone or doubled). Written to `<world>/hydrology/1m/coarse-guide.json` by the driver and summarised in the manifest's `water.coarse_guide` (ruling R17: recorded, explained at gate 2, not used to withhold `manifest.json`).
+  - `review.coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dict` (`fine_dir` holds the 1 m `water-body.u32`, `bodies.json` and `grid.json`; the world itself when None): `lakes_compared`, `level_diff_m` (by coarse lake id), `lakes_over_5m`, `lakes_gone`, `lakes_doubled`, `coarse_river_share_with_fine_river_within_100m`, `hard_failures` (over 5 m, gone or doubled). Written to `<world>/hydrology/1m/coarse-guide.json` by the driver and summarised in the manifest's `water.coarse_guide` (ruling R17: recorded, explained at gate 2, not used to withhold `manifest.json`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -8028,6 +8543,8 @@ Expected: all OK (7 tests).
 
 - [ ] **Step 5: Commit**
 
+Run the task-finish block first.
+
 ```bash
 git add training/src/topography_training/water training/tests/test_water_review.py
 git commit -m "feat(water): review crops at the owner's spots and the coarse-guide figures
@@ -8037,7 +8554,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 6: Expert review**
 
-Expert review protocol. Real-terrain output: `review.window_pair` for the Task 16 window (`scratch/hydrology-v3/t16-e49249`) and the coarse guide of that window against `data/worlds/fujix-55-chain/hydrology/4m` (pass `fine_dir` = the window's `out`; add the window's offset when comparing, or skip the guide for windows and say so).
+Expert review protocol. Real-terrain output, run as `PYTHONPATH=training/src "${CAP6[@]}" $P -c …` (6 GB cap): `review.window_pair` for the Task 16 window (`scratch/hydrology-v3/t16-e49249`) and the coarse guide of that window against `data/worlds/fujix-55-chain/hydrology/4m` (pass `fine_dir` = the window's `out`; add the window's offset when comparing, or skip the guide for windows and say so).
 
 ---
 
@@ -8075,12 +8592,12 @@ for s in 25645,24400 25307,24585 20071,30501 27169,44546 43966,21633; do
 done
 ```
 
-Note in the gate record: the 4 m input is v2's carved 4 m ground (the raw L3 surface was not kept), so these windows show the model's behaviour, not v3's 4 m result (Plan B).
+Note in the gate record: the 4 m input is v2's carved 4 m ground (the raw L3 surface was not kept), so these windows show the model's behaviour, not v3's 4 m result (Plan B). They are checked with their own level's thresholds from `water-v2.toml` (`[levels.4]`, `[levels.32]`; `change_max` = breach cap + 0.5 m, N19). The spec's coarse change budget (real interiors outside breaches, p99 ≤ 1 m, max ≤ 3 m) needs the provenance layer and comes with Plan B. Gate 1 passes on the 1 m windows' hard checks; the 4 m and 32 m reports are read by the reviewer, check by check, as evidence of the model's behaviour.
 
 - [ ] **Step 3: Pictures**
 
 ```bash
-PYTHONPATH=training/src $P -c "
+PYTHONPATH=training/src "${CAP6[@]}" $P -c "
 from pathlib import Path
 from topography_training.water import review
 for d in sorted(Path('$G').glob('*/E*')):
@@ -8092,7 +8609,7 @@ for d in sorted(Path('$G').glob('*/E*')):
 The canyon, dam and dune windows ran in Step 1. Add an alpine window: the 2 km block with the most class 6 (alpine ridges and cirques) in the chain world's 4 m classes.
 
 ```bash
-ALP=$(PYTHONPATH=training/src $P -c "
+ALP=$(PYTHONPATH=training/src "${CAP6[@]}" $P -c "
 import numpy as np
 c = np.memmap('data/worlds/fujix-55-chain/classes.u8', np.uint8, 'r', shape=(16384, 16384))
 b = (np.asarray(c[::4, ::4]) == 6).reshape(32, 128, 32, 128).sum(axis=(1, 3))
@@ -8100,7 +8617,7 @@ r, k = np.unravel_index(b.argmax(), b.shape)
 print(f'{k * 2048 + 1024},{65536 - (r * 2048 + 1024)}')")
 PYTHONPATH=training/src "${CAP6[@]}" $P -m topography_training.water.run window --source data/worlds/fujix-55-l4v2 \
     --level 1 --centre $ALP --size 2048 --tile 512 --threads 4 --out $G/1m/alpine | tail -n 3
-PYTHONPATH=training/src $P -c "
+PYTHONPATH=training/src "${CAP6[@]}" $P -c "
 import json, pathlib
 for name in ['E27169-N44546', 'E25645-N24400', 'E47962-N36851', 'alpine']:
     s = json.loads(pathlib.Path('$G/1m', name, 'work/stages.json').read_text())
@@ -8123,15 +8640,16 @@ Then:
 
 ```bash
 X=scratch/hydrology-v3/gate1/x16k; mkdir -p $X
-PYTHONPATH=training/src $P -c "
+PYTHONPATH=training/src "${CAP6[@]}" $P -c "
 from pathlib import Path
 from topography_training.water import run
 run.build_window_grid(Path('data/worlds/fujix-55-l4v2'), 1, (27169.0, 44546.0), 16384, Path('$X/grid'))"
 ( systemd-run --user --scope -q -p MemoryMax=10G target/release/topography world water --grid $X/grid --work $X/whole \
     --tile 16384 --threads 1 > $X/whole.log 2>&1; echo $? > $X/whole.exit ) &
+echo $! > $X/whole.pid
 ```
 
-Watch it per the heavy-run protocol; when `whole.exit` exists and is 0, run the tiled one the same way with `--work $X/tiled --tile 4096 --threads 4` (logs `tiled.log`, `tiled.exit`). Then compare:
+Watch it per the heavy-run protocol; when `whole.exit` exists and is 0, run the tiled one the same way, in the same 10 GB cap, with `--work $X/tiled --tile 4096 --threads 4` (logs `tiled.log`, `tiled.exit`, `tiled.pid`). Then compare:
 
 ```bash
 for f in breached.f32 m2-level.f32 m2-node.u32 m2-discharge.f32 m2-flow.u8 body.u32 carved.f32 water-surface.f32 water-body.u32 corridor.u8 bodies.json; do
@@ -8158,6 +8676,8 @@ Add to `docs/workflows/terrain-cascade.md` after "## Hydrology v2" a section "##
 Verify the commands in the section by running `--help` of each and checking every path exists.
 
 - [ ] **Step 6: Commit**
+
+Run the task-finish block first.
 
 ```bash
 git add docs/workflows/terrain-cascade.md
@@ -8186,7 +8706,7 @@ Expectation, stated before the run (spec staging 2): **the dams baked into `elev
 
 - [ ] **Step 1: HEAVY — warn the user**
 
-Tell the user, with the gate-1 measurements: the whole 1 m world (4.3 G cells) through the Rust passes (two model runs, breach, bodies and channels, then a third model run and the checks in `water-finish`) on 4 threads in a 10 GB memory cap, then the GPU relaxation of every tile with a channel corridor (16 GB VRAM ceiling, expected under 2 GB per tile), then world assembly and pictures. Duration: the gate-1 tiled 16k time × 16 plus the global steps (state the figure and its uncertainty). Disk: about 170 GB new on `/home` (589 GB free at planning time; the driver checks). The source world `fujix-55-l4v2` is only read. Wait for the go.
+Tell the user, with the gate-1 measurements: the whole 1 m world (4.3 G cells) through the Rust passes (two model runs, breach, bodies and channels, then a third model run and the checks in `water-finish`) on 4 threads in a 10 GB memory cap, then the GPU relaxation of every tile with a channel corridor (16 GB VRAM ceiling, expected under 2 GB per tile), then world assembly and pictures. Duration: the gate-1 tiled 16k time × 16 plus the global steps (state the figure and its uncertainty). Disk: about 220 GB new on `/home` (52 B per cell; the driver requires that × 1.1 + 10 GB free and stops otherwise; 589 GB were free at planning time). The source world `fujix-55-l4v2` is only read. Wait for the go.
 
 - [ ] **Step 2: Launch**
 
@@ -8233,6 +8753,7 @@ Closing note (review M3): **passing gate 2 does not mean the dams are solved.** 
 ( systemd-run --user --scope -q -p MemoryMax=10G env PYTHONPATH=training/src \
     data/models/diffusion-env-v1/.venv/bin/python -m topography_training.diffusion.game_layers \
     --world data/worlds/fujix-55-l4v3-water --layout data/worlds/fujix-collage-55 > $RUN/game.log 2>&1; echo $? > $RUN/game.exit ) &
+echo $! > $RUN/game.pid
 ```
 
 This is a CPU job over the 1 m world (it took minutes to tens of minutes for l4v2; check its log there); warn the user briefly if they have not already agreed to the gate-2 session as a whole. Expected: exit 0 and `game/*.u8` with digests in `manifest.json`. If the world has `manifest-failed.json` only (checks failed), stop: `game_layers` and export need `manifest.json`.
@@ -8240,7 +8761,9 @@ This is a CPU job over the 1 m world (it took minutes to tens of minutes for l4v
 - [ ] **Step 5: Export**
 
 ```bash
-target/release/topography export heightmap data/worlds/fujix-55-l4v3-water data/exports/fujix-55-l4v3-water > $RUN/export.log 2>&1; echo $? > $RUN/export.exit
+( systemd-run --user --scope -q -p MemoryMax=10G target/release/topography export heightmap \
+    data/worlds/fujix-55-l4v3-water data/exports/fujix-55-l4v3-water > $RUN/export.log 2>&1; echo $? > $RUN/export.exit ) &
+echo $! > $RUN/export.pid
 ```
 
 Expected: exit 0; the export's checks pass (water bodies under 65,535, guaranteed by `export_bodies` at 50,000; levels finite). Compare the export's `manifest.json` water figures with the l4v2 export's (`data/exports/` lists it, if one exists) and note differences.
@@ -8308,7 +8831,31 @@ Not in Plan A, by the brief: coarse-stage erosion, provenance K, the 4 m hand-of
 
 **Placeholder scan:** every code step carries code; the two places that tell the implementer to adapt code (Task 13's grid writer moved into `testing.rs` in Task 12, Task 17's driver hook) give the exact code or the exact change. Probe tests in Tasks 10, 11, 12 are described by reference to Task 9's probe with their exact differences (window, file names, extra calls); they are review aids, not product code.
 
-**Type consistency:** each type below is defined once and used with the same fields in later tasks: `Next`, `Edge`, `Ring`, `TileGraph`, `Hierarchy`, `Resolver` (sorted `Vec`s), `Balance` (with `pours`), `Counts`/`TileCounts`, `Frag`, `Node`/`Nodes`, `Setup` (with `contract`), `Water` (with `minpit`, `nodes`, `solved`), `Local`, `Model` (with `locals`), `Rasters`, `Wet` (node ordinals), `TileState` (`held: Vec<bool>`), `Candidate`/`Gorge` (node `key`), `Geometry` (built from the table's factor), `Layers` (channel), `CheckLayers` (with `flow_written`), `LakeInfo`, `CheckExtra` (with `lakes`), `Options`, `FinishOptions`, `Outcome`.
+**Pre-flight scan coverage** (`.superpowers/sdd/2026-11-05-hydrology-v3-a-water-model/preflight-scan.md`):
+
+| Finding | Where |
+| --- | --- |
+| B1 pours across tiles | `Frag::ring_pit`/`ring_leaf`, `Local::leaf_of_end` (Tasks 8b, 9); no `expect` on the path |
+| B2 pass L exactness | R25; Task 9 passes L (in-tile only when counts and pours match) and L2 (gathered from every tile); `settled_trees_solved_in_their_tile_or_across_seams_match_the_whole` |
+| N1, N2 | Task 8b test imports `build`; Task 13 tests import `geom::World` |
+| N3, N4 | unused imports removed (Task 4 test, Task 12 `mod.rs`); `iter().enumerate()` in Tasks 3 and 4 |
+| N5 | the task-finish block (Shared protocols) before every commit; `check.sh` from Task 14 |
+| N6 | `Model::local` decodes `(Local, Nodes, Vec<u64>)` |
+| N7 | `with_spills` gives solved tops the global spill and outlet |
+| N8 | `dammed_at` walls the west end; the cap test asserts the outlet at the dam and passes a 3 m cap |
+| N9 | breach (radius 24 on 128 cells), channel (256² with 32-cell tiles) and relaxation (corridor up to the cut) tests cut through work; Task 4 mass assert; Task 14 `check.sh` runs both commands on a fixture |
+| N10 | Interfaces and Files blocks of Tasks 2, 8b, 11, 13, 17 |
+| N11 | `breach.rs` doc comment |
+| N12 | `_reflink` uses `--reflink=always` and stops with an error; Python test worlds live under `scratch/` (btrfs) |
+| N13 | every real-data run capped; PID files for the 16k, game-layers and export runs |
+| N14 | `DISK_BYTES = 52`, × 1.1 + 10 GB; Task 19 says about 220 GB |
+| N15 | R32; `solve` starts zero-depth depressions full; Task 7 test |
+| N16 | `crop`, `water_in`, `direction`, `_finish(relaxed=…)` shared |
+| N17 | `Stage::copy` and `_publish` copy by reflink, never hard links |
+| N18 | Task 12 backwater (16 cells, inside the halo); `a_tributary_meets_a_larger_river_at_its_surface`; `drainage_rises` |
+| N19 | `[levels.*]` in `water-v2.toml`, `params(table, …)`, `change_max` = the level's cap + 0.5 m |
+
+**Type consistency:** each type below is defined once and used with the same fields in later tasks: `Table` (with `Level` and `level()`), `Params` (with `breach_radius`, `change_max_m()`; built by `params(table, spacing, river)`), `Next`, `Edge`, `Ring`, `TileGraph`, `Hierarchy`, `Resolver` (sorted `Vec`s), `Balance` (with `pours`), `Counts`/`TileCounts`, `Frag` (with `ring_pit`), `Tops`, `Node`/`Nodes`, `Setup` (with `contract`), `Water` (with `minpit`, `nodes`, `solved`, `remote`, `remote_of`), `Local` (`solved: Tops`, `leaf_of_end`), `Model` (with `locals`), `Rasters`, `Wet` (node ordinals), `TileState` (`held: Vec<bool>`), `Candidate` (node `key`, `radius`)/`Gorge` (node `key`), `Geometry` (built from the table's factor), `Stage::copy`, `Layers` (channel), `CheckLayers` (with `flow_written`), `LakeInfo`, `CheckExtra` (with `lakes`), `Options`, `FinishOptions`, `Outcome`.
 
 Other names are fixed in one task and used verbatim afterwards:
 - `solve` takes `sea_at_zero` everywhere (Task 7 tests, Task 8b, Task 9).
