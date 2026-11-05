@@ -1396,4 +1396,427 @@ mod tests {
             assert!(q[j] >= q[k], "discharge falls from {k} to {j}");
         }
     }
+
+    /// Peak resident memory of this process (VmHWM), in MB.
+    fn peak_rss_mb() -> f64 {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        let kb = status
+            .lines()
+            .find_map(|l| l.strip_prefix("VmHWM:"))
+            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<f64>().ok());
+        kb.unwrap_or(f64::NAN) / 1024.0
+    }
+
+    /// Counts and histograms of a run on a real window (review C2.4).
+    fn print_counts(m: &Model, node: &[u32], flow: &[u8]) {
+        let nodes = &m.water.nodes.0;
+        let lakes = nodes.iter().filter(|n| n.lake).count();
+        let lake_cells = node
+            .iter()
+            .filter(|&&n| n >= 2 && m.water.nodes.at(n - 2).lake)
+            .count();
+        eprintln!(
+            "global leaves {} depressions {} nodes {} lakes {lakes} ponds {} trees solved apart {} \
+             (across tiles {}) lake cells {lake_cells} river cells {} cycles {}",
+            m.water.h.leaves,
+            m.water.h.len(),
+            nodes.len(),
+            nodes.len() - lakes,
+            m.water.solved.len(),
+            m.water.remote.len(),
+            flow.iter().filter(|&&f| f & 16 != 0).count(),
+            m.cycles
+        );
+        let mut area = [0u64; 24];
+        let mut depth = [0u64; 32];
+        for n in nodes {
+            area[((n.cells as f64).max(1.0).log2() as usize).min(23)] += 1;
+            depth[(((n.level - n.low) * 10.0) as usize).min(31)] += 1;
+        }
+        eprintln!("node area (log2 m² bins): {area:?}\nnode depth (0.1 m bins): {depth:?}");
+    }
+
+    /// cargo test … pipeline -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_model_at_the_dam_spot() {
+        use crate::world::water::probe;
+        let Some((win, z)) = probe::window(25645, 24400, 1024) else {
+            return;
+        };
+        let world = World {
+            w: win.w as u64,
+            h: win.h as u64,
+        };
+        let mut s = setup(world, 256, 0.05);
+        s.classes = None;
+        s.table.lake_min_m2 = 500.0;
+        s.nw_m = [win.x0 as f64, (probe::WORLD.h - win.y0) as f64];
+        let r = Rasters::memory(world);
+        let m = model(&s, &Layer::memory(world, z.clone()), None, "m", Some(&r)).expect("model");
+        let node = r.node.to_vec().unwrap();
+        let flow = r.flow.to_vec().unwrap();
+        eprintln!("dam spot E25645 N24400, 1,024², tiles 256², uniform rain, r = 1:");
+        print_counts(&m, &node, &flow);
+        let wet: Vec<bool> = (0..z.len())
+            .map(|k| node[k] >= 2 && m.water.nodes.at(node[k] - 2).lake || flow[k] & 16 != 0)
+            .collect();
+        probe::shade_png("t9-dam-spot-water", &z, win.w, &wet);
+    }
+
+    /// Exactness on real terrain: the Grand Canyon window (E27169 N44546, 2,048², class 19,
+    /// r = 0.05, so settled trees keep closed lakes) uncontracted as one tile against tiles of
+    /// 512² with contraction; every raster and the node table bit-identical.
+    #[test]
+    #[ignore]
+    fn probe_tiles_match_the_whole_on_the_canyon() {
+        use crate::world::water::probe;
+        let Some((win, z)) = probe::window(27169, 44546, 2048) else {
+            return;
+        };
+        let world = World {
+            w: win.w as u64,
+            h: win.h as u64,
+        };
+        let ground = Layer::memory(world, z);
+        let run = |tile: u64, contract: bool| {
+            let mut s = setup(world, tile, 0.05);
+            s.table.lake_min_m2 = 500.0;
+            s.threads = 4;
+            s.contract = contract;
+            s.nw_m = [win.x0 as f64, (probe::WORLD.h - win.y0) as f64];
+            s.classes = Some(Classes::new(Layer::filled(world, 19), 1, world).expect("classes"));
+            let t = std::time::Instant::now();
+            let out = run_on(&s, &ground);
+            let w = &out.0.water;
+            eprintln!(
+                "canyon tiles {tile}² contraction {contract}: {:.0} s; global leaves {}, nodes \
+                 {} (closed {}), trees solved apart {} (across tiles {})",
+                t.elapsed().as_secs_f64(),
+                w.h.leaves,
+                w.nodes.0.len(),
+                w.nodes.0.iter().filter(|n| n.need > 0).count(),
+                w.solved.len(),
+                w.remote.len()
+            );
+            out
+        };
+        let whole = run(2048, false);
+        let tiled = run(512, true);
+        assert_same(&tiled, &whole, "canyon, tiles 512 with contraction");
+        eprintln!("canyon: tiles 512² with contraction = whole uncontracted, bit for bit");
+    }
+
+    /// Straight runs of a receiver field on the cells `on`: (cells on, of them in a
+    /// same-direction run of 60 or more steps ahead, maximal runs over 150 steps).
+    fn straight_runs(w: usize, dir: &[u8], on: &[bool]) -> (usize, usize, usize) {
+        let h = dir.len() / w;
+        let step = |k: usize, d: u8| -> Option<usize> {
+            let (dy, dx) = crate::world::water::geom::OFFSETS[d as usize - 1];
+            let (x, y) = ((k % w) as i64 + dx, (k / w) as i64 + dy);
+            (x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h)
+                .then(|| y as usize * w + x as usize)
+        };
+        let back = |k: usize, d: u8| -> Option<usize> {
+            let (dy, dx) = crate::world::water::geom::OFFSETS[d as usize - 1];
+            let (x, y) = ((k % w) as i64 - dx, (k / w) as i64 - dy);
+            (x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h)
+                .then(|| y as usize * w + x as usize)
+        };
+        let ahead = |k: usize, cap: usize| {
+            let (d, mut c, mut run) = (dir[k], k, 0);
+            while run < cap {
+                match step(c, d) {
+                    Some(n) if dir[n] == d && on[n] => (c, run) = (n, run + 1),
+                    _ => break,
+                }
+            }
+            run
+        };
+        let (mut total, mut straight, mut long) = (0, 0, 0);
+        for k in 0..dir.len() {
+            if dir[k] == 0 || !on[k] {
+                continue;
+            }
+            total += 1;
+            if ahead(k, 60) >= 60 {
+                straight += 1;
+            }
+            let starts = back(k, dir[k]).is_none_or(|p| dir[p] != dir[k] || !on[p]);
+            if starts && ahead(k, 151) > 150 {
+                long += 1;
+            }
+        }
+        (total, straight, long)
+    }
+
+    /// The raw surface's own accumulation network: steepest descent on the raw ground, and
+    /// in depressions the priority flood's route (Barnes 2014) to the window edge.
+    fn raw_network(w: usize, z: &[f32]) -> (Vec<u8>, Vec<u64>) {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let world = World {
+            w: w as u64,
+            h: (z.len() / w) as u64,
+        };
+        use crate::world::water::geom::{OFFSETS, step_len};
+        use crate::world::water::watershed::ordered;
+        let opposite = |j: usize| {
+            let (dy, dx) = OFFSETS[j];
+            OFFSETS
+                .iter()
+                .position(|&o| o == (-dy, -dx))
+                .expect("opposite") as u8
+                + 1
+        };
+        let mut dir = vec![0u8; z.len()];
+        // The neighbour that first reached each cell, as a direction byte.
+        let mut parent = vec![0u8; z.len()];
+        let (mut seen, mut done) = (vec![false; z.len()], vec![false; z.len()]);
+        let mut level = z.to_vec();
+        let mut heap = BinaryHeap::new();
+        for k in 0..z.len() {
+            let (x, y) = world.xy(k as u64);
+            if world.is_edge(x, y) {
+                seen[k] = true;
+                heap.push(Reverse((ordered(z[k]), k)));
+            }
+        }
+        // Each cell drains, when popped, to its steepest strictly lower neighbour popped
+        // before it, else along the flood's route: always to an earlier cell, so no cycles.
+        while let Some(Reverse((_, c))) = heap.pop() {
+            done[c] = true;
+            let (x, y) = world.xy(c as u64);
+            let mut best: Option<(f32, u8)> = None;
+            for j in 0..8 {
+                let Some((nx, ny)) = world.neighbour(x, y, j) else {
+                    continue;
+                };
+                let n = world.index(nx, ny) as usize;
+                let drop = (z[c] - z[n]) / step_len(j as u8 + 1) as f32;
+                if done[n] && drop > 0.0 && best.is_none_or(|(b, _)| drop > b) {
+                    best = Some((drop, j as u8 + 1));
+                }
+                if !seen[n] {
+                    seen[n] = true;
+                    level[n] = z[n].max(level[c]);
+                    parent[n] = opposite(j);
+                    heap.push(Reverse((ordered(level[n]), n)));
+                }
+            }
+            if !world.is_edge(x, y) {
+                dir[c] = best.map_or(parent[c], |b| b.1);
+            }
+        }
+        let next = |k: usize| match dir[k] {
+            0 => Next::End,
+            d => {
+                let (x, y) = world.xy(k as u64);
+                let (nx, ny) = world.neighbour(x, y, d as usize - 1).expect("inside");
+                Next::Cell(world.index(nx, ny) as u32)
+            }
+        };
+        let acc = accumulate(z.len(), next, |_| 1);
+        assert_eq!(acc.cycles, 0, "the raw network has no cycles");
+        (dir, acc.q)
+    }
+
+    /// Carry (expert, E49249): the full model on a 4,096² raw window at E49249 N16381 (the
+    /// straight river of the v2 diagnosis), tiles of 1,024², the layout's classes, uniform
+    /// rain (Q is area). Thalweg (Q ≥ 0.05 km²) straight runs against the raw surface's own
+    /// network, runs inside ponds apart; Q ≥ 1 km² rivers against the raw valley line; lakes
+    /// per km² per class; global leaves; peak RSS; 512 m hillshade crops with water tinted.
+    /// Run in release under systemd-run (MemoryMax ≤ 10G).
+    #[test]
+    #[ignore]
+    fn probe_model_at_e49249() {
+        use crate::world::water::probe;
+        use crate::world::water::table::{DEFAULT, Table};
+        let started = std::time::Instant::now();
+        let Some((win, z)) = probe::window(49249, 16381, 4096) else {
+            return;
+        };
+        let w = win.w;
+        let world = World {
+            w: w as u64,
+            h: win.h as u64,
+        };
+        let classes_path = "../../data/worlds/fujix-collage-55/class.u8";
+        let cmap = std::fs::read(classes_path).expect("class map");
+        assert_eq!(cmap.len(), 512 * 512);
+        let class: Vec<u8> = (0..z.len())
+            .map(|k| {
+                let (x, y) = win.world_xy(k);
+                cmap[(y / 128) as usize * 512 + (x / 128) as usize]
+            })
+            .collect();
+        let mut s = setup(world, 1024, 0.05);
+        s.table = Table::parse(DEFAULT).expect("table");
+        s.threads = 4;
+        s.nw_m = [win.x0 as f64, (probe::WORLD.h - win.y0) as f64];
+        s.classes =
+            Some(Classes::new(Layer::memory(world, class.clone()), 1, world).expect("classes"));
+        let r = Rasters::memory(world);
+        let m = model(&s, &Layer::memory(world, z.clone()), None, "m", Some(&r)).expect("model");
+        let model_s = started.elapsed().as_secs_f64();
+        let node = r.node.to_vec().unwrap();
+        let flow = r.flow.to_vec().unwrap();
+        let q = r.discharge.to_vec().unwrap();
+        eprintln!(
+            "E49249 N16381, 4,096² (x0 {} y0 {}), tiles 1,024², classes of fujix-collage-55, \
+             uniform rain, lake from {} m²; model {model_s:.0} s",
+            win.x0, win.y0, s.table.lake_min_m2
+        );
+        print_counts(&m, &node, &flow);
+
+        // Straight runs: the model's thalwegs (dry and in full ponds apart) against the raw
+        // surface's own network at the same threshold.
+        let dir: Vec<u8> = flow.iter().map(|f| f & 15).collect();
+        let pond = |k: usize| node[k] >= 2;
+        let thalweg: Vec<bool> = flow.iter().map(|f| f & 16 != 0).collect();
+        let dry: Vec<bool> = (0..z.len()).map(|k| thalweg[k] && !pond(k)).collect();
+        let wet: Vec<bool> = (0..z.len()).map(|k| thalweg[k] && pond(k)).collect();
+        let (raw_dir, raw_q) = raw_network(w, &z);
+        let raw_on: Vec<bool> = raw_q.iter().map(|&a| a >= 50_000).collect();
+        let share = |(n, s, long): (usize, usize, usize)| {
+            format!(
+                "{s} of {n} ({:.3}), runs over 150 m: {long}",
+                s as f64 / n.max(1) as f64
+            )
+        };
+        eprintln!("60 m straight runs on thalwegs (Q >= 0.05 km²):");
+        eprintln!(
+            "  model, all:       {}",
+            share(straight_runs(w, &dir, &thalweg))
+        );
+        eprintln!(
+            "  model, dry land:  {}",
+            share(straight_runs(w, &dir, &dry))
+        );
+        eprintln!(
+            "  model, in ponds:  {}",
+            share(straight_runs(w, &dir, &wet))
+        );
+        eprintln!(
+            "  raw network:      {}",
+            share(straight_runs(w, &raw_dir, &raw_on))
+        );
+
+        // Placement: Q >= 1 km² rivers on dry land against the lowest raw cell across the
+        // valley (±10 cells perpendicular to the flow).
+        // Also the floor of the river's own cross-section: from the river cell, descend along
+        // the transect while the ground strictly falls (to the local minimum it sits above).
+        let (mut offsets, mut floor) = ([0u64; 11], [0u64; 11]);
+        let (mut rise, mut floor_rise) = (0f64, 0f64);
+        let mut big = 0u64;
+        for k in 0..z.len() {
+            if !dry[k] || q[k] < 1.0 {
+                continue;
+            }
+            let (dy, dx) = crate::world::water::geom::OFFSETS[dir[k] as usize - 1];
+            let (px, py) = (-dy, dx);
+            let (x, y) = ((k % w) as i64, (k / w) as i64);
+            let at = |t: i64| {
+                let (cx, cy) = (x + t * px, y + t * py);
+                (cx >= 0 && cy >= 0 && cx < w as i64 && cy < win.h as i64)
+                    .then(|| z[cy as usize * w + cx as usize])
+            };
+            let mut low = (z[k], 0i64);
+            for t in -10i64..=10 {
+                let Some(zc) = at(t) else { continue };
+                if zc < low.0 || (zc == low.0 && t.abs() < low.1.abs()) {
+                    low = (zc, t);
+                }
+            }
+            offsets[low.1.unsigned_abs() as usize] += 1;
+            rise += f64::from(z[k] - low.0);
+            let side = match (at(-1), at(1)) {
+                (Some(a), Some(b)) if a.min(b) < z[k] => {
+                    if a < b {
+                        -1
+                    } else {
+                        1
+                    }
+                }
+                _ => 0,
+            };
+            let (mut t, mut zt) = (0i64, z[k]);
+            while side != 0 && t.abs() < 10 {
+                match at(t + side) {
+                    Some(zn) if zn < zt => (t, zt) = (t + side, zn),
+                    _ => break,
+                }
+            }
+            floor[t.unsigned_abs() as usize] += 1;
+            floor_rise += f64::from(z[k] - zt);
+            big += 1;
+        }
+        let within = |v: &[u64; 11]| {
+            let n: u64 = v[..4].iter().sum();
+            format!("within 3 cells {n} ({:.3})", n as f64 / big.max(1) as f64)
+        };
+        eprintln!(
+            "Q >= 1 km² river cells on dry land: {big}\n  lowest raw cell within ±10 cells \
+             across the flow, offset 0..10: {offsets:?}; {}; mean height above it {:.3} m\n  \
+             floor of its own cross-section (descending), offset 0..10: {floor:?}; {}; mean \
+             height above it {:.3} m",
+            within(&offsets),
+            rise / big.max(1) as f64,
+            within(&floor),
+            floor_rise / big.max(1) as f64
+        );
+
+        // Confetti check: labelled lakes per km² per class (by the class at the lake's key).
+        let mut area: BTreeMap<u8, u64> = BTreeMap::new();
+        for &c in &class {
+            *area.entry(c).or_insert(0) += 1;
+        }
+        let mut lakes: BTreeMap<u8, (u64, u64)> = BTreeMap::new();
+        for n in m.water.nodes.0.iter().filter(|n| n.lake) {
+            let (x, y) = world.xy(n.key);
+            let e = lakes
+                .entry(class[(y * world.w + x) as usize])
+                .or_insert((0, 0));
+            (e.0, e.1) = (e.0 + 1, e.1 + n.cells);
+        }
+        for (c, cells) in &area {
+            let (n, lc) = lakes.get(c).copied().unwrap_or((0, 0));
+            let km2 = *cells as f64 / 1e6;
+            eprintln!(
+                "class {c:>2} (r {:.2}): {km2:.2} km², {n} lakes ({:.2}/km², {lc} m² of water)",
+                f64::from(s.table.r_milli(*c)) / 1000.0,
+                n as f64 / km2
+            );
+        }
+        eprintln!(
+            "peak RSS {:.0} MB, total {:.0} s",
+            peak_rss_mb(),
+            started.elapsed().as_secs_f64()
+        );
+
+        // 512 m crops: the window centre, and the faint dotted line at E49107-49417
+        // N16200-16225 (centred on E49262 N16212). Thalwegs and lakes tinted.
+        let tint: Vec<bool> = (0..z.len())
+            .map(|k| thalweg[k] || node[k] >= 2 && m.water.nodes.at(node[k] - 2).lake)
+            .collect();
+        for (name, east, north) in [
+            ("t9-e49249-centre", 49249u64, 16381u64),
+            ("t9-e49249-dotted", 49262, 16212),
+        ] {
+            let cx = (east - win.x0) as usize;
+            let cy = (probe::WORLD.h - 1 - north - win.y0) as usize;
+            let (x0, y0) = (cx - 256, cy - 256);
+            let crop_of = |v: &dyn Fn(usize) -> f32| -> Vec<f32> {
+                (0..512 * 512)
+                    .map(|i| v((y0 + i / 512) * w + x0 + i % 512))
+                    .collect()
+            };
+            let zc = crop_of(&|k| z[k]);
+            let tc: Vec<bool> = crop_of(&|k| f32::from(u8::from(tint[k])))
+                .iter()
+                .map(|&v| v > 0.0)
+                .collect();
+            probe::shade_png(name, &zc, 512, &tc);
+        }
+    }
 }
