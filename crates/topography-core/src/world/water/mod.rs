@@ -33,6 +33,7 @@ mod watershed;
 
 use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -219,6 +220,42 @@ fn stage_tag(name: &str, inputs: &Value) -> String {
     format!("{name}-{}", &digest(inputs.to_string().as_bytes())[..12])
 }
 
+/// The final routing's tag for a ground file after channels `c_tag`: its path, size and
+/// modification time, so `finish` on the carved ground reuses the run's m3 and a finish on
+/// another ground never reads stale passes.
+fn final_tag(c_tag: &str, ground: &Path) -> Result<String> {
+    let meta = io_context("inspect the final ground", fs::metadata(ground))?;
+    let path = io_context("resolve the final ground", fs::canonicalize(ground))?;
+    Ok(stage_tag(
+        "m3",
+        &json!({"after": c_tag, "ground": path.display().to_string(), "bytes": meta.len(),
+                "modified": format!("{:?}", meta.modified().ok())}),
+    ))
+}
+
+/// Removes the final-routing sets (13 B per cell: level, node, discharge, flow; plus their
+/// pass caches) of other ground revisions once a finish on `keep` is published. A later
+/// finish on such a ground recomputes them.
+fn drop_other_finals(work: &store::Work, keep: &str) -> Result<()> {
+    let dir = work.path("");
+    for e in io_context("list the work directory", fs::read_dir(&dir))? {
+        let e = io_context("list the work directory", e)?;
+        let name = e.file_name().to_string_lossy().to_string();
+        let tag = name.split(['-', '.']).take(2).collect::<Vec<_>>().join("-");
+        if !name.starts_with("m3-") || tag == keep {
+            continue;
+        }
+        let path = e.path();
+        let gone = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        io_context(format!("remove {}", path.display()), gone)?;
+    }
+    Ok(())
+}
+
 /// Runs model → breach → model → bodies → channels into `work` (resumable). Returns a
 /// one-line summary; the figures go to `work/stages.json`.
 pub fn run(o: &Options) -> Result<String> {
@@ -264,7 +301,8 @@ pub fn run(o: &Options) -> Result<String> {
     let c_tag = stage_tag(
         "c",
         &json!({"after": l_tag, "m3s_per_km2": geo.m3s_per_km2, "cap": CHANNEL_CAP_M,
-                "halo": channel::HALO, "corridor": channel::CORRIDOR, "backwater": channel::BACKWATER}),
+                "halo": channel::HALO, "corridor": channel::CORRIDOR, "backwater": channel::BACKWATER,
+                "walls": channel::WALL_ROUNDS}),
     );
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
@@ -284,7 +322,7 @@ pub fn run(o: &Options) -> Result<String> {
         area[((nd.cells as f64 * cell_m2).max(1.0).log2() as usize).min(31)] += 1;
         depth[(((nd.level - nd.low) * 10.0).max(0.0) as usize).min(39)] += 1;
     }
-    let stages = json!({
+    let mut stages = json!({
         "breach": breaches,
         "channels": channels,
         "leaves": m2.water.h.leaves, "depressions": m2.water.h.len(),
@@ -295,8 +333,21 @@ pub fn run(o: &Options) -> Result<String> {
         "node_area_log2_m2_hist": area, "node_depth_dm_hist": depth,
         // Lake-balance supply (cells × r, r up to 3) that overflowed to the sea or off the map.
         "to_sea_r_cells": m2.water.bal.to_sea as f64 / table::MILLI as f64,
-        "tags": [m1_tag, b_tag, m2_tag, l_tag, c_tag],
     });
+    drop(m2);
+    // The routing on the carved ground (m3: `finish` checks this ground on the same one) and
+    // the written water settled on it (review: drainage_rises).
+    let carved = layers::Layer::open(s.world, &work.path("carved.f32"))?;
+    let m3_tag = final_tag(&c_tag, &work.path("carved.f32"))?;
+    let s_tag = stage_tag("s", &json!({"after": m3_tag}));
+    let settled = work.cached(&format!("{s_tag}/settled"), || {
+        let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
+        pipeline::model(&s, &carved, wk, &m3_tag, Some(&finals))?;
+        channel::settle(&s, &finals, &carved, &out, wk, &s_tag)
+    })?;
+    stages["settled"] = json!({"raised_cells": settled.0, "wetted_cells": settled.1,
+                               "max_raise_m": settled.2});
+    stages["tags"] = json!([m1_tag, b_tag, m2_tag, l_tag, c_tag, m3_tag, s_tag]);
     io_context(
         "write stages.json",
         fs::write(
@@ -354,12 +405,13 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             .map(str::to_string)
             .ok_or_else(|| AcquisitionError::Invalid("stages.json lists no stage tags".into()))
     };
-    let (m2_tag, l_tag, c_tag) = (tag(2)?, tag(3)?, tag(4)?);
+    let (m2_tag, l_tag, c_tag, s_tag) = (tag(2)?, tag(3)?, tag(4)?, tag(6)?);
     ensure(
-        work.is_done(&format!("{l_tag}/bodies")),
+        work.is_done(&format!("{l_tag}/bodies"))
+            && work.path(&format!("{s_tag}/settled.bin")).exists(),
         "run `world water` to the end first",
     )?;
-    let rasters = pipeline::Rasters::files(s.world, &work.path(""), "m2")?;
+    let rasters = pipeline::Rasters::open(s.world, &work.path(""), "m2")?;
     let breached = layers::Layer::open(s.world, &work.path("breached.f32"))?;
     // The second run's nodes (cached): the lakes as written.
     let m2 = pipeline::model(&s, &breached, Some(&work), &m2_tag, None)?;
@@ -384,20 +436,41 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             lake_short += 1;
         }
     }
+    // Every full node's exit (lakes, R26 pools, ponds) for the dam figures, by tile.
+    let lake_of: HashMap<u64, u32> = lakes
+        .iter()
+        .filter_map(|(&id, _)| {
+            list.iter()
+                .find(|b| b["kind"] == "lake" && b["id"].as_u64() == Some(u64::from(id)))
+                .and_then(|b| b["node"].as_u64())
+                .map(|key| (key, id))
+        })
+        .collect();
+    let mut exits: Vec<Vec<checks::Exit>> = vec![Vec::new(); s.tiles().len()];
+    for n in m2.water.nodes.0.iter().filter(|n| n.full) {
+        let (x, y) = s.world.xy(n.outlet[1]);
+        exits[geom::tile_of(s.world, s.tile, x, y)].push(checks::Exit {
+            key: n.key,
+            level: n.level,
+            outlet: n.outlet,
+            lake: lake_of.get(&n.key).copied(),
+        });
+    }
     drop(m2);
-    // The third model run, on the final ground (R27); its tag names the ground file and the
-    // channels it came from, so a finish on another ground never reads stale passes.
+    // The third model run, on the final ground (R27); `run` made it already for the carved
+    // ground (same tag).
     let ground = layers::Layer::open(s.world, &o.ground)?;
-    let meta = io_context("inspect the final ground", fs::metadata(&o.ground))?;
-    let m3_tag = stage_tag(
-        "m3",
-        &json!({"after": c_tag, "ground": o.ground.display().to_string(), "bytes": meta.len(),
-                "modified": format!("{:?}", meta.modified().ok())}),
-    );
-    let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
-    let m3 = pipeline::model(&s, &ground, Some(&work), &m3_tag, Some(&finals))?;
+    let m3_tag = final_tag(&c_tag, &o.ground)?;
+    let m3 = pipeline::model(
+        &s,
+        &ground,
+        Some(&work),
+        &m3_tag,
+        Some(&pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?),
+    )?;
     let ponds = m3.water.nodes.0.iter().filter(|n| !n.lake).count();
     drop(m3);
+    let finals = pipeline::Rasters::open(s.world, &work.path(""), &m3_tag)?;
     let layers = checks::CheckLayers {
         raw,
         ground,
@@ -409,8 +482,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         discharge: finals.discharge.clone(),
         flow_written: rasters.flow.clone(),
     };
-    let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |_, core| {
-        checks::check_tile(&s, &layers, core, &lakes)
+    let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
+        checks::check_tile(&s, &layers, core, &lakes, &exits[i])
     })?;
     let relax = match &o.relax {
         Some(p) => Some(serde_json::from_slice(&io_context(
@@ -486,6 +559,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     );
     stage.json("grid.json", &Value::Object(manifest))?;
     let out = stage.publish()?;
+    drop_other_finals(&work, &m3_tag)?;
     let summary = format!(
         "{}\nwater {}: {n_lakes} lakes, {n_rivers} rivers{}",
         out.display(),
@@ -825,5 +899,24 @@ mod tests {
     #[ignore]
     fn probe_finish_at_the_dam_spot() {
         probe_finish("dam-spot", 25645, 24400);
+    }
+
+    /// The other dam spots (R31 baseline for Plan B).
+    #[test]
+    #[ignore]
+    fn probe_finish_at_dam_e25307() {
+        probe_finish("dam-e25307", 25307, 24585);
+    }
+
+    #[test]
+    #[ignore]
+    fn probe_finish_at_dam_e20071() {
+        probe_finish("dam-e20071", 20071, 30501);
+    }
+
+    #[test]
+    #[ignore]
+    fn probe_finish_at_dam_e43966() {
+        probe_finish("dam-e43966", 43966, 21633);
     }
 }

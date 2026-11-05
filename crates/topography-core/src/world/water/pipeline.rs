@@ -290,6 +290,15 @@ impl Rasters {
             flow: Layer::filled(world, 0),
         }
     }
+    /// An existing set, read only (a missing file is an error, never created).
+    pub fn open(world: World, dir: &Path, tag: &str) -> Result<Self> {
+        Ok(Self {
+            level: Layer::open(world, &dir.join(format!("{tag}-level.f32")))?,
+            node: Layer::open(world, &dir.join(format!("{tag}-node.u32")))?,
+            discharge: Layer::open(world, &dir.join(format!("{tag}-discharge.f32")))?,
+            flow: Layer::open(world, &dir.join(format!("{tag}-flow.u8")))?,
+        })
+    }
     pub fn files(world: World, dir: &Path, tag: &str) -> Result<Self> {
         Ok(Self {
             level: Layer::open_or_create(world, &dir.join(format!("{tag}-level.f32")), f32::NAN)?,
