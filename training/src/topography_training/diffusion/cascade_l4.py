@@ -352,7 +352,6 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
         done = state["hydrology_done"]
         why = ("--restart" if restart else "the hydrology binary changed" if state.get("binary") != binary
                else "the hydrology Python code changed" if state.get("code") != code
-               else "the last attempt failed its seam audit" if state.get("audit_failed")
                else "bands failed in the last attempt" if state.get("failed") and done == len(c.bands)
                else "the band to resume from is gone"
                if 0 < done < len(c.bands) and not (c.hyd / f"band-{done - 1:03d}").exists()
@@ -404,13 +403,9 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     extra["game_layers"] = {k: v for k, v in manifest.get("layers", {}).items() if k.startswith("game/")}
     extra["hydrology_rerun"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     extra["hydrology_binary"] = pinned
-    try:
-        _finish(c, state, extra)
-    except SeamAuditFailed:
-        # Only an audit failure restarts the next rerun; any other failure here just finishes again.
-        state["audit_failed"] = True
-        save()
-        raise
+    # A failure here (the seam audit too) just finishes again on the next rerun: a hydrology fix
+    # changes the binary or code digest, which restarts the bands; an audit fix needs no bands.
+    _finish(c, state, extra)
     progress["hydrology_s"], progress["bodies"] = state["hydrology_s"], state["bodies"]
     progress["hydrology_done"] = len(c.bands)
     progress["hydrology_binary"], progress["hydrology_binaries"] = pinned, [binary]
