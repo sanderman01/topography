@@ -124,8 +124,6 @@ pub(crate) struct Tile {
     pub straight_m: f64,
     pub river_m: f64,
     pub beside_m: f64,
-    /// `thalweg_beside` failures: the river perched above the low cell, sunk below it.
-    pub beside_split: [u64; 2],
     pub pond_cells: u64,
     pub falls: Vec<Fall>,
     /// Lowest saddle out of each lake seen in this tile (lake id → min of max(level, D)).
@@ -385,31 +383,26 @@ pub(crate) fn check_tile(
         false
     };
 
-    // The nearest thalweg cell of body `b` to window cell p, by rings (ties: smaller index).
+    // The lowest D over cells of window cell j's body within `r` cells of it (D(j) included):
+    // downstream own cells within reach count, so a steep reach is judged at its own grade.
     let reach_across = (ACROSS_M / s.spacing_m).round() as i64;
-    let nearest_own = |p: usize, b: u32| -> Option<usize> {
-        let (px, py) = win.world_xy(p);
-        for r in 0..=reach_across {
-            let mut best: Option<(i64, usize)> = None;
-            for oy in -r..=r {
-                for ox in -r..=r {
-                    if ox.abs().max(oy.abs()) != r {
-                        continue;
-                    }
-                    let Some(c) = at_i(px as i64 + ox, py as i64 + oy) else {
-                        continue;
-                    };
-                    let d2 = ox * ox + oy * oy;
-                    if thal(c) && body[c] == b && best.is_none_or(|bb| (d2, c) < bb) {
-                        best = Some((d2, c));
-                    }
+    let own_min = |j: usize, r: f64| -> f32 {
+        let (x, y) = win.world_xy(j);
+        let reach = r.ceil() as i64;
+        let mut low = dsurf(j);
+        for oy in -reach..=reach {
+            for ox in -reach..=reach {
+                if ((ox * ox + oy * oy) as f64).sqrt() > r {
+                    continue;
+                }
+                if let Some(c) = at_i(x as i64 + ox, y as i64 + oy)
+                    && body[c] == body[j]
+                {
+                    low = low.min(dsurf(c));
                 }
             }
-            if let Some((_, c)) = best {
-                return Some(c);
-            }
         }
-        None
+        low
     };
 
     // Straight runs at any angle (R30): from each thalweg cell, the longest downstream thalweg
@@ -724,9 +717,11 @@ pub(crate) fn check_tile(
                     t.fail("parallel_rivers", x, y);
                 }
             }
-            // One thalweg (I3): across the flow, out to the first divide on each side (raw more
-            // than 1 m above D here), the lowest raw cell lies within 1 m of D at the nearest
-            // thalweg cell of this river, above or below (review: symmetric).
+            // One thalweg (I3, spec): across the flow, out to the first divide on each side (raw
+            // more than 1 m above D here), the lowest raw cell is a cell of this river's body
+            // (wetted river-crossed ponds included) or lies no more than 1 m below the lowest
+            // D of this body within its distance + 1 cell. Too low a river is no failure:
+            // channels cut 2 m at most, and `walls` / `change_max` cover over-cutting.
             if f64::from(q[j]) >= MAIN_RIVER_KM2
                 && let Some((vx, vy)) = direction(j)
             {
@@ -749,16 +744,16 @@ pub(crate) fn check_tile(
                         }
                     }
                 }
-                // Against this river (body > 1) where it passes nearest the low cell; an
-                // unlabelled thalweg against itself.
                 let (zl, _, p) = low;
-                let dt = (body[j] > 1)
-                    .then(|| nearest_own(p, body[j]))
-                    .flatten()
-                    .map_or(dj, dsurf);
-                if (zl - dt).abs() > THALWEG_M {
-                    t.fail("thalweg_beside", x, y);
-                    t.beside_split[usize::from(zl > dt)] += 1;
+                let own = body[j] > 1 && body[p] == body[j];
+                if !own {
+                    let (px, py) = win.world_xy(p);
+                    let r = (px as f64 - x as f64).hypot(py as f64 - y as f64);
+                    // An unlabelled thalweg (body ≤ 1) is judged against itself only.
+                    let d = if body[j] > 1 { own_min(j, r + 1.0) } else { dj };
+                    if zl < d - THALWEG_M {
+                        t.fail("thalweg_beside", x, y);
+                    }
                 }
             }
             let near = (20.0 / s.spacing_m).ceil() as i64;
@@ -922,7 +917,6 @@ pub(crate) fn report(
     let mut bank = (0u64, 0f32, Vec::new());
     let mut class_cells: BTreeMap<u8, u64> = BTreeMap::new();
     let mut class_lakes: BTreeSet<(u8, u32)> = BTreeSet::new();
-    let mut split = [0u64; 2];
     for t in tiles {
         for (id, s) in &t.saddle {
             let e = saddle.entry(*id).or_insert(f32::INFINITY);
@@ -936,8 +930,6 @@ pub(crate) fn report(
         }
         closed_ends += t.closed_ends;
         pond_runs += t.pond_runs;
-        split[0] += t.beside_split[0];
-        split[1] += t.beside_split[1];
         bank.0 += t.bank_steps.0;
         bank.1 = bank.1.max(t.bank_steps.1);
         bank.2
@@ -1039,10 +1031,6 @@ pub(crate) fn report(
         ),
     );
     figures.insert("straight_runs_in_ponds".into(), json!(pond_runs));
-    figures.insert(
-        "thalweg_beside_split".into(),
-        json!({"river_perched_over_1m": split[0], "river_sunk_over_1m": split[1]}),
-    );
     figures.insert(
         "dam_drops_any".into(),
         json!({"count": drops_any.len(), "largest": drops_any.iter().take(50)
@@ -1556,10 +1544,10 @@ mod tests {
         assert_eq!(t.drops_any.len(), 1, "still a figure (R31)");
     }
 
-    /// One thalweg (I3), divide-aware and symmetric: a river along row 30 of a valley with a
-    /// lower valley beyond a ridge, its own wet cell lowest, or perched / sunk 1.5 m.
+    /// One thalweg (I3): a river along row 30 of a valley with a lower valley beyond a ridge,
+    /// with its own wet cell lowest, or incised 1.5 m (no failure: one-sided).
     #[test]
-    fn thalweg_beside_stops_at_the_divide_and_reads_both_ways() {
+    fn thalweg_beside_stops_at_the_divide() {
         // A V valley along row 30; a ridge at row 40 (2 m above the floor); a lower valley
         // floor at row 50, 3 m below this one.
         let ground = |x: u64, y: u64| {
@@ -1579,17 +1567,6 @@ mod tests {
             0,
             "the ridge is a divide"
         );
-        // Without the ridge the lower floor is in reach: beside.
-        let mut c = Case::new(130, 70, |x, y| {
-            let floor = 20.0 - 0.01 * x as f32;
-            if y <= 30 {
-                floor + 0.2 * (30.0 - y as f32)
-            } else {
-                floor - 0.1 * (y as f32 - 30.0)
-            }
-        });
-        c.river(&path, 2.0, 5);
-        assert!(fails(&c.tile(), "thalweg_beside") > 0);
         // Its own wet bank cell lowest across: fine.
         let mut c = Case::new(130, 70, ground);
         c.river(&path, 2.0, 5);
@@ -1599,14 +1576,73 @@ mod tests {
             (c.surf[k], c.body[k]) = (c.z[c.k(x, 30)], 5);
         }
         assert_eq!(fails(&c.tile(), "thalweg_beside"), 0);
-        // A river surface 1.5 m below every raw cell across fails too.
+        // A river incised 1.5 m below every raw cell across is no failure (one-sided).
         let mut c = Case::new(130, 70, ground);
         c.river(&path, 2.0, 5);
         for &(x, y) in &path {
             let k = c.k(x, y);
             c.surf[k] = c.raw[k] - 1.5;
         }
-        assert!(fails(&c.tile(), "thalweg_beside") > 0, "sunk: symmetric");
+        assert_eq!(
+            fails(&c.tile(), "thalweg_beside"),
+            0,
+            "too low is not beside"
+        );
+    }
+
+    /// A true lower parallel channel 20 m away (no divide between), 1.5 m below every own
+    /// cell within that distance: beside.
+    #[test]
+    fn a_lower_parallel_channel_is_beside() {
+        let mut c = Case::new(130, 70, |x, y| {
+            let floor = 20.0 - 0.01 * x as f32;
+            let dy = y as f32 - 30.0;
+            if y < 40 {
+                floor + 0.05 * dy.abs()
+            } else {
+                floor + 0.5 - 0.2 * (dy - 10.0).min(10.0)
+            }
+        });
+        let path: Vec<(u64, u64)> = (10..120).map(|x| (x, 30)).collect();
+        c.river(&path, 2.0, 5);
+        let t = c.tile();
+        assert!(fails(&t, "thalweg_beside") > 0, "{:?}", t.examples);
+    }
+
+    /// A river through a 2.5 m deep pool wetted as the river (R7/R26): the pool floor is its
+    /// own body, so the deep water is no failure.
+    #[test]
+    fn a_deep_wetted_pool_passes() {
+        let mut c = Case::new(130, 70, |x, y| {
+            20.0 - 0.01 * x as f32 + 0.2 * (y as f32 - 30.0).abs()
+        });
+        let path: Vec<(u64, u64)> = (10..120).map(|x| (x, 30)).collect();
+        c.river(&path, 2.0, 5);
+        for y in 20..41 {
+            for x in 40..80 {
+                let k = c.k(x, y);
+                let level = 20.0 - 0.01 * 40.0 + 2.5;
+                if c.z[k] < level {
+                    (c.surf[k], c.body[k], c.level[k]) = (level, 5, level);
+                }
+            }
+        }
+        let t = c.tile();
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+    }
+
+    /// A steep straight reach (0.2 per cell) with a side hollow 10 m across, 1.5 m below the
+    /// river there but above the river 11 m downstream: judged at the reach's grade, fine.
+    #[test]
+    fn a_side_hollow_on_a_steep_reach_passes() {
+        let ground = |x: u64, y: u64| 50.0 - 0.2 * x as f32 + 0.05 * (y as f32 - 30.0).abs();
+        let mut c = Case::new(130, 70, ground);
+        let path: Vec<(u64, u64)> = (10..120).map(|x| (x, 30)).collect();
+        c.river(&path, 2.0, 5);
+        let k = c.k(60, 40);
+        c.raw[k] = ground(60, 30) - 1.5;
+        let t = c.tile();
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
     }
 
     #[test]
