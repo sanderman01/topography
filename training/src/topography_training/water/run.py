@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from ..diffusion import cascade, hydrology
+from . import review
 
 RAW = "elevation-raw.f32"
 # Disk per cell while running: the work directory (breached, carved, body, m2/m3 rasters,
@@ -375,6 +376,7 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
         if (out / "description.json").exists():
             digests["description.json"] = hydrology.sha256(out / "description.json")
     _pictures(out, n)
+    guide, shots = _review(out, out1m, Path(m["source_world"]) / "hydrology" / "4m", out1m / "review")
     manifest = {
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 1.0, "size": [n, n], "class_id": m.get("class_id"),
@@ -388,7 +390,11 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
                   "failures": report["failures"], "ground": "carved.f32",
                   "relaxation": "none: Plan A ships the carved ground",
                   "binary": str(binary.relative_to(out)), "binary_sha256": digest,
-                  "tile": tile, "threads": threads},
+                  "tile": tile, "threads": threads,
+                  # A figure in Plan A (R17): recorded, explained at gate 2, never withholds manifest.json.
+                  "coarse_guide": ({k: guide[k] for k in review.GUIDE_SUMMARY}
+                                   | {"file": "hydrology/1m/review/coarse-guide.json"}) if guide else None,
+                  "review": [str(p.relative_to(out)) for p in shots]},
         "layers": digests,
     }
     name = "manifest.json" if report["passed"] else "manifest-failed.json"
@@ -397,6 +403,19 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
     print(f"done: {out} ({'passed' if report['passed'] else 'FAILED: ' + ', '.join(report['failures'])})",
           flush=True)
     return 0 if report["passed"] else 1
+
+
+def _review(src: Path, fine: Path, coarse: Path | None, dest: Path) -> tuple[dict | None, list[Path]]:
+    """The review figures after water-finish, made afresh: crops of `src` (a world or window run)
+    and the coarse guide of `fine` against the 4 m hydrology `coarse` when it has water."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    guide = None
+    if coarse is not None and (coarse / "water-body.u32").exists():
+        guide = review.coarse_guide(src, coarse, fine_dir=fine)
+        cascade.save_json(dest / "coarse-guide.json", guide)
+    return guide, review.crops(src, dest)
 
 
 def _guard(out: Path, src: Path, m: dict) -> None:
@@ -455,6 +474,12 @@ def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, o
     binary, digest = _pin(out / "bin")
     progress.key(digest, tile, grid, work)
     code = _water(progress, binary, grid, work, out / "out", tile, threads)
+    m = _json(src / "manifest.json")
+    coarse = Path(m["source_world"]) / "hydrology" / "4m" if level == 1 and m.get("source_world") else None
+    guide, shots = _review(out, out / "out", coarse, out / "review")
+    shots.append(review.window_pair(out, out / "review" / "window.png"))
+    summary = {k: guide[k] for k in review.GUIDE_SUMMARY} if guide else "none"
+    print(f"review: {len(shots)} figures in {out / 'review'}; coarse guide {summary}", flush=True)
     print(f"done: {out / 'out'} ({'passed' if code == 0 else 'FAILED'})", flush=True)
     return code
 

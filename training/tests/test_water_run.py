@@ -61,6 +61,10 @@ class RunTest(unittest.TestCase):
                 self.assertTrue((out / name).exists(), name)
                 self.assertFalse((out / name).is_symlink(), name)
             self.assertTrue((out / "hydrology" / "1m" / "report.json").exists())
+            # Review figures (Task 17): the fake chain has no 4 m water, so no coarse guide.
+            self.assertIsNone(m["water"]["coarse_guide"])
+            for name in m["water"]["review"]:
+                self.assertTrue(name.startswith("hydrology/1m/review/") and (out / name).exists(), name)
             grid = json.loads((out / "hydrology" / "grid" / "grid.json").read_text())
             self.assertEqual(grid["moisture"]["scale_mm_h"], 4.0, "the chain's real moisture entry")
             self.assertEqual(grid["classes_cell_m"], 4.0)
@@ -134,6 +138,7 @@ class RunTest(unittest.TestCase):
             self.assertNotEqual(first["grid"], second["grid"])
             published = json.loads((out / "out" / "grid.json").read_text())
             self.assertEqual(published["offset_m"], [32.0, 32.0], "finish ran on the new window")
+            self.assertTrue((out / "review" / "window.png").exists())
 
     def test_a_window_grid_is_cut_from_the_raw_surface(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
