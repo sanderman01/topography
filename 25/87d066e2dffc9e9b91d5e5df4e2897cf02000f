@@ -1,0 +1,73 @@
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_2682537dcabc61 23,25
+  s_8c1b40ea9c1e0d::t_2321deb8e20067 1043-1045
+  s_8c1b40ea9c1e0d::t_c22b981f3b99c0 761
+  s_8c1b40ea9c1e0d::t_b62e4ce0b80a32 633
+  s_8c1b40ea9c1e0d::t_3a65bebe2fc0b3 1470,1472
+  s_8c1b40ea9c1e0d::t_2563f6f4fbda0e 1532-1533
+  s_8c1b40ea9c1e0d::t_f171facd28b265 1349-1350,1352-1353,1355
+  s_8c1b40ea9c1e0d::t_befe87c6f35c8c 674
+  s_8c1b40ea9c1e0d::t_ca04e5de8dc3da 56-57
+  s_8c1b40ea9c1e0d::t_40ea678bc44e7e 491
+  s_8c1b40ea9c1e0d::t_38f839b14e40ca 752-753,755-758,760
+  s_8c1b40ea9c1e0d::t_431ae8556e997c 939-940
+  s_8c1b40ea9c1e0d::t_7fceb46091e1e9 27-30
+  s_8c1b40ea9c1e0d::t_7fab9db2b52d64 127-128
+  s_8c1b40ea9c1e0d::t_7eb9f8616bb14c 197-200
+  s_8c1b40ea9c1e0d::t_3c88edf9211d7b 744
+  s_8c1b40ea9c1e0d::t_ad2bd990963ef8 759
+  s_8c1b40ea9c1e0d::t_a2415b0a1f500a 98-100
+  s_8c1b40ea9c1e0d::t_fb920cd660d966 925
+  s_8c1b40ea9c1e0d::t_888207cf6f59be 140
+  s_8c1b40ea9c1e0d::t_ba266a046d67e7 6,12,21-22,24,46-48,77-97,101,110-111,130,133,137-139,201,223-232,251,274-276,295-413,416,463,484-490,492-537,543-555,559-561,564-572,574,597,625-628,634-645,651,654,661-663,702-706,708-712,714-721,723,727,730-742,745,747-748,754,762,767-768,777-780,789-793,797-798,802-803,807-812,821-832,843,847-851,874-887,1006-1007,1035-1036,1049-1050,1055-1057,1085-1091,1113-1223,1243-1255,1257-1258,1261-1264,1270,1293-1314,1323,1326-1332,1334-1335,1342,1344,1346-1348,1351,1354,1359-1375,1383-1388,1394-1397,1412-1469,1471,1473-1531,1534-1652,1682-1683
+  s_8c1b40ea9c1e0d::t_9c23a3de03b5ae 728-729
+  s_8c1b40ea9c1e0d::t_d95785d91dac43 202
+  s_8c1b40ea9c1e0d::t_251d03ffe205f2 888
+  s_8c1b40ea9c1e0d::t_3cb6b40ff81ddf 1042
+crates/topography-core/src/world/water/channel.rs
+  s_8c1b40ea9c1e0d::t_b3c5bab6de3bc1 39-44
+  s_8c1b40ea9c1e0d::t_cb30745d837a41 662
+  s_8c1b40ea9c1e0d::t_da5c2abedd1538 206-208
+  s_8c1b40ea9c1e0d::t_8d549a79861cee 383-387
+  s_8c1b40ea9c1e0d::t_acbc4837e3f1b9 905-959,964-969
+  s_8c1b40ea9c1e0d::t_38f94e08cf954c 960-963
+  s_8c1b40ea9c1e0d::t_1fe974858b8c18 348-349,351
+  s_8c1b40ea9c1e0d::t_b21d668e01db82 311
+  s_8c1b40ea9c1e0d::t_05001302c2fcbe 499-661,663-684
+  s_8c1b40ea9c1e0d::t_4c787266c33067 357
+  s_8c1b40ea9c1e0d::t_4f202b558a5c3e 19
+  s_8c1b40ea9c1e0d::t_e7adba026af9b0 328-347,350,352-356,358-382,388-395
+  s_8c1b40ea9c1e0d::t_6e1a4efbb5dd65 268-269
+  s_8c1b40ea9c1e0d::t_b030a45790a8fb 685
+  s_8c1b40ea9c1e0d::t_58bf5e62943280 970
+crates/topography-core/src/world/water/pipeline.rs
+  s_8c1b40ea9c1e0d::t_d34468d0086c98 293-301
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_78b4c027dfb264 485-486
+  s_8c1b40ea9c1e0d::t_6ed7d200e2c663 228,231
+  s_8c1b40ea9c1e0d::t_6da1211910a109 439-458,460-461,463-470,473
+  s_8c1b40ea9c1e0d::t_d5e876e96369df 325,337-350
+  s_8c1b40ea9c1e0d::t_bf3a2e14babb12 223-227,229-230,232-235
+  s_8c1b40ea9c1e0d::t_3d0a992607546d 304-305
+  s_8c1b40ea9c1e0d::t_dbe15eb19562c6 903-921
+  s_8c1b40ea9c1e0d::t_5eb8084ff19937 236-258
+  s_8c1b40ea9c1e0d::t_5af3beab4e2e95 408,410-411,414
+  s_8c1b40ea9c1e0d::t_5fc739f4e8d410 36
+  s_8c1b40ea9c1e0d::t_bd13f2172cd7ac 562
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2587d066e2dffc9e9b91d5e5df4e2897cf02000f",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
