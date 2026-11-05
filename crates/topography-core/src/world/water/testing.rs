@@ -65,3 +65,32 @@ pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
         contract: true,
     }
 }
+
+/// A grid directory holding `terrain(world)` at 1 m with uniform moisture.
+pub(crate) fn grid_dir(dir: &std::path::Path, world: World) -> std::path::PathBuf {
+    use std::fs;
+    let grid = dir.join("grid");
+    fs::create_dir_all(&grid).expect("grid dir");
+    let z: Vec<u8> = terrain(world)
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    fs::write(grid.join("elevation.f32"), z).expect("elevation");
+    fs::write(grid.join("moisture.f32"), 1.0f32.to_le_bytes()).expect("moisture");
+    let manifest = serde_json::json!({
+        "size": [world.w, world.h], "spacing_m": 1.0, "origin": [0.0, world.h as f64],
+        "moisture": {"file": "moisture.f32", "size": [1, 1], "spacing_m": 1000.0,
+                     "nw_m": [-500.0, world.h as f64 + 500.0], "scale_mm_h": 2.0},
+        "discharge": {"mean_land_mm_h": 2.0},
+    });
+    fs::write(
+        grid.join("grid.json"),
+        serde_json::to_vec(&manifest).expect("json"),
+    )
+    .expect("grid.json");
+    // The synthetic bowls are small: a table whose lake minimum is 4 m² (pass it as `water`).
+    let table = DEFAULT.replace("lake_min_m2 = 2000.0", "lake_min_m2 = 4.0");
+    assert_ne!(table, DEFAULT, "the table's lake minimum moved");
+    fs::write(grid.join("water.toml"), table).expect("water.toml");
+    grid
+}
