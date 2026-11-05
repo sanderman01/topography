@@ -47,6 +47,35 @@ pub(crate) fn receivers(world: World, win: Rect, z: &[f32], core: Rect) -> Vec<u
     out
 }
 
+/// Receivers on `z` that keep `prior`'s (the ground before channels were carved) wherever that
+/// neighbour is still strictly lower on `z`; elsewhere `z`'s own. Carving can tip a dithered
+/// Horn pick off the carved river (scale diagnosis 3); this keeps the routing on it. `prior`
+/// covers `win` like `z`.
+pub(crate) fn kept_receivers(
+    world: World,
+    win: Rect,
+    z: &[f32],
+    prior: &[f32],
+    core: Rect,
+) -> Vec<u8> {
+    let old = receivers(world, win, prior, core);
+    let mut out = receivers(world, win, z, core);
+    for (k, (o, &d)) in out.iter_mut().zip(&old).enumerate() {
+        if d == 0 {
+            continue;
+        }
+        let (x, y) = core.world_xy(k);
+        let (nx, ny) = world
+            .neighbour(x, y, d as usize - 1)
+            .expect("receiver inside");
+        let at = |x: u64, y: u64| z[win.local(x, y).expect("receivers need a one-cell halo")];
+        if at(nx, ny) < at(x, y) {
+            *o = d;
+        }
+    }
+    out
+}
+
 /// Horn's fall line of the 3 x 3 window `f(dy, dx)`, in eighths of a turn from east turning
 /// south; none on a flat.
 pub(crate) fn fall_turns(f: impl Fn(i64, i64) -> f64) -> Option<f64> {
@@ -118,6 +147,39 @@ mod tests {
         assert!(
             (slope - 20f32.to_radians().tan()).abs() < 0.1,
             "path slope {slope}"
+        );
+    }
+
+    /// A cell on a slope falling W and N: its Horn pick on the ground before carving (W or NW)
+    /// stays after a carve that turns the gradient, as long as it is still strictly lower;
+    /// once it is not, the carved ground's own pick takes over.
+    #[test]
+    fn kept_receivers_hold_the_prior_pick_while_it_stays_lower() {
+        let world = World { w: 5, h: 5 };
+        let all = Rect::whole(world);
+        let prior: Vec<f32> = (0..25)
+            .map(|i| 10.0 + (i % 5) as f32 + 0.5 * (i / 5) as f32)
+            .collect();
+        let c = 12;
+        let pick = receivers(world, all, &prior, all)[c];
+        let (w, nw) = (2 + 1, 4 + 1);
+        assert!(pick == w || pick == nw, "a W or NW pick: {pick}");
+        // Lower the side away from the pick by 3 m: the fall line turns past the other one.
+        let mut carved = prior.clone();
+        let side: [usize; 3] = if pick == w { [6, 7, 8] } else { [16, 17, 18] };
+        for k in side {
+            carved[k] -= 3.0;
+        }
+        let fresh = receivers(world, all, &carved, all)[c];
+        assert_ne!(fresh, pick, "carving flips the plain pick");
+        assert_eq!(kept_receivers(world, all, &carved, &prior, all)[c], pick);
+        // The prior receiver no longer lower: the carved ground's pick.
+        let (dy, dx) = OFFSETS[pick as usize - 1];
+        let r = ((2 + dy) * 5 + 2 + dx) as usize;
+        carved[c] = carved[r] - 0.1;
+        assert_eq!(
+            kept_receivers(world, all, &carved, &prior, all)[c],
+            receivers(world, all, &carved, all)[c]
         );
     }
 

@@ -16,9 +16,10 @@ use super::hierarchy::{Hierarchy, NONE, Resolver, build};
 use super::layers::{Classes, Layer};
 use super::nodes::{Node, Nodes};
 use super::rain::{Q_PER_KM2, Rain};
+use super::receivers::{kept_receivers, receivers};
 use super::store::{Blob, Dec, Enc, Work, cached, for_tiles};
 use super::table::Table;
-use super::watershed::{Drain, TileGraph, drain, tile_graph};
+use super::watershed::{Drain, TileGraph, drain_with, tile_graph};
 use crate::acquisition::{AcquisitionError, Result, ensure};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -349,8 +350,9 @@ pub(crate) fn state(
     core: Rect,
     win: Rect,
     zw: &[f32],
+    dir: Vec<u8>,
 ) -> Result<TileState> {
-    let d = drain(s.world, win, zw, core);
+    let d = drain_with(s.world, win, zw, core, dir);
     let z = crop(win, zw, core);
     let n = core.cells();
     let (mut wet, mut held, mut level) = (vec![Wet::Dry; n], vec![false; n], vec![f32::NAN; n]);
@@ -665,12 +667,34 @@ pub(crate) fn model(
     tag: &str,
     out: Option<&Rasters>,
 ) -> Result<Model> {
+    model_on(s, ground, None, work, tag, out)
+}
+
+/// `model` whose dry-land receivers keep those of `prior` (the ground before channels) where
+/// they are still strictly lower on `ground` (`kept_receivers`).
+pub(crate) fn model_on(
+    s: &Setup,
+    ground: &Layer<f32>,
+    prior: Option<&Layer<f32>>,
+    work: Option<&Work>,
+    tag: &str,
+    out: Option<&Rasters>,
+) -> Result<Model> {
     let tiles = s.tiles();
     let world = s.world;
     ensure(ground.world() == world, "the ground is not the run's world")?;
-    let read = |core: Rect| -> Result<(Rect, Vec<f32>)> {
+    ensure(
+        prior.is_none_or(|p| p.world() == world),
+        "the prior ground is not the run's world",
+    )?;
+    let read = |core: Rect| -> Result<(Rect, Vec<f32>, Vec<u8>)> {
         let win = core.grow(1, world);
-        Ok((win, ground.read(win)?))
+        let zw = ground.read(win)?;
+        let dir = match prior {
+            Some(p) => kept_receivers(world, win, &zw, &p.read(win)?, core),
+            None => receivers(world, win, &zw, core),
+        };
+        Ok((win, zw, dir))
     };
     let missing = |what: &str| invalid(format!("{what} missing from the work directory"));
 
@@ -678,9 +702,9 @@ pub(crate) fn model(
     let parts: Vec<(TileGraph, Frag)> =
         for_tiles(&tiles, s.threads, &format!("{tag} A"), |i, core| {
             let (g, frag) = cached(work, &format!("{tag}/a/{i:05}"), || {
-                let (win, zw) = read(core)?;
+                let (win, zw, dir) = read(core)?;
                 let supply = s.supply(core)?;
-                let d = drain(world, win, &zw, core);
+                let d = drain_with(world, win, &zw, core, dir);
                 let g = tile_graph(world, core, &crop(win, &zw, core), &d, |k| supply[k]);
                 Ok(if s.contract {
                     contract(g)
@@ -717,8 +741,8 @@ pub(crate) fn model(
     // B: cells by their holding depression in the global hierarchy.
     let counts: Vec<TileCounts> = for_tiles(&tiles, s.threads, &format!("{tag} B"), |i, core| {
         cached(work, &format!("{tag}/b/{i:05}"), || {
-            let (win, zw) = read(core)?;
-            let d = drain(world, win, &zw, core);
+            let (win, zw, dir) = read(core)?;
+            let d = drain_with(world, win, &zw, core, dir);
             let local = Local {
                 frag: frag_at(i)?,
                 ..Default::default()
@@ -765,8 +789,8 @@ pub(crate) fn model(
                 };
                 return Ok((local, Nodes::default(), Vec::new()));
             }
-            let (win, zw) = read(core)?;
-            let d = drain(world, win, &zw, core);
+            let (win, zw, dir) = read(core)?;
+            let d = drain_with(world, win, &zw, core, dir);
             let probe = Local {
                 frag,
                 ..Default::default()
@@ -863,8 +887,8 @@ pub(crate) fn model(
         let gathered: Vec<Gathered> =
             for_tiles(&tiles, s.threads, &format!("{tag} L2"), |i, core| {
                 cached(work, &format!("{tag}/l2/{i:05}"), || {
-                    let (win, zw) = read(core)?;
-                    let d = drain(world, win, &zw, core);
+                    let (win, zw, dir) = read(core)?;
+                    let d = drain_with(world, win, &zw, core, dir);
                     let own = Local {
                         frag: frag_at(i)?,
                         ..Default::default()
@@ -953,8 +977,8 @@ pub(crate) fn model(
         let gathered: Vec<Vec<(u32, f32)>> =
             for_tiles(&tiles, s.threads, &format!("{tag} C"), |i, core| {
                 cached(work, &format!("{tag}/c/{i:05}"), || {
-                    let (win, zw) = read(core)?;
-                    let d = drain(world, win, &zw, core);
+                    let (win, zw, dir) = read(core)?;
+                    let d = drain_with(world, win, &zw, core, dir);
                     let local = Local {
                         frag: frag_at(i)?,
                         ..Default::default()
@@ -1010,8 +1034,8 @@ pub(crate) fn model(
     let spanning: Vec<Vec<(u32, u64, f32)>> =
         for_tiles(&tiles, s.threads, &format!("{tag} D"), |i, core| {
             cached(work, &format!("{tag}/d/{i:05}"), || {
-                let (win, zw) = read(core)?;
-                let st = state(s, w, &local_of(i)?, core, win, &zw)?;
+                let (win, zw, dir) = read(core)?;
+                let st = state(s, w, &local_of(i)?, core, win, &zw, dir)?;
                 Ok((0..core.cells())
                     .filter_map(|k| match st.wet[k] {
                         Wet::Pond(o) if w.nodes.at(o).full && !inside(w.nodes.at(o).bbox, core) => {
@@ -1047,8 +1071,8 @@ pub(crate) fn model(
     let outlet_cells: HashSet<u64> = outlets.values().flatten().copied().collect();
     let reports: Vec<Report> = for_tiles(&tiles, s.threads, &format!("{tag} E"), |i, core| {
         cached(work, &format!("{tag}/e/{i:05}"), || {
-            let (win, zw) = read(core)?;
-            let st = state(s, w, &local_of(i)?, core, win, &zw)?;
+            let (win, zw, dir) = read(core)?;
+            let st = state(s, w, &local_of(i)?, core, win, &zw, dir)?;
             let flat = flats_for(s, w, &st, &ponds)?;
             let rain = s.rain_units(core)?;
             let next = |k: usize| next_of(s, w, &st, &flat, k);
@@ -1086,8 +1110,8 @@ pub(crate) fn model(
             if work.is_some_and(|wk| wk.is_done(&name)) {
                 return Ok(());
             }
-            let (win, zw) = read(core)?;
-            let st = state(s, w, &local_of(i)?, core, win, &zw)?;
+            let (win, zw, dir) = read(core)?;
+            let st = state(s, w, &local_of(i)?, core, win, &zw, dir)?;
             let flat = flats_for(s, w, &st, &ponds)?;
             let rain = s.rain_units(core)?;
             let next = |k: usize| next_of(s, w, &st, &flat, k);

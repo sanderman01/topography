@@ -38,8 +38,12 @@ const MAX_RADIUS: f64 = (HALO - BACKWATER) as f64;
 /// most this many Jacobi rounds; each round reaches 2 cells further, so the area carries a
 /// margin of 2 per round (+ 1 for the slope stencil) and every tiling agrees.
 pub(crate) const WALL_ROUNDS: u64 = 16;
-/// The area's margin beyond the core: backwater and the wall rounds.
-const MARGIN: u64 = BACKWATER + 2 * WALL_ROUNDS + 1;
+/// Then every cut in the 3 × 3 of a cell still a wall is removed, at most this many Jacobi
+/// rounds (2 cells each); a core cell a further round would change is an error.
+pub(crate) const RESTORE_ROUNDS: u64 = 32;
+/// The area's margin beyond the core: backwater, the wall rounds and the restore rounds with
+/// the closing test round.
+const MARGIN: u64 = BACKWATER + 2 * (WALL_ROUNDS + RESTORE_ROUNDS + 1) + 1;
 
 pub(crate) struct Layers {
     pub carved: Layer<f32>,
@@ -66,8 +70,8 @@ impl Layers {
 }
 
 /// Per tile: lowered cells, deepest lowering below the ground, volume m³, river cells,
-/// deepest lowering below raw.
-type Figure = (u64, f32, f64, u64, f32);
+/// deepest lowering below raw, cuts removed by the restore rounds, restore rounds used.
+type Figure = (u64, f32, f64, u64, f32, u64, u64);
 /// Per tile: (river body, largest discharge) and (pond ordinal, crossing body).
 type Sizes = (Vec<(u32, f32)>, Vec<(u32, u32)>);
 
@@ -169,7 +173,9 @@ pub(crate) fn channels(
             let name = format!("{tag}/ch/{i:05}");
             if let Some(wk) = work {
                 if wk.is_done(&name) {
-                    return wk.cached(&format!("{name}-figures"), || Ok((0, 0.0, 0.0, 0, 0.0)));
+                    return wk.cached(&format!("{name}-figures"), || {
+                        Ok((0, 0.0, 0.0, 0, 0.0, 0, 0))
+                    });
                 }
             }
             // Every section reaching the area lies in the window (MAX_RADIUS + BACKWATER = HALO).
@@ -323,19 +329,22 @@ pub(crate) fn channels(
             let mut near_cut: Vec<usize> = (0..n)
                 .filter(|&a| !ring(a) && nbrs(a).any(|b| carved[b] < ga[b]))
                 .collect();
-            for _ in 0..WALL_ROUNDS {
-                let steep: Vec<usize> = near_cut
+            let steep_in = |carved: &[f32], near_cut: &[usize]| -> Vec<usize> {
+                near_cut
                     .iter()
                     .copied()
                     .filter(|&a| {
                         let (lx, ly) = (a % area.w, a / area.w);
                         (carved[a] - ra[a]).abs() > CHANGED_M
                             && is_wall(
-                                horn_deg(&carved, area.w, lx, ly, s.spacing_m),
+                                horn_deg(carved, area.w, lx, ly, s.spacing_m),
                                 horn_deg(&ra, area.w, lx, ly, s.spacing_m),
                             )
                     })
-                    .collect();
+                    .collect()
+            };
+            for _ in 0..WALL_ROUNDS {
+                let steep = steep_in(&carved, &near_cut);
                 let mut shrink: Vec<usize> = steep
                     .iter()
                     .flat_map(|&a| nbrs(a))
@@ -354,6 +363,39 @@ pub(crate) fn channels(
                     if is_river[b] && !keep[b] && carved[b] >= surface[b] {
                         carved[b] = ga[b];
                     }
+                }
+                near_cut.retain(|&a| nbrs(a).any(|b| carved[b] < ga[b]));
+            }
+            // Halving moves a step on a reach over 40° instead of removing it (scale
+            // diagnosis 1): remove every cut next to a remaining wall, until none is left.
+            // The round (from 1) that removed each cut, 0 for none.
+            let mut undone = vec![0u64; n];
+            for round in 0..=RESTORE_ROUNDS {
+                let undo: Vec<usize> = steep_in(&carved, &near_cut)
+                    .into_iter()
+                    .flat_map(|a| nbrs(a))
+                    .filter(|&b| carved[b] < ga[b])
+                    .collect();
+                if undo.is_empty() {
+                    break;
+                }
+                if round == RESTORE_ROUNDS {
+                    // Only cells beyond the core may still change (their tiles test them).
+                    if let Some(&b) = undo.iter().find(|&&b| {
+                        let (x, y) = area.world_xy(b);
+                        core.contains(x, y)
+                    }) {
+                        let (x, y) = area.world_xy(b);
+                        return Err(crate::acquisition::AcquisitionError::Invalid(format!(
+                            "a channel cut at ({x}, {y}) still leaves a wall after \
+                             {RESTORE_ROUNDS} restore rounds"
+                        )));
+                    }
+                    break;
+                }
+                for b in undo {
+                    carved[b] = ga[b];
+                    undone[b] = round + 1;
                 }
                 near_cut.retain(|&a| nbrs(a).any(|b| carved[b] < ga[b]));
             }
@@ -418,10 +460,13 @@ pub(crate) fn channels(
             out.carved.write(core, &cc)?;
             out.surface.write(core, &cs)?;
             out.body.write(core, &ci)?;
-            let mut fig: Figure = (0, 0.0, 0.0, 0, 0.0);
+            let mut fig: Figure = (0, 0.0, 0.0, 0, 0.0, 0, 0);
             for k in 0..core.cells() {
                 let (x, y) = core.world_xy(k);
                 let j = win.local(x, y).expect("core in window");
+                let round = undone[at(k)];
+                fig.5 += u64::from(round > 0);
+                fig.6 = fig.6.max(round);
                 let drop = g[j] - cc[k];
                 if drop > 0.0 {
                     fig.0 += 1;
@@ -445,6 +490,8 @@ pub(crate) fn channels(
         "max_below_raw_m": parts.iter().map(|p| p.4).fold(0.0f32, f32::max),
         "volume_m3": parts.iter().map(|p| p.2).sum::<f64>().round(),
         "river_cells": parts.iter().map(|p| p.3).sum::<u64>(),
+        "wall_cuts_removed": parts.iter().map(|p| p.5).sum::<u64>(),
+        "wall_restore_rounds": parts.iter().map(|p| p.6).max().unwrap_or(0),
         "width": "3 * Q^0.5 m, Q in m³/s", "depth": "min(0.3 * Q^0.4, 2) m",
         "m3s_per_km2": geo.m3s_per_km2,
     }))
@@ -513,8 +560,9 @@ fn path_max(world: World, core: Rect, flow: &[u8], d0: &[Drained]) -> Result<Vec
 
 /// Settles the written water on the final routing (review: drainage_rises): what drains at a
 /// cell never lies below what its receiver (`r3`, the routing on the carved ground) drains
-/// at. Each cell takes the highest labelled water on its path downstream when that lies
-/// above it: a dry or pond cell is wetted as that water's body, a wet one raised. Labels and
+/// at. A wet cell inside a higher pond of that routing stands at the pond's level. Each cell
+/// takes the highest labelled water on its path downstream when that lies above it: a dry or
+/// pond cell is wetted as that water's body, a wet one raised. Labels and
 /// surfaces only. Exact over tiles: per-tile path maxima, then the paths across tile rings.
 pub(crate) fn settle(
     s: &Setup,
@@ -529,10 +577,12 @@ pub(crate) fn settle(
     let read = |core: Rect| -> Result<(Vec<u8>, Vec<Drained>)> {
         let (sf, b) = (out.surface.read(core)?, out.body.read(core)?);
         let (lv, z) = (r3.level.read(core)?, ground.read(core)?);
+        // A wet cell inside a higher pond stands at the pond's level (bank pockets, scale
+        // diagnosis 2).
         let d0 = (0..core.cells())
             .map(|k| {
                 if sf[k].is_finite() {
-                    (sf[k], b[k])
+                    (sf[k].max(lv[k]), b[k])
                 } else if lv[k].is_finite() {
                     (lv[k], 0)
                 } else {
@@ -612,12 +662,20 @@ pub(crate) fn settle(
                         if f.0 > v { f } else { (v, id) }
                     }
                 };
+                let (was, mut v) = (sf[k], (sf[k], b[k]));
+                // A wet cell keeps its body at its pond's level (d0).
+                if was.is_finite() {
+                    v.0 = d0[k].0;
+                }
                 // Only labelled water wets a cell (a pond or dry source has no body).
                 if top.0 > d0[k].0 && top.1 >= 1 {
+                    v = top;
+                }
+                if v.0 != was && !(v.0.is_nan() && was.is_nan()) {
                     fig.0 += 1;
-                    fig.1 += u64::from(!sf[k].is_finite());
-                    fig.2 = fig.2.max(top.0 - d0[k].0);
-                    (sf[k], b[k]) = (top.0, top.1);
+                    fig.1 += u64::from(!was.is_finite());
+                    fig.2 = fig.2.max(v.0 - if was.is_finite() { was } else { d0[k].0 });
+                    (sf[k], b[k]) = v;
                 }
             }
             if fig.0 > 0 {
@@ -642,7 +700,7 @@ mod tests {
     use super::*;
     use crate::world::water::bodies::label;
     use crate::world::water::geom::OFFSETS;
-    use crate::world::water::pipeline::model;
+    use crate::world::water::pipeline::{model, model_on};
     use crate::world::water::testing::{setup, terrain};
 
     type Run = (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<u8>);
@@ -875,6 +933,45 @@ mod tests {
         assert_eq!(walls, 0);
     }
 
+    /// Changed cells steeper than max(40°, raw) (the `walls` check) in a `w`-wide world.
+    fn walls(raw: &[f32], carved: &[f32], w: usize) -> usize {
+        let h = raw.len() / w;
+        let mut n = 0;
+        for y in 1..h - 1 {
+            for x in 1..w - 1 {
+                let k = y * w + x;
+                n += usize::from(
+                    (carved[k] - raw[k]).abs() > CHANGED_M
+                        && is_wall(horn_deg(carved, w, x, y, 1.0), horn_deg(raw, w, x, y, 1.0)),
+                );
+            }
+        }
+        n
+    }
+
+    /// A rill straight down a 46° plane (raw 44–48° across it): the cut deepens downstream, so
+    /// halving only moves the step (scale diagnosis 1); the final pass removes it.
+    #[test]
+    fn a_rill_down_a_46_degree_slope_leaves_no_wall() {
+        let world = World { w: 160, h: 41 };
+        let z: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                200.0 - 1.035 * x + 0.3 * (y - 20.0).abs() + ((i * 7919) % 7) as f32 * 0.002
+            })
+            .collect();
+        let mut first: Option<Vec<f32>> = None;
+        for tile in [160, 32] {
+            let (raw, carved, ..) = run_on(world, z.clone(), tile, 50.0, 1e-4);
+            let cut = (0..raw.len()).filter(|&k| carved[k] < raw[k]).count();
+            assert!(cut > 50, "the rill is cut ({cut} cells)");
+            assert_eq!(walls(&raw, &carved, 160), 0, "tile {tile}");
+            let bits: Vec<u32> = carved.iter().map(|v| v.to_bits()).collect();
+            let f = first.get_or_insert_with(|| carved.clone());
+            assert_eq!(bits, f.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+        }
+    }
+
     /// Water settles on the final routing: cells draining into water above them are wetted
     /// as that water (labels and surfaces only), alike at every tiling.
     #[test]
@@ -917,6 +1014,103 @@ mod tests {
         assert_eq!(fig4.0, fig.0);
         let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
         assert_eq!((bits(&sf4), b4), (bits(&sf), b), "tiles of 4 alike");
+    }
+
+    /// A bank pocket wet at its river's surface (9.2 m) inside an m3 pond at 9.6 m that spills
+    /// into a dry cell at 9.6 m (the 60 `drainage_rises` cells at 8192²): settle raises it to
+    /// the pond's level, keeping its body, and the river cell upstream with it.
+    #[test]
+    fn a_bank_pocket_inside_a_higher_pond_stands_at_the_pond_level() {
+        let world = World { w: 12, h: 3 };
+        let settled = |tile: u64| {
+            let s = setup(world, tile, 1e-5);
+            let mut z: Vec<f32> = (0..36).map(|i| 10.0 - 0.1 * (i % 12) as f32).collect();
+            (z[12 + 5], z[12 + 6]) = (9.0, 9.6);
+            let r3 = Rasters::memory(world);
+            let flow: Vec<u8> = (0..36)
+                .map(|i| if i / 12 == 1 && i % 12 < 11 { 4 } else { 32 })
+                .collect();
+            r3.flow.write(Rect::whole(world), &flow).unwrap();
+            let mut lv = vec![f32::NAN; 36];
+            lv[12 + 5] = 9.6;
+            r3.level.write(Rect::whole(world), &lv).unwrap();
+            let out = Layers::memory(world);
+            let (mut sf, mut b) = (vec![f32::NAN; 36], vec![0u32; 36]);
+            (sf[12 + 4], b[12 + 4]) = (9.25, 7);
+            (sf[12 + 5], b[12 + 5]) = (9.2, 7);
+            out.surface.write(Rect::whole(world), &sf).unwrap();
+            out.body.write(Rect::whole(world), &b).unwrap();
+            let ground = Layer::memory(world, z.clone());
+            settle(&s, &r3, &ground, &out, None, "s").expect("settle");
+            let (sf, b) = (out.surface.to_vec().unwrap(), out.body.to_vec().unwrap());
+            // What the drainage check reads: no rise along row 1.
+            let d = |k: usize| {
+                if sf[k].is_finite() {
+                    sf[k]
+                } else if lv[k].is_finite() {
+                    lv[k]
+                } else {
+                    z[k]
+                }
+            };
+            for x in 0..11 {
+                assert!(d(12 + x + 1) <= d(12 + x), "rises at x = {x}");
+            }
+            (sf, b)
+        };
+        let (sf, b) = settled(12);
+        assert_eq!((sf[12 + 5], b[12 + 5]), (9.6, 7), "the pocket");
+        assert_eq!((sf[12 + 4], b[12 + 4]), (9.6, 7), "upstream");
+        assert!(sf[12 + 6].is_nan(), "the spill stays dry");
+        let (sf4, b4) = settled(4);
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!((bits(&sf4), b4), (bits(&sf), b), "tiles of 4 alike");
+    }
+
+    /// The routing on the carved ground (m3, scale diagnosis 3): carving tips the plain Horn
+    /// pick of some river cells off the carved river; kept receivers follow m2 wherever its
+    /// receiver is still strictly lower, alike at every tiling.
+    #[test]
+    fn the_final_routing_stays_on_the_carved_rivers() {
+        let world = World { w: 256, h: 256 };
+        let (raw, carved, _, _, m2) = run(32);
+        let route = |z: &[f32], prior: Option<&Layer<f32>>, tile: u64| {
+            let r = Rasters::memory(world);
+            let ground = Layer::memory(world, z.to_vec());
+            model_on(
+                &setup(world, tile, 1e-5),
+                &ground,
+                prior,
+                None,
+                "m",
+                Some(&r),
+            )
+            .expect("model");
+            (r.flow.to_vec().unwrap(), r.node.to_vec().unwrap())
+        };
+        let m2_node = route(&raw, None, 32).1;
+        let prior = Layer::memory(world, raw);
+        let route = |prior: Option<&Layer<f32>>, tile: u64| route(&carved, prior, tile);
+        let plain = route(None, 32);
+        let kept = route(Some(&prior), 32);
+        assert_eq!(kept, route(Some(&prior), 256), "tilings alike");
+        // Dry m2 thalweg cells, dry in m3 too, whose m2 receiver is still lower but not taken.
+        let left = |(flow, node): &(Vec<u8>, Vec<u32>)| {
+            (0..m2.len())
+                .filter(|&k| {
+                    let d = m2[k] & 15;
+                    if m2[k] & 16 == 0 || d == 0 || m2_node[k] != 0 || node[k] != 0 {
+                        return false;
+                    }
+                    let (dy, dx) = OFFSETS[d as usize - 1];
+                    let r =
+                        ((k / 256) as i64 + dy) as usize * 256 + ((k % 256) as i64 + dx) as usize;
+                    carved[r] < carved[k] && flow[k] & 15 != d
+                })
+                .count()
+        };
+        assert!(left(&plain) > 0, "carving flips some plain picks");
+        assert_eq!(left(&kept), 0);
     }
 
     #[test]

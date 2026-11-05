@@ -5,7 +5,6 @@
 
 use super::flow::{Next, ends};
 use super::geom::{Rect, UnionFind, World};
-use super::receivers::receivers;
 use super::store::{Blob, Dec, Enc};
 use crate::acquisition::Result;
 use std::collections::{BTreeMap, HashMap};
@@ -62,12 +61,18 @@ pub(crate) struct Drain {
 
 /// Drainage of `core`; `z` covers `win` (`core` grown by one cell) and must be finite, or a
 /// NaN cell would pass for a pit.
+#[cfg(test)]
 pub(crate) fn drain(world: World, win: Rect, z: &[f32], core: Rect) -> Drain {
+    let dir = super::receivers::receivers(world, win, z, core);
+    drain_with(world, win, z, core, dir)
+}
+
+/// `drain` with the receivers `dir` of `core` given (each strictly lower on `z`, or none).
+pub(crate) fn drain_with(world: World, win: Rect, z: &[f32], core: Rect, dir: Vec<u8>) -> Drain {
     if let Some(k) = z.iter().position(|v| !v.is_finite()) {
         let (x, y) = win.world_xy(k);
         panic!("ground at ({x}, {y}) is {}, not finite", z[k]);
     }
-    let dir = receivers(world, win, z, core);
     let n = core.cells();
     assert!(
         n <= u32::MAX as usize,

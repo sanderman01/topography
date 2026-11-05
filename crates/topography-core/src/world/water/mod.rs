@@ -299,7 +299,7 @@ pub fn run(o: &Options) -> Result<String> {
         "c",
         &json!({"after": l_tag, "m3s_per_km2": geo.m3s_per_km2, "cap": CHANNEL_CAP_M,
                 "halo": channel::HALO, "backwater": channel::BACKWATER,
-                "walls": channel::WALL_ROUNDS}),
+                "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS}),
     );
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
@@ -333,13 +333,14 @@ pub fn run(o: &Options) -> Result<String> {
     });
     drop(m2);
     // The routing on the carved ground (m3: `finish` checks this ground on the same one) and
-    // the written water settled on it (review: drainage_rises).
+    // the written water settled on it (review: drainage_rises). m3 keeps m2's receivers where
+    // they are still strictly lower, so the routing stays on the carved rivers.
     let carved = layers::Layer::open(s.world, &work.path("carved.f32"))?;
     let m3_tag = final_tag(&c_tag, &work.path("carved.f32"))?;
     let s_tag = stage_tag("s", &json!({"after": m3_tag}));
     let settled = work.cached(&format!("{s_tag}/settled"), || {
         let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
-        pipeline::model(&s, &carved, wk, &m3_tag, Some(&finals))?;
+        pipeline::model_on(&s, &carved, Some(&breached), wk, &m3_tag, Some(&finals))?;
         channel::settle(&s, &finals, &carved, &out, wk, &s_tag)
     })?;
     stages["settled"] = json!({"raised_cells": settled.0, "wetted_cells": settled.1,
@@ -456,9 +457,11 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     // ground (same tag).
     let ground = layers::Layer::open(s.world, &o.ground)?;
     let m3_tag = final_tag(&c_tag, &o.ground)?;
-    let m3 = pipeline::model(
+    // Receivers kept from the breached ground where still valid (scale diagnosis 3).
+    let m3 = pipeline::model_on(
         &s,
         &ground,
+        Some(&breached),
         Some(&work),
         &m3_tag,
         Some(&pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?),
