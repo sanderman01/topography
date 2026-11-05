@@ -105,8 +105,17 @@ def build_world_grid(src: Path, out: Path) -> Path:
     _write_if_changed(grid / "grid.json", {
         "size": [n, n], "spacing_m": 1.0, "origin": _origin(m, n, 1.0), "classes_cell_m": 4.0,
         "moisture": entry | {"file": "moisture.f32"}, "discharge": {"mean_land_mm_h": mean},
+        "inputs": _inputs(classes, field),
     })
     return grid
+
+
+def _inputs(classes: Path, moisture: Path) -> dict:
+    """What the grid was built from, so a changed class map or moisture field changes grid.json
+    (and with it the driver's resume key)."""
+    st = classes.stat()
+    return {"classes": {"file": str(classes.resolve()), "bytes": st.st_size, "modified_ns": st.st_mtime_ns},
+            "moisture": {"file": str(moisture.resolve()), "sha256": hydrology.sha256(moisture)}}
 
 
 def _mode_classes(c4: np.ndarray, k: int) -> np.ndarray:
@@ -153,25 +162,31 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
     col = int(round((centre[0] - origin[0]) / spacing - size / 2)) // k * k
     row = int(round((origin[1] - centre[1]) / spacing - size / 2)) // k * k
     col, row = min(max(col, 0), n - size), min(max(row, 0), n - size)
+    classes_src = (Path(m["source_world"]) if level == 1 else src) / "classes.u8"
     manifest = {
         "size": [size, size], "spacing_m": spacing, "origin": origin,
         "offset_m": [col * spacing, row * spacing], "classes_cell_m": spacing * k,
         "moisture": entry | {"file": "moisture.f32"}, "discharge": {"mean_land_mm_h": mean},
         "window": {"source": str(src.resolve()), "level": level, "centre_m": list(centre)},
+        "inputs": _inputs(classes_src, field_m),
     }
-    if (dest / "grid.json").exists() and _json(dest / "grid.json") == manifest:
+    sizes = {"elevation.f32": size * size * 4, "classes.u8": (size // k) ** 2}
+    if ((dest / "grid.json").exists() and _json(dest / "grid.json") == manifest
+            and all((dest / f).exists() and (dest / f).stat().st_size == b for f, b in sizes.items())):
         return dest
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "grid.json").unlink(missing_ok=True)
     if level == 1:
         field = _read_window(src / RAW, "<f4", n, row, col, size, size)
-        classes = _read_window(Path(m["source_world"]) / "classes.u8", np.uint8, n // 4, row // 4, col // 4,
-                               size // 4, size // 4)
+        classes = _read_window(classes_src, np.uint8, n // 4, row // 4, col // 4, size // 4, size // 4)
     elif level == 4:
         field = _read_window(src / "elevation.f32", "<f4", n, row, col, size, size)
         classes = _read_window(src / "classes.u8", np.uint8, n, row, col, size, size)
     else:
-        field = np.load(src / "arrays.npz")["l2_raw"][row : row + size, col : col + size]
+        l2 = np.load(src / "arrays.npz")["l2_raw"]
+        if l2.shape != (n, n):
+            raise Refused(f"{src / 'arrays.npz'} l2_raw is {l2.shape}, not the {n}² 32 m grid")
+        field = l2[row : row + size, col : col + size]
         c4 = _read_window(src / "classes.u8", np.uint8, n * 8, row * 8, col * 8, size * 8, size * 8)
         classes = _mode_classes(c4, 8)
     for name, a, dtype in (("elevation.f32", field, "<f4"), ("classes.u8", classes, np.uint8)):
@@ -195,6 +210,8 @@ def _pin(bin_dir: Path) -> tuple[Path, str]:
         hydrology.use_binary(pins[0])
         path = pins[0]
     else:
+        # Copy the release build, not a pin an earlier run in this process selected.
+        hydrology.use_binary(None)
         path, digest = hydrology.pin_binary(bin_dir)
     print(f"water binary: {path} (sha256 {digest[:12]})", flush=True)
     return path, digest
@@ -235,11 +252,16 @@ class Progress:
         if self.state["source"] != str(source.resolve()):
             raise Refused(f"{path.parent} was started from {self.state['source']}")
 
-    def key(self, digest: str, tile: int) -> None:
-        """A new pinned binary or tile size invalidates every step after the raw copy."""
-        if (self.state.get("binary"), self.state.get("tile")) != (digest, tile):
+    def key(self, digest: str, tile: int, grid: Path, work: Path) -> None:
+        """A new pinned binary, tile size or grid.json (window, moisture, class map) invalidates
+        every step after the raw copy and the work directory (Rust refuses a foreign one)."""
+        key = {"binary": digest, "tile": tile, "grid": hydrology.sha256(grid / "grid.json")}
+        if {k: self.state.get(k) for k in key} != key:
+            if work.exists():
+                print(f"inputs or settings changed: removing {work}", flush=True)
+                shutil.rmtree(work)
             self.state["steps"] = {k: v for k, v in self.state["steps"].items() if k == "raw"}
-            self.state["binary"], self.state["tile"] = digest, tile
+            self.state |= key
             self.save()
 
     def done(self, step: str) -> dict | None:
@@ -348,6 +370,8 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
             if (src / name).exists():
                 shutil.copy(src / name, out / name)
         extra["description"] = "description.json"
+        if (out / "description.json").exists():
+            digests["description.json"] = hydrology.sha256(out / "description.json")
     _pictures(out, n)
     manifest = {
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
@@ -373,13 +397,25 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
     return 0 if report["passed"] else 1
 
 
+def _guard(out: Path, src: Path, m: dict) -> None:
+    """Refuse an output at or inside the source or its source world, and an existing non-empty
+    directory that is not a run of this driver (another world, say)."""
+    o = out.resolve()
+    for p in {src.resolve(), *([Path(m["source_world"]).resolve()] if m.get("source_world") else [])}:
+        if o == p or p in o.parents:
+            raise Refused(f"--out {out} lies in the source {p}")
+    if out.exists() and any(out.iterdir()):
+        progress = out / "progress.json"
+        if not progress.exists() or "source" not in _json(progress):
+            raise Refused(f"{out} exists and is not a run of this driver (no progress.json)")
+
+
 def _run_world(src: Path, out: Path, tile: int, threads: int) -> int:
     m = _json(src / "manifest.json")
     n = m["size"][0]
     if m.get("spacing_m") != 1.0 or not (src / RAW).exists():
         raise Refused(f"{src} is not a 1 m world with a kept {RAW}")
-    if out.resolve() == src.resolve():
-        raise Refused("--out must be a new world, not the source")
+    _guard(out, src, m)
     moisture = _moisture(src, m)
     out.mkdir(parents=True, exist_ok=True)
     progress = Progress(out / "progress.json", src)
@@ -395,7 +431,7 @@ def _run_world(src: Path, out: Path, tile: int, threads: int) -> int:
         raw = progress.done("raw")
     grid = build_world_grid(src, out)
     binary, digest = _pin(out / "hydrology" / "bin")
-    progress.key(digest, tile)
+    progress.key(digest, tile, grid, work)
     out1m = out / "hydrology" / "1m"
     _water(progress, binary, grid, work, out1m, tile, threads)
     if not (step := progress.done("world")):
@@ -408,13 +444,15 @@ def _run_world(src: Path, out: Path, tile: int, threads: int) -> int:
 
 def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, out: Path, tile: int,
                 threads: int) -> int:
+    _guard(out, src, _json(src / "manifest.json"))
     out.mkdir(parents=True, exist_ok=True)
     progress = Progress(out / "progress.json", src)
-    _check_disk(out, size * size, out / "work")
+    work = out / "work"
+    _check_disk(out, size * size, work)
     grid = build_window_grid(src, level, centre, size, out / "grid")
     binary, digest = _pin(out / "bin")
-    progress.key(digest, tile)
-    code = _water(progress, binary, grid, out / "work", out / "out", tile, threads)
+    progress.key(digest, tile, grid, work)
+    code = _water(progress, binary, grid, work, out / "out", tile, threads)
     print(f"done: {out / 'out'} ({'passed' if code == 0 else 'FAILED'})", flush=True)
     return code
 
@@ -456,11 +494,18 @@ def main(argv=None) -> int:
     v.add_argument("--threads", type=int, default=4)
     a = p.parse_args(argv)
     started = time.time()
-    if a.mode == "world":
-        code = run_world(a.source, a.out, a.tile, a.threads)
-    else:
-        e, n = (float(t) for t in a.centre.split(","))
-        code = run_window(a.source, a.level, (e, n), a.size, a.out, a.tile or a.size, a.threads)
+    try:
+        if a.mode == "world":
+            code = run_world(a.source, a.out, a.tile, a.threads)
+        else:
+            e, n = (float(t) for t in a.centre.split(","))
+            code = run_window(a.source, a.level, (e, n), a.size, a.out, a.tile or a.size, a.threads)
+    except Exception:
+        # Exit 1 means only "checks failed, outputs kept".
+        import traceback
+
+        traceback.print_exc()
+        code = 2
     import resource
 
     print(f"exit {code} after {time.time() - started:.0f} s; peak RSS driver "

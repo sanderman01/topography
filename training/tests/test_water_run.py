@@ -84,6 +84,52 @@ class RunTest(unittest.TestCase):
             self.assertEqual(W.run_world(src, root / "v3", tile=64, threads=2), 2)
             self.assertFalse((root / "v3" / "hydrology" / "work").exists())
 
+    def test_an_out_inside_a_source_is_refused(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            root = Path(tmp)
+            src = fake_world(root)
+            for out in (src / "v3", root / "chain" / "v3", src):
+                self.assertEqual(W.run_world(src, out, tile=64, threads=2), 2, out)
+                self.assertEqual(W.run_window(src, 1, (128.0, 128.0), 64, out, 64, 2), 2, out)
+            self.assertFalse((src / "v3").exists())
+            self.assertFalse((root / "chain" / "v3").exists())
+
+    def test_an_out_inside_l4v2_is_refused(self):
+        l4v2 = Path(__file__).resolve().parents[2] / "data" / "worlds" / "fujix-55-l4v2"
+        if not (l4v2 / "manifest.json").exists():
+            self.skipTest("no l4v2 world")
+        out = l4v2 / "hydrology" / "v3-test"
+        self.assertEqual(W.run_world(l4v2, out, tile=2048, threads=2), 2)
+        self.assertEqual(W.run_window(l4v2, 1, (49249.0, 16381.0), 64, out, 64, 2), 2)
+        self.assertFalse(out.exists())
+
+    def test_another_existing_world_is_refused(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            root = Path(tmp)
+            src = fake_world(root)
+            other = fake_world(root / "other")
+            before = sorted(p.name for p in other.iterdir())
+            self.assertEqual(W.run_world(src, other, tile=64, threads=2), 2)
+            self.assertEqual(W.run_window(src, 1, (128.0, 128.0), 64, other, 64, 2), 2)
+            self.assertEqual(sorted(p.name for p in other.iterdir()), before)
+
+    def test_an_unexpected_error_exits_2(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            self.assertEqual(W.main(["world", "--source", str(Path(tmp) / "none"), "--out", str(Path(tmp) / "o")]), 2)
+
+    def test_a_changed_window_reruns(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            root = Path(tmp)
+            src = fake_world(root)
+            out = root / "win"
+            self.assertIn(W.run_window(src, 1, (128.0, 128.0), 128, out, 64, 2), (0, 1))
+            first = json.loads((out / "progress.json").read_text())
+            self.assertIn(W.run_window(src, 1, (96.0, 160.0), 128, out, 64, 2), (0, 1))
+            second = json.loads((out / "progress.json").read_text())
+            self.assertNotEqual(first["grid"], second["grid"])
+            published = json.loads((out / "out" / "grid.json").read_text())
+            self.assertEqual(published["offset_m"], [32.0, 32.0], "finish ran on the new window")
+
     def test_a_window_grid_is_cut_from_the_raw_surface(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
             src = fake_world(Path(tmp))
