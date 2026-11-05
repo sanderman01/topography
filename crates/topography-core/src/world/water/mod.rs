@@ -150,17 +150,26 @@ pub(crate) fn setup(
         None => (table::DEFAULT.to_string(), "built-in water-v2.toml".into()),
     };
     let rain = rain::Rain::read(grid, &manifest)?;
-    let elevation = io_context(
-        "inspect elevation.f32",
-        fs::metadata(grid.join("elevation.f32")),
-    )?;
+    // Large inputs by size and modification time; the small moisture field by digest.
+    let identity = |name: &str| -> Result<Value> {
+        let path = grid.join(name);
+        if !path.exists() {
+            return Ok(Value::Null);
+        }
+        let m = io_context(format!("inspect {name}"), fs::metadata(&path))?;
+        Ok(json!({"bytes": m.len(), "modified": format!("{:?}", m.modified().ok())}))
+    };
+    let moisture = rain.entry["file"].as_str().unwrap_or("moisture.f32");
     let stamp = json!({
         "grid.json": digest(&bytes),
-        "elevation.f32": {"bytes": elevation.len(), "modified": format!("{:?}", elevation.modified().ok())},
+        "elevation.f32": identity("elevation.f32")?,
+        "classes.u8": identity("classes.u8")?,
+        "moisture": {"file": moisture, "sha256": crate::acquisition::hash_file(&grid.join(moisture))?.0},
         "tile": tile,
         "water_table": {"source": source, "sha256": digest(text.as_bytes())},
         "river_km2": river_km2,
         "version": env!("CARGO_PKG_VERSION"),
+        "code": code_identity()?,
     });
     let table = table::Table::parse(&text)?;
     let params = params(&table, g.spacing_m, river_km2);
@@ -177,6 +186,18 @@ pub(crate) fn setup(
         contract: true,
     };
     Ok((s, raw, stamp))
+}
+
+/// The running binary's digest: any code change invalidates a work directory's caches,
+/// even within one crate version (hashed once per process).
+fn code_identity() -> Result<String> {
+    static CODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(c) = CODE.get() {
+        return Ok(c.clone());
+    }
+    let exe = io_context("locate the running binary", std::env::current_exe())?;
+    let (sha, _) = crate::acquisition::hash_file(&exe)?;
+    Ok(CODE.get_or_init(|| sha).clone())
 }
 
 /// Peak resident memory where the OS reports it (Linux), for the logs.
@@ -271,7 +292,8 @@ pub fn run(o: &Options) -> Result<String> {
         "lakes": n("lake"), "rivers": n("river"), "dry_basins": n("dry"), "river_pools": pools.len(),
         "ponds": nodes.iter().filter(|nd| !nd.lake).count(),
         "node_area_log2_m2_hist": area, "node_depth_dm_hist": depth,
-        "to_sea_cells": m2.water.bal.to_sea as f64 / table::MILLI as f64,
+        // Lake-balance supply (cells × r, r up to 3) that overflowed to the sea or off the map.
+        "to_sea_r_cells": m2.water.bal.to_sea as f64 / table::MILLI as f64,
         "tags": [m1_tag, b_tag, m2_tag, l_tag, c_tag],
     });
     io_context(
@@ -321,6 +343,10 @@ mod tests {
             fs::read(dir.path().join("work/stages.json")).unwrap(),
             stages
         );
+        fs::write(grid.join("moisture.f32"), 0.5f32.to_le_bytes()).unwrap();
+        assert!(run(&o).is_err(), "other moisture needs a fresh work dir");
+        fs::write(grid.join("moisture.f32"), 1.0f32.to_le_bytes()).unwrap();
+        assert_eq!(run(&o).expect("the original moisture resumes"), first);
         assert!(
             run(&Options { tile: 32, ..o }).is_err(),
             "another tile size needs a fresh work dir"
@@ -466,6 +492,54 @@ mod tests {
                 rises = (rises.0 + 1, rises.1.max(surface[j] - surface[k]));
             }
         }
+        // Ponds a river crosses (R7/R26 ruling): pond cells are node cells without a lake id
+        // in the labelled body raster; a dry one under such a pond's water is a defect.
+        let node = layers::Layer::<u32>::open(world, &work.join("m2-node.u32"))
+            .unwrap()
+            .to_vec()
+            .unwrap();
+        let labelled = layers::Layer::<u32>::open(world, &work.join("body.u32"))
+            .unwrap()
+            .to_vec()
+            .unwrap();
+        let lake_ids: std::collections::HashSet<u64> = bodies["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["kind"] == "lake")
+            .map(|b| b["id"].as_u64().unwrap())
+            .collect();
+        let pond = |k: usize| node[k] >= 2 && !lake_ids.contains(&u64::from(labelled[k]));
+        let crossed: std::collections::HashSet<u32> = (0..z.len())
+            .filter(|&k| pond(k) && flow[k] & 16 != 0)
+            .map(|k| node[k])
+            .collect();
+        let dry_in_crossed = (0..z.len())
+            .filter(|&k| pond(k) && crossed.contains(&node[k]) && !surface[k].is_finite())
+            .count();
+        // Dry cells more than 1 m below a neighbouring water surface.
+        let mut under = (0usize, 0f32);
+        for k in 0..z.len() {
+            if surface[k].is_finite() {
+                continue;
+            }
+            let (x, y) = (k as u64 % world.w, k as u64 / world.w);
+            let top = (0..8)
+                .filter_map(|d| world.neighbour(x, y, d))
+                .map(|(nx, ny)| surface[world.index(nx, ny) as usize])
+                .filter(|s| s.is_finite())
+                .fold(f32::NEG_INFINITY, f32::max);
+            if top - carved[k] > 1.0 {
+                under = (under.0 + 1, under.1.max(top - carved[k]));
+            }
+        }
+        eprintln!(
+            "{name}: river-crossed ponds {}, dry cells below their level {dry_in_crossed}; \
+             dry cells > 1 m below a neighbouring water surface {} (deepest {:.2} m)",
+            crossed.len(),
+            under.0,
+            under.1
+        );
         let count = |c: u8| corridor.iter().filter(|&&v| v == c).count();
         eprintln!(
             "{name}: deepest below raw {below_raw:.3} m (cap {CHANNEL_CAP_M}), raised cells {raised}, \
@@ -476,6 +550,7 @@ mod tests {
             count(1)
         );
         assert!(below_raw <= CHANNEL_CAP_M + 1e-4 && raised == 0, "R9");
+        assert_eq!(dry_in_crossed, 0, "river-crossed ponds are wet (R7/R26 ruling)");
         probe::shade_tinted(&format!("t12-{name}-carved"), &carved, size, |k| {
             if !surface[k].is_finite() {
                 (corridor[k] == 1).then_some([6, 6, 3])

@@ -65,31 +65,61 @@ impl Layers {
 /// Per tile: lowered cells, deepest lowering below the ground, volume m³, river cells,
 /// deepest lowering below raw.
 type Figure = (u64, f32, f64, u64, f32);
+/// Per tile: (river body, largest discharge) and (pond ordinal, crossing body).
+type Sizes = (Vec<(u32, f32)>, Vec<(u32, u32)>);
 
-/// Whether each cell of `area` lies within `c` cells (Chebyshev) of a `set` cell, by
-/// separable prefix counts.
+/// Whether each cell of `area` lies within Euclidean distance `c` of a `set` cell (a round
+/// dilation, so the relaxation stamps no squares), by per-row prefix counts.
 fn dilate(area: Rect, set: &[bool], c: usize) -> Vec<bool> {
     let (w, h) = (area.w, area.h);
-    let mut rows = vec![false; w * h];
-    let mut pre = vec![0u32; w.max(h) + 1];
+    // Each row's prefix counts: pre[y * (w + 1) + x] = set cells of row y left of x.
+    let mut pre = vec![0u32; h * (w + 1)];
     for y in 0..h {
+        let p = &mut pre[y * (w + 1)..(y + 1) * (w + 1)];
         for x in 0..w {
-            pre[x + 1] = pre[x] + u32::from(set[y * w + x]);
-        }
-        for x in 0..w {
-            rows[y * w + x] = pre[(x + c + 1).min(w)] > pre[x.saturating_sub(c)];
+            p[x + 1] = p[x] + u32::from(set[y * w + x]);
         }
     }
+    // The disc's half-width at each row offset.
+    let half: Vec<usize> = (0..=c).map(|d| (c * c - d * d).isqrt()).collect();
     let mut out = vec![false; w * h];
-    for x in 0..w {
-        for y in 0..h {
-            pre[y + 1] = pre[y] + u32::from(rows[y * w + x]);
-        }
-        for y in 0..h {
-            out[y * w + x] = pre[(y + c + 1).min(h)] > pre[y.saturating_sub(c)];
+    for y in 0..h {
+        for x in 0..w {
+            out[y * w + x] = (y.saturating_sub(c)..(y + c + 1).min(h)).any(|yy| {
+                let hw = half[yy.abs_diff(y)];
+                let p = &pre[yy * (w + 1)..];
+                p[(x + hw + 1).min(w)] > p[x.saturating_sub(hw)]
+            });
         }
     }
     out
+}
+
+/// Keeps the two best candidates of distinct river bodies, least first (a body's candidate
+/// is replaced only by a better one of the same body). Exact under any insertion order.
+fn offer(slots: &mut [(f32, u32, u32); 2], cand: (f32, u32, u32), body: impl Fn(u32) -> u32) {
+    let less = |a: (f32, u32, u32), b: (f32, u32, u32)| {
+        b.2 == u32::MAX || a.0 < b.0 || (a.0 == b.0 && (a.1, a.2) < (b.1, b.2))
+    };
+    let b = body(cand.2);
+    let same = |s: (f32, u32, u32)| s.2 != u32::MAX && body(s.2) == b;
+    if same(slots[0]) {
+        if less(cand, slots[0]) {
+            slots[0] = cand;
+        }
+    } else if same(slots[1]) {
+        if less(cand, slots[1]) {
+            slots[1] = cand;
+            if less(slots[1], slots[0]) {
+                slots.swap(0, 1);
+            }
+        }
+    } else if less(cand, slots[0]) {
+        slots[1] = slots[0];
+        slots[0] = cand;
+    } else if less(cand, slots[1]) {
+        slots[1] = cand;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -110,8 +140,9 @@ pub(crate) fn channels(
     let cells_per_m = 1.0 / s.spacing_m;
     let is_lake_node = |n: u32| n >= 2 && w.nodes.at(n - 2).lake;
 
-    // Each river body's largest discharge: the larger river takes a shared section (I3).
-    let sizes: Vec<Vec<(u32, f32)>> = for_tiles(
+    // Each river body's largest discharge (the larger river takes a shared section, I3), and
+    // the bodies whose thalwegs cross each full pond (by node ordinal).
+    let sizes: Vec<Sizes> = for_tiles(
         &tiles,
         s.threads,
         &format!("{tag} river sizes"),
@@ -120,6 +151,7 @@ pub(crate) fn channels(
                 let (node, flow) = (r.node.read(core)?, r.flow.read(core)?);
                 let (q, b) = (r.discharge.read(core)?, body.read(core)?);
                 let mut m: BTreeMap<u32, f32> = BTreeMap::new();
+                let mut crossing: Vec<(u32, u32)> = Vec::new();
                 for k in 0..core.cells() {
                     if flow[k] & 16 == 0 || node[k] == 1 || is_lake_node(node[k]) {
                         continue;
@@ -128,16 +160,33 @@ pub(crate) fn channels(
                     ensure(b[k] >= 2, format!("thalweg cell ({x}, {y}) has no body"))?;
                     let e = m.entry(b[k]).or_insert(0.0);
                     *e = e.max(q[k]);
+                    if node[k] >= 2 && w.nodes.at(node[k] - 2).full {
+                        crossing.push((node[k] - 2, b[k]));
+                    }
                 }
-                Ok(m.into_iter().collect())
+                crossing.sort_unstable();
+                crossing.dedup();
+                Ok((m.into_iter().collect(), crossing))
             })
         },
     )?;
     let mut size: HashMap<u32, f32> = HashMap::new();
-    for (id, q) in sizes.into_iter().flatten() {
-        let e = size.entry(id).or_insert(0.0);
-        *e = e.max(q);
+    for (id, q) in sizes.iter().flat_map(|p| p.0.iter()) {
+        let e = size.entry(*id).or_insert(0.0);
+        *e = e.max(*q);
     }
+    // A pond a river crosses is wetted whole at its level as part of the largest river
+    // crossing it (smaller id on ties): ruling extending R7/R26; labels only.
+    let mut pond_body: HashMap<u32, u32> = HashMap::new();
+    for &(o, id) in sizes.iter().flat_map(|p| p.1.iter()) {
+        let better = pond_body
+            .get(&o)
+            .is_none_or(|&b| size[&id] > size[&b] || (size[&id] == size[&b] && id < b));
+        if better {
+            pond_body.insert(o, id);
+        }
+    }
+    drop(sizes);
 
     let parts: Vec<Figure> =
         for_tiles(&tiles, s.threads, &format!("{tag} channels"), |i, core| {
@@ -171,9 +220,10 @@ pub(crate) fn channels(
                 (g[t] - floor).max(0.0)
             };
 
-            // The dominant thalweg of every area cell: (−body size, distance², window index),
-            // least first.
-            let mut best: Vec<(f32, u32, u32)> = vec![(0.0, 0, u32::MAX); area.cells()];
+            // The two best thalwegs of distinct rivers for every area cell: (−body size,
+            // distance², window index), least first.
+            let none = (0.0, 0, u32::MAX);
+            let mut best: Vec<[(f32, u32, u32); 2]> = vec![[none; 2]; area.cells()];
             for (t, id) in bw.iter().enumerate() {
                 if !thalweg(t) {
                     continue;
@@ -198,14 +248,7 @@ pub(crate) fn channels(
                             continue;
                         };
                         let Some(a) = area.local(x, y) else { continue };
-                        let cand = (-qb, d2, t as u32);
-                        let b = best[a];
-                        if b.2 == u32::MAX
-                            || cand.0 < b.0
-                            || (cand.0 == b.0 && (cand.1, cand.2) < (b.1, b.2))
-                        {
-                            best[a] = cand;
-                        }
+                        offer(&mut best[a], (-qb, d2, t as u32), |c| bw[c as usize]);
                     }
                 }
             }
@@ -223,9 +266,13 @@ pub(crate) fn channels(
                     surface[a] = level[j];
                     continue;
                 }
-                let dominant = (best[a].2 != u32::MAX).then(|| (best[a].2 as usize, best[a].1));
-                let own = (thalweg(j) && dominant.is_none_or(|d| d.0 != j)).then_some((j, 0));
-                for (t, d2) in dominant.into_iter().chain(own) {
+                let ranked: Vec<(usize, u32)> = best[a]
+                    .iter()
+                    .filter(|c| c.2 != u32::MAX)
+                    .map(|c| (c.2 as usize, c.1))
+                    .collect();
+                let own = (thalweg(j) && ranked.iter().all(|c| c.0 != j)).then_some((j, 0));
+                for (t, d2) in ranked.into_iter().chain(own) {
                     let rs = river(t);
                     let below_a_lake = (0..8).any(|k| {
                         world
@@ -254,12 +301,29 @@ pub(crate) fn channels(
                         break;
                     }
                 }
+                // A full pond a river crosses: wet at its level (or a section's higher
+                // surface) as one river, like an R26 pool.
+                if let Some(&id) = (node[j] >= 2)
+                    .then(|| pond_body.get(&(node[j] - 2)))
+                    .flatten()
+                {
+                    surface[a] = if surface[a].is_finite() {
+                        surface[a].max(level[j])
+                    } else {
+                        level[j]
+                    };
+                    ids[a] = id;
+                    is_river[a] = true;
+                }
             }
             // Backwater (N18): a river cell whose surface lies below that of the cell it flows
-            // into is raised to it, BACKWATER Jacobi steps upstream (water deepens; ground is not
-            // touched). Every core cell's chain lies in `area`, so every tiling agrees.
-            let links: Vec<(usize, usize)> = (0..n)
-                .filter(|&a| is_river[a])
+            // into is raised to it, and a dry cell draining into a river surface above its
+            // ground is wetted to it as that river, BACKWATER Jacobi steps upstream (water
+            // deepens; ground is not touched). Every core cell's chain lies in `area`, so
+            // every tiling agrees.
+            // (cell, receiver) in `area`, as u32 pairs to keep 4096² tiles small.
+            let links: Vec<(u32, u32)> = (0..n)
+                .filter(|&a| is_river[a] || !surface[a].is_finite())
                 .filter_map(|a| {
                     let (x, y) = area.world_xy(a);
                     let d = flow[win.local(x, y).expect("area in window")] & 15;
@@ -267,19 +331,32 @@ pub(crate) fn channels(
                         .then(|| world.neighbour(x, y, d as usize - 1))
                         .flatten()
                         .and_then(|(nx, ny)| area.local(nx, ny))
-                        .map(|b| (a, b))
+                        .map(|b| (a as u32, b as u32))
                 })
                 .collect();
             for _ in 0..BACKWATER {
-                let raise: Vec<(usize, f32)> = links
+                // Read every value before writing any (Jacobi).
+                let change: Vec<(usize, f32, u32)> = links
                     .iter()
-                    .filter(|&&(a, b)| surface[b].is_finite() && surface[b] > surface[a])
-                    .map(|&(a, b)| (a, surface[b]))
+                    .map(|&(a, b)| (a as usize, b as usize))
+                    .filter(|&(a, b)| {
+                        is_river[b]
+                            && if is_river[a] {
+                                surface[b] > surface[a]
+                            } else {
+                                surface[b] > carved[a]
+                            }
+                    })
+                    .map(|(a, b)| (a, surface[b], ids[b]))
                     .collect();
-                if raise.is_empty() {
+                if change.is_empty() {
                     break;
                 }
-                for (a, v) in raise {
+                for (a, v, id) in change {
+                    if !is_river[a] {
+                        ids[a] = id;
+                        is_river[a] = true;
+                    }
                     surface[a] = v;
                 }
             }
@@ -358,7 +435,17 @@ mod tests {
     }
 
     fn run_on(world: World, z: Vec<f32>, tile: u64, m3s_per_km2: f64, river_km2: f64) -> Run {
-        let s = setup(world, tile, river_km2);
+        run_setup(setup(world, tile, river_km2), z, m3s_per_km2, None)
+    }
+
+    /// `rasters` receives the model's node and level layers when given.
+    fn run_setup(
+        s: Setup,
+        z: Vec<f32>,
+        m3s_per_km2: f64,
+        rasters: Option<&mut (Vec<u32>, Vec<f32>)>,
+    ) -> Run {
+        let world = s.world;
         let raw = Layer::memory(world, z);
         let r = Rasters::memory(world);
         let m = model(&s, &raw, None, "m", Some(&r)).expect("model");
@@ -369,6 +456,11 @@ mod tests {
         // inside HALO with BACKWATER and CORRIDOR).
         let geo = Geometry::new(m3s_per_km2);
         channels(&s, &m.water, &raw, &raw, &r, &body, &out, &geo, None, "c").expect("channels");
+        if let Some(v) = rasters {
+            *v = (r.node.to_vec().unwrap(), r.level.to_vec().unwrap());
+            // Pond cells are no lake nodes.
+            assert!(v.0.iter().all(|&n| n < 2 || !m.water.nodes.at(n - 2).lake));
+        }
         (
             raw.to_vec().unwrap(),
             out.carved.to_vec().unwrap(),
@@ -445,7 +537,7 @@ mod tests {
                 trunk.min(trib)
             })
             .collect();
-        let (_, _, surface, body, _, flow) = run_on(world, z, 32, 3.6e4, 1e-5);
+        let (raw, carved, surface, body, _, flow) = run_on(world, z, 32, 3.6e4, 1e-5);
         assert_no_rise(256, &surface, &flow);
         // The tributary's cell next to the trunk thalweg carries the trunk's body (I3b).
         let at = |x: usize, y: usize| y * 256 + x;
@@ -455,6 +547,16 @@ mod tests {
             body[at(100, 40)],
             "it joins the trunk inside its section"
         );
+        // Its banks inside the trunk's radius stay wet and keep their channel (the next
+        // river takes a cell the larger one rejects).
+        let mut cut = 0;
+        for y in 6..20 {
+            for x in [79, 81] {
+                assert!(surface[at(x, y)].is_finite(), "dry bank at ({x}, {y})");
+                cut += usize::from(carved[at(x, y)] < raw[at(x, y)]);
+            }
+        }
+        assert!(cut >= 20, "tributary banks cut: {cut} of 28");
     }
 
     /// A V valley with 1:1 walls: each wall cell loses at most the centre cut (the taper of
@@ -501,6 +603,39 @@ mod tests {
         assert!(bed > 50, "the valley floor carries a channel");
     }
 
+    /// A river through a 1 m deep pond (a dam across a valley; no lake: the lake minimum is
+    /// out of reach): every pond cell is wet at the pond's level, as one river body.
+    #[test]
+    fn a_pond_a_river_crosses_is_wet_at_its_level() {
+        let world = World { w: 96, h: 41 };
+        let z: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                let dam = if (46.0..=50.0).contains(&x) { 1.2 } else { 0.0 };
+                40.0 - 0.05 * x + 0.3 * (y - 20.0).abs() + dam + ((i * 7919) % 7) as f32 * 0.001
+            })
+            .collect();
+        let mut s = setup(world, 32, 1e-5);
+        s.table.lake_min_m2 = 1e9;
+        let mut nl = (Vec::new(), Vec::new());
+        let (_, carved, surface, body, _, _) = run_setup(s, z, 1e3, Some(&mut nl));
+        let (node, level) = nl;
+        let pond = node[20 * 96 + 40];
+        assert!(pond >= 2, "the dam holds a pond");
+        let cells: Vec<usize> = (0..node.len()).filter(|&k| node[k] == pond).collect();
+        let depth = level[cells[0]] - cells.iter().map(|&k| carved[k]).fold(f32::MAX, f32::min);
+        assert!(
+            cells.len() > 50 && depth > 0.9,
+            "{} cells, {depth} m deep",
+            cells.len()
+        );
+        for &k in &cells {
+            assert_eq!(surface[k], level[k], "pond cell {k} at the level");
+            assert_eq!(body[k], body[cells[0]], "pond cell {k} in one body");
+        }
+        assert!(body[cells[0]] > 1);
+    }
+
     #[test]
     fn channels_are_alike_at_every_tiling() {
         let a = run(256);
@@ -525,7 +660,8 @@ mod tests {
         let d = dilate(area, &set, 2);
         for (k, &v) in d.iter().enumerate() {
             let (x, y) = (k % 9, k / 9);
-            assert_eq!(v, x.abs_diff(4) <= 2 && y.abs_diff(3) <= 2, "at {x},{y}");
+            let d2 = x.abs_diff(4).pow(2) + y.abs_diff(3).pow(2);
+            assert_eq!(v, d2 <= 4, "at {x},{y}: round, not square");
         }
     }
 }
