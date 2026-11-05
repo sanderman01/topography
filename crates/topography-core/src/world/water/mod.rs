@@ -8,11 +8,13 @@
 #![allow(dead_code)]
 
 mod balance;
+mod contract;
 mod flats;
 mod flow;
 mod geom;
 mod hierarchy;
 mod layers;
+mod nodes;
 #[cfg(test)]
 mod probe;
 mod rain;

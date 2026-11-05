@@ -480,6 +480,7 @@ pub(crate) mod tests {
     #[ignore]
     fn probe_pits_in_the_canyon() {
         pit_probe("canyon", 27169, 44546);
+        contraction_probe("canyon", 27169, 44546);
     }
 
     /// Plains (class 18/0 on 253 of 256 class cells, 74 m p5-p95 relief): the lowest-relief
@@ -488,6 +489,80 @@ pub(crate) mod tests {
     #[ignore]
     fn probe_pits_on_the_plains() {
         pit_probe("plains", 18944, 36863);
+        contraction_probe("plains", 18944, 36863);
+    }
+
+    /// Task 8b: the 2048² window as its own world, cut into tiles and contracted. Prints the
+    /// pits, the settled trees, the global leaves left and the contraction ratio, and checks
+    /// that contraction keeps every depression's smallest pit, spill and low.
+    fn contraction_probe(name: &str, east: u64, north: u64) {
+        use crate::world::water::contract::{contract, min_pits};
+        use crate::world::water::geom::tiles;
+        use crate::world::water::hierarchy::{Hierarchy, NONE, build};
+        use crate::world::water::probe;
+        let Some((win, z)) = probe::window(east, north, 2048) else {
+            return;
+        };
+        let world = World {
+            w: win.w as u64,
+            h: win.h as u64,
+        };
+        let sig = |h: &Hierarchy, skip_tops: bool, out: &mut Vec<(u64, u32, u32)>| {
+            let keys = min_pits(h);
+            out.extend(
+                (0..h.len())
+                    .filter(|&d| !(skip_tops && h.parent[d] == NONE))
+                    .map(|d| (keys[d], ordered(h.spill[d]), ordered(h.low[d]))),
+            );
+        };
+        for tile in [512u64, 1024, 2048] {
+            let graphs: Vec<TileGraph> = tiles(world, tile)
+                .into_iter()
+                .map(|core| {
+                    let w = core.grow(1, world);
+                    let d = drain(world, w, &cut(world, &z, w), core);
+                    tile_graph(world, core, &cut(world, &z, core), &d, |_| 1000)
+                })
+                .collect();
+            let pits: usize = graphs.iter().map(|g| g.pits.len()).sum();
+            let edges = |gs: &[TileGraph]| gs.iter().map(|g| g.edges.len()).sum::<usize>();
+            let edges_before = edges(&graphs);
+            let (whole, _) = build(world, tile, &graphs).expect("hierarchy");
+            let (graphs, frags): (Vec<TileGraph>, Vec<_>) =
+                graphs.into_iter().map(contract).unzip();
+            let (part, _) = build(world, tile, &graphs).expect("contracted hierarchy");
+            let candidates: usize = frags.iter().map(|f| f.h.leaves).sum();
+            let tops = |f: &crate::world::water::contract::Frag| {
+                (0..f.h.len()).filter(|&d| f.h.parent[d] == NONE).count()
+            };
+            let trees: usize = frags.iter().map(tops).sum();
+            let multi: usize = frags
+                .iter()
+                .map(|f| {
+                    (0..f.h.len())
+                        .filter(|&d| f.h.parent[d] == NONE && f.size[d] > 1)
+                        .count()
+                })
+                .sum();
+            let (mut want, mut got) = (Vec::new(), Vec::new());
+            sig(&whole, false, &mut want);
+            sig(&part, false, &mut got);
+            for f in &frags {
+                sig(&f.h, true, &mut got);
+            }
+            want.sort_unstable();
+            got.sort_unstable();
+            assert_eq!(got, want, "{name} tiles {tile}: contraction is not exact");
+            eprintln!(
+                "{name} E{east} N{north} tiles {tile}²: pits {pits}, global leaves {} -> {} \
+                 (ratio {:.2}); candidates {candidates} settle into {trees} super-leaves \
+                 ({multi} of more than one pit); in-tile edges {edges_before} -> {}; exact",
+                whole.leaves,
+                part.leaves,
+                whole.leaves as f64 / part.leaves.max(1) as f64,
+                edges(&graphs)
+            );
+        }
     }
 
     /// One window per class, each a 2 km block the class owns on all 256 class cells of
