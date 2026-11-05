@@ -1,0 +1,37 @@
+training/tests/test_water_run.py
+  s_8c1b40ea9c1e0d::t_e5ccf7ac4191fb 164
+  s_8c1b40ea9c1e0d::t_5510d110135037 67,69-70
+  s_8c1b40ea9c1e0d::t_8bee54391357ae 7
+  s_8c1b40ea9c1e0d::t_2fcf7f6fe3a67f 86-105
+training/src/topography_training/water/run.py
+  s_8c1b40ea9c1e0d::t_ecbfcd00b1f937 407-442
+  s_8c1b40ea9c1e0d::t_3a4bc9f34ba858 503
+  s_8c1b40ea9c1e0d::t_a5e869e702a656 379-380
+  s_8c1b40ea9c1e0d::t_b6d8baba43aec3 395-396
+training/src/topography_training/water/review.py
+  s_8c1b40ea9c1e0d::t_cbdbb579a96f1f 78-79
+  s_8c1b40ea9c1e0d::t_885a3c1b104223 264
+  s_8c1b40ea9c1e0d::t_8e9dd0b2b48b1f 97
+  s_8c1b40ea9c1e0d::t_cfc8e6f908a84f 1-3,19,31,48-50,68,70,76-77,80-85,90-96,98-104,119-137,150-155,187-194,197-218,220-224,228,236-240,242,246-247,250-257,260-263,265-266,269-272,274-276,278-321,329-330,332-339,341-345,349-378,380-384,389,391-403,407,409,412,415-421,425,446,463-466,469-470,475-476,479,484-504,507-511,513-520,522,528-529,531-532,538-539,546-547,549-553,573-583,588-589,594-595,599,620,626,632,635-649,675,679-726,734,738,741,743,745-746
+  s_8c1b40ea9c1e0d::t_09317cdf0f08cb 219
+training/tests/test_water_review.py
+  s_8c1b40ea9c1e0d::t_90034957fee50b 81,83-85
+  s_8c1b40ea9c1e0d::t_96196c36059532 111
+  s_8c1b40ea9c1e0d::t_37f94efe586e1b 115,117-132,135,138-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cda38d5c6328d1213b6303a9c3abbf6a3de4d6e",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
