@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 mod balance;
+mod flats;
 mod flow;
 mod geom;
 mod hierarchy;
