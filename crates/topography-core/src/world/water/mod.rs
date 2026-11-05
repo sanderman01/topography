@@ -225,7 +225,7 @@ fn final_tag(c_tag: &str, ground: &Path) -> Result<String> {
     let path = io_context("resolve the final ground", fs::canonicalize(ground))?;
     Ok(stage_tag(
         "m3",
-        &json!({"after": c_tag, "ground": path.display().to_string(), "bytes": meta.len(),
+        &json!({"after": c_tag, "ground": path.display().to_string(), "bytes": meta.len(), "kept": true,
                 "modified": format!("{:?}", meta.modified().ok())}),
     ))
 }
@@ -299,7 +299,8 @@ pub fn run(o: &Options) -> Result<String> {
         "c",
         &json!({"after": l_tag, "m3s_per_km2": geo.m3s_per_km2, "cap": CHANNEL_CAP_M,
                 "halo": channel::HALO, "backwater": channel::BACKWATER,
-                "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS}),
+                "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS,
+                "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true}),
     );
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
@@ -479,6 +480,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         flow: finals.flow.clone(),
         discharge: finals.discharge.clone(),
         flow_written: rasters.flow.clone(),
+        node_written: rasters.node.clone(),
+        breached: breached.clone(),
     };
     let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
         checks::check_tile(&s, &layers, core, &lakes, &exits[i])

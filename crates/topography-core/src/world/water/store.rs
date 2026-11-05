@@ -126,7 +126,7 @@ blob_tuple!(A, B);
 blob_tuple!(A, B, C);
 blob_tuple!(A, B, C, D);
 blob_tuple!(A, B, C, D, E);
-blob_tuple!(A, B, C, D, E, F, G);
+blob_tuple!(A, B, C, D, E, F, G, H);
 
 pub(crate) fn encode<T: Blob>(v: &T) -> Vec<u8> {
     let mut e = Enc(Vec::new());

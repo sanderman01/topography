@@ -76,6 +76,9 @@ pub(crate) struct CheckLayers {
     pub discharge: Layer<f32>,
     /// The written rivers' flow layer (m2), for the label agreement with m3's `flow`.
     pub flow_written: Layer<u8>,
+    /// The m2 node layer and the ground channels were cut into, for `bed_rises`.
+    pub node_written: Layer<u32>,
+    pub breached: Layer<f32>,
 }
 
 /// Lakes by id: level, full, outlet [inside, outside], cells needed (closed).
@@ -149,6 +152,8 @@ pub(crate) struct Tile {
     pub agree: [u64; 4],
     /// Rivers with Q ≥ 1 km² ending in a closed node (M2).
     pub closed_ends: u64,
+    /// `thalweg_beside` cells excused as tributaries: [p's channel joins j's body, j joins p's].
+    pub tributary_excused: [u64; 2],
     /// Bank water over 0.5 m above the dry cell it drains into: count, highest, examples.
     pub bank_steps: (u64, f32, Vec<[u64; 2]>),
     /// Cells per class, and (class, lake) pairs seen.
@@ -249,6 +254,7 @@ pub(crate) fn check_tile(
         l.discharge.read(win)?,
     );
     let fw = l.flow_written.read(win)?;
+    let (n2, bz) = (l.node_written.read(win)?, l.breached.read(win)?);
     let classes = match &s.classes {
         Some(c) => c.read(core)?,
         None => vec![0; core.cells()],
@@ -643,6 +649,21 @@ pub(crate) fn check_tile(
                 }
             }
         }
+        // Bed grade: on a dry m2 thalweg link where the ground (before channels) falls, the
+        // carved bed does not rise (beds under standing water may).
+        let d2 = fw[j] & 15;
+        if fw[j] & 16 != 0
+            && n2[j] == 0
+            && d2 != 0
+            && let Some(r) = world
+                .neighbour(x, y, d2 as usize - 1)
+                .and_then(|(rx, ry)| at(rx, ry))
+            && n2[r] == 0
+            && bz[r] <= bz[j]
+            && z[r] > z[j] + RISE_M
+        {
+            t.fail("bed_rises", x, y);
+        }
         // Lakes are flat, stand at their lowest saddle and do not leak (C1). A lake cell
         // whose ground reaches its level holds no water: it is shore on both sides, never
         // a leak's source, and a neighbour at the level (D = level).
@@ -749,7 +770,8 @@ pub(crate) fn check_tile(
             // than 0.5 m above D here), the lowest cell where water stands (raw, a pond's
             // level, shown water: a filled pit or a lake is no second thalweg) is a cell of
             // this river's body (wetted river-crossed ponds included), lies on a tributary
-            // beside its trunk (one drains into the other's body within 150 m), or lies no
+            // beside its trunk (one channel drains into the other's water within 150 m; a dry
+            // hollow draining back is no channel), or lies no
             // more than 1 m below the lowest D of this body within its distance + 1 cell. Too
             // low a river is no failure: channels cut 2 m at most, and `walls` / `change_max`
             // cover over-cutting.
@@ -792,11 +814,18 @@ pub(crate) fn check_tile(
                     }
                     false
                 };
-                // Either may be the tributary: p joining this river, or this one joining p's.
-                let own = body[j] > 1
-                    && (body[p] == body[j]
-                        || joins(p, body[j])
-                        || (body[p] > 1 && surf[p].is_finite() && joins(j, body[p])));
+                // Either may be the tributary: p's channel (a river thalweg or labelled water,
+                // not a dry hollow) joining this river, or this one joining p's water.
+                let wet_p = body[p] > 1 && surf[p].is_finite();
+                let channel_p = wet_p || (flow[p] & 16 != 0 && q[p] >= thr);
+                let mut own = body[j] > 1 && body[p] == body[j];
+                if body[j] > 1 && !own {
+                    if channel_p && joins(p, body[j]) {
+                        (own, t.tributary_excused[0]) = (true, t.tributary_excused[0] + 1);
+                    } else if wet_p && joins(j, body[p]) {
+                        (own, t.tributary_excused[1]) = (true, t.tributary_excused[1] + 1);
+                    }
+                }
                 if !own {
                     let (px, py) = win.world_xy(p);
                     let r = (px as f64 - x as f64).hypot(py as f64 - y as f64);
@@ -941,6 +970,7 @@ pub(crate) fn report(
     let mut fails: BTreeMap<&str, u64> = [
         "drainage_rises",
         "drainage_stuck",
+        "bed_rises",
         "lake_not_flat",
         "lake_leaks",
         "lake_exit_surface",
@@ -964,6 +994,7 @@ pub(crate) fn report(
     let mut saddle: BTreeMap<u32, f32> = BTreeMap::new();
     let (mut runs, mut drops_any, mut rims_any) = (Vec::new(), Vec::new(), Vec::new());
     let (mut agree, mut closed_ends, mut pond_run_cells) = ([0u64; 4], 0u64, 0u64);
+    let mut excused = [0u64; 2];
     let mut bank = (0u64, 0f32, Vec::new());
     let mut class_cells: BTreeMap<u8, u64> = BTreeMap::new();
     let mut class_lakes: BTreeSet<(u8, u32)> = BTreeSet::new();
@@ -979,6 +1010,8 @@ pub(crate) fn report(
             *a += b;
         }
         closed_ends += t.closed_ends;
+        excused[0] += t.tributary_excused[0];
+        excused[1] += t.tributary_excused[1];
         pond_run_cells += t.pond_run_cells;
         bank.0 += t.bank_steps.0;
         bank.1 = bank.1.max(t.bank_steps.1);
@@ -1088,6 +1121,10 @@ pub(crate) fn report(
     );
     figures.insert("big_rivers_into_closed_nodes".into(), json!(closed_ends));
     figures.insert(
+        "thalweg_beside_tributary_excused".into(),
+        json!({"channel_joins_river": excused[0], "river_joins_water": excused[1]}),
+    );
+    figures.insert(
         "straight_share".into(),
         json!(if river > 0.0 { straight / river } else { 0.0 }),
     );
@@ -1162,6 +1199,9 @@ mod tests {
         flow: Vec<u8>,
         q: Vec<f32>,
         fw: Vec<u8>,
+        /// m2 nodes and the ground before channels (bed_rises).
+        n2: Vec<u32>,
+        bz: Vec<f32>,
         lakes: LakeInfo,
         exits: Vec<Exit>,
     }
@@ -1174,6 +1214,7 @@ mod tests {
             Case {
                 world,
                 raw: z.clone(),
+                bz: z.clone(),
                 z,
                 surf: vec![f32::NAN; n],
                 body: vec![0; n],
@@ -1182,6 +1223,7 @@ mod tests {
                 flow: vec![32; n],
                 q: vec![0.0; n],
                 fw: vec![0; n],
+                n2: vec![0; n],
                 lakes: LakeInfo::new(),
                 exits: Vec::new(),
             }
@@ -1256,6 +1298,8 @@ mod tests {
                 flow: Layer::memory(w, self.flow.clone()),
                 discharge: Layer::memory(w, self.q.clone()),
                 flow_written: Layer::memory(w, self.fw.clone()),
+                node_written: Layer::memory(w, self.n2.clone()),
+                breached: Layer::memory(w, self.bz.clone()),
             }
         }
         fn report(&self) -> Value {
@@ -1776,6 +1820,59 @@ mod tests {
         let k = c.k(80, 31);
         c.flow[k] = 32;
         assert!(fails(&c.tile(), "thalweg_beside") > 0);
+    }
+
+    /// A hollow 1.5 m below the river, 6–8 m beside it, every cell routed straight back into
+    /// it within 8 m: as a dry hollow (no channel) it is beside; as a river-sized thalweg
+    /// joining the river it is a tributary (direction 1).
+    #[test]
+    fn only_a_channel_joining_the_river_is_its_tributary() {
+        let hollow = |channel: bool| {
+            let mut c = gentle_valley(|_, v| v);
+            for x in 50..70 {
+                for y in 36..39 {
+                    let (k, floor) = (c.k(x, y), 20.0 - 0.01 * x as f32);
+                    (c.raw[k], c.z[k]) = (floor - 1.5, floor - 1.5);
+                }
+                let back: Vec<(u64, u64)> = (30..39).rev().map(|y| (x, y)).collect();
+                c.route(
+                    &back,
+                    if channel { 16 } else { 0 },
+                    if channel { 0.06 } else { 0.0 },
+                );
+            }
+            c.tile()
+        };
+        let dry = hollow(false);
+        assert!(
+            fails(&dry, "thalweg_beside") > 0,
+            "a dry hollow draining back"
+        );
+        assert_eq!(dry.tributary_excused, [0, 0]);
+        let trib = hollow(true);
+        assert_eq!(fails(&trib, "thalweg_beside"), 0, "{:?}", trib.examples);
+        assert!(trib.tributary_excused[0] > 0);
+    }
+
+    /// A dry m2 thalweg whose carved bed rises to its receiver where the ground falls fails
+    /// `bed_rises`; under standing water (an m2 node) or where the ground rises it does not.
+    #[test]
+    fn a_carved_bed_rising_on_a_dry_thalweg_fails() {
+        let rise = |node: u32, ground_rises: bool| {
+            let mut c = Case::new(9, 9, plane);
+            c.river(&[(2, 4), (3, 4), (4, 4), (5, 4)], 2.0, 5);
+            let (j, r) = (c.k(3, 4), c.k(4, 4));
+            c.z[r] = c.z[j] + 0.05;
+            c.n2[r] = node;
+            if ground_rises {
+                c.bz[r] = c.bz[j] + 0.1;
+            }
+            let t = c.tile();
+            (fails(&t, "bed_rises"), t.examples.get("bed_rises").cloned())
+        };
+        assert_eq!(rise(0, false), (1, Some(vec![[3, 4]])));
+        assert_eq!(rise(2, false).0, 0, "under standing water");
+        assert_eq!(rise(0, true).0, 0, "the ground rises");
     }
 
     /// A river through a 2.5 m deep pool wetted as the river (R7/R26): the pool floor is its
