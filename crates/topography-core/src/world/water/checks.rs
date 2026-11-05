@@ -1,6 +1,6 @@
 //! Hard checks (each a count that must be 0; spec "Checks", rulings R7, R11, R14, R16, R22,
-//! R27, R29, R30, R31) and figures on a finished run, tile by tile with a 160-cell halo (a
-//! 150 m straight run at 1 m must fit).
+//! R27, R29, R30, R31) and figures on a finished run, tile by tile with a 576-cell halo (every
+//! straight run through a core cell, up to STRAIGHT_STEPS cells, must fit).
 
 use super::bodies::main_up;
 use super::geom::{OFFSETS, Rect, UnionFind, step_len};
@@ -12,9 +12,11 @@ use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-const HALO: u64 = 160;
+const HALO: u64 = 576;
 /// Parallel rivers (R29): another flow line from this size, this close, this parallel, this long.
-const PARALLEL_KM2: f32 = 0.002;
+/// The size is the river threshold (ruling after the 8192² run): a doubled channel carries
+/// river-sized flow, while hillslope lines of 0.002–0.03 km² run beside rivers naturally.
+const PARALLEL_KM2: f32 = 0.05;
 const PARALLEL_M: f64 = 10.0;
 const PARALLEL_COS: f64 = 0.7;
 const PARALLEL_RUN_M: f64 = 100.0;
@@ -48,6 +50,11 @@ const DAM_RIM_M: f32 = 0.5;
 const FALL_M: [f64; 3] = [5.0, 10.0, 50.0];
 const ACROSS_M: f64 = 30.0;
 const THALWEG_M: f32 = 1.0;
+/// One thalweg: the scan across stops at a ridge this far above the river's surface, and of
+/// two rivers where one's routing reaches the other's body within TRIBUTARY_M, one is the
+/// other's tributary.
+const RIDGE_M: f32 = 0.5;
+const TRIBUTARY_M: f64 = 150.0;
 const STRAIGHT_M: f64 = 60.0;
 const STRAIGHT_SHARE: f64 = 0.05;
 const PLANE_RMS_M: f64 = 0.02;
@@ -128,10 +135,11 @@ pub(crate) struct Tile {
     pub falls: Vec<Fall>,
     /// Lowest saddle out of each lake seen in this tile (lake id → min of max(level, D)).
     pub saddle: BTreeMap<u32, f32>,
-    /// Straight-run clusters over 60 m whose longest member starts in this tile.
+    /// Straight-run clusters over 60 m whose longest member starts in this tile (a figure,
+    /// approximate across tiles: a window can split a cluster).
     pub runs: Vec<Run>,
-    /// Failing straight runs that lie mostly in ponds (reported apart, still failing).
-    pub pond_runs: u64,
+    /// Of the `straight_runs` cells, those in ponds (reported apart, still failing).
+    pub pond_run_cells: u64,
     /// Raw-independent dam figures (R31): (node key, lake, cell, drop m).
     pub drops_any: Vec<(u64, Option<u32>, [u64; 2], f32)>,
     /// Dry cells beside an exit above its level: (node key, lake, cell, after m, before m).
@@ -558,16 +566,36 @@ pub(crate) fn check_tile(
             raw: raw_share(m),
             members: members.len(),
         });
-        let failing = members.iter().find(|&&r| {
-            let mr = &maximal[r];
-            mr.1 > STRAIGHT_RUN_M && raw_share(mr) < GORGE_SHARE
-        });
-        if let Some(&r) = failing {
-            t.fail("straight_runs", x, y);
-            if pond_share(&maximal[r]) > 0.5 {
-                t.pond_runs += 1;
-            }
+    }
+    // The hard count (scale diagnosis 4): core thalweg cells on any failing run (over 150 m,
+    // raw thalweg share under 0.9) from any start. Every such run lies within STRAIGHT_STEPS
+    // cells of each of its cells, inside the halo, so the count is exact over tiles.
+    let mut covered: HashSet<usize> = HashSet::new();
+    for (&j, &(len, end)) in &runs_at {
+        if len <= STRAIGHT_RUN_M {
+            continue;
         }
+        let mut cells = vec![j];
+        while *cells.last().expect("start") != end {
+            cells.push(down(*cells.last().expect("start")).expect("run path"));
+        }
+        let run = (j, len, end, cells);
+        if raw_share(&run) < GORGE_SHARE {
+            covered.extend(run.3);
+        }
+    }
+    let mut covered: Vec<usize> = covered
+        .into_iter()
+        .filter(|&c| {
+            let (x, y) = win.world_xy(c);
+            core.contains(x, y)
+        })
+        .collect();
+    covered.sort_unstable();
+    for c in covered {
+        let (x, y) = win.world_xy(c);
+        t.fail("straight_runs", x, y);
+        t.pond_run_cells += u64::from(node[c] >= 2);
     }
 
     let thr = s.river_km2();
@@ -653,7 +681,7 @@ pub(crate) fn check_tile(
         }
         // Walls and facets on changed cells. Their stencils (Horn 3 × 3, facet 5 × 5) need two
         // cells all round, so the outermost two rows and columns of the world are not checked
-        // (inside the world the 160-cell halo always holds them).
+        // (inside the world the halo always holds them).
         let inner = x >= win.x0 + 2
             && y >= win.y0 + 2
             && x + 2 < win.x0 + win.w as u64
@@ -717,17 +745,21 @@ pub(crate) fn check_tile(
                     t.fail("parallel_rivers", x, y);
                 }
             }
-            // One thalweg (I3, spec): across the flow, out to the first divide on each side (raw
-            // more than 1 m above D here), the lowest raw cell is a cell of this river's body
-            // (wetted river-crossed ponds included) or lies no more than 1 m below the lowest
-            // D of this body within its distance + 1 cell. Too low a river is no failure:
-            // channels cut 2 m at most, and `walls` / `change_max` cover over-cutting.
+            // One thalweg (I3, spec): across the flow, out to the first ridge on each side (more
+            // than 0.5 m above D here), the lowest cell where water stands (raw, a pond's
+            // level, shown water: a filled pit or a lake is no second thalweg) is a cell of
+            // this river's body (wetted river-crossed ponds included), lies on a tributary
+            // beside its trunk (one drains into the other's body within 150 m), or lies no
+            // more than 1 m below the lowest D of this body within its distance + 1 cell. Too
+            // low a river is no failure: channels cut 2 m at most, and `walls` / `change_max`
+            // cover over-cutting.
             if f64::from(q[j]) >= MAIN_RIVER_KM2
                 && let Some((vx, vy)) = direction(j)
             {
                 let (nx, ny) = (-vy, vx);
                 let dj = dsurf(j);
-                let mut low = (raw[j], 0i64, j);
+                let stands = |p: usize| raw[p].max(level[p]).max(surf[p]);
+                let mut low = (stands(j), 0i64, j);
                 for side in [-1i64, 1] {
                     for i in 1..=reach_across {
                         let Some(p) = at_i(
@@ -736,16 +768,35 @@ pub(crate) fn check_tile(
                         ) else {
                             break;
                         };
-                        if raw[p] > dj + THALWEG_M {
+                        let u = stands(p);
+                        if u > dj + RIDGE_M {
                             break;
                         }
-                        if raw[p] < low.0 || (raw[p] == low.0 && i < low.1) {
-                            low = (raw[p], i, p);
+                        if u < low.0 || (u == low.0 && i < low.1) {
+                            low = (u, i, p);
                         }
                     }
                 }
                 let (zl, _, p) = low;
-                let own = body[j] > 1 && body[p] == body[j];
+                // Whether the path from `from` reaches water of body `id` within 150 m.
+                let joins = |from: usize, id: u32| {
+                    let (mut c, mut walked) = (from, 0.0);
+                    while walked <= TRIBUTARY_M {
+                        if surf[c].is_finite() && body[c] == id {
+                            return true;
+                        }
+                        let dc = flow[c] & 15;
+                        let Some(n) = down(c) else { return false };
+                        walked += step_len(dc) * s.spacing_m;
+                        c = n;
+                    }
+                    false
+                };
+                // Either may be the tributary: p joining this river, or this one joining p's.
+                let own = body[j] > 1
+                    && (body[p] == body[j]
+                        || joins(p, body[j])
+                        || (body[p] > 1 && surf[p].is_finite() && joins(j, body[p])));
                 if !own {
                     let (px, py) = win.world_xy(p);
                     let r = (px as f64 - x as f64).hypot(py as f64 - y as f64);
@@ -912,7 +963,7 @@ pub(crate) fn report(
     let mut falls = Vec::new();
     let mut saddle: BTreeMap<u32, f32> = BTreeMap::new();
     let (mut runs, mut drops_any, mut rims_any) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut agree, mut closed_ends, mut pond_runs) = ([0u64; 4], 0u64, 0u64);
+    let (mut agree, mut closed_ends, mut pond_run_cells) = ([0u64; 4], 0u64, 0u64);
     let mut bank = (0u64, 0f32, Vec::new());
     let mut class_cells: BTreeMap<u8, u64> = BTreeMap::new();
     let mut class_lakes: BTreeSet<(u8, u32)> = BTreeSet::new();
@@ -928,7 +979,7 @@ pub(crate) fn report(
             *a += b;
         }
         closed_ends += t.closed_ends;
-        pond_runs += t.pond_runs;
+        pond_run_cells += t.pond_run_cells;
         bank.0 += t.bank_steps.0;
         bank.1 = bank.1.max(t.bank_steps.1);
         bank.2
@@ -1021,7 +1072,7 @@ pub(crate) fn report(
                 .collect::<Vec<_>>()
         ),
     );
-    figures.insert("straight_runs_in_ponds".into(), json!(pond_runs));
+    figures.insert("straight_run_cells_in_ponds".into(), json!(pond_run_cells));
     figures.insert(
         "dam_drops_any".into(),
         json!({"count": drops_any.len(), "largest": drops_any.iter().take(50)
@@ -1165,8 +1216,37 @@ mod tests {
             }
         }
         fn tile(&self) -> Tile {
+            check_tile(
+                &setup(self.world, 4096, 0.05),
+                &self.layers(),
+                Rect::whole(self.world),
+                &self.lakes,
+                &self.exits,
+            )
+            .expect("check")
+        }
+        /// The report's check counts over tiles of `tile` cells.
+        fn checks_at(&self, tile: u64) -> Value {
+            let (s, l) = (setup(self.world, tile, 0.05), self.layers());
+            let tiles = s
+                .tiles()
+                .into_iter()
+                .map(|core| check_tile(&s, &l, core, &self.lakes, &self.exits).expect("check"))
+                .collect();
+            report(tiles, self.extra(), Map::new()).0["checks"].clone()
+        }
+        fn extra(&self) -> CheckExtra {
+            CheckExtra {
+                cycles: 0,
+                bodies: 0,
+                lake_short: 0,
+                lakes: self.lakes.clone(),
+                cell_km2: 1e-6,
+            }
+        }
+        fn layers(&self) -> CheckLayers {
             let w = self.world;
-            let l = CheckLayers {
+            CheckLayers {
                 raw: Layer::memory(w, self.raw.clone()),
                 ground: Layer::memory(w, self.z.clone()),
                 surface: Layer::memory(w, self.surf.clone()),
@@ -1176,25 +1256,10 @@ mod tests {
                 flow: Layer::memory(w, self.flow.clone()),
                 discharge: Layer::memory(w, self.q.clone()),
                 flow_written: Layer::memory(w, self.fw.clone()),
-            };
-            check_tile(
-                &setup(w, 4096, 0.05),
-                &l,
-                Rect::whole(w),
-                &self.lakes,
-                &self.exits,
-            )
-            .expect("check")
+            }
         }
         fn report(&self) -> Value {
-            let extra = CheckExtra {
-                cycles: 0,
-                bodies: 0,
-                lake_short: 0,
-                lakes: self.lakes.clone(),
-                cell_km2: 1e-6,
-            };
-            report(vec![self.tile()], extra, Map::new()).0
+            report(vec![self.tile()], self.extra(), Map::new()).0
         }
     }
 
@@ -1226,8 +1291,8 @@ mod tests {
     }
 
     /// A river of discharge 2 km² along `path` on a `w` × `h` plane (raw `raw`, else the
-    /// plane), and optionally a second flow line along row `beside` (x 10..240, gaps every
-    /// `gap` cells) that never joins it.
+    /// plane), and optionally a second flow line of 0.05 km² along row `beside` (x 10..240,
+    /// gaps every `gap` cells) that never joins it.
     fn river_on(
         w: u64,
         h: u64,
@@ -1235,12 +1300,23 @@ mod tests {
         beside: Option<(u64, u64)>,
         raw: Option<Vec<f32>>,
     ) -> Tile {
+        river_beside(w, h, path, beside, raw, 0.05)
+    }
+
+    fn river_beside(
+        w: u64,
+        h: u64,
+        path: &[(u64, u64)],
+        beside: Option<(u64, u64)>,
+        raw: Option<Vec<f32>>,
+        q: f32,
+    ) -> Tile {
         let mut c = Case::new(w, h, plane);
         c.river(path, 2.0, 5);
         if let Some((row, gap)) = beside {
             for x in 10..240 {
                 let k = c.k(x, row);
-                (c.flow[k], c.q[k]) = (if gap > 0 && x % gap == 0 { 0 } else { 4 }, 0.01);
+                (c.flow[k], c.q[k]) = (if gap > 0 && x % gap == 0 { 0 } else { 4 }, q);
             }
         }
         if let Some(r) = raw {
@@ -1273,6 +1349,10 @@ mod tests {
             0,
             "15 m away is fine"
         );
+        // A hillslope line below the river threshold (0.03 km²) 5 m away is ordinary flow.
+        let path: Vec<(u64, u64)> = (10..241).map(|x| (x, 10)).collect();
+        let rill = river_beside(260, 30, &path, Some((15, 0)), None, 0.03);
+        assert_eq!(fails(&rill, "parallel_rivers"), 0);
     }
 
     /// A doubled channel with a 1 m gap every 10 m is still one doubled channel (R29: gaps up
@@ -1292,7 +1372,7 @@ mod tests {
         let path: Vec<(u64, u64)> = (5..185).map(|i| (i, i)).collect();
         c.river(&path, 2.0, 5);
         let line: Vec<(u64, u64)> = (5..180).map(|i| (i + 3, i)).collect();
-        c.route(&line, 0, 0.01);
+        c.route(&line, 0, 0.05);
         let t = c.tile();
         assert_eq!(fails(&t, "parallel_rivers"), 1, "{:?}", t.examples);
     }
@@ -1306,7 +1386,11 @@ mod tests {
             slanted.push((5 + i, 2 + i / 10));
         }
         let t = river_on(260, 30, &slanted, None, None);
-        assert_eq!(fails(&t, "straight_runs"), 1, "one 1:10 run of 228 m");
+        assert_eq!(
+            fails(&t, "straight_runs"),
+            220,
+            "every cell of one 1:10 run of 228 m"
+        );
         assert!(t.runs[0].length_m > 220.0, "{:?}", t.runs[0]);
         let t = river_on(260, 30, &wobble(5.0), None, None);
         assert_eq!(fails(&t, "straight_runs"), 0, "{:?}", t.runs.first());
@@ -1335,13 +1419,41 @@ mod tests {
     /// fails; one wobbling ±1.5 m does not count as straight.
     #[test]
     fn the_chord_tolerance_is_one_metre() {
-        let t = river_on(260, 30, &wobble(0.5), None, None);
-        assert_eq!(fails(&t, "straight_runs"), 1, "{:?}", t.runs.first());
+        let path = wobble(0.5);
+        let t = river_on(260, 30, &path, None, None);
+        assert_eq!(
+            fails(&t, "straight_runs"),
+            path.len() as u64 - 1,
+            "every river cell: {:?}",
+            t.runs.first()
+        );
         let t = river_on(260, 30, &wobble(1.5), None, None);
         assert_eq!(fails(&t, "straight_runs"), 0, "{:?}", t.runs.first());
     }
 
-    /// A long, gentle arc: many maximal runs overlap along it; they are one straight reach.
+    /// A 1.4 km straight river across many tile seams (runs up to 400 cells, longer than the
+    /// old 160-cell halo): every check counts alike at every tiling, and `straight_runs`
+    /// counts each covered river cell once.
+    #[test]
+    fn a_straight_run_across_tile_seams_counts_once() {
+        let mut c = Case::new(1500, 24, plane);
+        let path: Vec<(u64, u64)> = (10..1440).map(|x| (x, 10)).collect();
+        c.river(&path, 2.0, 5);
+        // A raw trench under x 400..1300 exempts the runs inside it; a run cut short at a
+        // window edge would see another raw share.
+        for x in 400..1300 {
+            let k = c.k(x, 10);
+            c.raw[k] -= 1.0;
+        }
+        let whole = c.checks_at(4096);
+        let n = whole["straight_runs"].as_u64().unwrap();
+        assert!(n > 600 && n < 1429, "{n} cells");
+        for tile in [128, 200, 700] {
+            assert_eq!(c.checks_at(tile), whole, "tile {tile}");
+        }
+    }
+
+    /// A long, gentle arc: many maximal runs overlap along it; their cells count once each.
     #[test]
     fn overlapping_straight_runs_count_once() {
         let mut path = vec![(5u64, 5u64)];
@@ -1355,7 +1467,12 @@ mod tests {
         }
         let t = river_on(420, 40, &path, None, None);
         assert!(t.runs.iter().any(|r| r.members > 1), "{:?}", t.runs);
-        assert_eq!(fails(&t, "straight_runs"), 1, "{:?}", t.runs);
+        let cells = fails(&t, "straight_runs");
+        assert!(
+            cells > 150 && cells < path.len() as u64,
+            "{cells} cells: {:?}",
+            t.runs
+        );
     }
 
     /// The straight-gorge exemption needs a raw thalweg strictly below the cells across: an
@@ -1596,6 +1713,69 @@ mod tests {
         c.river(&path, 2.0, 5);
         let t = c.tile();
         assert!(fails(&t, "thalweg_beside") > 0, "{:?}", t.examples);
+    }
+
+    /// A gentle V valley (0.05 per cell across) with a river along row 30, x 10..120.
+    fn gentle_valley(across: impl Fn(u64, f32) -> f32) -> Case {
+        let mut c = Case::new(130, 70, |x, y| {
+            20.0 - 0.01 * x as f32 + across(y, 0.05 * (y as f32 - 30.0).abs())
+        });
+        let path: Vec<(u64, u64)> = (10..120).map(|x| (x, 30)).collect();
+        c.river(&path, 2.0, 5);
+        c
+    }
+
+    /// A raw pit 1.5 m below the river, 6–8 m beside it, filled to its spill 0.35 m above the
+    /// river: water stands at the pond's level there, so it is no second thalweg.
+    #[test]
+    fn a_pond_beside_a_river_counts_at_its_level() {
+        let pit = |level: bool| {
+            let mut c = gentle_valley(|_, v| v);
+            for y in 36..39 {
+                for x in 50..70 {
+                    let (k, floor) = (c.k(x, y), 20.0 - 0.01 * x as f32);
+                    (c.raw[k], c.z[k]) = (floor - 1.5, floor - 1.5);
+                    if level {
+                        (c.level[k], c.node[k]) = (floor + 0.35, 2);
+                    }
+                }
+            }
+            fails(&c.tile(), "thalweg_beside")
+        };
+        assert!(pit(false) > 0, "an open hollow 1.5 m below is beside");
+        assert_eq!(pit(true), 0);
+    }
+
+    /// Lower ground 2 m below the river behind a ridge 8 m away: a ridge 0.7 m above the
+    /// river's surface divides; one 0.4 m above does not.
+    #[test]
+    fn a_half_metre_ridge_divides() {
+        let ridge = |h: f32| {
+            let c = gentle_valley(move |y, v| match y {
+                38 => h,
+                39..=45 => -2.0,
+                _ => v,
+            });
+            fails(&c.tile(), "thalweg_beside")
+        };
+        assert_eq!(ridge(0.7), 0);
+        assert!(ridge(0.4) > 0);
+    }
+
+    /// A tributary (body 6) running 15 m beside its trunk (body 5) and 1.5 m above it, then
+    /// joining it within 150 m: a natural tributary beside its trunk, no second thalweg.
+    #[test]
+    fn a_tributary_beside_its_trunk_passes() {
+        let mut c = gentle_valley(|y, v| if y >= 30 { 0.1 * (y as f32 - 30.0) } else { v });
+        let mut trib: Vec<(u64, u64)> = (10..80).map(|x| (x, 45)).collect();
+        trib.extend((30..=45).rev().map(|y| (80, y)));
+        c.river(&trib, 1.5, 6);
+        let t = c.tile();
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+        // Without the join it is a second, higher channel beside a lower one.
+        let k = c.k(80, 31);
+        c.flow[k] = 32;
+        assert!(fails(&c.tile(), "thalweg_beside") > 0);
     }
 
     /// A river through a 2.5 m deep pool wetted as the river (R7/R26): the pool floor is its
