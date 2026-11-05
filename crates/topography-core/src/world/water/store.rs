@@ -131,6 +131,13 @@ pub(crate) fn encode<T: Blob>(v: &T) -> Vec<u8> {
     e.0
 }
 
+/// The temporary sibling of `path` for an atomic write: its full file name + `.partial`.
+pub(crate) fn partial_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".partial");
+    path.with_file_name(name)
+}
+
 pub(crate) fn decode<T: Blob>(b: &[u8]) -> Result<T> {
     let mut d = Dec { b, at: 0 };
     let v = T::get(&mut d)?;
@@ -183,7 +190,7 @@ impl Work {
         if let Some(parent) = path.parent() {
             io_context("create work dir", fs::create_dir_all(parent))?;
         }
-        let tmp = path.with_extension("partial");
+        let tmp = partial_path(&path);
         io_context("write work file", fs::write(&tmp, encode(&v)))?;
         io_context("publish work file", fs::rename(&tmp, &path))?;
         Ok(v)
@@ -292,6 +299,10 @@ mod tests {
         assert_eq!(work.cached("m1/a/0000", f).expect("second"), 42);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(Work::open(dir.path(), &serde_json::json!({"input": "b"})).is_err());
+        assert_eq!(
+            partial_path(Path::new("w/a.b.f32")),
+            Path::new("w/a.b.f32.partial")
+        );
     }
 
     #[test]

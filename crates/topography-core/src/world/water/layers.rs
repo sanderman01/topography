@@ -2,6 +2,7 @@
 //! windowed reads and positioned writes, so tiles never need the whole raster.
 
 use super::geom::{Rect, World};
+use super::store::partial_path;
 use crate::acquisition::{Result, ensure, io_context};
 use std::{
     fs,
@@ -79,7 +80,7 @@ impl<T: Cell> Layer<T> {
         if path.exists() {
             return Self::open(world, path);
         }
-        let tmp = path.with_extension("partial");
+        let tmp = partial_path(path);
         let file = io_context(format!("create {}", tmp.display()), fs::File::create(&tmp))?;
         let mut row = Vec::with_capacity(world.w as usize * T::B);
         for _ in 0..world.w {

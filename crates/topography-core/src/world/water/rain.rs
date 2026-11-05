@@ -44,6 +44,7 @@ impl Rain {
             spacing_m > 0.0 && scale > 0.0 && mean > 0.0,
             "moisture needs spacing_m, scale_mm_h and discharge.mean_land_mm_h",
         )?;
+        ensure(w > 0 && h > 0, "moisture size must not be empty")?;
         let file = entry["file"].as_str().unwrap_or("moisture.f32");
         let bytes = io_context(format!("read {file}"), fs::read(dir.join(file)))?;
         ensure(
@@ -94,8 +95,13 @@ impl Rain {
     }
 
     /// A cell's rain in Q units (1e-12 km² at mean rain) at its centre (x, y).
-    pub fn units(&self, x: f64, y: f64, cell_km2: f64) -> u64 {
-        (self.at(x, y) * self.weight * cell_km2 * Q_PER_KM2).round() as u64
+    pub fn units(&self, x: f64, y: f64, cell_km2: f64) -> Result<u64> {
+        let m = self.at(x, y);
+        ensure(
+            m.is_finite() && m >= 0.0,
+            format!("moisture {m} at ({x}, {y}) is negative or not finite"),
+        )?;
+        Ok((m * self.weight * cell_km2 * Q_PER_KM2).round() as u64)
     }
 }
 
@@ -119,6 +125,38 @@ mod tests {
         assert_eq!(r.at(128.0, 64.0), 0.5);
         assert_eq!(r.at(500.0, 64.0), 1.0, "clamped past the last centre");
         // 1 m² cell at moisture 0.5, weight 2: 1e-6 km² = 1e6 units.
-        assert_eq!(r.units(128.0, 64.0, 1e-6), 1_000_000);
+        assert_eq!(r.units(128.0, 64.0, 1e-6).expect("units"), 1_000_000);
+    }
+
+    #[test]
+    fn an_empty_moisture_grid_is_refused() {
+        let dir = tempfile::tempdir().expect("temp");
+        std::fs::write(dir.path().join("moisture.f32"), b"").expect("write");
+        for size in [[0, 1], [1, 0]] {
+            let manifest = serde_json::json!({
+                "moisture": {"file": "moisture.f32", "size": size, "spacing_m": 128.0,
+                             "nw_m": [0.0, 0.0], "scale_mm_h": 1.0},
+                "discharge": {"mean_land_mm_h": 1.0},
+            });
+            let m = manifest.as_object().expect("object");
+            assert!(Rain::read(dir.path(), m).is_err(), "size {size:?}");
+        }
+    }
+
+    #[test]
+    fn negative_or_non_finite_moisture_is_an_error() {
+        for bad in [-0.5f32, f32::NAN, f32::INFINITY] {
+            let r = Rain {
+                w: 1,
+                h: 1,
+                spacing_m: 128.0,
+                nw_m: [0.0, 128.0],
+                values: vec![bad],
+                weight: 1.0,
+                mean_land_mm_h: 1.0,
+                entry: Default::default(),
+            };
+            assert!(r.units(64.0, 64.0, 1e-6).is_err(), "moisture {bad}");
+        }
     }
 }
