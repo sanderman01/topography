@@ -78,16 +78,16 @@ impl<T: Blob> Blob for Vec<T> {
     }
 }
 
-impl<const N: usize> Blob for [u64; N] {
+impl<T: Blob + Copy + Default, const N: usize> Blob for [T; N] {
     fn put(&self, e: &mut Enc) {
         for v in self {
             v.put(e);
         }
     }
     fn get(d: &mut Dec) -> Result<Self> {
-        let mut out = [0u64; N];
+        let mut out = [T::default(); N];
         for v in &mut out {
-            *v = u64::get(d)?;
+            *v = T::get(d)?;
         }
         Ok(out)
     }
