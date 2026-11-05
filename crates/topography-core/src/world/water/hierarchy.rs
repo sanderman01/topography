@@ -105,7 +105,11 @@ impl Resolver {
             match t {
                 Next::Out(c) => t = self.ring_end(c).expect("an exit enters a ring cell"),
                 Next::Node(EDGE_KEY) => return NONE,
-                Next::Node(p) => return self.leaf_index(self.root_of(p)),
+                Next::Node(p) => {
+                    let l = self.leaf_index(self.root_of(p));
+                    assert!(l != NONE, "pit {p} is not a leaf");
+                    return l;
+                }
                 Next::Cell(_) | Next::End => panic!("{t:?} is not a drainage end"),
             }
         }
