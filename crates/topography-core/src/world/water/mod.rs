@@ -7,6 +7,10 @@
 // Items are wired to the CLI in Task 14, which removes this allow.
 #![allow(dead_code)]
 
+mod geom;
+mod layers;
+mod rain;
+mod store;
 mod table;
 
 /// Judgment value (spec): standing water at least this deep is a lake; shallower is a pond.
