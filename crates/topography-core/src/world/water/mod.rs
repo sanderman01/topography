@@ -9,11 +9,13 @@
 
 mod balance;
 mod bodies;
+mod breach;
 mod contract;
 mod flats;
 mod flow;
 mod geom;
 mod hierarchy;
+mod hydraulic;
 mod layers;
 mod nodes;
 mod pipeline;

@@ -10,8 +10,10 @@
 use super::flow::{Next, ends};
 use super::geom::{OFFSETS, Rect, World};
 use super::hierarchy::NONE;
+use super::hydraulic::Geometry;
 use super::layers::Layer;
-use super::pipeline::{Rasters, Setup, Water};
+use super::pipeline::{Model, Rasters, Setup, Water};
+use super::rain::Q_PER_KM2;
 use super::store::{Work, cached, for_tiles};
 use crate::acquisition::{AcquisitionError, Result, ensure};
 use serde_json::{Value, json};
@@ -176,6 +178,25 @@ type RiverAttrs = BTreeMap<u32, (u64, u64, Vec<(u64, f32, u32)>)>;
 fn round(v: f64, places: i32) -> f64 {
     let k = 10f64.powi(places);
     (v * k).round() / k
+}
+
+/// River pools: full lake nodes a river flows into (inflow ≥ the river start) whose area is
+/// below 20 · w(Q)² of that river; they are labelled as the river leaving them. Node key →
+/// outlet cell.
+pub(crate) fn pools(s: &Setup, m: &Model, geo: &Geometry) -> BTreeMap<u64, u64> {
+    let thr = s.params.river_km2;
+    m.water
+        .nodes
+        .0
+        .iter()
+        .filter(|n| n.lake && n.full)
+        .filter_map(|n| {
+            let q = m.flow.node_total.get(&n.key).copied().unwrap_or(0) as f64 / Q_PER_KM2;
+            let w = geo.width_m(q);
+            (q >= thr && (n.cells as f64) * s.spacing_m * s.spacing_m < 20.0 * w * w)
+                .then_some((n.key, n.outlet[1]))
+        })
+        .collect()
 }
 
 /// Writes `body` (0 none, 1 sea, lake ids, river ids on thalweg cells, and on the cells of the
@@ -557,7 +578,7 @@ fn dry_basins(w: &Water, min_cells: u64) -> Vec<usize> {
 mod tests {
     use super::*;
     use crate::world::water::nodes::{Node, Nodes};
-    use crate::world::water::pipeline::{Model, model};
+    use crate::world::water::pipeline::model;
     use crate::world::water::testing::{setup, terrain};
 
     fn run_pools(
@@ -1107,6 +1128,41 @@ mod tests {
                 lake(id).then_some([2, 3, 6])
             }
         });
+    }
+
+    #[test]
+    fn a_small_pool_on_a_river_is_labelled_as_that_river() {
+        let world = World { w: 64, h: 64 };
+        let s = setup(world, 16, 1e-5);
+        let r = Rasters::memory(world);
+        let m = model(
+            &s,
+            &Layer::memory(world, terrain(world)),
+            None,
+            "m",
+            Some(&r),
+        )
+        .expect("model");
+        // A huge factor makes every lake with river inflow a pool.
+        let p = pools(&s, &m, &Geometry::new(1e9));
+        assert!(!p.is_empty(), "the humid bowl takes a river");
+        let body = Layer::filled(world, 0u32);
+        let json = label(&s, &m.water, &r, &body, &p, None, "m").expect("bodies");
+        let lakes = json["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["kind"] == "lake")
+            .count();
+        let all_lakes = m.water.nodes.0.iter().filter(|n| n.lake).count();
+        assert_eq!(lakes, all_lakes - p.len(), "pools are not listed as lakes");
+        let ids = body.to_vec().unwrap();
+        let node = r.node.to_vec().unwrap();
+        for k in 0..ids.len() {
+            if node[k] >= 2 && p.contains_key(&m.water.nodes.at(node[k] - 2).key) {
+                assert!(ids[k] > 1, "a pool cell carries its river's id");
+            }
+        }
     }
 
     /// Dry basins do not depend on the tiling or contraction (here from one cell: the

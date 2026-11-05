@@ -54,6 +54,7 @@ blob_num!(u32);
 blob_num!(u64);
 blob_num!(i64);
 blob_num!(f32);
+blob_num!(f64);
 
 impl Blob for bool {
     fn put(&self, e: &mut Enc) {
