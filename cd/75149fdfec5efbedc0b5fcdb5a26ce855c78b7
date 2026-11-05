@@ -1,0 +1,48 @@
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_3a40c1b9d64956 56-57
+  s_8c1b40ea9c1e0d::t_8ed62d48d128c9 569-576,578-597
+  s_8c1b40ea9c1e0d::t_177eeaaf1496f8 1219-1247,1249
+  s_8c1b40ea9c1e0d::t_8f1c1ee32afb8a 1389-1393,1471-1475,1769
+  s_8c1b40ea9c1e0d::t_83d4eaaf8544c9 1718-1768,1770-1780
+  s_8c1b40ea9c1e0d::t_3a9a1672e8079e 1259,1262
+  s_8c1b40ea9c1e0d::t_586fa713b1a5ab 1352-1355
+  s_8c1b40ea9c1e0d::t_0667a9a6c744e9 2-3,15,138-139
+  s_8c1b40ea9c1e0d::t_a12930a2ffdf87 1434-1441,1448,1451-1455
+  s_8c1b40ea9c1e0d::t_447cceb845b25b 1422-1429
+  s_8c1b40ea9c1e0d::t_82f8f7320231f7 1456,1470
+  s_8c1b40ea9c1e0d::t_13abdfa566683b 17-19
+  s_8c1b40ea9c1e0d::t_091554b8af84ba 141-142,598,684,966,982,1075
+  s_8c1b40ea9c1e0d::t_774ddcd1efc6f8 53-55
+  s_8c1b40ea9c1e0d::t_e713686762875d 1443,1445-1447,1449-1450
+  s_8c1b40ea9c1e0d::t_c4561c4b936a56 748-750,761-762,771-772,775-776,784,786-794
+  s_8c1b40ea9c1e0d::t_afba2a938cfcf8 781-783,785,795-799
+  s_8c1b40ea9c1e0d::t_d2e56ee04e5d7d 751-752
+  s_8c1b40ea9c1e0d::t_f5355ae0edfc7e 1442,1444
+  s_8c1b40ea9c1e0d::t_39988a0c551df2 753-755
+  s_8c1b40ea9c1e0d::t_edd05b0f3ab3ba 1294-1295,1302-1312,1319
+  s_90f113479ad6cc::t_548bfcb595c5da 1375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd75149fdfec5efbedc0b5fcdb5a26ce855c78b7",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    },
+    "s_90f113479ad6cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a84cc6155efcf4ff2",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
