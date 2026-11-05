@@ -13,9 +13,15 @@ use std::collections::{BTreeMap, HashMap};
 /// Node key of the world edge: the ocean of the hierarchy.
 pub(crate) const EDGE_KEY: u64 = u64::MAX;
 
-/// An f32 as an unsigned key in total order.
+/// `z` with -0.0 as +0.0, so equal heights encode alike in every tiling.
+fn norm(z: f32) -> f32 {
+    z + 0.0
+}
+
+/// A finite f32 as an unsigned key in total order (-0.0 and +0.0 alike).
 pub(crate) fn ordered(z: f32) -> u32 {
-    let b = z.to_bits();
+    assert!(z.is_finite(), "height {z} is not finite");
+    let b = norm(z).to_bits();
     if b & 0x8000_0000 != 0 {
         !b
     } else {
@@ -54,7 +60,13 @@ pub(crate) struct Drain {
     pub cycles: u64,
 }
 
+/// Drainage of `core`; `z` covers `win` (`core` grown by one cell) and must be finite, or a
+/// NaN cell would pass for a pit.
 pub(crate) fn drain(world: World, win: Rect, z: &[f32], core: Rect) -> Drain {
+    if let Some(k) = z.iter().position(|v| !v.is_finite()) {
+        let (x, y) = win.world_xy(k);
+        panic!("ground at ({x}, {y}) is {}, not finite", z[k]);
+    }
     let dir = receivers(world, win, z, core);
     let n = core.cells();
     assert!(
@@ -160,6 +172,11 @@ pub(crate) fn tile_graph(
     supply: impl Fn(usize) -> u64,
 ) -> TileGraph {
     let n = core.cells();
+    assert_eq!(zc.len(), n, "zc covers the core");
+    assert!(
+        zc.iter().all(|v| v.is_finite()),
+        "core ground is not finite"
+    );
     let mut sup = BTreeMap::new();
     for k in 0..n {
         *sup.entry(d.end[k]).or_insert(0) += supply(k);
@@ -179,7 +196,8 @@ pub(crate) fn tile_graph(
             if ea == eb {
                 continue;
             }
-            let (ck, cm, saddle) = (world.index(x, y), world.index(nx, ny), zc[k].max(zc[m]));
+            let (ck, cm) = (world.index(x, y), world.index(nx, ny));
+            let saddle = norm(zc[k].max(zc[m]));
             let e = if ea < eb {
                 Edge {
                     a: ea,
@@ -213,15 +231,19 @@ pub(crate) fn tile_graph(
             let (x, y) = core.world_xy(k);
             core.on_ring(x, y).then(|| Ring {
                 cell: world.index(x, y),
-                z: zc[k],
+                z: norm(zc[k]),
                 end: d.end[k],
                 pit: d.pit.contains_key(&(k as u32)),
             })
         })
         .collect();
+    // A pit's height is its key cell's (always in this tile).
     let mut pits: BTreeMap<u64, f32> = BTreeMap::new();
     for (&k, &key) in &d.pit {
-        pits.insert(key, zc[k as usize]);
+        let (x, y) = core.world_xy(k as usize);
+        if world.index(x, y) == key {
+            pits.insert(key, norm(zc[k as usize]));
+        }
     }
     TileGraph {
         ring,
@@ -323,8 +345,28 @@ pub(crate) mod tests {
         };
         assert_eq!(between(15, 17).expect("A-B").saddle, 5.0);
         assert_eq!(between(17, EDGE_KEY).expect("B-edge").saddle, 7.0);
-        assert_eq!(g.supply.values().sum::<u64>(), 35 * 1000);
-        assert_eq!(g.pits.len(), 2);
+        // A: the 1, the 5 and the 8s at x 1-2 plus (3, 3); B: the 2, the 6 and the other 8s
+        // at x 3-4; the edge: its 20 cells plus the column of x 5 above the outlet.
+        let supply: Vec<(Next, u64)> = g.supply.iter().map(|(&e, &s)| (e, s)).collect();
+        assert_eq!(
+            supply,
+            vec![
+                (Next::Node(15), 7 * 1000),
+                (Next::Node(17), 5 * 1000),
+                (Next::Node(EDGE_KEY), 23 * 1000)
+            ]
+        );
+        assert_eq!(g.pits, vec![(15, 1.0), (17, 2.0)]);
+    }
+
+    /// The `w` x `h` world `z` cut to `win`.
+    fn cut(world: World, z: &[f32], win: Rect) -> Vec<f32> {
+        (0..win.cells())
+            .map(|k| {
+                let (x, y) = win.world_xy(k);
+                z[world.index(x, y) as usize]
+            })
+            .collect()
     }
 
     #[test]
@@ -339,13 +381,7 @@ pub(crate) mod tests {
             h: 4,
         };
         let win = core.grow(1, world);
-        let zw: Vec<f32> = (0..win.cells())
-            .map(|k| {
-                let (x, y) = win.world_xy(k);
-                z[(y * 6 + x) as usize]
-            })
-            .collect();
-        let d = drain(world, win, &zw, core);
+        let d = drain(world, win, &cut(world, &z, win), core);
         assert_eq!(
             d.pit.values().copied().collect::<Vec<_>>(),
             vec![8],
@@ -353,24 +389,111 @@ pub(crate) mod tests {
         );
         let left = drain(world, Rect::whole(world), &z, Rect::whole(world));
         assert_eq!(left.end[9], Next::Node(8), "(3, 1) joins the pit named 8");
+
+        // A plane falling east: inner core cells leave the tile at the first cell outside.
+        let plane: Vec<f32> = (0..24).map(|i| 10.0 - (i % 6) as f32).collect();
+        let d = drain(world, win, &cut(world, &plane, win), core);
+        let at = |x, y| d.end[core.local(x, y).expect("in core")];
+        assert_eq!(at(2, 1), Next::Out(world.index(3, 1)));
+        assert_eq!(at(1, 1), Next::Out(world.index(3, 1)));
+        assert_eq!(at(1, 2), Next::Out(world.index(3, 2)));
+        assert_eq!(
+            at(0, 1),
+            Next::Node(EDGE_KEY),
+            "world edge cells end at the edge"
+        );
+        assert!(d.pit.is_empty());
+    }
+
+    #[test]
+    fn signed_zeros_in_a_flat_pit_are_one_height() {
+        let world = World { w: 6, h: 4 };
+        let mut z = vec![5.0f32; 24];
+        (z[8], z[9]) = (0.0, -0.0); // one flat pit at sea level
+        let all = Rect::whole(world);
+        let d = drain(world, all, &z, all);
+        assert_eq!(d.end[8], Next::Node(8));
+        assert_eq!(d.end[9], Next::Node(8), "-0.0 and +0.0 are one pit");
+        assert_eq!(ordered(-0.0), ordered(0.0));
+        assert!(ordered(-0.5) < ordered(-0.0) && ordered(0.0) < ordered(f32::MIN_POSITIVE));
+        // The key cell (8) names the pit's height; -0.0 there is stored as +0.0.
+        for (a, b) in [(0.0, -0.0), (-0.0, 0.0)] {
+            (z[8], z[9]) = (a, b);
+            let d = drain(world, all, &z, all);
+            let g = tile_graph(world, all, &z, &d, |_| 1);
+            assert_eq!(g.pits.len(), 1);
+            assert_eq!(g.pits[0].1.to_bits(), 0.0f32.to_bits());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "not finite")]
+    fn a_nan_cell_is_refused() {
+        let (world, mut z) = two_pits();
+        z[2 * 7 + 2] = f32::NAN;
+        let all = Rect::whole(world);
+        drain(world, all, &z, all);
     }
 
     #[test]
     fn tile_graphs_round_trip() {
         use super::super::store::{decode, encode};
         let (world, z) = two_pits();
-        let all = Rect::whole(world);
-        let d = drain(world, all, &z, all);
-        let g = tile_graph(world, all, &z, &d, |k| k as u64);
-        assert!(!g.ring.is_empty() && !g.edges.is_empty());
-        assert_eq!(decode::<TileGraph>(&encode(&g)).expect("decode"), g);
+        // The inner 5 x 3: its ring holds pit A and the 7 leaving for the outlet.
+        let core = Rect {
+            x0: 1,
+            y0: 1,
+            w: 5,
+            h: 3,
+        };
+        let d = drain(world, Rect::whole(world), &z, core);
+        let g = tile_graph(world, core, &cut(world, &z, core), &d, |k| k as u64);
+        let cells: Vec<u64> = g.ring.iter().map(|r| r.cell).collect();
+        assert_eq!(cells, [8, 9, 10, 11, 12, 15, 19, 22, 23, 24, 25, 26]);
+        let at = |c: u64| *g.ring.iter().find(|r| r.cell == c).expect("on the ring");
+        assert_eq!(
+            at(15),
+            Ring {
+                cell: 15,
+                z: 1.0,
+                end: Next::Node(15),
+                pit: true
+            }
+        );
+        assert_eq!(
+            at(19),
+            Ring {
+                cell: 19,
+                z: 7.0,
+                end: Next::Out(20),
+                pit: false
+            }
+        );
+        assert_eq!(g.ring.iter().filter(|r| r.pit).count(), 1);
+        assert!(!g.edges.is_empty());
+        let back = decode::<TileGraph>(&encode(&g)).expect("decode");
+        assert_eq!(back.ring, g.ring);
+        assert_eq!(back, g);
     }
 
     #[test]
     #[ignore]
     fn probe_pits_in_the_canyon() {
+        pit_probe("canyon", 27169, 44546);
+    }
+
+    /// Plains (class 18/0 on 253 of 256 class cells, 74 m p5-p95 relief): the lowest-relief
+    /// class-dominated 2 km block of the layout's class map.
+    #[test]
+    #[ignore]
+    fn probe_pits_on_the_plains() {
+        pit_probe("plains", 18944, 36863);
+    }
+
+    /// Pit and in-tile edge density of a 2048² window, extrapolated to the world.
+    fn pit_probe(name: &str, east: u64, north: u64) {
         use crate::world::water::probe;
-        let Some((win, z)) = probe::window(27169, 44546, 2048) else {
+        let Some((win, z)) = probe::window(east, north, 2048) else {
             return;
         };
         let core = Rect {
@@ -388,7 +511,7 @@ pub(crate) mod tests {
             .collect();
         let g = tile_graph(probe::WORLD, core, &zc, &d, |_| 1000);
         eprintln!(
-            "pits {} (one per {} cells), edges {}, cycles {}",
+            "{name} E{east} N{north}: pits {} (one per {} cells), edges {}, cycles {}",
             g.pits.len(),
             core.cells() / g.pits.len().max(1),
             g.edges.len(),
@@ -408,12 +531,25 @@ pub(crate) mod tests {
             .filter(|&&(k, z)| spill.get(&Next::Node(k)).is_some_and(|&s| s <= z))
             .count();
         let km2 = core.cells() as f64 / 1e6;
+        let (pits_km2, edges_km2) = (g.pits.len() as f64 / km2, g.edges.len() as f64 / km2);
         eprintln!(
-            "core {:.3} km², pits/km² {:.0}, zero-depth pits {} ({:.0}/km²)",
-            km2,
-            g.pits.len() as f64 / km2,
-            flat,
+            "{name}: core {km2:.3} km², pits/km² {pits_km2:.0}, edges/km² {edges_km2:.0}, \
+             zero-depth pits {flat} ({:.0}/km²)",
             flat as f64 / km2
+        );
+        // The world at this density: struct sizes only, no map overhead or seam edges.
+        let world_km2 = (probe::WORLD.w * probe::WORLD.h) as f64 / 1e6;
+        let (pits, edges) = (pits_km2 * world_km2, edges_km2 * world_km2);
+        let bytes = pits * std::mem::size_of::<(u64, f32)>() as f64
+            + edges * std::mem::size_of::<Edge>() as f64;
+        eprintln!(
+            "{name}: world {world_km2:.0} km² -> pits {:.2} M, edges {:.2} M, {:.2} GB \
+             ({} B/edge, {} B/pit)",
+            pits / 1e6,
+            edges / 1e6,
+            bytes / 1e9,
+            std::mem::size_of::<Edge>(),
+            std::mem::size_of::<(u64, f32)>()
         );
     }
 }
