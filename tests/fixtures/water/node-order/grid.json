@@ -1,0 +1,32 @@
+{
+  "classes_cell_m": 1.0,
+  "discharge": {
+    "mean_land_mm_h": 2.3638717390811466
+  },
+  "moisture": {
+    "dtype": "float32",
+    "file": "moisture.f32",
+    "nw_m": [
+      23680.0,
+      39424.0
+    ],
+    "scale": "95th percentile of precipitation on land cells",
+    "scale_mm_h": 7.606463432312012,
+    "size": [
+      5,
+      5
+    ],
+    "spacing_m": 128.0,
+    "value": "precipitation / scale_mm_h, clipped to 0..1"
+  },
+  "origin": [
+    23824.0,
+    39209.0
+  ],
+  "probe": "128\u00b2 of the fujix l4v2 raw surface at E23824..23952 N39081..39209, whose tiles of 64 listed water nodes out of key order (fixed in b101ca1)",
+  "size": [
+    128,
+    128
+  ],
+  "spacing_m": 1.0
+}

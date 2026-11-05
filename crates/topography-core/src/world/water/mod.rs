@@ -606,6 +606,25 @@ mod tests {
         );
     }
 
+    /// A 128² window of the real surface (tests/fixtures/water/node-order) whose tiles of 64
+    /// list their water nodes out of key order; the work store refused those tables until
+    /// each tile's table was sorted by key (b101ca1).
+    #[test]
+    fn tiles_whose_nodes_come_out_of_key_order_run() {
+        let dir = tempfile::tempdir().expect("temp");
+        for tile in [64, 128] {
+            let o = Options {
+                grid: "../../tests/fixtures/water/node-order".into(),
+                work: dir.path().join(format!("work-{tile}")),
+                tile,
+                threads: 2,
+                water: None,
+                river_km2: None,
+            };
+            run(&o).unwrap_or_else(|e| panic!("tile {tile}: {e}"));
+        }
+    }
+
     /// Writes tests/fixtures/water/grid for scripts/check.sh: cargo test … write_check_fixture -- --ignored
     #[test]
     #[ignore]
