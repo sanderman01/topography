@@ -9,23 +9,36 @@ pub(crate) const RAW: &str = "../../data/worlds/fujix-55-l4v2/elevation-raw.f32"
 pub(crate) const OUT: &str = "../../scratch/hydrology-v3/probes";
 pub(crate) const WORLD: World = World { w: 65536, h: 65536 };
 
-/// A `size`² window of the raw surface centred on (east, north) metres; None without data.
+/// A `size`² window of the raw surface centred on (east, north) metres; None only when the
+/// file is missing. A window outside the world or an unreadable file panics.
 pub(crate) fn window(east: u64, north: u64, size: usize) -> Option<(Rect, Vec<f32>)> {
     if !Path::new(RAW).exists() {
         eprintln!("no data: {RAW}");
         return None;
     }
     let half = size as u64 / 2;
+    // Row 0 is the north edge: north metre n is row h - 1 - n.
+    let row = WORLD.h.checked_sub(north + 1);
+    let x0 = east.checked_sub(half);
+    let y0 = row.and_then(|r| r.checked_sub(half));
+    let (Some(x0), Some(y0)) = (x0, y0) else {
+        panic!("probe window E{east} N{north} size {size} leaves the world");
+    };
+    assert!(
+        x0 + size as u64 <= WORLD.w && y0 + size as u64 <= WORLD.h,
+        "probe window E{east} N{north} size {size} leaves the world"
+    );
     let r = Rect {
-        x0: east - half,
-        y0: WORLD.h - north - half,
+        x0,
+        y0,
         w: size,
         h: size,
     };
-    let z = Layer::<f32>::open(WORLD, Path::new(RAW))
-        .ok()?
+    let layer =
+        Layer::<f32>::open(WORLD, Path::new(RAW)).unwrap_or_else(|e| panic!("open {RAW}: {e}"));
+    let z = layer
         .read(r)
-        .ok()?;
+        .unwrap_or_else(|e| panic!("read {RAW} window {r:?}: {e}"));
     Some((r, z))
 }
 

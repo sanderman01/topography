@@ -158,26 +158,54 @@ mod tests {
         };
         let world = probe::WORLD;
         let fall = receivers(world, win, &z, core);
-        // Steepest descent alone, for comparison.
+        // Steepest descent alone, for comparison; ties go to the first direction, as in
+        // `receivers`.
         let steep: Vec<u8> = (0..core.cells())
             .map(|k| {
                 let (x, y) = core.world_xy(k);
                 let zc = z[win.local(x, y).expect("in")];
-                (0..8)
-                    .filter_map(|j| {
-                        let (nx, ny) = world.neighbour(x, y, j)?;
-                        let d = (zc - z[win.local(nx, ny)?]) / step_len(j as u8 + 1) as f32;
-                        (d > 0.0).then_some((d, j as u8 + 1))
-                    })
-                    .max_by(|a, b| a.0.total_cmp(&b.0))
-                    .map_or(0, |b| b.1)
+                let mut best: Option<(f32, u8)> = None;
+                for j in 0..8 {
+                    let (nx, ny) = world.neighbour(x, y, j).expect("inside");
+                    let d = (zc - z[win.local(nx, ny).expect("in")]) / step_len(j as u8 + 1) as f32;
+                    if d > 0.0 && best.is_none_or(|(b, _)| d > b) {
+                        best = Some((d, j as u8 + 1));
+                    }
+                }
+                best.map_or(0, |b| b.1)
             })
             .collect();
+        // Thalweg cells: in-window accumulated area of at least 0.05 km² (1 m² cells).
+        let thalweg = |dir: &[u8]| {
+            let mut order: Vec<usize> = (0..core.cells()).collect();
+            let zat = |k: usize| {
+                let (x, y) = core.world_xy(k);
+                z[win.local(x, y).expect("in")]
+            };
+            order.sort_by(|&a, &b| zat(b).total_cmp(&zat(a)));
+            let mut area = vec![1u64; core.cells()];
+            for k in order {
+                if dir[k] == 0 {
+                    continue;
+                }
+                let (x, y) = core.world_xy(k);
+                let (dy, dx) = OFFSETS[dir[k] as usize - 1];
+                if let Some(n) = core.local((x as i64 + dx) as u64, (y as i64 + dy) as u64) {
+                    area[n] += area[k];
+                }
+            }
+            let max = area.iter().copied().max().unwrap_or(0);
+            (
+                area.iter().map(|&a| a >= 50_000).collect::<Vec<bool>>(),
+                max,
+            )
+        };
         let share = |dir: &[u8]| {
-            // Cells in same-direction runs of 60 or more steps along their receivers.
+            // Thalweg cells in same-direction runs of 60 or more steps along their receivers.
+            let (on, max) = thalweg(dir);
             let (mut straight, mut total) = (0usize, 0usize);
             for k in 0..core.cells() {
-                if dir[k] == 0 {
+                if dir[k] == 0 || !on[k] {
                     continue;
                 }
                 total += 1;
@@ -197,12 +225,12 @@ mod tests {
                     straight += 1;
                 }
             }
-            straight as f64 / total.max(1) as f64
+            (straight as f64 / total.max(1) as f64, total, max)
         };
+        let ((s_share, s_n, s_max), (f_share, f_n, f_max)) = (share(&steep), share(&fall));
         eprintln!(
-            "straight-run share: steepest {:.3}, fall line {:.3}",
-            share(&steep),
-            share(&fall)
+            "thalweg straight-run share: steepest {s_share:.3} of {s_n} (largest area {s_max} m²), \
+             fall line {f_share:.3} of {f_n} (largest area {f_max} m²)"
         );
         probe::shade_png("t3-e49249-raw", &z, win.w, &vec![false; z.len()]);
     }
