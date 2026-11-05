@@ -1,0 +1,45 @@
+training/src/topography_training/water/run.py
+  s_8c1b40ea9c1e0d::t_809c1bd39d14b8 255,257,260-262
+  s_8c1b40ea9c1e0d::t_3f3d6ede093a4d 165,171,173-175
+  s_8c1b40ea9c1e0d::t_cd90b0eb599297 181
+  s_8c1b40ea9c1e0d::t_e873da2e3d52b9 447
+  s_8c1b40ea9c1e0d::t_0ab13ef1b9703f 400-412
+  s_8c1b40ea9c1e0d::t_f41d8e4e2686be 108,113-118
+  s_8c1b40ea9c1e0d::t_dd807168f87ff7 373-374
+  s_8c1b40ea9c1e0d::t_5f15df0832ede7 213-214
+  s_8c1b40ea9c1e0d::t_b57d598fba03bf 186-189
+  s_8c1b40ea9c1e0d::t_b4e3ddd074c187 450-451,455
+  s_8c1b40ea9c1e0d::t_97251a96d4d902 497-508
+  s_8c1b40ea9c1e0d::t_e101cbf6dcd8cd 256,258-259,264
+  s_8c1b40ea9c1e0d::t_524cf009668f0e 418
+  s_8c1b40ea9c1e0d::t_f715d006a259f4 119-120
+  s_8c1b40ea9c1e0d::t_ee4631dc078815 454
+  s_bbe42596e1b5eb::t_6c73318300b7ff 434
+training/tests/test_water_run.py
+  s_8c1b40ea9c1e0d::t_7137f500379f0f 87-115,120-132
+  s_8c1b40ea9c1e0d::t_338daafc880b4e 116-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f5250238dace6314c24036daf1adc942903e3471",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    },
+    "s_bbe42596e1b5eb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abac1f8f7676d477a",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
