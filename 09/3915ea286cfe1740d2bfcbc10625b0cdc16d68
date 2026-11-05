@@ -1,0 +1,27 @@
+crates/topography-core/src/world/water/balance.rs
+  s_8c1b40ea9c1e0d::t_1c4155295bd861 594
+  s_8c1b40ea9c1e0d::t_a3e12af42e24b5 38
+  s_8c1b40ea9c1e0d::t_822815549d62ec 455
+  s_8c1b40ea9c1e0d::t_41dd481915768f 539-542,618-622
+  s_8c1b40ea9c1e0d::t_68fefb72137c69 36,115-116,134,147,152-155,163,165-166,170,181,187,238,277-281,284,296,412,425,435,457-458,468,479,481,507,630
+  s_8c1b40ea9c1e0d::t_a7095de203683e 646
+  s_8c1b40ea9c1e0d::t_929835180502a0 593
+  s_8c1b40ea9c1e0d::t_fd9ee440a6ad6d 592
+  s_8c1b40ea9c1e0d::t_40bccd3f9cd0a7 514-538,543-591,595-617,623-625
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "093915ea286cfe1740d2bfcbc10625b0cdc16d68",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
