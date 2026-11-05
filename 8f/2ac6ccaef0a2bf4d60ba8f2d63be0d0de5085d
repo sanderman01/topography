@@ -1,0 +1,26 @@
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_6a37c6f3eac87f 10
+crates/topography-core/src/world/water/flow.rs
+  s_8c1b40ea9c1e0d::t_cd100952551544 194-198
+  s_8c1b40ea9c1e0d::t_6a37c6f3eac87f 268-271,273-314,317-324,327-334,340-344,346-351,353-377,382-399,408-409,443
+  s_8c1b40ea9c1e0d::t_f176f8d039eb93 1-96,102-128,135-147,154-156,162-193,199-267
+  s_8c1b40ea9c1e0d::t_5bb1df46873100 97-101,129-134,148-153,157-161,272,315-316,335-339,378-381,400-407,420-423,438,440
+  s_8c1b40ea9c1e0d::t_3f7aedb7b6874c 410-419,424-437,439,441-442
+  s_8c1b40ea9c1e0d::t_47c94f76448b29 325-326,345,352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f2ac6ccaef0a2bf4d60ba8f2d63be0d0de5085d",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
