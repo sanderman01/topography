@@ -30,17 +30,22 @@ impl Blob for Next {
     fn get(d: &mut Dec) -> Result<Self> {
         let (tag, v) = (u8::get(d)?, u64::get(d)?);
         Ok(match tag {
-            0 => Next::Cell(v as u32),
+            0 => Next::Cell(u32::try_from(v).map_err(|_| bad_next())?),
             1 => Next::Out(v),
             2 => Next::Node(v),
             3 => Next::End,
-            _ => return Err(AcquisitionError::Invalid("work file: bad Next".into())),
+            _ => return Err(bad_next()),
         })
     }
 }
 
+fn bad_next() -> AcquisitionError {
+    AcquisitionError::Invalid("work file: bad Next".into())
+}
+
 /// For every cell, where its in-tile path ends (`Out`, `Node` or `End`, never `Cell`), and
-/// how many cells lie on cycles (their end is `End`).
+/// how many cells lie on cycles (their end is `End`). Callers must hard-fail when that count
+/// is not 0; this function only reports it.
 pub(crate) fn ends(n: usize, next: impl Fn(usize) -> Next) -> (Vec<Next>, u64) {
     const UNSEEN: u8 = 0;
     const OPEN: u8 = 1;
@@ -93,13 +98,14 @@ pub(crate) struct Local {
     pub cycles: u64,
 }
 
-/// Sums `rain` along `next` in topological (Kahn) order, upstream first.
+/// Sums `rain` along `next` in topological (Kahn) order, upstream first. Callers must
+/// hard-fail when `Local::cycles` is not 0; this function only reports it.
 pub(crate) fn accumulate(
     n: usize,
     next: impl Fn(usize) -> Next,
     rain: impl Fn(usize) -> u64,
 ) -> Local {
-    let mut indeg = vec![0u8; n];
+    let mut indeg = vec![0u32; n];
     for k in 0..n {
         if let Next::Cell(j) = next(k) {
             indeg[j as usize] += 1;
@@ -145,19 +151,15 @@ pub(crate) struct Report {
 
 impl Blob for Report {
     fn put(&self, e: &mut Enc) {
-        (
-            self.out.clone(),
-            self.node_in.clone(),
-            self.port_end.clone(),
-        )
-            .put(e);
+        self.out.put(e);
+        self.node_in.put(e);
+        self.port_end.put(e);
     }
     fn get(d: &mut Dec) -> Result<Self> {
-        let (out, node_in, port_end) = Blob::get(d)?;
         Ok(Self {
-            out,
-            node_in,
-            port_end,
+            out: Blob::get(d)?,
+            node_in: Blob::get(d)?,
+            port_end: Blob::get(d)?,
         })
     }
 }
@@ -176,19 +178,44 @@ enum V {
     Node(u64),
 }
 
-/// The exact totals across tiles. `outlet` gives the cell a node's water leaves by (None: the
-/// node keeps it). Errors on a cycle or on flow into a cell no tile reported.
+/// The exact totals across tiles. `outlet` lists every node with the cell its water leaves by
+/// (None: a closed node keeps it). Errors on a cycle, on flow into a cell no tile reported, on
+/// a port reported twice or ending in a `Cell`, and on a node missing from `outlet`.
 pub(crate) fn solve(reports: &[Report], outlet: &BTreeMap<u64, Option<u64>>) -> Result<Solved> {
     let mut port_end: HashMap<u64, Next> = HashMap::new();
     let mut inflow: HashMap<u64, u64> = HashMap::new();
     let mut node_total: BTreeMap<u64, u64> = outlet.keys().map(|&k| (k, 0)).collect();
+    let node = |k: u64| -> Result<()> {
+        if outlet.contains_key(&k) {
+            return Ok(());
+        }
+        Err(AcquisitionError::Invalid(format!(
+            "node {k} has no outlet entry (None marks a closed node)"
+        )))
+    };
     for r in reports {
-        port_end.extend(r.port_end.iter().map(|(&c, &e)| (c, e)));
+        for (&c, &e) in &r.port_end {
+            match e {
+                Next::Cell(_) => {
+                    return Err(AcquisitionError::Invalid(format!(
+                        "port {c} ends in a cell of its tile"
+                    )));
+                }
+                Next::Node(k) => node(k)?,
+                Next::Out(_) | Next::End => {}
+            }
+            if port_end.insert(c, e).is_some() {
+                return Err(AcquisitionError::Invalid(format!(
+                    "port {c} reported by two tiles"
+                )));
+            }
+        }
         for (&c, &q) in &r.out {
             *inflow.entry(c).or_insert(0) += q;
         }
         for (&k, &q) in &r.node_in {
-            *node_total.entry(k).or_insert(0) += q;
+            node(k)?;
+            *node_total.get_mut(&k).expect("checked node") += q;
         }
     }
     // Water leaving a tile must enter a reported port, or it would vanish.
@@ -196,11 +223,6 @@ pub(crate) fn solve(reports: &[Report], outlet: &BTreeMap<u64, Option<u64>>) -> 
         inflow.keys().all(|c| port_end.contains_key(c)),
         "flow leaves into a cell no tile reported",
     )?;
-    for e in port_end.values() {
-        if let Next::Node(k) = e {
-            node_total.entry(*k).or_insert(0);
-        }
-    }
     let target = |v: V| -> Option<V> {
         match v {
             V::Port(c) => match port_end.get(&c) {
@@ -248,21 +270,24 @@ pub(crate) fn solve(reports: &[Report], outlet: &BTreeMap<u64, Option<u64>>) -> 
     Ok(Solved { inflow, node_total })
 }
 
-/// Adds what enters each port (local index, amount) to every cell on its in-tile path.
-pub(crate) fn add_inflows(q: &mut [u64], ports: &[(usize, u64)], next: impl Fn(usize) -> Next) {
+/// Adds what enters each port (local index, amount) to every cell downstream of it in the
+/// tile: one more linear pass with the inflows as the only supply (Barnes 2017). Errors on a
+/// cycle in the tile.
+pub(crate) fn add_inflows(
+    q: &mut [u64],
+    ports: &[(usize, u64)],
+    next: impl Fn(usize) -> Next,
+) -> Result<()> {
+    let mut supply = vec![0u64; q.len()];
     for &(k, a) in ports {
-        if a == 0 {
-            continue;
-        }
-        let mut c = k;
-        for _ in 0..q.len() {
-            q[c] += a;
-            match next(c) {
-                Next::Cell(j) => c = j as usize,
-                _ => break,
-            }
-        }
+        supply[k] += a;
     }
+    let extra = accumulate(q.len(), next, |k| supply[k]);
+    ensure(extra.cycles == 0, "flow inside a tile has a cycle")?;
+    for (v, e) in q.iter_mut().zip(extra.q) {
+        *v += e;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -303,10 +328,21 @@ mod tests {
     fn discharge(world: World, size: u64) -> Vec<u64> {
         let (_, global) = case(world);
         let outlet = BTreeMap::from([(7u64, Some(world.index(10, 7)))]);
+        discharge_with(world, size, &global, &outlet)
+    }
+
+    /// Discharge from tiles of `size` for receivers `global` and node outlets `outlet`.
+    fn discharge_with(
+        world: World,
+        size: u64,
+        global: &impl Fn(u64, u64) -> Option<Next>,
+        outlet: &BTreeMap<u64, Option<u64>>,
+    ) -> Vec<u64> {
+        let outlets: Vec<u64> = outlet.values().flatten().copied().collect();
         let rain = |_: usize| 3u64;
         let tiles = tiles(world, size);
         let local_next = |core: Rect| {
-            let g = &global;
+            let g = global;
             move |k: usize| {
                 let (x, y) = core.world_xy(k);
                 match g(x, y).expect("cell") {
@@ -328,7 +364,7 @@ mod tests {
             let mut port_end = BTreeMap::new();
             for (k, &e) in end.iter().enumerate() {
                 let (x, y) = core.world_xy(k);
-                if core.on_ring(x, y) || world.index(x, y) == world.index(10, 7) {
+                if core.on_ring(x, y) || outlets.contains(&world.index(x, y)) {
                     port_end.insert(world.index(x, y), e);
                 }
             }
@@ -338,7 +374,7 @@ mod tests {
                 port_end,
             });
         }
-        let solved = solve(&reports, &outlet).expect("solve");
+        let solved = solve(&reports, outlet).expect("solve");
         let mut q = vec![0u64; (world.w * world.h) as usize];
         for &core in &tiles {
             let next = local_next(core);
@@ -349,7 +385,7 @@ mod tests {
                     solved.inflow.get(&world.index(x, y)).map(|&a| (k, a))
                 })
                 .collect();
-            add_inflows(&mut local, &ports, next);
+            add_inflows(&mut local, &ports, next).expect("inflows");
             for (k, &lq) in local.iter().enumerate() {
                 let (x, y) = core.world_xy(k);
                 q[world.index(x, y) as usize] = match next(k) {
@@ -366,6 +402,7 @@ mod tests {
         let world = World { w: 32, h: 24 };
         let whole = discharge(world, 64);
         assert_eq!(discharge(world, 8), whole);
+        assert_eq!(discharge(world, 7), whole, "node split at x 7");
         assert_eq!(discharge(world, 5), whole);
         // Mass: every cell's water ends in a cell whose next is End (the edge or a dry pit), so
         // their discharges sum to all the rain (3 per cell) (N9).
@@ -379,6 +416,33 @@ mod tests {
             whole.iter().any(|&q| q > 3 * 50),
             "the node's water flows on"
         );
+    }
+
+    /// A path leaves the west tile, crosses the east one and comes back west.
+    #[test]
+    fn a_path_may_leave_a_tile_and_come_back() {
+        let world = World { w: 6, h: 3 };
+        let path = [
+            (0, 0),
+            (1, 0),
+            (2, 0),
+            (3, 0),
+            (3, 1),
+            (2, 1),
+            (2, 2),
+            (1, 2),
+        ];
+        let global = move |x: u64, y: u64| -> Option<Next> {
+            let at = path.iter().position(|&p| p == (x, y));
+            Some(match at.and_then(|i| path.get(i + 1)) {
+                Some(&(nx, ny)) => Next::Out(world.index(nx, ny)),
+                None => Next::End,
+            })
+        };
+        let none = BTreeMap::new();
+        let whole = discharge_with(world, 6, &global, &none);
+        assert_eq!(whole[world.index(1, 2) as usize], 3 * path.len() as u64);
+        assert_eq!(discharge_with(world, 3, &global, &none), whole);
     }
 
     #[test]
@@ -421,6 +485,66 @@ mod tests {
             solve(&[Report::default()], &to_node).is_err(),
             "node outlet unreported"
         );
+    }
+
+    #[test]
+    fn a_port_ending_in_a_cell_is_an_error() {
+        let a = Report {
+            port_end: BTreeMap::from([(1, Next::Cell(0))]),
+            ..Default::default()
+        };
+        assert!(solve(&[a], &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn a_port_reported_twice_is_an_error() {
+        let a = Report {
+            port_end: BTreeMap::from([(1, Next::End)]),
+            ..Default::default()
+        };
+        assert!(solve(&[a.clone(), a], &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn every_node_needs_an_outlet_entry() {
+        let fed = Report {
+            node_in: BTreeMap::from([(7, 3)]),
+            ..Default::default()
+        };
+        let reached = Report {
+            port_end: BTreeMap::from([(1, Next::Node(7))]),
+            ..Default::default()
+        };
+        for r in [&fed, &reached] {
+            assert!(solve(std::slice::from_ref(r), &BTreeMap::new()).is_err());
+        }
+        // A closed node (outlet None) keeps its water.
+        let closed = BTreeMap::from([(7, None)]);
+        let solved = solve(&[fed, reached], &closed).expect("closed node");
+        assert_eq!(solved.node_total[&7], 3);
+    }
+
+    #[test]
+    fn inflows_follow_the_paths() {
+        // 0 -> 1 -> 2 -> End, 3 -> 2; inflow 5 at 0 and 7 at 3.
+        let next = |k: usize| match k {
+            0 => Next::Cell(1),
+            1 | 3 => Next::Cell(2),
+            _ => Next::End,
+        };
+        let mut q = vec![1; 4];
+        add_inflows(&mut q, &[(0, 5), (3, 7)], next).expect("inflows");
+        assert_eq!(q, vec![6, 6, 13, 8]);
+        let cycle = |k: usize| Next::Cell(1 - k as u32);
+        assert!(add_inflows(&mut [0, 0], &[(0, 1)], cycle).is_err());
+    }
+
+    #[test]
+    fn an_oversized_cell_index_is_refused() {
+        let mut e = Enc(Vec::new());
+        0u8.put(&mut e);
+        (u64::from(u32::MAX) + 1).put(&mut e);
+        assert!(decode::<Next>(&e.0).is_err());
     }
 
     #[test]
