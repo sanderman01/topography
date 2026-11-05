@@ -451,7 +451,11 @@ Both the full command and the rerun pin the hydrology binary for the whole run: 
 cannot change the remaining bands. The manifest records it as `hydrology_binary` (with
 `mixed`, every binary used, when a resumed full run changed it). Unset `TOPOGRAPHY_BIN` for a
 rerun after a hydrology fix, or point it at the fixed build: an old pin left exported reruns
-the old code.
+the old code. A rerun stopped part-way (no failed band, Python code unchanged) resumes with
+the binary it pinned when `TOPOGRAPHY_BIN` is unset, so building a later checkout does not
+restart it; to apply a hydrology fix there, set `TOPOGRAPHY_BIN` to the fixed build or pass
+`--restart`. Earlier pins are removed only once the rerun has decided to resume or restart and
+its raw surface checks out.
 
 `progress.json` keeps the rerun's state under `rerun`, with the binary's digest and a digest
 of the Python hydrology code (`hydrology.py` and the band step): the same command resumes

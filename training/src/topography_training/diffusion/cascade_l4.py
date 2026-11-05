@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -74,10 +75,10 @@ def _code_digest() -> str:
     return h.hexdigest()
 
 
-def _pin(c: SimpleNamespace) -> dict:
+def _pin(c: SimpleNamespace, prune: bool = True) -> dict:
     """Pin the hydrology binary (TOPOGRAPHY_BIN, else the release build) into the world's
-    hydrology/bin for the whole run; its manifest entry."""
-    path, digest = hydrology.pin_binary(c.hyd / "bin")
+    hydrology/bin for the whole run; its manifest entry. Earlier pins stay unless `prune`."""
+    path, digest = hydrology.pin_binary(c.hyd / "bin", prune)
     print(f"hydrology binary: {path} (sha256 {digest[:12]})", flush=True)
     return {"sha256": digest, "file": str(path.relative_to(c.out))}
 
@@ -333,9 +334,10 @@ def _layers(c: SimpleNamespace, mode: str, raw_mode: str | None = None) -> None:
 def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     """Rerun every band's hydrology from the kept raw surface of an L4 world (finished, failed
     or with hydrology stopped part-way), without diffusion. Resumes after the last band it
-    finished while the hydrology binary and Python code are the same; a changed binary or code
-    (a fix), `restart`, failed bands or a lost north band start again from band 0. An attempt
-    that failed only while finishing (its seam audit too) just finishes again."""
+    finished while the hydrology binary and Python code are the same (a rerun stopped part-way
+    resumes with its pinned binary unless TOPOGRAPHY_BIN is set); a changed binary or code (a
+    fix), `restart`, failed bands or a lost north band start again from band 0. An attempt that
+    failed only while finishing (its seam audit too) just finishes again."""
     progress_path = out / "progress.json"
     if not progress_path.exists() or not (out / RAW).exists():
         print(f"error: {out} has no progress.json or {RAW} (worlds made before it was kept need diffusion again)",
@@ -348,9 +350,18 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     c = _setup(progress["params"], out)
     _layers(c, "r+", raw_mode="r")  # hydrology never writes the raw surface
     c.raw_kept = not drop_raw
-    pinned = _pin(c)
-    binary, code = pinned["sha256"], _code_digest()
     state = progress.get("rerun")
+    # A rerun stopped part-way resumes with the binary it pinned, so a later build of the
+    # checkout does not restart it; TOPOGRAPHY_BIN (a fix) or --restart overrides.
+    code = _code_digest()
+    if (state is not None and not restart and not os.environ.get("TOPOGRAPHY_BIN")
+            and 0 < state["hydrology_done"] < len(c.bands) and not state.get("failed")
+            and state.get("code") == code and (c.hyd / f"band-{state['hydrology_done'] - 1:03d}").exists()):
+        kept = c.hyd / "bin" / f"topography-{state.get('binary', '')[:12]}"
+        if kept.exists():
+            hydrology.use_binary(kept)
+    pinned = _pin(c, prune=False)  # earlier pins go once the run is decided and checked
+    binary = pinned["sha256"]
     if state is not None:
         done = state["hydrology_done"]
         why = ("--restart" if restart else "the hydrology binary changed" if state.get("binary") != binary
@@ -381,6 +392,7 @@ def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
               file=sys.stderr)
         return 2
     state["raw_sha256"] = got
+    hydrology.prune_pins(c.hyd / "bin", c.out / pinned["file"])
 
     def save():
         cascade.save_json(progress_path, progress)

@@ -222,9 +222,23 @@ def binary() -> Path:
     return _BINARY
 
 
-def pin_binary(dest: Path) -> tuple[Path, str]:
-    """Copy `binary()` into `dest` as topography-<sha12> (other copies there removed) and run
-    that copy from now on, so later builds cannot change a long run; returns it and its sha256."""
+def use_binary(path: Path) -> None:
+    """Run `path` from now on (an earlier pin) instead of TOPOGRAPHY_BIN or the release build."""
+    global _BINARY
+    _BINARY = path
+
+
+def prune_pins(dest: Path, keep: Path) -> None:
+    """Remove the pinned copies in `dest` other than `keep`."""
+    for old in dest.glob("topography-*"):
+        if old != keep:
+            old.unlink()
+
+
+def pin_binary(dest: Path, prune: bool = True) -> tuple[Path, str]:
+    """Copy `binary()` into `dest` as topography-<sha12> and run that copy from now on, so later
+    builds cannot change a long run; returns it and its sha256. Other copies there are removed
+    unless `prune` is false (then `prune_pins` once the run is decided)."""
     global _BINARY
     src = binary()
     digest = sha256(src)
@@ -234,9 +248,8 @@ def pin_binary(dest: Path) -> tuple[Path, str]:
         tmp = pinned.with_suffix(".tmp")
         shutil.copy2(src, tmp)
         tmp.rename(pinned)
-    for old in dest.glob("topography-*"):
-        if old != pinned:
-            old.unlink()
+    if prune:
+        prune_pins(dest, pinned)
     _BINARY = pinned
     return pinned, digest
 
