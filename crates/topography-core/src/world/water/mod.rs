@@ -16,6 +16,7 @@ mod rain;
 mod receivers;
 mod store;
 mod table;
+mod watershed;
 
 /// Judgment value (spec): standing water at least this deep is a lake; shallower is a pond.
 pub(crate) const LAKE_DEPTH_M: f32 = 0.3;
