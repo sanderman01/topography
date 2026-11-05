@@ -86,7 +86,12 @@ impl Table {
                 .parse()
                 .map_err(|_| AcquisitionError::Invalid(format!("water table level {key}")))?;
             ensure(
-                spacing > 0.0 && l.river_km2 > 0.0 && l.breach_cap_m >= 0.0,
+                spacing.is_finite()
+                    && spacing > 0.0
+                    && l.river_km2.is_finite()
+                    && l.river_km2 > 0.0
+                    && l.breach_cap_m.is_finite()
+                    && l.breach_cap_m >= 0.0,
                 format!("water table level {key}: positive spacing and river start, cap 0 or more"),
             )?;
             levels.push((spacing, l));
@@ -111,6 +116,7 @@ impl Table {
     /// The thresholds of the largest level not coarser than `spacing_m` (the finest level
     /// for grids finer than every level).
     pub fn level(&self, spacing_m: f64) -> Level {
+        debug_assert!(spacing_m.is_finite() && spacing_m > 0.0);
         self.levels
             .iter()
             .rev()
@@ -130,10 +136,13 @@ mod tests {
         assert_eq!(t.r_milli(0), 1000);
         assert_eq!(t.r_milli(8), 0, "dunes are playas");
         assert_eq!(t.r_milli(7), 0);
-        assert_eq!(t.r_milli(19), 100);
-        assert_eq!(t.r_milli(10), 3000);
+        assert_eq!(t.r_milli(19), 50);
+        assert_eq!(t.r_milli(2), 100);
+        assert_eq!(t.r_milli(1), 20, "karst drains underground");
+        assert_eq!(t.r_milli(17), 30);
+        assert_eq!(t.r_milli(10), 1000);
         assert_eq!(t.r_milli(200), 1000, "missing classes take class 0");
-        assert_eq!(t.lake_min_m2, 500.0);
+        assert_eq!(t.lake_min_m2, 2000.0);
         assert_eq!(t.m3s_per_km2, 0.56);
         assert_eq!(
             t.level(1.0),
@@ -196,5 +205,25 @@ mod tests {
             Table::parse(&zero).is_err(),
             "the m³/s factor must be positive"
         );
+    }
+
+    #[test]
+    fn r_above_100_or_a_class_key_beyond_u8_is_refused() {
+        let head = "schema_version = 2\nkind = \"water_table\"\nlegend = \"x\"\nlake_min_m2 = 500.0\nm3s_per_km2 = 0.5\n[levels.1]\nriver_km2 = 0.05\nbreach_cap_m = 2.0\n[classes.0]\nr = 1.0\n";
+        assert!(Table::parse(&format!("{head}[classes.1]\nr = 100.5\n")).is_err());
+        assert!(Table::parse(&format!("{head}[classes.256]\nr = 1.0\n")).is_err());
+        assert!(Table::parse(&format!("{head}[classes.karst]\nr = 1.0\n")).is_err());
+    }
+
+    #[test]
+    fn a_non_finite_level_threshold_is_refused() {
+        let head = "schema_version = 2\nkind = \"water_table\"\nlegend = \"x\"\nlake_min_m2 = 500.0\nm3s_per_km2 = 0.5\n[classes.0]\nr = 1.0\n";
+        let level = |river: &str, cap: &str| {
+            format!("{head}[levels.1]\nriver_km2 = {river}\nbreach_cap_m = {cap}\n")
+        };
+        assert!(Table::parse(&level("0.05", "2.0")).is_ok());
+        assert!(Table::parse(&level("inf", "2.0")).is_err());
+        assert!(Table::parse(&level("0.05", "inf")).is_err());
+        assert!(Table::parse(&level("nan", "2.0")).is_err());
     }
 }

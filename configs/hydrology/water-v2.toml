@@ -1,17 +1,20 @@
 # Lake-to-catchment ratio r ≈ P/E per terrain class (legend topography terrain-v3), read by
 # `topography world water` (hydrology v3). A depression stands where its lake area equals
 # Σ r over its catchment's cells (with upstream overflow); when no level below its spill
-# does, it fills and overflows. r >= 1: lakes spill. r = 0.1: arid, mostly closed.
-# r = 0: a dry playa (badlands, dunes). Judgment values, 2026-11-05. Classes missing here
-# take class 0.
+# does, it fills and overflows. A catchment of one class with r >= 1 always fills to its
+# spill; r > 1 matters only as extra supply into mixed catchments. r = 0.1: arid, mostly
+# closed. r = 0: dry (playas, interdune hollows). Lake supply ignores the moisture field,
+# which drives only Q (a known simplification). Judgment values, 2026-11-05. Classes
+# missing here take class 0.
 schema_version = 2
 kind = "water_table"
 legend = "topography terrain-v3"
 # Game settings. Standing water is a labelled lake from this area (smaller: an unlabelled
 # pond), as well as 0.3 m deep.
-lake_min_m2 = 500.0
-# Discharge (km² at mean rain) to m³/s for channel width and depth: chosen so the largest
-# river (about 177 km²) is about 30 m wide; the model's literal rain would give 0.657.
+lake_min_m2 = 2000.0
+# River-width setting, not a real discharge (about 20–50× real runoff): converts Q (km² at
+# mean rain) to the m³/s of the channel width and depth, so the largest river (about
+# 177 km²) is about 30 m wide; the model's literal rain would give 0.657.
 m3s_per_km2 = 0.56
 
 # Per level (grid spacing in m): river start (km² at mean rain, v2's values) and the deepest
@@ -29,41 +32,41 @@ breach_cap_m = 20.0
 
 [classes.0]  # unlabelled
 r = 1.0
-[classes.1]  # doline, pinnacle and plateau karst (drains underground)
-r = 0.3
-[classes.2]  # gorges and canyons
+[classes.1]  # doline, pinnacle and plateau karst (drains underground: dolines stay dry)
+r = 0.02
+[classes.2]  # gorges and slot-like canyons
 r = 0.1
 [classes.3]  # fjords and glacial troughs
 r = 3.0
-[classes.4]  # calderas and craters
+[classes.4]  # volcanic calderas and craters
 r = 1.0
-[classes.5]  # archipelagos
+[classes.5]  # archipelagos, rias and skerries
 r = 2.0
 [classes.6]  # alpine ridges and cirques
 r = 3.0
-[classes.7]  # badlands and mesas (desert basins: playas)
+[classes.7]  # badlands, mesas and eroded gullies (arid: dry hollows)
 r = 0.0
-[classes.8]  # dunes (interdune hollows stay dry)
+[classes.8]  # star and mountain dunes (interdune hollows stay dry)
 r = 0.0
-[classes.9]  # braided rivers
+[classes.9]  # braided river basins and floodplains
 r = 2.0
 [classes.10]  # glaciers and ice fields
-r = 3.0
-[classes.11]  # volcanic cones and lava fields (porous)
+r = 1.0
+[classes.11]  # stratovolcanoes (porous)
 r = 0.5
-[classes.12]  # coastal cliffs
+[classes.12]  # coastal cliffs and sea stacks
 r = 1.5
 [classes.13]  # layered plateau canyons (2)
-r = 0.1
-[classes.14]  # cone and tower karst (1)
-r = 0.5
-[classes.15]  # drowned tower karst (5)
-r = 2.0
+r = 0.05
+[classes.14]  # cone and tower karst (1, drains underground)
+r = 0.02
+[classes.15]  # drowned tower karst (5, drains underground)
+r = 0.02
 [classes.16]  # crest-train dunes (8)
 r = 0.0
-[classes.17]  # cinder cones and lava fields (11)
-r = 0.3
+[classes.17]  # cinder cones and lava fields (11, porous)
+r = 0.03
 [classes.18]  # plain and rolling ground (0)
 r = 1.0
 [classes.19]  # Grand Canyon (2)
-r = 0.1
+r = 0.05
