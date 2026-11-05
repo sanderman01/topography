@@ -15,11 +15,13 @@ use super::geom::UnionFind;
 use super::hierarchy::{Hierarchy, NONE};
 use super::store::{Blob, Dec, Enc};
 use super::watershed::{EDGE_KEY, Edge, Ring, TileGraph};
-use crate::acquisition::Result;
+use crate::acquisition::{Result, ensure};
 use std::collections::BTreeMap;
 
 /// A tile's settled trees. Leaves are its candidate pits (keys in `h.leaf_pit`), metas their
 /// settled merges; a tree's top has `parent == NONE` and spill +∞ until the global step.
+/// `h.ocean_order` is empty and `h.supply` holds this tile's cells only: only `solve_local`
+/// completes them, so `h` never goes to `solve` directly.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Frag {
     pub h: Hierarchy,
@@ -146,12 +148,20 @@ pub(crate) fn contract(g: TileGraph) -> (TileGraph, Frag) {
         if ri == rj {
             continue;
         }
-        // Ties stay unsettled: the global Kruskal orders them (conservative, still exact).
-        if frozen[ri] || frozen[rj] || e.saddle >= frontier[ri] || e.saddle >= frontier[rj] {
+        let (da, db) = (top[ri], top[rj]);
+        // Ties stay unsettled: the global Kruskal orders them (conservative, still exact). A
+        // zero-depth depression (R32) starts full with its capacity counted in its parent's,
+        // so it stays a global leaf, as it would uncontracted.
+        if frozen[ri]
+            || frozen[rj]
+            || e.saddle >= frontier[ri]
+            || e.saddle >= frontier[rj]
+            || e.saddle <= h.low[da as usize]
+            || e.saddle <= h.low[db as usize]
+        {
             (frozen[ri], frozen[rj]) = (true, true);
             continue;
         }
-        let (da, db) = (top[ri], top[rj]);
         let m = h.len() as u32;
         h.low.push(h.low[da as usize].min(h.low[db as usize]));
         h.spill.push(f32::INFINITY);
@@ -280,7 +290,8 @@ pub(crate) fn with_spills(frag: &Frag, tops: &Tops) -> Hierarchy {
 }
 
 /// Solves the inside of the trees in `tops`. Their leaves get their own supply plus `extra`
-/// (local leaf, water poured in from outside); other trees are left dry, and water poured
+/// (local leaf, water from outside: the global pours into the tree and the r of other tiles'
+/// cells draining in across the ring, B1); other trees are left dry, and water poured
 /// into them is an error. A listed top's overflow is `to_sea`. `counts` holds every cell the
 /// listed trees hold (from every tile) by local holding depression (B2).
 pub(crate) fn solve_local(
@@ -291,6 +302,11 @@ pub(crate) fn solve_local(
 ) -> Result<Balance> {
     let mut h = with_spills(frag, tops);
     let listed = |d: usize| tops.contains_key(&frag.tree[d]);
+    // Unlisted spills are −∞: a cell counted there would overflow `solve`'s volumes.
+    ensure(
+        counts.cells.len() == h.len() && (0..h.len()).all(|d| listed(d) || counts.cells[d] == 0),
+        "counts hold cells of a tree not being solved",
+    )?;
     // Every listed top is taken, so all its water is accounted for (`solve` checks).
     h.ocean_order = (0..h.len())
         .filter(|&d| h.parent[d] == NONE && listed(d))
@@ -308,15 +324,26 @@ pub(crate) fn solve_local(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::world::water::balance::{TileCounts, count, holding, top_spill};
     use crate::world::water::geom::{Rect, World, tiles};
     use crate::world::water::hierarchy::build;
     use crate::world::water::hierarchy::tests::{graph_for, rough};
     use crate::world::water::watershed::{drain, ordered, tile_graph};
 
-    /// Pass A on `world` cut into tiles of `tile` cells: each tile's graph.
+    /// Pass A on `world` cut into tiles of `tile` cells, r = 1 everywhere.
     fn graphs_for(world: World, z: &[f32], tile: u64) -> Vec<TileGraph> {
+        graphs_with(world, z, tile, |_| 1000)
+    }
+
+    /// Pass A on `world` cut into tiles of `tile` cells, with r by world cell.
+    fn graphs_with(
+        world: World,
+        z: &[f32],
+        tile: u64,
+        r: impl Fn(u64) -> u64 + Copy,
+    ) -> Vec<TileGraph> {
         let all = Rect::whole(world);
         let cut = |r: Rect| -> Vec<f32> {
             (0..r.cells())
@@ -331,7 +358,10 @@ mod tests {
             .map(|core| {
                 let win = core.grow(1, world);
                 let d = drain(world, win, &cut(win), core);
-                tile_graph(world, core, &cut(core), &d, |_| 1000)
+                tile_graph(world, core, &cut(core), &d, |k| {
+                    let (x, y) = core.world_xy(k);
+                    r(world.index(x, y))
+                })
             })
             .collect()
     }
@@ -344,15 +374,236 @@ mod tests {
         (frags, h)
     }
 
-    /// (smallest pit, spill bits, low bits) of every depression, sorted.
-    fn signature(h: &Hierarchy, skip_tops: bool) -> Vec<(u64, u32, u32)> {
+    /// A depression as contraction must keep it: smallest pit, spill and low bits, the
+    /// parent's smallest pit (MAX: none) and the spill edge (which names the geolink's leaf).
+    pub(crate) type Sig = (u64, u32, u32, u64, [u64; 2]);
+
+    /// The signature of every depression (`skip_tops`: only those with a parent), sorted.
+    pub(crate) fn signature(h: &Hierarchy, skip_tops: bool) -> Vec<Sig> {
         let keys = min_pits(h);
-        let mut v: Vec<(u64, u32, u32)> = (0..h.len())
+        let mut v: Vec<Sig> = (0..h.len())
             .filter(|&d| !(skip_tops && h.parent[d] == NONE))
-            .map(|d| (keys[d], ordered(h.spill[d]), ordered(h.low[d])))
+            .map(|d| {
+                let p = h.parent[d];
+                let up = if p == NONE {
+                    u64::MAX
+                } else {
+                    keys[p as usize]
+                };
+                let s = (keys[d], ordered(h.spill[d]), ordered(h.low[d]));
+                (s.0, s.1, s.2, up, h.outlet[d])
+            })
             .collect();
         v.sort_unstable();
         v
+    }
+
+    /// Pits under each depression, given each leaf's.
+    fn pits_under(h: &Hierarchy, leaf: impl Fn(usize) -> u64) -> Vec<u64> {
+        let mut out = vec![0u64; h.len()];
+        for d in 0..h.len() {
+            out[d] = if h.is_leaf(d as u32) {
+                leaf(d)
+            } else {
+                h.children[d].iter().map(|&c| out[c as usize]).sum()
+            };
+        }
+        out
+    }
+
+    /// Cells held by each depression of `h`, given each cell's leaf.
+    fn counts_of(world: World, h: &Hierarchy, z: &[f32], leaf: impl Fn(usize) -> u32) -> Counts {
+        let top = top_spill(h);
+        let mut t = TileCounts::new();
+        for (k, &zk) in z.iter().enumerate() {
+            let l = leaf(k);
+            if l == NONE {
+                continue;
+            }
+            let d = holding(h, &top, l, zk);
+            if d != NONE {
+                let (x, y) = world.xy(k as u64);
+                count(&mut t, d, zk, x, y);
+            }
+        }
+        Counts::dense(h.len(), &[t])
+    }
+
+    /// A depression's balance by (smallest pit, pits under it): full, own, its node's
+    /// (smallest pit, pits under) ((MAX, 0): none) and outlet.
+    type Facts = BTreeMap<(u64, u64), (bool, u64, (u64, u64), [u64; 2])>;
+
+    /// The balance of the uncontracted world (one tile) and of the contracted one on tiles of
+    /// `tile` (global solve, then each fragment's listed trees solved with their pours), with
+    /// their water sent to the sea.
+    fn balances(
+        world: World,
+        z: &[f32],
+        tile: u64,
+        r: impl Fn(u64) -> u64 + Copy,
+    ) -> [(Facts, u64); 2] {
+        let all = Rect::whole(world);
+        let dw = drain(world, all, z, all);
+        let pit_of = |k: usize| match dw.end[k] {
+            Next::Node(p) if p != EDGE_KEY => Some(p),
+            _ => None,
+        };
+        let key = |keys: &[u64], under: &[u64], d: u32| {
+            if d == NONE {
+                (u64::MAX, 0)
+            } else {
+                (keys[d as usize], under[d as usize])
+            }
+        };
+
+        let big = world.w.max(world.h);
+        let (hf, rf) = build(world, big, &graphs_with(world, z, big, r)).expect("hierarchy");
+        let cf = counts_of(world, &hf, z, |k| {
+            pit_of(k).map_or(NONE, |p| rf.leaf_of(Next::Node(p)))
+        });
+        let bf = solve(&hf, &cf, true).expect("balance");
+        let (kf, uf) = (min_pits(&hf), pits_under(&hf, |_| 1));
+        let whole: Facts = (0..hf.len())
+            .map(|d| {
+                let v = (
+                    bf.full[d],
+                    bf.own[d],
+                    key(&kf, &uf, bf.node[d]),
+                    hf.outlet[d],
+                );
+                (key(&kf, &uf, d as u32), v)
+            })
+            .collect();
+
+        let (graphs, frags): (Vec<TileGraph>, Vec<Frag>) = graphs_with(world, z, tile, r)
+            .into_iter()
+            .map(contract)
+            .unzip();
+        let (hp, rp) = build(world, tile, &graphs).expect("contracted hierarchy");
+        // Candidate pit → (fragment, local leaf).
+        let cand: BTreeMap<u64, (usize, u32)> = frags
+            .iter()
+            .enumerate()
+            .flat_map(|(i, f)| {
+                f.h.leaf_pit
+                    .iter()
+                    .enumerate()
+                    .map(move |(l, &p)| (p, (i, l as u32)))
+            })
+            .collect();
+        let global = |p: u64| match cand.get(&p) {
+            Some(&(i, l)) => rp.leaf_of(Next::Node(frags[i].tree[l as usize])),
+            None => rp.leaf_of(Next::Node(p)),
+        };
+        let cp = counts_of(world, &hp, z, |k| pit_of(k).map_or(NONE, global));
+        let bp = solve(&hp, &cp, true).expect("contracted balance");
+        // A global leaf that is a settled tree: its fragment and local top.
+        let tree_of = |g: usize| {
+            let &(i, l) = cand.get(&hp.leaf_pit[g])?;
+            let f = &frags[i];
+            let t =
+                (0..f.h.len()).find(|&d| f.h.parent[d] == NONE && f.tree[d] == f.tree[l as usize]);
+            Some((i, t.expect("a top")))
+        };
+        let size = |g: usize| tree_of(g).map_or(1, |(i, t)| u64::from(frags[i].size[t]));
+        let (kp, up) = (min_pits(&hp), pits_under(&hp, size));
+        let mut part: Facts = (0..hp.len())
+            .filter(|&d| !(hp.is_leaf(d as u32) && tree_of(d).is_some()))
+            .map(|d| {
+                let v = (
+                    bp.full[d],
+                    bp.own[d],
+                    key(&kp, &up, bp.node[d]),
+                    hp.outlet[d],
+                );
+                (key(&kp, &up, d as u32), v)
+            })
+            .collect();
+
+        // Pass L: each fragment's trees that are not sea, with the pours into them.
+        for (i, f) in frags.iter().enumerate() {
+            let sup = |d: usize| rp.leaf_of(Next::Node(f.tree[d])) as usize;
+            let tops: Tops = (0..f.h.len())
+                .filter(|&d| f.h.parent[d] == NONE && !bp.sea[sup(d)])
+                .map(|d| (f.tree[d], (hp.spill[sup(d)], hp.outlet[sup(d)])))
+                .collect();
+            let extra: Vec<(u32, u64)> = bp
+                .pours
+                .iter()
+                .filter_map(|&(_, c, w)| match cand.get(&pit_of(c as usize)?) {
+                    Some(&(j, l)) if j == i => Some((l, w)),
+                    _ => None,
+                })
+                .collect();
+            let hs = with_spills(f, &tops);
+            let ts = top_spill(&hs);
+            let mut t = TileCounts::new();
+            for (k, &zk) in z.iter().enumerate() {
+                let Some(&(j, l)) = pit_of(k).and_then(|p| cand.get(&p)) else {
+                    continue;
+                };
+                if j != i {
+                    continue;
+                }
+                let d = holding(&hs, &ts, l, zk);
+                if d != NONE {
+                    let (x, y) = world.xy(k as u64);
+                    count(&mut t, d, zk, x, y);
+                }
+            }
+            // `f.h.supply` holds this tile's cells only; cells of other tiles drain in across
+            // the ring (B1).
+            let mut extra = extra;
+            for (l, &p) in f.h.leaf_pit.iter().enumerate() {
+                if !tops.contains_key(&f.tree[l]) {
+                    continue;
+                }
+                let w: u64 = (0..z.len())
+                    .filter(|&k| pit_of(k) == Some(p))
+                    .map(|k| r(k as u64))
+                    .sum();
+                extra.push((l as u32, w - f.h.supply[l]));
+            }
+            let b = solve_local(f, &tops, &extra, &Counts::dense(f.h.len(), &[t])).expect("pass L");
+            let (kl, ul) = (min_pits(&f.h), pits_under(&f.h, |_| 1));
+            for d in 0..f.h.len() {
+                let g = sup(d);
+                let gn = bp.node[g];
+                let node = if gn != NONE && gn as usize != g {
+                    key(&kp, &up, gn)
+                } else if tops.contains_key(&f.tree[d]) {
+                    key(&kl, &ul, b.node[d])
+                } else {
+                    (u64::MAX, 0)
+                };
+                let v = (b.full[d], b.own[d], node, hs.outlet[d]);
+                part.insert(key(&kl, &ul, d as u32), v);
+            }
+        }
+        [(whole, bf.to_sea), (part, bp.to_sea)]
+    }
+
+    #[test]
+    fn contraction_keeps_the_balance() {
+        // Rounded heights: flats and zero-depth pits; r from dry to wet, so trees from
+        // nearly empty to just full.
+        let world = World { w: 30, h: 27 };
+        let z: Vec<f32> = rough(world).iter().map(|v| v.round()).collect();
+        for scale in [3, 40, 150, 400, 1000] {
+            let r = move |c: u64| scale * (1 + (c * 2_654_435_761) % 7);
+            for tile in [9, 5, 3] {
+                let [whole, part] = balances(world, &z, tile, r);
+                assert_eq!(whole.1, part.1, "to_sea, r × {scale}, tiles {tile}");
+                for (k, v) in &whole.0 {
+                    assert_eq!(
+                        part.0.get(k),
+                        Some(v),
+                        "depression {k:?}, r × {scale}, tiles {tile}"
+                    );
+                }
+                assert_eq!(whole.0.len(), part.0.len());
+            }
+        }
     }
 
     /// The global part plus every fragment's settled (non-top) depressions is the whole
@@ -500,6 +751,8 @@ mod tests {
             bbox: vec![[u64::MAX, u64::MAX, 0, 0]; 3],
         };
         assert!(solve_local(&frag, &none, &[(0, 1)], &empty).is_err());
+        let err = solve_local(&frag, &none, &[], &counts).expect_err("cells of an unlisted tree");
+        assert!(err.to_string().contains("not being solved"));
         let dry = solve_local(&frag, &none, &[], &empty).expect("balance");
         assert_eq!(dry.own.iter().sum::<u64>() + dry.to_sea, 0);
     }

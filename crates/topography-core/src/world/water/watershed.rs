@@ -494,11 +494,12 @@ pub(crate) mod tests {
 
     /// Task 8b: the 2048² window as its own world, cut into tiles and contracted. Prints the
     /// pits, the settled trees, the global leaves left and the contraction ratio, and checks
-    /// that contraction keeps every depression's smallest pit, spill and low.
+    /// that contraction keeps every depression (`contract::tests::signature`).
     fn contraction_probe(name: &str, east: u64, north: u64) {
-        use crate::world::water::contract::{contract, min_pits};
+        use crate::world::water::contract::contract;
+        use crate::world::water::contract::tests::signature;
         use crate::world::water::geom::tiles;
-        use crate::world::water::hierarchy::{Hierarchy, NONE, build};
+        use crate::world::water::hierarchy::{NONE, build};
         use crate::world::water::probe;
         let Some((win, z)) = probe::window(east, north, 2048) else {
             return;
@@ -506,14 +507,6 @@ pub(crate) mod tests {
         let world = World {
             w: win.w as u64,
             h: win.h as u64,
-        };
-        let sig = |h: &Hierarchy, skip_tops: bool, out: &mut Vec<(u64, u32, u32)>| {
-            let keys = min_pits(h);
-            out.extend(
-                (0..h.len())
-                    .filter(|&d| !(skip_tops && h.parent[d] == NONE))
-                    .map(|d| (keys[d], ordered(h.spill[d]), ordered(h.low[d]))),
-            );
         };
         for tile in [512u64, 1024, 2048] {
             let graphs: Vec<TileGraph> = tiles(world, tile)
@@ -544,13 +537,11 @@ pub(crate) mod tests {
                         .count()
                 })
                 .sum();
-            let (mut want, mut got) = (Vec::new(), Vec::new());
-            sig(&whole, false, &mut want);
-            sig(&part, false, &mut got);
+            let want = signature(&whole, false);
+            let mut got = signature(&part, false);
             for f in &frags {
-                sig(&f.h, true, &mut got);
+                got.extend(signature(&f.h, true));
             }
-            want.sort_unstable();
             got.sort_unstable();
             assert_eq!(got, want, "{name} tiles {tile}: contraction is not exact");
             eprintln!(
