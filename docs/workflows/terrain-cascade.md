@@ -477,8 +477,9 @@ whole world with the same rule: at every band boundary, with d the change hydrol
 the sea's depth is no change of the land, so their ground counts there), a column
 fails where d in one of the first four rows of the band differs from d in the last row above
 by more than 5 m plus the 35° side slope's rise per further row (except where both cells are
-water of one body), or where d lies 5 m below both neighbours (north and south, or west and
-east) in those rows (a slot). A world without its raw surface falls back to steps of what
+water of one body), or where what shows less the raw surface (the water surface where wet,
+lakes and sea too) lies 5 m below both neighbours (north and south, or west and east) in those
+rows (a slot), as the band checks count them. A world without its raw surface falls back to steps of what
 shows over 5 m and 4 times the rows beside them. The audit writes
 `hydrology/seam-audit.json` and records the totals in the manifest (`seam_audit`). A world
 that fails gets `manifest-failed.json` instead of `manifest.json`, so export and resumes see

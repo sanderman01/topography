@@ -152,14 +152,15 @@ def _hydro_band(c: SimpleNamespace, j: int, state: dict) -> None:
 
 def _seam_audit(out: Path, n: int, bands: list[tuple[int, int]], step_m: float = SEAM_STEP_M) -> dict:
     """Steps and slots at each band boundary of a 1 m world, as the per-band hydrology check
-    (`seam_steps`, `seam_slots`) counts them. With d = what shows (the water surface where wet,
-    else the ground) less the raw surface: a column steps where d in one of the first
-    SEAM_CHECK_ROWS rows of the band differs from d in the last row of the band above by more
-    than `step_m` plus the side slope per further row, unless both cells are water of one body;
-    it holds a slot where d lies SLOT_M below both neighbours (north and south, or west and
-    east) in those rows. A lake's or the sea's depth is no change of the land: their ground
-    counts there (kinds from bodies.json), as in the check. Without the raw surface (dropped) only steps of what shows over
-    `step_m` and 4 times the rows beside count."""
+    (`seam_steps`, `seam_slots`) counts them. With d = the land change, what shows (the water
+    surface where wet, else the ground; a lake's or the sea's ground, as their depth is no change
+    of the land; kinds from bodies.json) less the raw surface: a column steps where d in one of
+    the first SEAM_CHECK_ROWS rows of the band differs from d in the last row of the band above
+    by more than `step_m` plus the side slope per further row, unless both cells are water of one
+    body. It holds a slot where what shows less the raw surface (water surface where wet) lies
+    SLOT_M below both neighbours (north and south, or west and east) in those rows. Without the
+    raw surface (dropped) only steps of what shows over `step_m` and 4 times the rows beside
+    count."""
     def mm(name, dtype):
         return np.memmap(out / name, dtype=dtype, mode="r", shape=(n, n))
 
@@ -181,7 +182,8 @@ def _seam_audit(out: Path, n: int, bands: list[tuple[int, int]], step_m: float =
         if raw is not None:
             still = wet & np.isin(bd, still_ids)
             shown = np.where(still, np.asarray(ground[rows], np.float64), vis)
-            d = shown - np.asarray(raw[rows], np.float64)
+            rw = np.asarray(raw[rows], np.float64)
+            d, change = shown - rw, vis - rw
             bad, step = np.zeros(n, bool), np.zeros(n)
             for r in range(k):  # rows a + r against row a - 1 (index 1)
                 same = wet[1] & wet[2 + r] & (bd[1] == bd[2 + r])
@@ -189,8 +191,8 @@ def _seam_audit(out: Path, n: int, bands: list[tuple[int, int]], step_m: float =
                 hit = (st > step_m + SIDE_SLOPE * r) & ~same
                 bad |= hit
                 step = np.where(hit, np.maximum(step, st), step)
-                mid = d[2 + r]
-                ns = np.minimum(d[1 + r], d[3 + r]) - mid
+                mid = change[2 + r]
+                ns = np.minimum(change[1 + r], change[3 + r]) - mid
                 we = np.zeros(n)
                 we[1:-1] = np.minimum(mid[:-2], mid[2:]) - mid[1:-1]
                 slots |= np.maximum(ns, we) > SLOT_M
