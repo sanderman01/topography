@@ -1,0 +1,36 @@
+crates/topography-core/src/world/water/contract.rs
+  s_8c1b40ea9c1e0d::t_c0b72267320b3c 555-558,562-566,568
+  s_8c1b40ea9c1e0d::t_ea40e4f5f0abb1 567
+  s_8c1b40ea9c1e0d::t_6990edf9a18236 151-158,161
+  s_8c1b40ea9c1e0d::t_f1aaea546b957c 338-346
+  s_8c1b40ea9c1e0d::t_b9145625e4adc4 559-561
+  s_8c1b40ea9c1e0d::t_e09fcadf0a9800 18,23-24
+  s_8c1b40ea9c1e0d::t_05c3220da9d14a 305-309
+  s_8c1b40ea9c1e0d::t_f31b2f347e017f 362-364
+  s_8c1b40ea9c1e0d::t_9bce4cd7cedeb6 755
+  s_8c1b40ea9c1e0d::t_d2b66688778226 378-382,384,386-395,401-443,445-461,463,465-472,474-487,489-492,494-517,519-545,549,551-554,569-608
+  s_8c1b40ea9c1e0d::t_9964511586e013 159-160
+  s_8c1b40ea9c1e0d::t_b4300b5848e388 293-294
+  s_8c1b40ea9c1e0d::t_12a108c27aaa3a 546-548,550
+  s_8c1b40ea9c1e0d::t_b1bc087fcf4b0d 327,329,335,337,361,377,444,462,464,473,488,493,518,754
+crates/topography-core/src/world/water/watershed.rs
+  s_8c1b40ea9c1e0d::t_a9f163fdc6fe69 497
+  s_8c1b40ea9c1e0d::t_2baafefaa93b77 499-500,502
+  s_8c1b40ea9c1e0d::t_cf62d843a46a3b 540-541,543
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c9cc1f61efb4eae61e0b0708d32a833598aceb6",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
