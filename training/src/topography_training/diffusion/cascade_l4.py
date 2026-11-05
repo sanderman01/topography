@@ -450,6 +450,14 @@ def _drop(c: SimpleNamespace, drop_raw: bool) -> None:
 
 
 def main(argv=None) -> int:
+    try:
+        return _main(argv)
+    except SeamAuditFailed as e:  # the world is written; its manifest says why it failed
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def _main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--run", type=Path, help="L4 run directory")
     p.add_argument("--class-runs", type=Path, help="directory of per-class expert runs (c1, c2, ...) mixed over --run")
