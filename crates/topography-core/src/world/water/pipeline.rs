@@ -594,10 +594,16 @@ impl Trees<'_> {
             .collect();
         lbal.set_closed_levels(&closed)?;
         let minpit = min_pits(&lh);
-        let nodes = (0..lh.len() as u32)
+        let mut nodes: Vec<Node> = (0..lh.len() as u32)
             .filter(|&d| lbal.node[d as usize] == d && tops.contains_key(&frag.tree[d as usize]))
             .map(|d| node_of(&lh, &lbal, &minpit, d, self.min_cells))
             .collect();
+        // Nodes is sorted by key (its smallest pit cell), which need not follow the order of d.
+        nodes.sort_unstable_by_key(|n| n.key);
+        ensure(
+            nodes.windows(2).all(|p| p[0].key < p[1].key),
+            "two water nodes of a tile share a key",
+        )?;
         let local = Local {
             frag,
             h: lh,
