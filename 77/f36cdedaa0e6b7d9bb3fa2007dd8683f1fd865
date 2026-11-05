@@ -1,0 +1,31 @@
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_3dc0fc169921bc 1871-1911
+  s_8c1b40ea9c1e0d::t_477b637349e822 774-777
+  s_8c1b40ea9c1e0d::t_ae86d6f380ea7b 1913-1914
+  s_8c1b40ea9c1e0d::t_f7e2d6c602945c 413
+  s_8c1b40ea9c1e0d::t_e6e20f3554871f 862
+  s_8c1b40ea9c1e0d::t_18071150981d28 400,403
+  s_8c1b40ea9c1e0d::t_bb0670aa857852 817-824,826-845,848-853,855,858-859,866-867,870-874
+  s_8c1b40ea9c1e0d::t_6f17139933f5f6 1796-1797
+  s_8c1b40ea9c1e0d::t_f686cea208c942 1821-1822
+  s_8c1b40ea9c1e0d::t_f7ae422c00a776 1925-1926
+  s_8c1b40ea9c1e0d::t_7ac366ec9684b8 1839,1844-1848
+  s_8c1b40ea9c1e0d::t_c3631597389971 825
+  s_8c1b40ea9c1e0d::t_4666fa5ab7570f 860-861,864-865,868-869
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77f36cdedaa0e6b7d9bb3fa2007dd8683f1fd865",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
