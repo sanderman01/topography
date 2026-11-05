@@ -333,8 +333,9 @@ def _layers(c: SimpleNamespace, mode: str, raw_mode: str | None = None) -> None:
 def _hydrology_only(out: Path, drop_raw: bool, restart: bool) -> int:
     """Rerun every band's hydrology from the kept raw surface of an L4 world (finished, failed
     or with hydrology stopped part-way), without diffusion. Resumes after the last band it
-    finished while the hydrology binary and Python code are the same; a change (a code fix),
-    `restart` or an attempt that failed its seam audit starts again from band 0."""
+    finished while the hydrology binary and Python code are the same; a changed binary or code
+    (a fix), `restart`, failed bands or a lost north band start again from band 0. An attempt
+    that failed only while finishing (its seam audit too) just finishes again."""
     progress_path = out / "progress.json"
     if not progress_path.exists() or not (out / RAW).exists():
         print(f"error: {out} has no progress.json or {RAW} (worlds made before it was kept need diffusion again)",
