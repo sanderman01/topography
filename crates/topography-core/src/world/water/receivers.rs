@@ -35,29 +35,54 @@ pub(crate) fn receivers(world: World, win: Rect, z: &[f32], core: Rect) -> Vec<u
         }
         let Some((_, steepest)) = best else { continue };
         *o = steepest;
-        let f = |dy: i64, dx: i64| f64::from(at(dy, dx));
-        // Horn: east and south rises; the water goes the other way.
-        let east = (f(-1, 1) + 2.0 * f(0, 1) + f(1, 1)) - (f(-1, -1) + 2.0 * f(0, -1) + f(1, -1));
-        let south = (f(1, -1) + 2.0 * f(1, 0) + f(1, 1)) - (f(-1, -1) + 2.0 * f(-1, 0) + f(-1, 1));
-        if east == 0.0 && south == 0.0 {
+        let Some(turns) = fall_turns(|dy, dx| f64::from(at(dy, dx))) else {
             continue;
-        }
-        let turns =
-            (-south).atan2(-east).rem_euclid(std::f64::consts::TAU) / std::f64::consts::FRAC_PI_4;
-        let sector = turns.floor() as usize % 8;
-        // R2 low-discrepancy threshold over the world position: alike in every tiling.
-        let t = (x as f64 * 0.754_877_666_2 + y as f64 * 0.569_840_290_9).rem_euclid(1.0);
-        let pick = AROUND[if turns.fract() > t {
-            (sector + 1) % 8
-        } else {
-            sector
-        }];
+        };
+        let pick = fall_pick(x, y, turns, |_| true).expect("every direction allowed");
         let (dy, dx) = OFFSETS[pick];
         if at(dy, dx) < zc {
             *o = pick as u8 + 1;
         }
     }
     out
+}
+
+/// Horn's fall line of the 3 x 3 window `f(dy, dx)`, in eighths of a turn from east turning
+/// south; none on a flat.
+pub(crate) fn fall_turns(f: impl Fn(i64, i64) -> f64) -> Option<f64> {
+    // Horn: east and south rises; the water goes the other way.
+    let east = (f(-1, 1) + 2.0 * f(0, 1) + f(1, 1)) - (f(-1, -1) + 2.0 * f(0, -1) + f(1, -1));
+    let south = (f(1, -1) + 2.0 * f(1, 0) + f(1, 1)) - (f(-1, -1) + 2.0 * f(-1, 0) + f(-1, 1));
+    if east == 0.0 && south == 0.0 {
+        return None;
+    }
+    Some((-south).atan2(-east).rem_euclid(std::f64::consts::TAU) / std::f64::consts::FRAC_PI_4)
+}
+
+/// The direction (an `OFFSETS` index) on the fall line `turns` at (x, y): one of the two that
+/// bracket it, dithered by an R2 low-discrepancy threshold of the world position (alike in
+/// every tiling). If `ok` refuses that one, the allowed direction nearest the dithered line.
+pub(crate) fn fall_pick(x: u64, y: u64, turns: f64, ok: impl Fn(usize) -> bool) -> Option<usize> {
+    let sector = turns.floor() as usize % 8;
+    let t = (x as f64 * 0.754_877_666_2 + y as f64 * 0.569_840_290_9).rem_euclid(1.0);
+    let first = if turns.fract() > t {
+        (sector + 1) % 8
+    } else {
+        sector
+    };
+    if ok(AROUND[first]) {
+        return Some(AROUND[first]);
+    }
+    // The dithered pick is the direction nearest this line.
+    let line = turns + 0.5 - t;
+    let off = |p: usize| {
+        let d = (line - p as f64).rem_euclid(8.0);
+        d.min(8.0 - d)
+    };
+    (0..8)
+        .filter(|&p| ok(AROUND[p]))
+        .min_by(|&a, &b| off(a).total_cmp(&off(b)).then(a.cmp(&b)))
+        .map(|p| AROUND[p])
 }
 
 #[cfg(test)]
