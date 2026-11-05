@@ -66,21 +66,45 @@ pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
     }
 }
 
-/// A grid directory holding `terrain(world)` at 1 m with uniform moisture.
+/// `terrain(world)` (64² or larger) with a V valley in x ≥ 24, y ≤ 20 falling east 8 cm a
+/// cell to the map edge, its sides rising 0.3 m a cell, and a one-cell dam at x = 40 whose
+/// crest is 1 m above the floor and rises 2 cm a row (one spill): the pond behind it is
+/// breached (as breach.rs's `dammed_at`).
+pub(crate) fn dammed(world: World) -> Vec<f32> {
+    let mut z = terrain(world);
+    for y in 0..=20u64 {
+        let side = (y as f32 - 10.0).abs();
+        for x in 24..world.w {
+            let floor = |x: u64| 15.0 - 0.08 * (x as f32 - 24.0);
+            let mut v = floor(x) + 0.3 * side;
+            if x == 40 {
+                v = v.max(floor(39) + 1.0 + 0.02 * side);
+            }
+            z[(y * world.w + x) as usize] = v;
+        }
+    }
+    z
+}
+
+/// A grid directory holding `dammed(world)` at 1 m with `classes(world)` and a 2 × 2
+/// moisture field.
 pub(crate) fn grid_dir(dir: &std::path::Path, world: World) -> std::path::PathBuf {
     use std::fs;
     let grid = dir.join("grid");
     fs::create_dir_all(&grid).expect("grid dir");
-    let z: Vec<u8> = terrain(world)
+    let z: Vec<u8> = dammed(world).iter().flat_map(|v| v.to_le_bytes()).collect();
+    fs::write(grid.join("elevation.f32"), z).expect("elevation");
+    fs::write(grid.join("classes.u8"), classes(world)).expect("classes");
+    let moisture: Vec<u8> = [1.0f32, 0.6, 1.4, 0.8]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect();
-    fs::write(grid.join("elevation.f32"), z).expect("elevation");
-    fs::write(grid.join("moisture.f32"), 1.0f32.to_le_bytes()).expect("moisture");
+    fs::write(grid.join("moisture.f32"), moisture).expect("moisture");
+    let half = world.w.max(world.h) as f64 / 2.0;
     let manifest = serde_json::json!({
         "size": [world.w, world.h], "spacing_m": 1.0, "origin": [0.0, world.h as f64],
-        "moisture": {"file": "moisture.f32", "size": [1, 1], "spacing_m": 1000.0,
-                     "nw_m": [-500.0, world.h as f64 + 500.0], "scale_mm_h": 2.0},
+        "moisture": {"file": "moisture.f32", "size": [2, 2], "spacing_m": half,
+                     "nw_m": [0.0, world.h as f64], "scale_mm_h": 2.0},
         "discharge": {"mean_land_mm_h": 2.0},
     });
     fs::write(
@@ -91,6 +115,10 @@ pub(crate) fn grid_dir(dir: &std::path::Path, world: World) -> std::path::PathBu
     // The synthetic bowls are small: a table whose lake minimum is 4 m² (pass it as `water`).
     let table = DEFAULT.replace("lake_min_m2 = 2000.0", "lake_min_m2 = 4.0");
     assert_ne!(table, DEFAULT, "the table's lake minimum moved");
+    let table = format!(
+        "# Test table for the synthetic 64² fixture (lake_min_m2 = 4), written by\n\
+         # testing::grid_dir; not the production config (configs/hydrology/water-v2.toml).\n{table}"
+    );
     fs::write(grid.join("water.toml"), table).expect("water.toml");
     grid
 }

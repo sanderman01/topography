@@ -648,7 +648,8 @@ fn water(args: &[std::ffi::OsString]) -> ExitCode {
     workflow_result(water::run(&o))
 }
 
-/// `world water-finish --grid DIR --work DIR --ground FILE --out DIR [--relax FILE] …`
+/// `world water-finish --grid DIR --work DIR --ground FILE --out DIR [--tile N] [--threads N]
+/// [--relax FILE] [--water FILE] [--river-km2 A]`
 fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
     use topography_core::world::water;
     let mut o = water::FinishOptions {

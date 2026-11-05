@@ -1,3 +1,5 @@
+# Test table for the synthetic 64² fixture (lake_min_m2 = 4), written by
+# testing::grid_dir; not the production config (configs/hydrology/water-v2.toml).
 # Lake-to-catchment ratio r ≈ P/E per terrain class (legend topography terrain-v3), read by
 # `topography world water` (hydrology v3). A depression stands where its lake area equals
 # Σ r over its catchment's cells (with upstream overflow); when no level below its spill

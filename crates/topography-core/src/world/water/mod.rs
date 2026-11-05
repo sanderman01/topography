@@ -604,9 +604,12 @@ mod tests {
             fs::read(dir.path().join("work/stages.json")).unwrap(),
             stages
         );
-        fs::write(grid.join("moisture.f32"), 0.5f32.to_le_bytes()).unwrap();
+        let moisture = fs::read(grid.join("moisture.f32")).unwrap();
+        let mut other = moisture.clone();
+        other[..4].copy_from_slice(&0.5f32.to_le_bytes());
+        fs::write(grid.join("moisture.f32"), other).unwrap();
         assert!(run(&o).is_err(), "other moisture needs a fresh work dir");
-        fs::write(grid.join("moisture.f32"), 1.0f32.to_le_bytes()).unwrap();
+        fs::write(grid.join("moisture.f32"), moisture).unwrap();
         assert_eq!(run(&o).expect("the original moisture resumes"), first);
         assert!(
             run(&Options { tile: 32, ..o }).is_err(),
