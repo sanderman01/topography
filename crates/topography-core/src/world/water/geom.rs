@@ -101,6 +101,7 @@ impl Rect {
 
 /// Tiles of `size` cells covering the world row by row; the last ones may be smaller.
 pub(crate) fn tiles(world: World, size: u64) -> Vec<Rect> {
+    assert!(size > 0, "tile size must be positive");
     let mut out = Vec::new();
     for y0 in (0..world.h).step_by(size as usize) {
         for x0 in (0..world.w).step_by(size as usize) {
@@ -117,6 +118,7 @@ pub(crate) fn tiles(world: World, size: u64) -> Vec<Rect> {
 
 /// Index (in `tiles` order) of the tile holding (x, y).
 pub(crate) fn tile_of(world: World, size: u64, x: u64, y: u64) -> usize {
+    assert!(size > 0, "tile size must be positive");
     (y / size * world.w.div_ceil(size) + x / size) as usize
 }
 
@@ -125,6 +127,10 @@ pub(crate) struct UnionFind(Vec<u32>);
 
 impl UnionFind {
     pub fn new(n: usize) -> Self {
+        assert!(
+            n <= u32::MAX as usize,
+            "union-find holds at most u32::MAX members"
+        );
         Self((0..n as u32).collect())
     }
     pub fn find(&mut self, mut a: u32) -> u32 {
@@ -197,5 +203,17 @@ mod tests {
         u.union(4, 3);
         assert_eq!(u.find(4), 1);
         assert_eq!(u.find(0), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tile size")]
+    fn a_zero_tile_size_is_refused() {
+        tiles(World { w: 4, h: 4 }, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tile size")]
+    fn tile_of_refuses_a_zero_tile_size() {
+        tile_of(World { w: 4, h: 4 }, 0, 1, 1);
     }
 }

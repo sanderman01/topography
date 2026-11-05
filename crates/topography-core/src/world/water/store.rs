@@ -7,10 +7,11 @@ use serde_json::Value;
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -138,6 +139,18 @@ pub(crate) fn partial_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// Writes `bytes` to a `.partial` sibling, syncs it and renames it over `path`.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = partial_path(path);
+    let mut file = io_context(format!("create {}", tmp.display()), fs::File::create(&tmp))?;
+    io_context(format!("write {}", tmp.display()), file.write_all(bytes))?;
+    io_context(format!("sync {}", tmp.display()), file.sync_all())?;
+    io_context(
+        format!("publish {}", path.display()),
+        fs::rename(&tmp, path),
+    )
+}
+
 pub(crate) fn decode<T: Blob>(b: &[u8]) -> Result<T> {
     let mut d = Dec { b, at: 0 };
     let v = T::get(&mut d)?;
@@ -165,10 +178,7 @@ impl Work {
                 ),
             )?;
         } else {
-            io_context(
-                "write stamp",
-                fs::write(&path, serde_json::to_vec_pretty(stamp)?),
-            )?;
+            write_atomic(&path, &serde_json::to_vec_pretty(stamp)?)?;
         }
         Ok(Self {
             dir: dir.to_path_buf(),
@@ -190,9 +200,7 @@ impl Work {
         if let Some(parent) = path.parent() {
             io_context("create work dir", fs::create_dir_all(parent))?;
         }
-        let tmp = partial_path(&path);
-        io_context("write work file", fs::write(&tmp, encode(&v)))?;
-        io_context("publish work file", fs::rename(&tmp, &path))?;
+        write_atomic(&path, &encode(&v))?;
         Ok(v)
     }
     pub fn is_done(&self, name: &str) -> bool {
@@ -230,16 +238,24 @@ pub(crate) fn for_tiles<T: Send>(
     let started = Instant::now();
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
     let slots: Vec<Mutex<Option<Result<T>>>> = tiles.iter().map(|_| Mutex::new(None)).collect();
     std::thread::scope(|s| {
         for _ in 0..threads.max(1) {
             s.spawn(|| {
                 loop {
+                    // Checked before taking a tile, so every skipped tile comes after a failed one.
+                    if failed.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     if i >= tiles.len() {
                         break;
                     }
                     let r = f(i, tiles[i]);
+                    if r.is_err() {
+                        failed.store(true, Ordering::Relaxed);
+                    }
                     *slots[i].lock().expect("slot") = Some(r);
                     let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if tiles.len() > 16 && d % 16 == 0 {
@@ -317,5 +333,30 @@ mod tests {
             .collect();
         let got = for_tiles(&tiles, 4, "test", |i, r| Ok(i as u64 * 10 + r.x0)).expect("run");
         assert_eq!(got, (0..9).map(|i| i * 11).collect::<Vec<u64>>());
+    }
+
+    #[test]
+    fn for_tiles_stops_after_the_first_error() {
+        let tiles: Vec<Rect> = (0..9)
+            .map(|i| Rect {
+                x0: i,
+                y0: 0,
+                w: 1,
+                h: 1,
+            })
+            .collect();
+        let calls = AtomicUsize::new(0);
+        let got = for_tiles(&tiles, 1, "test", |i, _| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            ensure(i != 2, "tile 2 failed")?;
+            Ok(i)
+        });
+        let err = got.expect_err("an error").to_string();
+        assert_eq!(err, "tile 2 failed", "the real error, not a skipped tile");
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            3,
+            "tiles after the failure are skipped"
+        );
     }
 }

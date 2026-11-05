@@ -128,8 +128,14 @@ impl<T: Cell> Layer<T> {
         }
         Ok(out)
     }
+    /// Writes `values` into window `r`. Parallel tiles share the layer without a lock, so
+    /// callers write only their tile's core, never its halo: cores never overlap.
     pub fn write(&self, r: Rect, values: &[T]) -> Result<()> {
         let world = self.world();
+        ensure(
+            r.x0 + r.w as u64 <= world.w && r.y0 + r.h as u64 <= world.h,
+            "raster window out of range",
+        )?;
         ensure(values.len() == r.cells(), "raster write size")?;
         match self {
             Layer::Memory { values: v, .. } => {
@@ -174,11 +180,29 @@ pub(crate) struct Classes {
 }
 
 impl Classes {
+    /// Classes for `world`; the class grid must cover it.
+    pub fn new(layer: Layer<u8>, k: u64, world: World) -> Result<Self> {
+        let cw = layer.world();
+        ensure(
+            k > 0 && cw.w * k >= world.w && cw.h * k >= world.h,
+            format!(
+                "class grid {}x{} at {k} cells per class does not cover the {}x{} world",
+                cw.w, cw.h, world.w, world.h
+            ),
+        )?;
+        Ok(Self { layer, k })
+    }
+
     pub fn read(&self, r: Rect) -> Result<Vec<u8>> {
         let cw = self.layer.world();
+        ensure(r.cells() > 0, "empty class window")?;
         let (cx0, cy0) = (r.x0 / self.k, r.y0 / self.k);
-        let cx1 = ((r.x0 + r.w as u64 - 1) / self.k + 1).min(cw.w);
-        let cy1 = ((r.y0 + r.h as u64 - 1) / self.k + 1).min(cw.h);
+        let cx1 = (r.x0 + r.w as u64 - 1) / self.k + 1;
+        let cy1 = (r.y0 + r.h as u64 - 1) / self.k + 1;
+        ensure(
+            cx1 <= cw.w && cy1 <= cw.h,
+            "class window lies beyond the class grid",
+        )?;
         let c = Rect {
             x0: cx0,
             y0: cy0,
@@ -189,7 +213,7 @@ impl Classes {
         Ok((0..r.cells())
             .map(|k| {
                 let (x, y) = r.world_xy(k);
-                let (cx, cy) = ((x / self.k).min(cx1 - 1), (y / self.k).min(cy1 - 1));
+                let (cx, cy) = (x / self.k, y / self.k);
                 coarse[(cy - cy0) as usize * c.w + (cx - cx0) as usize]
             })
             .collect())
@@ -250,5 +274,47 @@ mod tests {
             })
             .expect("read");
         assert_eq!(got, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_write_outside_the_world_is_refused() {
+        let dir = tempfile::tempdir().expect("temp");
+        let world = World { w: 3, h: 3 };
+        let file = Layer::<u8>::open_or_create(world, &dir.path().join("a.u8"), 0).expect("create");
+        let memory = Layer::<u8>::filled(world, 0);
+        for layer in [file, memory] {
+            let r = Rect {
+                x0: 2,
+                y0: 0,
+                w: 2,
+                h: 1,
+            };
+            assert!(layer.write(r, &[1, 1]).is_err());
+            assert_eq!(layer.to_vec().expect("read"), vec![0; 9], "nothing written");
+        }
+    }
+
+    #[test]
+    fn classes_must_cover_the_world_and_the_window() {
+        let world = World { w: 9, h: 8 };
+        let coarse = || Layer::memory(World { w: 2, h: 2 }, vec![1u8, 2, 3, 4]);
+        assert!(
+            Classes::new(coarse(), 4, world).is_err(),
+            "8 < 9 cells wide"
+        );
+        assert!(Classes::new(coarse(), 0, world).is_err());
+        let classes = Classes::new(coarse(), 5, world).expect("covers");
+        assert_eq!(classes.k, 5);
+        let small = Classes {
+            layer: coarse(),
+            k: 4,
+        };
+        let r = Rect {
+            x0: 6,
+            y0: 0,
+            w: 3,
+            h: 1,
+        };
+        assert!(small.read(r).is_err(), "x 8 lies beyond the class grid");
     }
 }

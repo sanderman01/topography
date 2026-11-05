@@ -48,7 +48,7 @@ impl Rain {
         let file = entry["file"].as_str().unwrap_or("moisture.f32");
         let bytes = io_context(format!("read {file}"), fs::read(dir.join(file)))?;
         ensure(
-            bytes.len() == w * h * 4,
+            w.checked_mul(h).and_then(|n| n.checked_mul(4)) == Some(bytes.len()),
             "moisture.f32 does not match its size",
         )?;
         let values = bytes
@@ -132,7 +132,8 @@ mod tests {
     fn an_empty_moisture_grid_is_refused() {
         let dir = tempfile::tempdir().expect("temp");
         std::fs::write(dir.path().join("moisture.f32"), b"").expect("write");
-        for size in [[0, 1], [1, 0]] {
+        // The last size overflows w * h * 4: an error, not a panic or a wrapped size.
+        for size in [[0, 1], [1, 0], [usize::MAX / 2, 4]] {
             let manifest = serde_json::json!({
                 "moisture": {"file": "moisture.f32", "size": size, "spacing_m": 128.0,
                              "nw_m": [0.0, 0.0], "scale_mm_h": 1.0},
