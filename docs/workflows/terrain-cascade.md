@@ -473,7 +473,8 @@ Each band's hydrology fails (and stops hydrology, while diffusion goes on, for a
 on a step or slot at its seam with the band above or on ground cut deeper than allowed
 ([Bands and seams](#bands-and-seams---north)). After the last band, a seam audit checks the
 whole world with the same rule: at every band boundary, with d the change hydrology made
-(what shows, the water surface where wet, else the ground, less the raw surface), a column
+(what shows, the water surface where wet, else the ground, less the raw surface; a lake's or
+the sea's depth is no change of the land, so their ground counts there), a column
 fails where d in one of the first four rows of the band differs from d in the last row above
 by more than 5 m plus the 35° side slope's rise per further row (except where both cells are
 water of one body), or where d lies 5 m below both neighbours (north and south, or west and

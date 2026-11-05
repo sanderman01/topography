@@ -157,13 +157,17 @@ def _seam_audit(out: Path, n: int, bands: list[tuple[int, int]], step_m: float =
     SEAM_CHECK_ROWS rows of the band differs from d in the last row of the band above by more
     than `step_m` plus the side slope per further row, unless both cells are water of one body;
     it holds a slot where d lies SLOT_M below both neighbours (north and south, or west and
-    east) in those rows. Without the raw surface (dropped) only steps of what shows over
+    east) in those rows. A lake's or the sea's depth is no change of the land: their ground
+    counts there (kinds from bodies.json), as in the check. Without the raw surface (dropped) only steps of what shows over
     `step_m` and 4 times the rows beside count."""
     def mm(name, dtype):
         return np.memmap(out / name, dtype=dtype, mode="r", shape=(n, n))
 
     ground, surface, body = mm("elevation.f32", "<f4"), mm("water-surface.f32", "<f4"), mm("water-body.u32", "<u4")
     raw = mm(RAW, "<f4") if (out / RAW).exists() else None
+    path = out / "bodies.json"
+    listed = json.loads(path.read_text())["bodies"] if path.exists() else []
+    still_ids = np.array(sorted({1} | {b["id"] for b in listed if b["kind"] in ("lake", "sea")}), np.int64)
     k = SEAM_CHECK_ROWS
     boundaries = []
     for a, _ in bands[1:]:
@@ -175,7 +179,9 @@ def _seam_audit(out: Path, n: int, bands: list[tuple[int, int]], step_m: float =
         bd, wet = np.asarray(body[rows]), np.isfinite(s)
         slots = np.zeros(n, bool)
         if raw is not None:
-            d = vis - np.asarray(raw[rows], np.float64)
+            still = wet & np.isin(bd, still_ids)
+            shown = np.where(still, np.asarray(ground[rows], np.float64), vis)
+            d = shown - np.asarray(raw[rows], np.float64)
             bad, step = np.zeros(n, bool), np.zeros(n)
             for r in range(k):  # rows a + r against row a - 1 (index 1)
                 same = wet[1] & wet[2 + r] & (bd[1] == bd[2 + r])
