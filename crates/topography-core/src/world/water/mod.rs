@@ -15,12 +15,15 @@ mod geom;
 mod hierarchy;
 mod layers;
 mod nodes;
+mod pipeline;
 #[cfg(test)]
 mod probe;
 mod rain;
 mod receivers;
 mod store;
 mod table;
+#[cfg(test)]
+mod testing;
 mod watershed;
 
 /// Judgment value (spec): standing water at least this deep is a lake; shallower is a pond.

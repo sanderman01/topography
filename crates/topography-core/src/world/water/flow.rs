@@ -172,6 +172,22 @@ pub(crate) struct Solved {
     pub node_total: BTreeMap<u64, u64>,
 }
 
+impl Blob for Solved {
+    fn put(&self, e: &mut Enc) {
+        let mut inflow: Vec<(u64, u64)> = self.inflow.iter().map(|(&k, &v)| (k, v)).collect();
+        inflow.sort_unstable();
+        inflow.put(e);
+        self.node_total.put(e);
+    }
+    fn get(d: &mut Dec) -> Result<Self> {
+        let (inflow, node_total): (Vec<(u64, u64)>, BTreeMap<u64, u64>) = Blob::get(d)?;
+        Ok(Self {
+            inflow: inflow.into_iter().collect(),
+            node_total,
+        })
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum V {
     Port(u64),
