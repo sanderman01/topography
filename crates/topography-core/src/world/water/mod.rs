@@ -9,7 +9,10 @@
 
 mod geom;
 mod layers;
+#[cfg(test)]
+mod probe;
 mod rain;
+mod receivers;
 mod store;
 mod table;
 
