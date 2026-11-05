@@ -22,6 +22,7 @@ struct Class {
 struct File {
     schema_version: u32,
     kind: String,
+    // Required in the file (deny_unknown_fields) but not used by the model.
     #[allow(dead_code)]
     legend: String,
     lake_min_m2: f64,

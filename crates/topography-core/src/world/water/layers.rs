@@ -1,14 +1,16 @@
-//! World-sized rasters, in memory (tests, windows) or in little-endian files (the world):
+//! World-sized rasters, in memory (tests) or in little-endian files (the world):
 //! windowed reads and positioned writes, so tiles never need the whole raster.
 
 use super::geom::{Rect, World};
 use super::store::partial_path;
 use crate::acquisition::{Result, ensure, io_context};
+#[cfg(test)]
+use std::sync::{Arc, RwLock};
 use std::{
     fs,
+    marker::PhantomData,
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
 };
 
 /// A raster cell type stored little-endian.
@@ -38,6 +40,7 @@ cell!(u64);
 
 #[derive(Clone)]
 pub(crate) enum Layer<T: Cell> {
+    #[cfg(test)]
     Memory {
         world: World,
         values: Arc<RwLock<Vec<T>>>,
@@ -45,10 +48,12 @@ pub(crate) enum Layer<T: Cell> {
     File {
         world: World,
         path: PathBuf,
+        cell: PhantomData<T>,
     },
 }
 
 impl<T: Cell> Layer<T> {
+    #[cfg(test)]
     pub fn memory(world: World, values: Vec<T>) -> Self {
         assert_eq!(values.len() as u64, world.w * world.h);
         Layer::Memory {
@@ -56,6 +61,7 @@ impl<T: Cell> Layer<T> {
             values: Arc::new(RwLock::new(values)),
         }
     }
+    #[cfg(test)]
     pub fn filled(world: World, fill: T) -> Self {
         Self::memory(world, vec![fill; (world.w * world.h) as usize])
     }
@@ -73,6 +79,7 @@ impl<T: Cell> Layer<T> {
         Ok(Layer::File {
             world,
             path: path.to_path_buf(),
+            cell: PhantomData,
         })
     }
     /// The file at `path`, created full of `fill` when missing (a resumed run keeps it).
@@ -95,7 +102,9 @@ impl<T: Cell> Layer<T> {
     }
     pub fn world(&self) -> World {
         match self {
-            Layer::Memory { world, .. } | Layer::File { world, .. } => *world,
+            #[cfg(test)]
+            Layer::Memory { world, .. } => *world,
+            Layer::File { world, .. } => *world,
         }
     }
     pub fn read(&self, r: Rect) -> Result<Vec<T>> {
@@ -106,6 +115,7 @@ impl<T: Cell> Layer<T> {
         )?;
         let mut out = Vec::with_capacity(r.cells());
         match self {
+            #[cfg(test)]
             Layer::Memory { values, .. } => {
                 let v = values.read().expect("layer lock");
                 for y in r.y0..r.y0 + r.h as u64 {
@@ -138,6 +148,7 @@ impl<T: Cell> Layer<T> {
         )?;
         ensure(values.len() == r.cells(), "raster write size")?;
         match self {
+            #[cfg(test)]
             Layer::Memory { values: v, .. } => {
                 let mut v = v.write().expect("layer lock");
                 for (row, y) in (r.y0..r.y0 + r.h as u64).enumerate() {
@@ -166,7 +177,8 @@ impl<T: Cell> Layer<T> {
         }
         Ok(())
     }
-    /// The whole raster (tests and small windows).
+    /// The whole raster (tests).
+    #[cfg(test)]
     pub fn to_vec(&self) -> Result<Vec<T>> {
         self.read(Rect::whole(self.world()))
     }

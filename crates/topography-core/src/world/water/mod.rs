@@ -4,8 +4,6 @@
 //! receivers, flat ponds (Barnes 2014) and accumulation (Barnes 2017); at 1 m also channels.
 //! The GPU bank relaxation runs in Python between `run` and `finish`.
 //! See docs/superpowers/specs/2026-11-05-hydrology-v3-design.md.
-// Items are wired to the CLI in Task 14, which removes this allow.
-#![allow(dead_code)]
 
 mod balance;
 mod bodies;
@@ -614,6 +612,15 @@ mod tests {
             run(&Options { tile: 32, ..o }).is_err(),
             "another tile size needs a fresh work dir"
         );
+    }
+
+    /// Writes tests/fixtures/water/grid for scripts/check.sh: cargo test … write_check_fixture -- --ignored
+    #[test]
+    #[ignore]
+    fn write_check_fixture() {
+        let dir = std::path::Path::new("../../tests/fixtures/water");
+        let _ = std::fs::remove_dir_all(dir.join("grid"));
+        testing::grid_dir(dir, geom::World { w: 64, h: 64 });
     }
 
     #[test]

@@ -79,7 +79,8 @@ pub(crate) struct Gorge {
     pub depth: f32,
     pub volume_mm: i64,
     pub length_m: f64,
-    /// The graded path, from the pit to where the grade meets the ground.
+    /// The graded path, from the pit to where the grade meets the ground (tests check the walls).
+    #[cfg(test)]
     pub axis: Vec<u64>,
 }
 
@@ -228,6 +229,7 @@ pub(crate) fn gorge(
         depth,
         volume_mm,
         length_m: s[e],
+        #[cfg(test)]
         axis: path[..=e].to_vec(),
     })
 }

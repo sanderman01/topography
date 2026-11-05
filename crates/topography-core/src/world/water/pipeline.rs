@@ -254,13 +254,13 @@ impl Blob for Local {
 
 pub(crate) struct Model {
     pub water: Water,
-    /// Receivers of full ponds that cross tiles, by world cell.
-    pub ponds: HashMap<u64, u8>,
     pub flow: Solved,
     /// Each tile's `Local` (runs without a work directory; with one, they are read back).
+    #[cfg(test)]
     pub locals: Vec<Local>,
 }
 
+#[cfg(test)]
 impl Model {
     pub fn local(&self, work: Option<&Work>, tag: &str, i: usize) -> Result<Local> {
         match work {
@@ -282,6 +282,7 @@ pub(crate) struct Rasters {
 }
 
 impl Rasters {
+    #[cfg(test)]
     pub fn memory(world: World) -> Self {
         Self {
             level: Layer::filled(world, f32::NAN),
@@ -1134,8 +1135,8 @@ pub(crate) fn model(
     }
     Ok(Model {
         water,
-        ponds,
         flow,
+        #[cfg(test)]
         locals: mem_locals,
     })
 }

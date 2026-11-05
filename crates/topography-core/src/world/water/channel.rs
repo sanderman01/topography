@@ -51,6 +51,7 @@ pub(crate) struct Layers {
 }
 
 impl Layers {
+    #[cfg(test)]
     pub fn memory(world: World) -> Self {
         Self {
             carved: Layer::filled(world, 0.0),

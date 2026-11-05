@@ -73,6 +73,20 @@ check_success '4294967296 bytes' validate world configs/worlds/standard.toml
 check_success 'Final corner tile: 257 x 257 vertices' validate world configs/worlds/exact-32km.toml
 check_success 'Extent: 32000 x 16000 m' validate world 'tests/fixtures/contracts/rectangular world.toml'
 check_success '9 classes, 0 retired IDs' validate legend catalog/labels/terrain-v1.toml
+# Hydrology v3 on a 64² fixture: the commands run and write their outputs.
+water_tmp="$(mktemp -d)"
+water_grid=tests/fixtures/water/grid
+water_args=(--tile 16 --threads 2 --water "$water_grid/water.toml" --river-km2 0.00001)
+check_success 'next: relax' world water --grid "$water_grid" --work "$water_tmp/work" "${water_args[@]}"
+check_success 'water passed' world water-finish --grid "$water_grid" --work "$water_tmp/work" \
+  --ground "$water_tmp/work/carved.f32" --out "$water_tmp/out" "${water_args[@]}"
+for f in elevation.f32 water-surface.f32 water-body.u32 discharge.f32 flow.u8 bodies.json report.json grid.json; do
+  test -s "$water_tmp/out/$f" || { printf 'world water-finish wrote no %s\n' "$f" >&2; exit 1; }
+done
+grep -q '"passed": true' "$water_tmp/out/report.json"
+rm -rf "$water_tmp"
+check_failure 2 'Unsupported arguments' world water --grid
+check_failure 2 'Unsupported arguments' world water-finish --grid g --work w
 check_success 'excluded from prepared and training pools' validate source examples/manifests/source-v1.toml
 # Resolve storage against the config file, even when invoked outside the checkout.
 (

@@ -45,6 +45,8 @@ Usage: topography [--help | --version]
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography world hydrology --grid <grid-dir> --out <new-output-dir> [--coarse <coarse-out-dir>] [--north <band-out-dir>] [--wind-deg 225] [--water water.toml] [--river-km2 10]
        topography world hydrology-seam --north <band-out-dir> --south <band-out-dir>
+       topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
+       topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--relax relax.json] [--water water.toml] [--river-km2 0.05]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
@@ -371,6 +373,12 @@ fn main() -> ExitCode {
         [command, action, rest @ ..] if command == "world" && action == "hydrology" => {
             return hydrology(rest);
         }
+        [command, action, rest @ ..] if command == "world" && action == "water" => {
+            return water(rest);
+        }
+        [command, action, rest @ ..] if command == "world" && action == "water-finish" => {
+            return water_finish(rest);
+        }
         [command, action, f1, north, f2, south]
             if command == "world"
                 && action == "hydrology-seam"
@@ -564,6 +572,134 @@ fn hydrology(args: &[std::ffi::OsString]) -> ExitCode {
             } else {
                 eprintln!(
                     "Hydrology validation failed; see {}",
+                    outcome.out.join("report.json").display()
+                );
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => workflow_result(Err(error)),
+    }
+}
+
+/// Flags shared by `world water` and `world water-finish`; false on an unknown flag or value.
+#[allow(clippy::too_many_arguments)]
+fn water_flag(
+    flag: &std::ffi::OsStr,
+    value: &std::ffi::OsStr,
+    grid: &mut std::path::PathBuf,
+    work: &mut std::path::PathBuf,
+    tile: &mut u64,
+    threads: &mut usize,
+    water: &mut Option<std::path::PathBuf>,
+    river_km2: &mut Option<f64>,
+) -> bool {
+    match flag.to_str() {
+        Some("--grid") => *grid = value.into(),
+        Some("--work") => *work = value.into(),
+        Some("--water") => *water = Some(value.into()),
+        Some("--tile") => match number(value) {
+            Some(v) => *tile = v,
+            None => return false,
+        },
+        Some("--threads") => match number(value) {
+            Some(v) => *threads = v,
+            None => return false,
+        },
+        Some("--river-km2") => match number(value) {
+            Some(v) => *river_km2 = Some(v),
+            None => return false,
+        },
+        _ => return false,
+    }
+    true
+}
+
+/// `world water --grid DIR --work DIR [--tile N] [--threads N] [--water FILE] [--river-km2 A]`
+fn water(args: &[std::ffi::OsString]) -> ExitCode {
+    use topography_core::world::water;
+    let mut o = water::Options {
+        grid: Default::default(),
+        work: Default::default(),
+        tile: water::DEFAULT_TILE,
+        threads: 4,
+        water: None,
+        river_km2: None,
+    };
+    for pair in args.chunks(2) {
+        let [flag, value] = pair else {
+            return usage_error();
+        };
+        if !water_flag(
+            flag,
+            value,
+            &mut o.grid,
+            &mut o.work,
+            &mut o.tile,
+            &mut o.threads,
+            &mut o.water,
+            &mut o.river_km2,
+        ) {
+            return usage_error();
+        }
+    }
+    if o.grid.as_os_str().is_empty() || o.work.as_os_str().is_empty() {
+        return usage_error();
+    }
+    workflow_result(water::run(&o))
+}
+
+/// `world water-finish --grid DIR --work DIR --ground FILE --out DIR [--relax FILE] …`
+fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
+    use topography_core::world::water;
+    let mut o = water::FinishOptions {
+        grid: Default::default(),
+        work: Default::default(),
+        ground: Default::default(),
+        out: Default::default(),
+        tile: water::DEFAULT_TILE,
+        threads: 4,
+        water: None,
+        river_km2: None,
+        relax: None,
+    };
+    for pair in args.chunks(2) {
+        let [flag, value] = pair else {
+            return usage_error();
+        };
+        match flag.to_str() {
+            Some("--ground") => o.ground = value.into(),
+            Some("--out") => o.out = value.into(),
+            Some("--relax") => o.relax = Some(value.into()),
+            _ => {
+                if !water_flag(
+                    flag,
+                    value,
+                    &mut o.grid,
+                    &mut o.work,
+                    &mut o.tile,
+                    &mut o.threads,
+                    &mut o.water,
+                    &mut o.river_km2,
+                ) {
+                    return usage_error();
+                }
+            }
+        }
+    }
+    if [&o.grid, &o.work, &o.ground, &o.out]
+        .iter()
+        .any(|p| p.as_os_str().is_empty())
+    {
+        return usage_error();
+    }
+    match water::finish(&o) {
+        Ok(outcome) => {
+            println!("{}", outcome.summary);
+            if outcome.passed {
+                ExitCode::SUCCESS
+            } else {
+                eprintln!(
+                    "Water checks failed; see {}",
                     outcome.out.join("report.json").display()
                 );
                 ExitCode::FAILURE

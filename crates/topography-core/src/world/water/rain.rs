@@ -68,6 +68,7 @@ impl Rain {
     }
 
     /// Moisture 1 and weight 1 everywhere (tests).
+    #[cfg(test)]
     pub fn uniform(mean_land_mm_h: f64) -> Self {
         Self {
             w: 1,
