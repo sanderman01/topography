@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -63,8 +64,10 @@ class RunTest(unittest.TestCase):
             self.assertTrue((out / "hydrology" / "1m" / "report.json").exists())
             # Review figures (Task 17): the fake chain has no 4 m water, so no coarse guide.
             self.assertIsNone(m["water"]["coarse_guide"])
+            self.assertIn("hydrology/review/overview.png", m["water"]["review"])
             for name in m["water"]["review"]:
-                self.assertTrue(name.startswith("hydrology/1m/review/") and (out / name).exists(), name)
+                self.assertTrue(name.startswith("hydrology/review/") and (out / name).exists(), name)
+            self.assertGreaterEqual(m["water"]["review_seconds"], 0)
             grid = json.loads((out / "hydrology" / "grid" / "grid.json").read_text())
             self.assertEqual(grid["moisture"]["scale_mm_h"], 4.0, "the chain's real moisture entry")
             self.assertEqual(grid["classes_cell_m"], 4.0)
@@ -79,6 +82,26 @@ class RunTest(unittest.TestCase):
             self.assertEqual(W.run_world(src, out, tile=64, threads=2), code)
             self.assertEqual((out / "elevation.f32").read_bytes(), before)
             self.assertEqual((out / "hydrology" / "1m" / "report.json").stat().st_mtime_ns, stamp, "finish not rerun")
+
+    def test_a_failing_review_never_withholds_the_manifest(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            root = Path(tmp)
+            src = fake_world(root)
+            # 4 m water whose grid.json is corrupt (no size): the coarse guide fails.
+            np.zeros((64, 64), "<u4").tofile(root / "chain" / "hydrology" / "4m" / "water-body.u32")
+            out = root / "v3"
+            with mock.patch.object(W.review, "crops", side_effect=RuntimeError("boom")):
+                code = W.run_world(src, out, tile=64, threads=2)
+            report = json.loads((out / "hydrology" / "1m" / "report.json").read_text())
+            self.assertEqual(code, 0 if report["passed"] else 1, "the water's own exit code")
+            m = json.loads((out / ("manifest.json" if code == 0 else "manifest-failed.json")).read_text())
+            self.assertIn("KeyError", m["water"]["coarse_guide"]["error"])
+            self.assertEqual(m["water"]["review"], {"error": "RuntimeError: boom"})
+            win = root / "win"
+            with mock.patch.object(W.review, "crops", side_effect=RuntimeError("boom")):
+                self.assertIn(W.run_window(src, 1, (128.0, 128.0), 128, win, 64, 2), (0, 1))
+            step = json.loads((win / "progress.json").read_text())["steps"]["review"]
+            self.assertEqual(step["review"], {"error": "RuntimeError: boom"})
 
     def test_a_world_without_real_moisture_is_refused(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
@@ -138,7 +161,7 @@ class RunTest(unittest.TestCase):
             self.assertNotEqual(first["grid"], second["grid"])
             published = json.loads((out / "out" / "grid.json").read_text())
             self.assertEqual(published["offset_m"], [32.0, 32.0], "finish ran on the new window")
-            self.assertTrue((out / "review" / "window.png").exists())
+            self.assertTrue((out / "review" / "overview.png").exists())
 
     def test_a_window_grid_is_cut_from_the_raw_surface(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:

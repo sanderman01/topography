@@ -376,7 +376,8 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
         if (out / "description.json").exists():
             digests["description.json"] = hydrology.sha256(out / "description.json")
     _pictures(out, n)
-    guide, shots = _review(out, out1m, Path(m["source_world"]) / "hydrology" / "4m", out1m / "review")
+    # Next to the Rust output, never inside hydrology/1m (its provenance lists its files).
+    reviewed = _review(out, out1m, Path(m["source_world"]) / "hydrology" / "4m", out / "hydrology" / "review")
     manifest = {
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 1.0, "size": [n, n], "class_id": m.get("class_id"),
@@ -391,10 +392,8 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
                   "relaxation": "none: Plan A ships the carved ground",
                   "binary": str(binary.relative_to(out)), "binary_sha256": digest,
                   "tile": tile, "threads": threads,
-                  # A figure in Plan A (R17): recorded, explained at gate 2, never withholds manifest.json.
-                  "coarse_guide": ({k: guide[k] for k in review.GUIDE_SUMMARY}
-                                   | {"file": "hydrology/1m/review/coarse-guide.json"}) if guide else None,
-                  "review": [str(p.relative_to(out)) for p in shots]},
+                  # Figures in Plan A (R17): recorded, explained at gate 2, never withhold manifest.json.
+                  **reviewed},
         "layers": digests,
     }
     name = "manifest.json" if report["passed"] else "manifest-failed.json"
@@ -405,17 +404,42 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
     return 0 if report["passed"] else 1
 
 
-def _review(src: Path, fine: Path, coarse: Path | None, dest: Path) -> tuple[dict | None, list[Path]]:
-    """The review figures after water-finish, made afresh: crops of `src` (a world or window run)
-    and the coarse guide of `fine` against the 4 m hydrology `coarse` when it has water."""
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True)
-    guide = None
-    if coarse is not None and (coarse / "water-body.u32").exists():
-        guide = review.coarse_guide(src, coarse, fine_dir=fine)
-        cascade.save_json(dest / "coarse-guide.json", guide)
-    return guide, review.crops(src, dest)
+def _review(src: Path, fine: Path, coarse: Path | None, dest: Path) -> dict:
+    """The review figures after water-finish, made afresh in `dest`: the coarse guide of `fine`
+    against the 4 m hydrology `coarse` (when it has water) with a figure per mismatch, and the
+    crops of `src` (a world or window run). Never raises: figures only, so a failure is logged
+    and recorded as {"error": ...} (R17) and the run goes on. Returns the manifest entries."""
+    import resource
+    import traceback
+
+    started = time.time()
+    entry: dict = {"coarse_guide": None, "review": None}
+    try:
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True)
+        if coarse is not None and (coarse / "water-body.u32").exists():
+            guide = review.coarse_guide(src, coarse, fine_dir=fine)
+            cascade.save_json(dest / "coarse-guide.json", guide)
+            figures = review.guide_figures(src, coarse, guide, dest / "coarse-guide")
+            entry["coarse_guide"] = {k: guide[k] for k in review.GUIDE_SUMMARY} | {
+                "file": str((dest / "coarse-guide.json").relative_to(src)),
+                "figures": [str(p.relative_to(src)) for p in figures]}
+    except Exception as e:
+        traceback.print_exc()
+        entry["coarse_guide"] = {"error": f"{type(e).__name__}: {e}"}
+    try:
+        entry["review"] = [str(p.relative_to(src)) for p in review.crops(src, dest)]
+    except Exception as e:
+        traceback.print_exc()
+        entry["review"] = {"error": f"{type(e).__name__}: {e}"}
+    entry["review_seconds"] = round(time.time() - started, 1)
+    # The driver's peak so far: the review is its largest step after the Rust commands.
+    entry["review_driver_peak_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+    figures = len(entry["review"]) if isinstance(entry["review"], list) else entry["review"]
+    print(f"review: {figures} figures in {dest} ({entry['review_seconds']} s, driver peak "
+          f"{entry['review_driver_peak_mb']} MB); coarse guide {entry['coarse_guide']}", flush=True)
+    return entry
 
 
 def _guard(out: Path, src: Path, m: dict) -> None:
@@ -476,10 +500,7 @@ def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, o
     code = _water(progress, binary, grid, work, out / "out", tile, threads)
     m = _json(src / "manifest.json")
     coarse = Path(m["source_world"]) / "hydrology" / "4m" if level == 1 and m.get("source_world") else None
-    guide, shots = _review(out, out / "out", coarse, out / "review")
-    shots.append(review.window_pair(out, out / "review" / "window.png"))
-    summary = {k: guide[k] for k in review.GUIDE_SUMMARY} if guide else "none"
-    print(f"review: {len(shots)} figures in {out / 'review'}; coarse guide {summary}", flush=True)
+    progress.mark("review", **_review(out, out / "out", coarse, out / "review"))
     print(f"done: {out / 'out'} ({'passed' if code == 0 else 'FAILED'})", flush=True)
     return code
 

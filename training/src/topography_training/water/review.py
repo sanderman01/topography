@@ -1,5 +1,6 @@
-"""Review figures for hydrology v3: hillshade crops (the raw surface beside the result, water
-tinted, lake exits marked) and the coarse guide, the 1 m water against the 4 m world's.
+"""Review figures for hydrology v3: hillshade crops (raw | result with water tinted and lake
+exits ringed | cut depth), a tinted overview with the crop boxes, lake-exit contact sheets and
+the coarse guide, the 1 m water against the 4 m world's, with a figure per mismatch.
 
 Works on a v3 world, a driver window run (grid/ and out/) or a bare water output directory
 (with --raw). Crops outside the processed grid are skipped. The coarse guide is a figure in
@@ -15,7 +16,7 @@ import argparse
 import json
 import math
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,7 @@ SPOTS = ((25645, 24400), (25307, 24585), (20071, 30501), (27169, 44546), (43966,
 CROP_M = 512
 CROP_PX = 512
 GAP_PX = 8
+BAR_PX = 40
 LEVEL_GROSS_M = 5.0
 DOUBLED_SHARE = 0.25
 RIVER_NEAR_M = 100.0
@@ -43,8 +45,9 @@ class Area:
     size_m: int = CROP_M
 
 
-# The controller's Task 17 list (carry-later.md, progress.md); E/N in metres. Straight-share
-# runs and thalweg_beside clusters are the Task 13 probe results, converted to world metres.
+# The controller's Task 17 list (carry-later.md, progress.md); E/N in metres. The straight-share
+# runs (two longest per window) and thalweg_beside cells come from the Task 13 Rust probe
+# windows, whose origin sits about 2 cells from the driver's windows at the same centre.
 AREAS = (
     Area("parallel-river-E49236-N16093", ((49236, 16093), (49426, 16135)), "box"),
     Area("zigzag-gully-E26013-N24172", ((26013, 24172), (26078, 24272)), "box"),
@@ -62,20 +65,41 @@ AREAS = (
     Area("thalweg-beside-E49909-N16285", ((49909, 16285), (49913, 16288)), "box", 128),
     Area("thalweg-beside-E44829-N21770", ((44829, 21770), (44832, 21772)), "box", 128),
 )
-# The dam spot: flow arrows and lake outlet markers (carry-later.md).
+# The dam spot: flow arrows and lake outlet rings (carry-later.md).
 DAM = (25645, 24400)
-DAM_M, DAM_PX = 96, 768
+DAM_M, DAM_PX = 256, 1024
 # Dry cells get a flow arrow from this discharge on (wet and thalweg cells always).
 ARROW_KM2 = 2e-5
 STRAIGHT_RUNS, RUN_M = 20, 256
 FAILURE_M, FAILURE_CROPS = 128, 10
 EXIT_M, EXIT_PX, SHEET_COLS, SHEET_ROWS = 128, 256, 6, 8
+GUIDE_MIN_M, GUIDE_MAX_M, GUIDE_PX = 256, 4096, 768
+OVERVIEW_PX = 2048
+# The cut panel saturates at this lowering or raising; a square-root ramp shows 5-20 cm cuts.
+CUT_M = 0.5
 
-# Water tints by kind (1 lake or sea, 2 river) and marker colours.
-TINT = {1: (0.2, 0.45, 1.0), 2: (0.1, 0.95, 1.0)}
-MARK, FULL_EXIT, CLOSED = (255, 220, 0), (40, 230, 60), (255, 40, 40)
+LAKE, RIVER = (0.45, 0.68, 1.0), (0.0, 0.15, 0.7)
+CUT_LOW, CUT_HIGH = (0.85, 0.1, 0.1), (0.1, 0.3, 0.95)
+MARK, OPEN_EXIT, CLOSED = (255, 220, 0), (40, 220, 60), (255, 40, 40)
+THALWEG, WET, DRY = (230, 30, 30), (255, 220, 0), (255, 255, 255)
+CARRY, RUNS, DAM_BOX = (255, 140, 0), (230, 0, 230), (0, 220, 220)
 # D8 receiver codes in flow.u8's low 4 bits: (dx, dy).
 D8 = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0), 5: (-1, -1), 6: (1, -1), 7: (-1, 1), 8: (1, 1)}
+
+
+def _c255(c: tuple) -> tuple[int, int, int]:
+    return tuple(int(v * 255) for v in c)
+
+
+WATER_LEGEND = [("swatch", _c255(LAKE), "lake/sea"), ("swatch", _c255(RIVER), "river"),
+                ("ring", OPEN_EXIT, "open lake exit"), ("ring", CLOSED, "closed lake low point")]
+CROP_LEGEND = WATER_LEGEND + [("box", MARK, "review area"),
+                              ("ramp", None, f"cut: red lowered, blue raised, sqrt ramp to {CUT_M:g} m")]
+DAM_LEGEND = CROP_LEGEND[:4] + [("line", THALWEG, "thalweg flow"), ("line", WET, "wet flow"),
+                                ("line", DRY, f"dry flow, Q >= {ARROW_KM2:g} km2")]
+OVERVIEW_LEGEND = WATER_LEGEND[:2] + [("box", MARK, "owner spot"), ("box", CARRY, "carried area"),
+                                      ("box", DAM_BOX, "dam view"), ("box", RUNS, "straight run"),
+                                      ("box", CLOSED, "failing check")]
 
 
 def _json(path: Path) -> dict:
@@ -92,6 +116,25 @@ def _nw(grid: dict) -> tuple[float, float]:
     return float(origin[0] + off[0]), float(origin[1] - off[1])
 
 
+def _kind_table(bodies: list) -> np.ndarray:
+    """Body id -> 0 dry, 1 lake or sea, 2 river."""
+    table = np.zeros(max((b["id"] for b in bodies), default=0) + 1, np.uint8)
+    for b in bodies:
+        table[b["id"]] = {"lake": 1, "sea": 1, "river": 2}.get(b["kind"], 0)
+    return table
+
+
+def _kinds(table: np.ndarray, body: np.ndarray) -> np.ndarray:
+    k = table[np.minimum(body, len(table) - 1)]
+    k[body >= len(table)] = 0
+    return k
+
+
+def _is_open(b: dict) -> bool:
+    """A lake that drains: by its endorheic flag, else by having an exit cell."""
+    return not b["endorheic"] if "endorheic" in b else b.get("exit_cell") is not None
+
+
 @dataclass
 class Layers:
     """A water output (`out`) and the raw surface it was computed from."""
@@ -104,6 +147,12 @@ class Layers:
     nw: tuple[float, float]
     bodies: list
     report: dict
+    table: np.ndarray = field(init=False)
+    by_id: dict = field(init=False)
+
+    def __post_init__(self):
+        self.table = _kind_table(self.bodies)
+        self.by_id = {b["id"]: b for b in self.bodies}
 
     def mm(self, name: str | Path, dtype) -> np.ndarray:
         path = name if isinstance(name, Path) else self.out / name
@@ -135,22 +184,48 @@ def open_layers(path: Path, raw: Path | None = None) -> Layers:
                   _json(out / "bodies.json")["bodies"], _json(out / "report.json"))
 
 
-def _kind_table(bodies: list) -> np.ndarray:
-    """Body id -> 0 dry, 1 lake or sea, 2 river."""
-    table = np.zeros(max((b["id"] for b in bodies), default=0) + 1, np.uint8)
-    for b in bodies:
-        table[b["id"]] = {"lake": 1, "sea": 1, "river": 2}.get(b["kind"], 0)
-    return table
+def default_dest(path: Path) -> Path:
+    """Review figures go next to the input, never inside the Rust output: <world>/hydrology/review,
+    <run>/review, or <out>-review beside a bare output directory."""
+    if (path / "hydrology" / "1m" / "report.json").exists():
+        return path / "hydrology" / "review"
+    if (path / "out" / "report.json").exists():
+        return path / "review"
+    return path.parent / f"{path.name}-review"
 
 
-def _kinds(table: np.ndarray, body: np.ndarray) -> np.ndarray:
-    k = table[np.minimum(body, len(table) - 1)]
-    k[body >= len(table)] = 0
-    return k
+# Reading and rendering.
+
+Win = tuple[int, int, int, int]  # r0, c0, h, w
+
+
+def _read(L: Layers, name: str | Path, dtype, win: Win, k: int = 1) -> np.ndarray:
+    r0, c0, h, w = win
+    return np.asarray(L.mm(name, dtype)[r0 : r0 + h : k, c0 : c0 + w : k])
+
+
+def _reduce(kinds: np.ndarray, k: int) -> np.ndarray:
+    """k x k blocks: river if any cell is, else lake if any cell is."""
+    h, w = -(-kinds.shape[0] // k) * k, -(-kinds.shape[1] // k) * k
+    pad = np.zeros((h, w), np.uint8)
+    pad[: kinds.shape[0], : kinds.shape[1]] = kinds
+    b = pad.reshape(h // k, k, w // k, k)
+    return np.where((b == 2).any(axis=(1, 3)), 2, np.where((b == 1).any(axis=(1, 3)), 1, 0)).astype(np.uint8)
+
+
+def _kinds_at(L: Layers, win: Win, k: int = 1) -> np.ndarray:
+    """Water kinds of the window at stride k, block-reduced so thin rivers survive (streamed)."""
+    if k == 1:
+        return _kinds(L.table, _read(L, "water-body.u32", "<u4", win))
+    r0, c0, h, w = win
+    step = k * max(1, 512 // k)
+    body = L.mm("water-body.u32", "<u4")
+    return np.concatenate([_reduce(_kinds(L.table, np.asarray(body[y : min(y + step, r0 + h), c0 : c0 + w])), k)
+                           for y in range(r0, r0 + h, step)])
 
 
 def _illum(z: np.ndarray, cell_m: float) -> np.ndarray:
-    """Hillshade (north-west sun at 45 degrees) in 0..1, NaN where the ground is."""
+    """Hillshade (north-west sun at 45 degrees) in 0..1; NaN where the elevation is NaN."""
     gy, gx = np.gradient(np.asarray(z, np.float64), cell_m)
     az, alt = np.radians(315), np.radians(45)
     slope = np.arctan(np.hypot(gx, gy))
@@ -158,46 +233,92 @@ def _illum(z: np.ndarray, cell_m: float) -> np.ndarray:
     return np.clip(np.sin(alt) * np.cos(slope) + np.cos(alt) * np.sin(slope) * np.cos(az - aspect), 0, 1)
 
 
-def _limits(i: np.ndarray) -> tuple[float, float]:
-    """The contrast stretch: 1st to 99th percentile."""
-    if not np.isfinite(i).any():
+def _limits(i: np.ndarray, dry: np.ndarray | None = None) -> tuple[float, float]:
+    """The contrast stretch: 1st to 99th percentile (of the dry cells when there are any)."""
+    v = i[dry] if dry is not None and dry.any() else i
+    v = v[np.isfinite(v)]
+    if v.size == 0:
         return 0.0, 1.0
-    lo, hi = np.nanpercentile(i, [1, 99])
+    lo, hi = np.percentile(v, [1, 99])
     return (float(lo), float(hi)) if hi - lo > 1e-6 else (0.0, 1.0)
 
 
-def _rgb(i: np.ndarray, lim: tuple[float, float], kinds: np.ndarray | None) -> np.ndarray:
-    g = np.nan_to_num(np.clip((i - lim[0]) / (lim[1] - lim[0]), 0, 1), nan=0.5)
+def _gray(i: np.ndarray, lim: tuple[float, float]) -> np.ndarray:
+    return np.nan_to_num(np.clip((i - lim[0]) / (lim[1] - lim[0]), 0, 1), nan=0.5)
+
+
+def _water(g: np.ndarray, kinds: np.ndarray, widen: bool) -> np.ndarray:
+    """Gray with lakes light blue and rivers dark blue (widened to 3 px when a cell is 1 px)."""
     rgb = np.repeat(g[..., None], 3, axis=2)
-    if kinds is not None:
-        for k, col in TINT.items():
-            m = kinds == k
-            rgb[m] = 0.3 * rgb[m] + 0.7 * np.array(col) * (0.55 + 0.45 * rgb[m])
-    return (rgb * 255).astype(np.uint8)
+    lake = kinds == 1
+    river = ndimage.binary_dilation(kinds == 2) if widen else kinds == 2
+    rgb[lake] = 0.35 * rgb[lake] + 0.65 * np.array(LAKE) * (0.6 + 0.4 * g[lake, None])
+    rgb[river] = 0.2 * rgb[river] + 0.8 * np.array(RIVER)
+    return rgb
 
 
-def _up(a: np.ndarray, scale: int) -> np.ndarray:
+def _cut(d: np.ndarray, g: np.ndarray) -> np.ndarray:
+    """Result minus raw over a light hillshade: red lowered, blue raised."""
+    base = np.repeat((0.7 + 0.3 * g)[..., None], 3, axis=2)
+    t = np.nan_to_num(np.clip(d / CUT_M, -1, 1))
+    a = np.sqrt(np.abs(t))[..., None]
+    col = np.where((t < 0)[..., None], np.array(CUT_LOW), np.array(CUT_HIGH))
+    return base * (1 - a) + col * a
+
+
+def _u8(rgb: np.ndarray, scale: int) -> np.ndarray:
+    a = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
     return a if scale == 1 else np.repeat(np.repeat(a, scale, 0), scale, 1)
 
 
-def _join(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-    return np.concatenate([left, np.full((left.shape[0], GAP_PX, 3), 255, np.uint8), right], axis=1)
+def _compose(panels: list[np.ndarray], title: str, px_per_m: float, legend: list):
+    """Panels side by side over a caption bar: title, scale bar, north arrow and legend."""
+    from PIL import Image, ImageDraw
+
+    h = panels[0].shape[0]
+    xs, x = [], 0
+    for p in panels:
+        xs.append(x)
+        x += p.shape[1] + GAP_PX
+    img = Image.new("RGB", (max(x - GAP_PX, 1100), h + BAR_PX), "white")
+    for p, x0 in zip(panels, xs):
+        img.paste(Image.fromarray(p), (x0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.text((4, h + 3), title, fill=(0, 0, 0))
+    y = h + 26
+    want = 120 / px_per_m
+    nice = max(m * 10**p for p in range(-1, 6) for m in (1, 2, 5) if m * 10**p <= want) if want >= 0.1 else want
+    length = nice * px_per_m
+    draw.line([(4, y), (4 + length, y)], fill=(0, 0, 0), width=2)
+    for xe in (4, 4 + length):
+        draw.line([(xe, y - 4), (xe, y + 4)], fill=(0, 0, 0))
+    draw.text((8 + length, y - 6), f"{nice:g} m", fill=(0, 0, 0))
+    nx = 180
+    draw.polygon([(nx, y - 10), (nx - 5, y + 4), (nx + 5, y + 4)], fill=(0, 0, 0))
+    draw.text((nx + 8, y - 6), "N", fill=(0, 0, 0))
+    x = 210
+    for kind, col, label in legend:
+        if kind == "swatch":
+            draw.rectangle([x, y - 5, x + 12, y + 5], fill=col, outline=(0, 0, 0))
+        elif kind == "ring":
+            draw.ellipse([x, y - 6, x + 12, y + 6], outline=col, width=2)
+        elif kind == "box":
+            draw.rectangle([x, y - 5, x + 12, y + 5], outline=col, width=2)
+        elif kind == "line":
+            draw.line([(x, y), (x + 12, y)], fill=(0, 0, 0), width=4)
+            draw.line([(x, y), (x + 12, y)], fill=col, width=2)
+        elif kind == "ramp":
+            for i in range(25):
+                t = i / 12 - 1
+                c = np.array(CUT_LOW if t < 0 else CUT_HIGH) * abs(t) + (1 - abs(t))
+                draw.line([(x + i, y - 5), (x + i, y + 5)], fill=_c255(tuple(c)))
+            x += 12
+        draw.text((x + 16, y - 6), label, fill=(0, 0, 0))
+        x += 16 + int(draw.textlength(label)) + 14
+    return img, xs
 
 
-def _panels(L: Layers, win: tuple[int, int, int, int], scale: int, pair: bool) -> np.ndarray:
-    """Raw beside the result (or the result alone), one contrast stretch from the raw."""
-    r0, c0, h, w = win
-    sl = (slice(r0, r0 + h), slice(c0, c0 + w))
-    res = _illum(np.asarray(L.mm("elevation.f32", "<f4")[sl]), L.spacing)
-    kinds = _kinds(_kind_table(L.bodies), np.asarray(L.mm("water-body.u32", "<u4")[sl]))
-    if not pair:
-        return _up(_rgb(res, _limits(res), kinds), scale)
-    raw = _illum(np.asarray(L.mm(L.raw, "<f4")[sl]), L.spacing)
-    lim = _limits(raw)
-    return _join(_up(_rgb(raw, lim, None), scale), _up(_rgb(res, lim, kinds), scale))
-
-
-def _window(L: Layers, c: int, r: int, cells: int) -> tuple[int, int, int, int] | None:
+def _window(L: Layers, c: int, r: int, cells: int) -> Win | None:
     """A cells² window around (c, r) kept inside the grid; None when (c, r) is outside it."""
     if not (0 <= c < L.w and 0 <= r < L.h):
         return None
@@ -205,75 +326,103 @@ def _window(L: Layers, c: int, r: int, cells: int) -> tuple[int, int, int, int] 
     return min(max(r - ch // 2, 0), L.h - ch), min(max(c - cw // 2, 0), L.w - cw), ch, cw
 
 
-def _exits(L: Layers, win: tuple[int, int, int, int]) -> list[tuple[int, int, tuple]]:
-    """Lake outlet markers in the window: a full lake's exit cell, a closed lake's lowest cell."""
+def _rings(L: Layers, win: Win) -> list[tuple[int, int, tuple]]:
+    """Lake rings in the window: an open lake's exit cell, a closed lake's lowest cell."""
     r0, c0, h, w = win
-    marks = []
-    body = None
-    for b in L.bodies:
-        if b["kind"] != "lake":
+    marks = [(b["exit_cell"][0], b["exit_cell"][1], OPEN_EXIT) for b in L.bodies
+             if b["kind"] == "lake" and _is_open(b) and b.get("exit_cell") is not None
+             and r0 <= b["exit_cell"][1] < r0 + h and c0 <= b["exit_cell"][0] < c0 + w]
+    body = _read(L, "water-body.u32", "<u4", win)
+    ground = None
+    for i in np.unique(body):
+        b = L.by_id.get(int(i))
+        if b is None or b["kind"] != "lake" or _is_open(b):
             continue
-        if b.get("exit_cell") is not None:
-            c, r = b["exit_cell"]
-            if r0 <= r < r0 + h and c0 <= c < c0 + w:
-                marks.append((c, r, FULL_EXIT))
-            continue
-        if body is None:
-            body = np.asarray(L.mm("water-body.u32", "<u4")[r0 : r0 + h, c0 : c0 + w])
-            ground = np.asarray(L.mm("elevation.f32", "<f4")[r0 : r0 + h, c0 : c0 + w])
-        inside = body == b["id"]
-        if inside.any():
-            r, c = np.unravel_index(np.argmin(np.where(inside, ground, np.inf)), inside.shape)
-            marks.append((c0 + int(c), r0 + int(r), CLOSED))
+        if ground is None:
+            ground = _read(L, "elevation.f32", "<f4", win)
+        inside = body == i
+        r, c = np.unravel_index(np.argmin(np.where(inside, ground, np.inf)), inside.shape)
+        marks.append((c0 + int(c), r0 + int(r), CLOSED))
     return marks
 
 
-def _crop(L: Layers, path: Path, centre: tuple[int, int], size_m: float, target_px: int = CROP_PX,
+def _arrows(draw, L: Layers, win: Win, scale: int, x0: int) -> None:
+    """D8 flow from cell centre to receiver centre, outlined; a head on about every 7th cell."""
+    r0, c0, h, w = win
+    flow = _read(L, "flow.u8", np.uint8, win)
+    kinds = _kinds(L.table, _read(L, "water-body.u32", "<u4", win))
+    q = _read(L, "discharge.f32", "<f4", win)
+    shown = (flow & 15 > 0) & ((kinds > 0) | (flow & 16 > 0) | (q >= ARROW_KM2))
+    cells = list(zip(*np.nonzero(shown)))
+    segs = []
+    for r, c in cells:
+        dx, dy = D8.get(int(flow[r, c] & 15), (0, 0))
+        a = (x0 + (c + 0.5) * scale, (r + 0.5) * scale)
+        b = (a[0] + dx * scale, a[1] + dy * scale)
+        col = THALWEG if flow[r, c] & 16 else WET if kinds[r, c] else DRY
+        segs.append((a, b, dx, dy, col, ((r0 + r) * 3 + (c0 + c) * 5) % 7 == 0))
+    for a, b, *_ in segs:
+        draw.line([a, b], fill=(0, 0, 0), width=4)
+    for a, b, dx, dy, col, head in segs:
+        draw.line([a, b], fill=col, width=2)
+        if head:
+            n = math.hypot(dx, dy)
+            ux, uy = dx / n, dy / n
+            tip = (b[0] - ux * 0.2 * scale, b[1] - uy * 0.2 * scale)
+            base = (tip[0] - ux * 1.5 * scale, tip[1] - uy * 1.5 * scale)
+            hw = 0.75 * scale
+            draw.polygon([tip, (base[0] - uy * hw, base[1] + ux * hw), (base[0] + uy * hw, base[1] - ux * hw)],
+                         fill=col, outline=(0, 0, 0))
+
+
+def _crop(L: Layers, path: Path, centre: tuple[int, int], size_m: float, title: str, target_px: int = CROP_PX,
           box: tuple[int, int, int, int] | None = None, ends: tuple = (), arrows: bool = False,
-          pair: bool = True) -> Path | None:
-    """One crop centred on cell `centre`; `box` (c0, r0, c1, r1) and `ends` [(c, r)] are marked
-    on both panels, lake outlets and flow arrows on the result. None when outside the grid."""
-    from PIL import Image, ImageDraw
+          legend: list = CROP_LEGEND) -> tuple[Path | None, Win | None]:
+    """raw | result | cut around cell `centre`, one contrast stretch from the result's dry cells.
+    `box` (c0, r0, c1, r1) and `ends` [(c, r)] are marked on raw and result, lake rings and flow
+    arrows on the result. (None, None) when the centre is outside the grid."""
+    from PIL import ImageDraw
 
     cells = max(1, int(round(size_m / L.spacing)))
     win = _window(L, *centre, cells)
     if win is None:
-        return None
+        return None, None
     r0, c0, h, w = win
-    scale = max(1, int(round(target_px / cells)))
-    img = Image.fromarray(_panels(L, win, scale, pair))
+    k = max(1, math.ceil(cells / target_px))
+    scale = max(1, int(round(target_px / cells))) if k == 1 else 1
+    raw = _read(L, L.raw, "<f4", win, k)
+    res = _read(L, "elevation.f32", "<f4", win, k)
+    kinds = _kinds_at(L, win, k)
+    ir, ie = _illum(raw, L.spacing * k), _illum(res, L.spacing * k)
+    lim = _limits(ie, kinds == 0)
+    gr, ge = _gray(ir, lim), _gray(ie, lim)
+    panels = [_u8(np.repeat(gr[..., None], 3, axis=2), scale), _u8(_water(ge, kinds, scale < 2), scale),
+              _u8(_cut(res.astype(np.float64) - raw, ge), scale)]
+    e, n = L.en(*centre)
+    img, xs = _compose(panels, f"{title}   centre E{e} N{n}   raw | result | cut (result - raw)",
+                       scale / (L.spacing * k), legend)
     draw = ImageDraw.Draw(img)
-    right = w * scale + GAP_PX if pair else 0
 
     def px(x0: int, c: float, r: float) -> tuple[float, float]:
-        return x0 + (c - c0 + 0.5) * scale, (r - r0 + 0.5) * scale
+        return x0 + (c - c0 + 0.5) * scale / k, (r - r0 + 0.5) * scale / k
 
-    for x0 in {0, right}:
+    for x0 in xs[:2]:
         if box is not None:
             a, b = px(x0, box[0] - 0.5, box[1] - 0.5), px(x0, box[2] + 0.5, box[3] + 0.5)
-            draw.rectangle([a, b], outline=MARK)
+            draw.rectangle([a, b], outline=MARK, width=2)
         for c, r in ends:
             x, y = px(x0, c, r)
-            draw.ellipse([x - 5, y - 5, x + 5, y + 5], outline=MARK, width=2)
-    if arrows:
-        flow = np.asarray(L.mm("flow.u8", np.uint8)[r0 : r0 + h, c0 : c0 + w])
-        kinds = _kinds(_kind_table(L.bodies), np.asarray(L.mm("water-body.u32", "<u4")[r0 : r0 + h, c0 : c0 + w]))
-        q = np.asarray(L.mm("discharge.f32", "<f4")[r0 : r0 + h, c0 : c0 + w])
-        shown = (flow & 15 > 0) & ((kinds > 0) | (flow & 16 > 0) | (q >= ARROW_KM2))
-        for r, c in zip(*np.nonzero(shown)):
-            dx, dy = D8.get(int(flow[r, c] & 15), (0, 0))
-            x, y = px(right, c0 + c, r0 + r)
-            tip = (x + dx * 0.4 * scale, y + dy * 0.4 * scale)
-            col = (230, 30, 30) if flow[r, c] & 16 else MARK if kinds[r, c] else (0, 0, 0)
-            draw.line([(x - dx * 0.3 * scale, y - dy * 0.3 * scale), tip], fill=col)
-            draw.rectangle([tip[0] - 1, tip[1] - 1, tip[0] + 1, tip[1] + 1], fill=col)
-    for c, r, col in _exits(L, win):
-        x, y = px(right, c, r)
-        rad = max(4, scale)
+            draw.rectangle([x - 5, y - 5, x + 5, y + 5], outline=MARK, width=2)
+    if arrows and k == 1:
+        _arrows(draw, L, win, scale, xs[1])
+    rad = max(6, 1.5 * scale)
+    for c, r, col in _rings(L, win):
+        x, y = px(xs[1], c, r)
+        draw.ellipse([x - rad, y - rad, x + rad, y + rad], outline=(0, 0, 0), width=4)
         draw.ellipse([x - rad, y - rad, x + rad, y + rad], outline=col, width=2)
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(path)
-    return path
+    return path, win
 
 
 def _clusters(cells: list, radius: float) -> list[list]:
@@ -294,7 +443,7 @@ def _lake_sheets(L: Layers, dest: Path) -> list[Path]:
     with water tinted, the exit ringed; captioned id, level and E/N."""
     from PIL import Image, ImageDraw
 
-    lakes = sorted((b for b in L.bodies if b["kind"] == "lake" and b.get("exit_cell") is not None),
+    lakes = sorted((b for b in L.bodies if b["kind"] == "lake" and _is_open(b) and b.get("exit_cell") is not None),
                    key=lambda b: (-b.get("area_km2", 0.0), b["id"]))
     cells = max(1, int(round(EXIT_M / L.spacing)))
     scale = max(1, int(round(EXIT_PX / cells)))
@@ -311,87 +460,97 @@ def _lake_sheets(L: Layers, dest: Path) -> list[Path]:
             win = _window(L, c, r, cells)
             if win is None:
                 continue
-            thumb = Image.fromarray(_panels(L, win, scale, pair=False))
+            res = _read(L, "elevation.f32", "<f4", win)
+            kinds = _kinds(L.table, _read(L, "water-body.u32", "<u4", win))
+            ie = _illum(res, L.spacing)
+            thumb = Image.fromarray(_u8(_water(_gray(ie, _limits(ie, kinds == 0)), kinds, scale < 2), scale))
             td = ImageDraw.Draw(thumb)
             x, y = (c - win[1] + 0.5) * scale, (r - win[0] + 0.5) * scale
-            td.ellipse([x - 6, y - 6, x + 6, y + 6], outline=CLOSED, width=2)
+            td.ellipse([x - 7, y - 7, x + 7, y + 7], outline=(0, 0, 0), width=4)
+            td.ellipse([x - 7, y - 7, x + 7, y + 7], outline=OPEN_EXIT, width=2)
             ox, oy = (i % SHEET_COLS) * (side + 4), (i // SHEET_COLS) * (side + cap + 4)
             sheet.paste(thumb, (ox, oy + cap))
             e, n = L.en(c, r)
             draw.text((ox + 2, oy + 1), f"lake {b['id']}  {b.get('level_m', 0):.1f} m  E{e} N{n}", fill=(0, 0, 0))
+        img, _ = _compose([np.asarray(sheet)], f"lake exits {s + 1}-{s + len(page)} of {len(lakes)}, "
+                          f"{EXIT_M} m each, largest lakes first", scale / L.spacing, WATER_LEGEND[:3])
         path = dest / f"sheet-{s // per + 1:02d}.png"
         path.parent.mkdir(parents=True, exist_ok=True)
-        sheet.save(path)
+        img.save(path)
         out.append(path)
     return out
 
 
+def _overview(L: Layers, path: Path, marks: list[tuple[Win, tuple]]) -> Path:
+    """The whole grid at a stride (water block-reduced), tinted, with the crop boxes marked."""
+    from PIL import ImageDraw
+
+    k = max(1, math.ceil(max(L.w, L.h) / OVERVIEW_PX))
+    win = (0, 0, L.h, L.w)
+    res = _read(L, "elevation.f32", "<f4", win, k)
+    kinds = _kinds_at(L, win, k)
+    ie = _illum(res, L.spacing * k)
+    panel = _u8(_water(_gray(ie, _limits(ie, kinds == 0)), kinds, True), 1)
+    (e0, n0), (e1, n1) = L.en(0, 0), L.en(L.w, L.h)
+    img, _ = _compose([panel], f"overview E{e0}-{e1} N{n1}-{n0}, 1 px = {k * L.spacing:g} m", 1 / (L.spacing * k),
+                      OVERVIEW_LEGEND)
+    draw = ImageDraw.Draw(img)
+    for (r0, c0, h, w), col in marks:
+        draw.rectangle([c0 / k, r0 / k, (c0 + w) / k, (r0 + h) / k], outline=col, width=2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(path)
+    return path
+
+
 def crops(src: Path, dest: Path, spots=SPOTS, areas=AREAS, dam: tuple[int, int] | None = DAM,
           raw: Path | None = None) -> list[Path]:
-    """Every review crop of a world, window run or water output under `dest`: the owner's spots
-    (spots/E<e>-N<n>.png, 512 m), the carried areas (carry/), the dam flow overlay (dam/), the
-    longest straight runs (straight-runs/), clusters of failing-check examples (failures/) and the
-    lake-exit contact sheets (lake-exits/). Spots outside the grid are skipped."""
+    """Every review figure of a world, window run or water output under `dest`: the owner's spots
+    (spots/E<e>-N<n>.png, 512 m), the carried areas (carry/), the dam flow view (dam/), the
+    longest straight runs (straight-runs/), clusters of failing-check examples (failures/), the
+    lake-exit contact sheets (lake-exits/) and overview.png with every crop box. Spots outside
+    the grid are skipped."""
     L = open_layers(src, raw)
-    out: list[Path | None] = []
+    out: list[Path] = []
+    marks: list[tuple[Win, tuple]] = []
+
+    def add(result: tuple[Path | None, Win | None], colour: tuple) -> None:
+        if result[0] is not None:
+            out.append(result[0])
+            marks.append((result[1], colour))
+
     for e, n in spots:
-        out.append(_crop(L, dest / "spots" / f"E{e}-N{n}.png", L.cell(e, n), CROP_M))
+        add(_crop(L, dest / "spots" / f"E{e}-N{n}.png", L.cell(e, n), CROP_M, f"spot E{e} N{n}"), MARK)
     for a in areas:
         cs = [L.cell(e, n) for e, n in a.points]
         lo = (min(c for c, _ in cs), min(r for _, r in cs))
         hi = (max(c for c, _ in cs), max(r for _, r in cs))
         centre = ((lo[0] + hi[0]) // 2, (lo[1] + hi[1]) // 2)
-        out.append(_crop(L, dest / "carry" / f"{a.name}.png", centre, a.size_m,
-                         box=(*lo, *hi) if a.mark == "box" else None, ends=tuple(cs) if a.mark == "ends" else ()))
+        add(_crop(L, dest / "carry" / f"{a.name}.png", centre, a.size_m, a.name,
+                  box=(*lo, *hi) if a.mark == "box" else None, ends=tuple(cs) if a.mark == "ends" else ()), CARRY)
     if dam is not None:
-        out.append(_crop(L, dest / "dam" / f"flow-E{dam[0]}-N{dam[1]}.png", L.cell(*dam), DAM_M, DAM_PX,
-                         arrows=True))
+        add(_crop(L, dest / "dam" / f"flow-E{dam[0]}-N{dam[1]}.png", L.cell(*dam), DAM_M, "dam flow", DAM_PX,
+                  arrows=True, legend=DAM_LEGEND), DAM_BOX)
     figures = L.report.get("figures", {})
     for i, run in enumerate(figures.get("longest_straight_runs", [])[:STRAIGHT_RUNS]):
         a, b = run["from"], run["to"]
         mid = ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2)
         e, n = L.en(*mid)
-        out.append(_crop(L, dest / "straight-runs" / f"{i + 1:02d}-E{e}-N{n}.png", mid, RUN_M,
-                         ends=(tuple(a), tuple(b))))
+        add(_crop(L, dest / "straight-runs" / f"{i + 1:02d}-E{e}-N{n}.png", mid, RUN_M,
+                  f"straight run {i + 1}, {run.get('length_m', 0):.0f} m", ends=(tuple(a), tuple(b))), RUNS)
     for check, cells in sorted(L.report.get("examples", {}).items()):
         for j, g in enumerate(_clusters(cells, FAILURE_M / 2 / L.spacing)[:FAILURE_CROPS]):
             lo = (min(c for c, _ in g), min(r for _, r in g))
             hi = (max(c for c, _ in g), max(r for _, r in g))
             mid = ((lo[0] + hi[0]) // 2, (lo[1] + hi[1]) // 2)
             e, n = L.en(*mid)
-            out.append(_crop(L, dest / "failures" / f"{check}-{j + 1:02d}-E{e}-N{n}.png", mid, FAILURE_M,
-                             box=(*lo, *hi)))
+            add(_crop(L, dest / "failures" / f"{check}-{j + 1:02d}-E{e}-N{n}.png", mid, FAILURE_M,
+                      f"{check} cluster {j + 1} ({len(g)} cells)", box=(*lo, *hi)), CLOSED)
     out += _lake_sheets(L, dest / "lake-exits")
-    return [p for p in out if p is not None]
+    out.append(_overview(L, dest / "overview.png", marks))
+    return out
 
 
-def window_pair(run_dir: Path, dest: Path, raw: Path | None = None, max_px: int = 2048) -> Path:
-    """The whole window, raw beside the result (block means down to at most `max_px` a side;
-    a block is a river if any cell is, else water if any cell is)."""
-    from PIL import Image
-
-    L = open_layers(run_dir, raw)
-    k = max(1, math.ceil(max(L.w, L.h) / max_px))
-    h, w = L.h // k * k, L.w // k * k
-    table = _kind_table(L.bodies)
-
-    def blocks(a: np.ndarray, how) -> np.ndarray:
-        return how(a.reshape(a.shape[0] // k, k, w // k, k), axis=(1, 3))
-
-    raw_m, res_m, kinds = [], [], []
-    step = max(k, 1024 // k * k)
-    for y in range(0, h, step):
-        rows = slice(y, min(y + step, h))
-        raw_m.append(blocks(np.asarray(L.mm(L.raw, "<f4")[rows, :w], np.float64), np.mean))
-        res_m.append(blocks(np.asarray(L.mm("elevation.f32", "<f4")[rows, :w], np.float64), np.mean))
-        kb = _kinds(table, np.asarray(L.mm("water-body.u32", "<u4")[rows, :w]))
-        kinds.append(np.where(blocks(kb == 2, np.any), 2, np.where(blocks(kb == 1, np.any), 1, 0)))
-    raw_i = _illum(np.concatenate(raw_m), L.spacing * k)
-    res_i = _illum(np.concatenate(res_m), L.spacing * k)
-    lim = _limits(raw_i)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(_join(_rgb(raw_i, lim, None), _rgb(res_i, lim, np.concatenate(kinds)))).save(dest)
-    return dest
+# The coarse guide.
 
 
 def _bodies(dirpath: Path) -> tuple[dict[int, str], dict[int, float]]:
@@ -411,25 +570,33 @@ def _is(table: np.ndarray, ids: np.ndarray) -> np.ndarray:
     return table[np.minimum(ids, len(table) - 1)] & (ids < len(table))
 
 
-def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dict:
-    """The fine water against the coarse (4 m) world's over the fine grid's footprint.
-    `fine_dir` holds the fine water-body.u32, bodies.json and grid.json (the world itself when
-    None). Coarse lakes that the footprint cuts are not compared; coarse river cells within
-    100 m of a footprint edge inside the coarse grid are not counted."""
-    fine_dir = fine_dir or world
-    cg, fg = _json(coarse / "grid.json"), _json(fine_dir / "grid.json")
-    cw, ch = cg["size"]
-    fw, fh = fg["size"]
+def _align(cg: dict, fg: dict, where: str) -> tuple[int, int, int]:
+    """Fine cells per coarse cell and the fine grid's NW corner in coarse cells (x, y)."""
     cs, fs = float(cg.get("spacing_m", 1.0)), float(fg.get("spacing_m", 1.0))
     k = int(round(cs / fs))
     (cex, cny), (fex, fny) = _nw(cg), _nw(fg)
     x0, y0 = (fex - cex) / cs, (cny - fny) / cs
     if k < 1 or abs(k * fs - cs) > 1e-6 or x0 != int(x0) or y0 != int(y0):
-        raise ValueError(f"{fine_dir} is not aligned to the {cs:g} m grid of {coarse}")
-    x0, y0 = int(x0), int(y0)
+        raise ValueError(f"{where}: the fine grid is not aligned to the {cs:g} m grid")
+    return k, int(x0), int(y0)
+
+
+def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dict:
+    """The fine water against the coarse (4 m) world's over the fine grid's footprint.
+    `fine_dir` holds the fine water-body.u32, bodies.json and grid.json (the world itself when
+    None). Coarse lakes that the footprint cuts are not compared; coarse river cells within
+    100 m of a footprint edge inside the coarse grid are not counted. `mismatches` lists each
+    failing lake with its box in metres (E west, N north, E east, N south)."""
+    fine_dir = fine_dir or world
+    cg, fg = _json(coarse / "grid.json"), _json(fine_dir / "grid.json")
+    cw, ch = cg["size"]
+    fw, fh = fg["size"]
+    cs = float(cg.get("spacing_m", 1.0))
+    k, x0, y0 = _align(cg, fg, str(fine_dir))
     pw, ph = fw // k, fh // k
     if x0 < 0 or y0 < 0 or x0 + pw > cw or y0 + ph > ch:
         raise ValueError(f"{fine_dir} lies outside {coarse}")
+    cex, cny = _nw(cg)
     cb = np.memmap(coarse / "water-body.u32", "<u4", "r", shape=(ch, cw))
     cq = np.memmap(coarse / "discharge.f32", "<f4", "r", shape=(ch, cw))
     fb = np.memmap(fine_dir / "water-body.u32", "<u4", "r", shape=(fh, fw))
@@ -450,28 +617,36 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
             b = boxes.setdefault(i, [ph, pw, -1, -1])
             b[:] = [min(b[0], y + sl[0].start), min(b[1], sl[1].start),
                     max(b[2], y + sl[0].stop - 1), max(b[3], sl[1].stop - 1)]
-    diff, over, gone, doubled, cut = {}, [], [], [], 0
+    diff, over, gone, doubled, mismatches, cut = {}, [], [], [], [], 0
     for i, (r0, c0, r1, c1) in sorted(boxes.items()):
         if (inner[0] and r0 == 0) or (inner[1] and c0 == 0) or (inner[2] and r1 == ph - 1) or \
                 (inner[3] and c1 == pw - 1):
             cut += 1
             continue
+        box_m = [cex + (x0 + c0) * cs, cny - (y0 + r0) * cs, cex + (x0 + c1 + 1) * cs, cny - (y0 + r1 + 1) * cs]
         mask = np.asarray(cb[y0 + r0 : y0 + r1 + 1, x0 + c0 : x0 + c1 + 1]) == i
         fine = np.asarray(fb[r0 * k : (r1 + 1) * k, c0 * k : (c1 + 1) * k])
         inside = np.kron(mask, np.ones((k, k), bool))
         ids, counts = np.unique(fine[inside], return_counts=True)
         lakes = [(int(c), int(j)) for j, c in zip(ids, counts) if _is(f_lake, np.array([j]))[0]]
+        found = []
         if not lakes:
             gone.append(i)
-            continue
-        area = int(inside.sum())
-        if sum(1 for c, _ in lakes if c > DOUBLED_SHARE * area) >= 2:
-            doubled.append(i)
-        _, best = max(lakes)
-        d = abs(flevels[best] - clevels[i])
-        diff[str(i)] = round(d, 3)
-        if d > LEVEL_GROSS_M:
-            over.append(i)
+            found.append(("gone", None))
+        else:
+            area = int(inside.sum())
+            _, best = max(lakes)
+            if sum(1 for c, _ in lakes if c > DOUBLED_SHARE * area) >= 2:
+                doubled.append(i)
+                found.append(("doubled", flevels[best]))
+            d = abs(flevels[best] - clevels[i])
+            diff[str(i)] = round(d, 3)
+            if d > LEVEL_GROSS_M:
+                over.append(i)
+                found.append(("over_5m", flevels[best]))
+        for failure, level in found:
+            mismatches.append({"lake": i, "failure": failure, "box_m": box_m, "coarse_level_m": clevels.get(i),
+                               "fine_level_m": level})
     # Coarse rivers: a fine river cell within 100 m (a k x k block any, then a square dilation).
     near = int(round(RIVER_NEAR_M / cs))
     has = np.zeros((ph, pw), bool)
@@ -497,7 +672,56 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
         "coarse_river_cells": total,
         "coarse_river_share_with_fine_river_within_100m": hits / total if total else 1.0,
         "hard_failures": len(over) + len(gone) + len(doubled),
+        "mismatches": mismatches,
     }
+
+
+def guide_figures(src: Path, coarse: Path, guide: dict, dest: Path, raw: Path | None = None) -> list[Path]:
+    """One figure per coarse-guide mismatch: the result with the 4 m water beside it with the
+    1 m water, the 4 m lake's box marked (coarse-guide/lake-<id>-<failure>.png)."""
+    from PIL import ImageDraw
+
+    L = open_layers(src, raw)
+    cg = _json(coarse / "grid.json")
+    kc, x0, y0 = _align(cg, _json(L.out / "grid.json"), str(src))
+    cw, ch = cg["size"]
+    cb = np.memmap(coarse / "water-body.u32", "<u4", "r", shape=(ch, cw))
+    ctable = _kind_table(_json(coarse / "bodies.json")["bodies"])
+    out = []
+    for m in guide.get("mismatches", []):
+        e0, n0, e1, n1 = m["box_m"]
+        size = min(max(max(e1 - e0, n0 - n1) * 1.3, GUIDE_MIN_M), GUIDE_MAX_M)
+        centre = L.cell((e0 + e1) / 2, (n0 + n1) / 2)
+        cells = max(1, int(round(size / L.spacing)))
+        win = _window(L, *centre, cells)
+        if win is None:
+            continue
+        r0, c0, h, w = win
+        k = max(1, math.ceil(cells / GUIDE_PX))
+        scale = max(1, int(round(GUIDE_PX / cells))) if k == 1 else 1
+        res = _read(L, "elevation.f32", "<f4", win, k)
+        fk = _kinds_at(L, win, k)
+        rows, cols = r0 + np.arange(0, h, k), c0 + np.arange(0, w, k)
+        ck = _kinds(ctable, np.asarray(cb[np.ix_(y0 + rows // kc, x0 + cols // kc)]))
+        ie = _illum(res, L.spacing * k)
+        g = _gray(ie, _limits(ie, fk == 0))
+        widen = scale < 2
+        lvl = "none" if m["fine_level_m"] is None else f"{m['fine_level_m']:.2f} m"
+        e, n = L.en(*centre)
+        img, xs = _compose([_u8(_water(g, ck, widen), scale), _u8(_water(g, fk, widen), scale)],
+                           f"4 m lake {m['lake']}: {m['failure']}, 4 m level {m['coarse_level_m']:.2f} m, "
+                           f"1 m level {lvl}   centre E{e} N{n}   4 m water | 1 m water",
+                           scale / (L.spacing * k), WATER_LEGEND[:2] + [("box", MARK, "4 m lake box")])
+        draw = ImageDraw.Draw(img)
+        (bc0, br0), (bc1, br1) = L.cell(e0, n0), L.cell(e1, n1)
+        for x in xs:
+            draw.rectangle([x + (bc0 - c0) * scale / k, (br0 - r0) * scale / k,
+                            x + (bc1 - c0) * scale / k, (br1 - r0) * scale / k], outline=MARK, width=2)
+        path = dest / f"lake-{m['lake']}-{m['failure']}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(path)
+        out.append(path)
+    return out
 
 
 GUIDE_SUMMARY = ("hard_failures", "lakes_compared", "lakes_over_5m", "lakes_gone", "lakes_doubled",
@@ -507,22 +731,19 @@ GUIDE_SUMMARY = ("hard_failures", "lakes_compared", "lakes_over_5m", "lakes_gone
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("path", type=Path, help="v3 world, window run directory or water output directory")
-    p.add_argument("--dest", type=Path, help="default: <world>/hydrology/1m/review or <run>/review")
+    p.add_argument("--dest", type=Path, help="default: next to the input (see default_dest)")
     p.add_argument("--raw", type=Path, help="the raw surface, when not beside the output")
     p.add_argument("--coarse", type=Path, help="a 4 m hydrology directory for the coarse guide")
     a = p.parse_args(argv)
-    L = open_layers(a.path, a.raw)
-    world = L.out.parent.name == "hydrology"
-    dest = a.dest or (L.out / "review" if world else (a.path if L.out != a.path else L.out) / "review")
+    dest = a.dest or default_dest(a.path)
     paths = crops(a.path, dest, raw=a.raw)
-    if not world:
-        paths.append(window_pair(a.path, dest / "window.png", a.raw))
+    if a.coarse:
+        guide = coarse_guide(a.path, a.coarse, fine_dir=open_layers(a.path, a.raw).out)
+        (dest / "coarse-guide.json").write_text(json.dumps(guide, indent=1))
+        paths += guide_figures(a.path, a.coarse, guide, dest / "coarse-guide", a.raw)
+        print(json.dumps({k: guide[k] for k in GUIDE_SUMMARY}))
     for path in paths:
         print(path)
-    if a.coarse:
-        guide = coarse_guide(a.path, a.coarse, fine_dir=L.out)
-        (dest / "coarse-guide.json").write_text(json.dumps(guide, indent=1))
-        print(json.dumps({k: guide[k] for k in GUIDE_SUMMARY}))
     return 0
 
 

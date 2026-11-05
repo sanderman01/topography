@@ -78,9 +78,11 @@ def window_run(root: Path, n: int = 600) -> Path:
     body = np.zeros((n, n), np.uint32)
     body[100:160, 100:180] = 2
     body[160:500, 140] = 3
+    body[300:320, 400:420] = 4  # closed: the flag wins over a stray exit cell
     write(out, n, body, [{"id": 2, "kind": "lake", "level_m": 95.0, "exit_cell": [140, 160], "endorheic": False},
-                         {"id": 3, "kind": "river"}], np.where(body == 3, 1.0, 0.01), origin=[1000.0, 3000.0],
-          offset_m=[0.0, 1000.0])
+                         {"id": 3, "kind": "river"},
+                         {"id": 4, "kind": "lake", "level_m": 85.0, "exit_cell": [410, 299], "endorheic": True}],
+          np.where(body == 3, 1.0, 0.01), origin=[1000.0, 3000.0], offset_m=[0.0, 1000.0])
     (raw - (body > 0) * 0.3).astype("<f4").tofile(out / "elevation.f32")
     np.where(body > 0, raw, np.nan).astype("<f4").tofile(out / "water-surface.f32")
     flow = np.full((n, n), 2, np.uint8)  # all south
@@ -106,26 +108,50 @@ class CropsTest(unittest.TestCase):
             self.assertEqual(len([s for s in names if s.startswith("straight-runs/")]), 1)
             self.assertEqual(len([s for s in names if s.startswith("failures/thalweg_beside")]), 2)
             self.assertEqual([s for s in names if s.startswith("lake-exits/")], ["lake-exits/sheet-01.png"])
+            self.assertIn("overview.png", names)
             from PIL import Image
 
             with Image.open(Path(tmp) / "review" / "spots" / "E1300-N1700.png") as im:
-                self.assertEqual(im.size, (2 * 512 + review.GAP_PX, 512))
+                self.assertEqual(im.size, (3 * 512 + 2 * review.GAP_PX, 512 + review.BAR_PX))
                 rgb = np.asarray(im.convert("RGB")).astype(int)
-            # The river (cyan) shows in the result panel only.
-            right = rgb[:, 512 + review.GAP_PX :]
-            cyan = (right[..., 2] > right[..., 0] + 40) & (right[..., 1] > right[..., 0] + 40)
-            self.assertGreater(cyan.sum(), 100)
-            left = rgb[:, :512]
-            self.assertEqual(((left[..., 2] > left[..., 0] + 40) & (left[..., 1] > left[..., 0] + 40)).sum(), 0)
+            raw, result = rgb[:512, :512], rgb[:512, 512 + review.GAP_PX : 1024 + review.GAP_PX]
+            cut = rgb[:512, 1024 + 2 * review.GAP_PX :]
 
-    def test_window_pair_shows_the_whole_window(self):
+            def river(a):
+                return (a[..., 0] < 60) & (a[..., 2] > 130) & (a[..., 2] > a[..., 1] + 60)
+
+            # The river (dark blue, widened) shows in the result panel only.
+            self.assertGreater(river(result).sum(), 3 * 300)
+            self.assertEqual(river(raw).sum(), 0)
+            # Rings: green at the open lake's exit, red at the closed lake's low point.
+            for col in (review.OPEN_EXIT, review.CLOSED):
+                self.assertGreater((result == col).all(axis=-1).sum(), 10, col)
+            # The cut panel shows the 0.3 m lowering under water in red.
+            self.assertGreater(((cut[..., 0] > cut[..., 2] + 40)).sum(), 1000)
+
+    def test_the_overview_marks_the_crops(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = window_run(Path(tmp))
-            path = review.window_pair(run, Path(tmp) / "pair.png")
+            review.crops(run, Path(tmp) / "review", spots=((1300, 1700),), areas=(), dam=None)
             from PIL import Image
 
-            with Image.open(path) as im:
-                self.assertEqual(im.size, (2 * 600 + review.GAP_PX, 600))
+            with Image.open(Path(tmp) / "review" / "overview.png") as im:
+                self.assertEqual(im.size[1], 600 + review.BAR_PX)
+                rgb = np.asarray(im.convert("RGB"))
+            self.assertGreater((rgb[:600, :600] == review.MARK).all(axis=-1).sum(), 1000)
+
+    def test_a_mismatch_gets_a_figure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = window_run(Path(tmp))
+            cb = np.zeros((150, 150), np.uint32)
+            cb[25:40, 25:45] = 7  # the 1 m lake 2 at 95 m
+            write(Path(tmp) / "4m", 150, cb, [{"id": 7, "kind": "lake", "level_m": 80.0}], np.zeros((150, 150)),
+                  4.0, origin=[1000.0, 2000.0])
+            guide = review.coarse_guide(run, Path(tmp) / "4m", fine_dir=run / "out")
+            self.assertEqual(guide["lakes_over_5m"], [7])
+            self.assertEqual(guide["mismatches"][0]["box_m"], [1100.0, 1900.0, 1180.0, 1840.0])
+            paths = review.guide_figures(run, Path(tmp) / "4m", guide, Path(tmp) / "guide")
+            self.assertEqual([p.name for p in paths], ["lake-7-over_5m.png"])
 
 
 if __name__ == "__main__":
