@@ -1,8 +1,11 @@
 //! Water bodies: the sea (id 1), lakes (labelled nodes by key, R28; river pools take their
 //! river's id, R26), and rivers as main stems: at a confluence the branch with the larger
 //! discharge keeps its body (ties: the smaller cell index), so a river body runs from its head
-//! to its mouth. Writes the ids of the sea, lakes, pools and thalweg cells and returns the body
-//! list (v2's `bodies.json` fields).
+//! to its mouth. A full lake or pool joins the main-stem choice at its outlet's outside cell
+//! with its whole discharge: a lake that wins starts its outflow river there (a gully never
+//! takes it); a pool that wins carries its largest inflow's river through it. Writes the ids
+//! of the sea, lakes, pools and thalweg cells and returns the body list (v2's `bodies.json`
+//! fields).
 
 use super::flow::{Next, ends};
 use super::geom::{OFFSETS, Rect, World};
@@ -21,6 +24,46 @@ fn invalid(msg: impl Into<String>) -> AcquisitionError {
     AcquisitionError::Invalid(msg.into())
 }
 
+/// `c` beats `best`: more discharge, ties to the smaller world index.
+fn better(c: (f32, u64), best: Option<(f32, u64)>) -> bool {
+    best.is_none_or(|b| c.0 > b.0 || (c.0 == b.0 && c.1 < b.1))
+}
+
+/// The thalweg neighbour draining into (x, y) with the most discharge, leaving out window
+/// cells `skip` names: (discharge, world index).
+fn best_up(
+    world: World,
+    win: Rect,
+    flow: &[u8],
+    q: &[f32],
+    x: u64,
+    y: u64,
+    skip: impl Fn(usize) -> bool,
+) -> Option<(f32, u64)> {
+    let mut best = None;
+    for k in 0..8 {
+        let Some((nx, ny)) = world.neighbour(x, y, k) else {
+            continue;
+        };
+        let Some(j) = win.local(nx, ny) else {
+            continue;
+        };
+        let d = flow[j] & 15;
+        if flow[j] & 16 == 0 || d == 0 || skip(j) {
+            continue;
+        }
+        let (dy, dx) = OFFSETS[d as usize - 1];
+        if (nx as i64 + dx, ny as i64 + dy) != (x as i64, y as i64) {
+            continue;
+        }
+        let c = (q[j], world.index(nx, ny));
+        if better(c, best) {
+            best = Some(c);
+        }
+    }
+    best
+}
+
 /// The thalweg neighbour draining into (x, y) with the most discharge (ties: the smaller world
 /// index).
 pub(crate) fn main_up(
@@ -31,67 +74,114 @@ pub(crate) fn main_up(
     x: u64,
     y: u64,
 ) -> Option<u64> {
-    let mut best: Option<(f32, u64)> = None;
-    for k in 0..8 {
-        let Some((nx, ny)) = world.neighbour(x, y, k) else {
-            continue;
-        };
-        let Some(j) = win.local(nx, ny) else {
-            continue;
-        };
-        let d = flow[j] & 15;
-        if flow[j] & 16 == 0 || d == 0 {
-            continue;
+    best_up(world, win, flow, q, x, y, |_| false).map(|b| b.1)
+}
+
+/// A window of the model's rasters.
+struct View {
+    win: Rect,
+    flow: Vec<u8>,
+    q: Vec<f32>,
+    node: Vec<u32>,
+}
+
+impl View {
+    fn read(r: &Rasters, win: Rect) -> Result<Self> {
+        Ok(Self {
+            win,
+            flow: r.flow.read(win)?,
+            q: r.discharge.read(win)?,
+            node: r.node.read(win)?,
+        })
+    }
+    fn at(&self, x: u64, y: u64) -> usize {
+        self.win.local(x, y).expect("in window")
+    }
+}
+
+/// Main stems with full lakes and pools as members.
+struct Stems<'a> {
+    world: World,
+    w: &'a Water,
+    /// Full lakes and pools on a river (ordinals), by their outlet's outside cell.
+    joins: HashMap<u64, Vec<u32>>,
+    /// Pools on a river by ordinal: their largest inflowing thalweg cell, if any.
+    pools: HashMap<u32, Option<u64>>,
+}
+
+impl Stems<'_> {
+    fn in_pool(&self, node: u32) -> bool {
+        node >= 2 && self.pools.contains_key(&(node - 2))
+    }
+    /// The next cell up the main stem from (x, y); None at a head. A full node competes with
+    /// its outlet's inside cell (that cell's discharge is the node's total).
+    fn up(&self, v: &View, x: u64, y: u64) -> Option<u64> {
+        let near = best_up(self.world, v.win, &v.flow, &v.q, x, y, |j| {
+            self.in_pool(v.node[j])
+        });
+        let mut best = near.map(|b| (b.0, b.1, None));
+        for &o in self
+            .joins
+            .get(&self.world.index(x, y))
+            .into_iter()
+            .flatten()
+        {
+            let inside = self.w.nodes.at(o).outlet[0];
+            let (ix, iy) = self.world.xy(inside);
+            let c = (v.q[v.at(ix, iy)], inside);
+            if better(c, best.map(|b| (b.0, b.1))) {
+                best = Some((c.0, c.1, Some(o)));
+            }
         }
-        let (dy, dx) = OFFSETS[d as usize - 1];
-        if (nx as i64 + dx, ny as i64 + dy) != (x as i64, y as i64) {
-            continue;
-        }
-        let c = (q[j], world.index(nx, ny));
-        if best.is_none_or(|b| c.0 > b.0 || (c.0 == b.0 && c.1 < b.1)) {
-            best = Some(c);
+        match best? {
+            (_, c, None) => Some(c),
+            // A lake starts a river here; a pool goes on up its largest inflow.
+            (_, _, Some(o)) => self.pools.get(&o).copied().flatten(),
         }
     }
-    best.map(|b| b.1)
-}
-
-/// A tile's main-stem chains: each core cell's end up its main stem (`Node(head cell)`, `Out`
-/// of the tile, or `End` off the thalweg).
-fn chains(world: World, core: Rect, win: Rect, flow: &[u8], q: &[f32]) -> Result<Vec<Next>> {
-    let at = |k: usize| {
-        let (x, y) = core.world_xy(k);
-        win.local(x, y).expect("core in window")
-    };
-    let next = |k: usize| {
-        if flow[at(k)] & 16 == 0 {
-            return Next::End;
-        }
-        let (x, y) = core.world_xy(k);
-        match main_up(world, win, flow, q, x, y) {
-            Some(u) => {
-                let (ux, uy) = world.xy(u);
-                core.local(ux, uy)
-                    .map_or(Next::Out(u), |j| Next::Cell(j as u32))
+    /// Each core cell's end up its main stem: `Node(head cell)`, `Out` of the tile, or `End`
+    /// (off the thalweg or in a pool).
+    fn chains(&self, core: Rect, v: &View) -> Result<Vec<Next>> {
+        let next = |k: usize| {
+            let (x, y) = core.world_xy(k);
+            let j = v.at(x, y);
+            if v.flow[j] & 16 == 0 || self.in_pool(v.node[j]) {
+                return Next::End;
             }
-            None => Next::Node(world.index(x, y)),
-        }
-    };
-    let (end, cycles) = ends(core.cells(), next);
-    ensure(cycles == 0, "a main stem runs in a cycle")?;
-    Ok(end)
+            match self.up(v, x, y) {
+                Some(u) => {
+                    let (ux, uy) = self.world.xy(u);
+                    core.local(ux, uy)
+                        .map_or(Next::Out(u), |j| Next::Cell(j as u32))
+                }
+                None => Next::Node(self.world.index(x, y)),
+            }
+        };
+        let (end, cycles) = ends(core.cells(), next);
+        ensure(cycles == 0, "a main stem runs in a cycle")?;
+        Ok(end)
+    }
 }
 
-/// Pass G per tile: river heads off pools, heads in pools, thalweg ring cells with their
-/// chain ends, and each pool's outlet chain end (pools whose outlet cell is in this tile).
-type Chased = (Vec<u64>, Vec<u64>, Vec<(u64, Next)>, Vec<(u64, Next)>);
+/// Pass P per tile: listed pools whose outlet's outside cell lies here, and whether it is a
+/// thalweg cell outside every listed pool (the pool is on a river); thalweg cells draining
+/// into a listed pool (ordinal, discharge, cell, own node raster value).
+type Probed = (Vec<(u32, bool)>, Vec<(u32, f32, u64, u32)>);
+/// Pass G per tile: river heads, entry cells (ring cells and pool inflows) with their chain
+/// ends, and each pool's outlet chain end.
+type Chased = (Vec<u64>, Vec<(u64, Next)>, Vec<(u32, Next)>);
 /// A tile's rivers: by id, axial and diagonal steps, and mouths (cell, discharge, parent id).
 type RiverAttrs = BTreeMap<u32, (u64, u64, Vec<(u64, f32, u32)>)>;
-/// A tile's lakes: by id, cells and the body at its outlet cell.
-type LakeAttrs = BTreeMap<u32, (u64, Vec<u32>)>;
+
+fn round(v: f64, places: i32) -> f64 {
+    let k = 10f64.powi(places);
+    (v * k).round() / k
+}
 
 /// Writes `body` (0 none, 1 sea, lake ids, river ids on thalweg cells, and on the cells of the
 /// pools in `pools` (node key → outlet cell, R26) the id of the river leaving them) and
-/// returns the `bodies.json` value.
+/// returns the `bodies.json` value. A listed pool whose outlet carries no river stays its own
+/// node (a lake keeps its lake id): it would otherwise take the level of the sea or lake below.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn label(
     s: &Setup,
@@ -104,57 +194,127 @@ pub(crate) fn label(
 ) -> Result<Value> {
     let world = s.world;
     let tiles = s.tiles();
-    for &key in pools.keys() {
+    let mut listed: BTreeMap<u32, u64> = BTreeMap::new();
+    for (&key, &b) in pools {
+        let o = w
+            .nodes
+            .ordinal(key)
+            .ok_or_else(|| invalid(format!("pool {key} is no water node")))?;
+        let n = w.nodes.at(o);
         ensure(
-            w.nodes.get(key).is_some(),
-            format!("pool {key} is no water node"),
+            n.full && n.outlet[1] == b,
+            format!("pool {key} is no full node draining at {b}"),
         )?;
+        listed.insert(o, b);
     }
-    let in_pool = |n: u32| n >= 2 && pools.contains_key(&w.nodes.at(n - 2).key);
+    let is_listed = |node: u32| node >= 2 && listed.contains_key(&(node - 2));
+
+    // Pass P: which pools are on a river, and what drains into them.
+    let probed: Vec<Probed> = for_tiles(&tiles, s.threads, &format!("{tag} P"), |i, core| {
+        cached(work, &format!("{tag}/bp/{i:05}"), || {
+            let v = View::read(r, core.grow(1, world))?;
+            let mut outs = Vec::new();
+            for (&o, &b) in &listed {
+                let (bx, by) = world.xy(b);
+                if core.contains(bx, by) {
+                    let j = v.at(bx, by);
+                    outs.push((o, v.flow[j] & 16 != 0 && !is_listed(v.node[j])));
+                }
+            }
+            let mut ins = Vec::new();
+            for k in 0..core.cells() {
+                let (x, y) = core.world_xy(k);
+                let j = v.at(x, y);
+                if v.flow[j] & 16 == 0 {
+                    continue;
+                }
+                let (rx, ry) = world
+                    .neighbour(x, y, (v.flow[j] & 15) as usize - 1)
+                    .ok_or_else(|| invalid("a receiver lies outside the world"))?;
+                let below = v.node[v.at(rx, ry)];
+                if is_listed(below) && below != v.node[j] {
+                    ins.push((below - 2, v.q[j], world.index(x, y), v.node[j]));
+                }
+            }
+            Ok((outs, ins))
+        })
+    })?;
+    let mut on_river: HashMap<u32, Option<u64>> = HashMap::new();
+    for &(o, ok) in probed.iter().flat_map(|p| p.0.iter()) {
+        if ok {
+            on_river.insert(o, None);
+        }
+    }
+    let mut inflow: BTreeMap<u32, (f32, u64)> = BTreeMap::new();
+    for &(o, q, c, from) in probed.iter().flat_map(|p| p.1.iter()) {
+        let from_pool = from >= 2 && on_river.contains_key(&(from - 2));
+        if on_river.contains_key(&o) && !from_pool && better((q, c), inflow.get(&o).copied()) {
+            inflow.insert(o, (q, c));
+        }
+    }
+    drop(probed);
+    for (&o, &(_, c)) in &inflow {
+        on_river.insert(o, Some(c));
+    }
+    let mut joins: HashMap<u64, Vec<u32>> = HashMap::new();
+    for (o, n) in w.nodes.0.iter().enumerate() {
+        let o = o as u32;
+        if n.full && (n.lake || on_river.contains_key(&o)) {
+            let ((ax, ay), (bx, by)) = (world.xy(n.outlet[0]), world.xy(n.outlet[1]));
+            ensure(
+                ax.abs_diff(bx) <= 1 && ay.abs_diff(by) <= 1,
+                format!("node {}'s outlet cells are no neighbours", n.key),
+            )?;
+            joins.entry(n.outlet[1]).or_default().push(o);
+        }
+    }
+    let stems = Stems {
+        world,
+        w,
+        joins,
+        pools: on_river,
+    };
+    let entries_wanted: HashSet<u64> = stems.pools.values().flatten().copied().collect();
 
     // Pass G: main-stem chains to heads or out of the tile.
     let chased: Vec<Chased> = for_tiles(&tiles, s.threads, &format!("{tag} G"), |i, core| {
         cached(work, &format!("{tag}/bg/{i:05}"), || {
-            let win = core.grow(1, world);
-            let (flow, q, node) = (r.flow.read(win)?, r.discharge.read(win)?, r.node.read(win)?);
-            let end = chains(world, core, win, &flow, &q)?;
-            let (mut heads, mut pool_heads, mut ring) = (Vec::new(), Vec::new(), Vec::new());
+            let v = View::read(r, core.grow(1, world))?;
+            let end = stems.chains(core, &v)?;
+            let (mut heads, mut entries) = (Vec::new(), Vec::new());
             for (k, &e) in end.iter().enumerate() {
                 let (x, y) = core.world_xy(k);
                 let c = world.index(x, y);
                 if e == Next::Node(c) {
-                    let j = win.local(x, y).expect("core in window");
-                    if in_pool(node[j]) {
-                        pool_heads.push(c);
-                    } else {
-                        heads.push(c);
-                    }
+                    heads.push(c);
                 }
-                if e != Next::End && core.on_ring(x, y) {
-                    ring.push((c, e));
+                if e != Next::End && (core.on_ring(x, y) || entries_wanted.contains(&c)) {
+                    entries.push((c, e));
                 }
             }
             let mut pool_ends = Vec::new();
-            for (&key, &b) in pools {
-                let (bx, by) = world.xy(b);
-                let Some(k) = core.local(bx, by) else {
-                    continue;
-                };
-                ensure(
-                    end[k] != Next::End,
-                    format!("pool {key}'s outlet cell {b} is no river cell"),
-                )?;
-                pool_ends.push((key, end[k]));
+            for &o in stems.pools.keys() {
+                let (bx, by) = world.xy(listed[&o]);
+                if let Some(k) = core.local(bx, by) {
+                    ensure(end[k] != Next::End, "a pool's outlet is no river cell")?;
+                    pool_ends.push((o, end[k]));
+                }
             }
-            Ok((heads, pool_heads, ring, pool_ends))
+            Ok((heads, entries, pool_ends))
         })
     })?;
-    let ring: HashMap<u64, Next> = chased.iter().flat_map(|c| c.2.iter().copied()).collect();
+    let entries: HashMap<u64, Next> = chased.iter().flat_map(|c| c.1.iter().copied()).collect();
+    for &c in &entries_wanted {
+        ensure(
+            entries.contains_key(&c),
+            format!("pool inflow {c} is no river cell"),
+        )?;
+    }
     let head_of = |mut t: Next| -> Result<u64> {
-        for _ in 0..=ring.len() {
+        for _ in 0..=entries.len() {
             match t {
                 Next::Out(c) => {
-                    t = *ring
+                    t = *entries
                         .get(&c)
                         .ok_or_else(|| invalid(format!("main stem enters cell {c}, no river")))?
                 }
@@ -164,37 +324,14 @@ pub(crate) fn label(
         }
         Err(invalid("main stems cycle across tiles"))
     };
-    // Each pool's river: the head of its outlet cell's main stem.
-    let mut pool_head: BTreeMap<u64, u64> = BTreeMap::new();
-    for &(key, e) in chased.iter().flat_map(|c| c.3.iter()) {
-        ensure(
-            pool_head.insert(key, head_of(e)?).is_none(),
-            format!("pool {key} found twice"),
-        )?;
-    }
-    ensure(
-        pool_head.len() == pools.len(),
-        "a pool's outlet cell lies outside the world",
-    )?;
-    // Heads inside pools start a river only when it is a pool's river; other chains there
-    // stay inside the pool, labelled as it.
-    let pool_rivers: HashSet<u64> = pool_head.values().copied().collect();
-    let mut heads: Vec<u64> = chased
-        .iter()
-        .flat_map(|c| {
-            c.0.iter()
-                .copied()
-                .chain(c.1.iter().copied().filter(|h| pool_rivers.contains(h)))
-        })
-        .collect();
-    drop(chased);
+    let mut heads: Vec<u64> = chased.iter().flat_map(|c| c.0.iter().copied()).collect();
     heads.sort_unstable();
 
-    // Ids: sea 1, lakes by node key (pools are not lakes), rivers by head cell.
+    // Ids: sea 1, lakes by node key (pools on a river are not lakes), rivers by head cell.
     let mut lake_id: BTreeMap<u32, u32> = BTreeMap::new();
     let mut next_id = 2u32;
     for (o, n) in w.nodes.0.iter().enumerate() {
-        if n.lake && !pools.contains_key(&n.key) {
+        if n.lake && !stems.pools.contains_key(&(o as u32)) {
             ensure(n.level.is_finite(), format!("lake {} has no level", n.key))?;
             lake_id.insert(o as u32, next_id);
             next_id += 1;
@@ -221,68 +358,59 @@ pub(crate) fn label(
             .copied()
             .ok_or_else(|| invalid(format!("river head {h} has no id")))
     };
-    let pool_id: HashMap<u64, u32> = pool_head
-        .iter()
-        .map(|(&key, &h)| Ok((key, river(Next::Node(h))?)))
-        .collect::<Result<_>>()?;
-    // Full lakes by their outlet cell (outside), for their parent.
-    let mut outlet_of: HashMap<u64, Vec<u32>> = HashMap::new();
-    for &o in lake_id.keys() {
-        let n = w.nodes.at(o);
-        if n.full {
-            outlet_of.entry(n.outlet[1]).or_default().push(o);
-        }
+    let mut pool_id: HashMap<u32, u32> = HashMap::new();
+    for &(o, e) in chased.iter().flat_map(|c| c.2.iter()) {
+        ensure(pool_id.insert(o, river(e)?).is_none(), "a pool found twice")?;
     }
+    ensure(
+        pool_id.len() == stems.pools.len(),
+        "a pool on a river has no outlet cell",
+    )?;
+    drop(chased);
 
     // Pass H: write ids and gather attributes.
-    let parts: Vec<(RiverAttrs, LakeAttrs, u64)> =
+    let parts: Vec<(RiverAttrs, BTreeMap<u32, u64>, u64)> =
         for_tiles(&tiles, s.threads, &format!("{tag} H"), |_, core| {
-            let win = core.grow(2, world);
-            let (flow, q, node) = (r.flow.read(win)?, r.discharge.read(win)?, r.node.read(win)?);
-            let end = chains(world, core, win, &flow, &q)?;
-            // The body of a cell of the window: in the core from its chain, outside it from
-            // the neighbouring tile's ring.
+            let v = View::read(r, core.grow(1, world))?;
+            let end = stems.chains(core, &v)?;
+            // The body of a window cell: in the core from its chain, outside it from the
+            // neighbouring tile's ring.
             let body_at = |x: u64, y: u64| -> Result<u32> {
-                let j = win.local(x, y).expect("in window");
+                let j = v.at(x, y);
                 let thalweg = || match core.local(x, y) {
                     Some(k) => river(end[k]),
                     None => river(Next::Out(world.index(x, y))),
                 };
-                Ok(match node[j] {
+                Ok(match v.node[j] {
                     1 => 1,
-                    n if n >= 2 => match pool_id.get(&w.nodes.at(n - 2).key) {
+                    n if n >= 2 => match pool_id.get(&(n - 2)) {
                         Some(&id) => id,
                         None => match lake_id.get(&(n - 2)) {
                             Some(&id) => id,
-                            None if flow[j] & 16 != 0 => thalweg()?,
+                            None if v.flow[j] & 16 != 0 => thalweg()?,
                             None => 0,
                         },
                     },
-                    _ if flow[j] & 16 != 0 => thalweg()?,
+                    _ if v.flow[j] & 16 != 0 => thalweg()?,
                     _ => 0,
                 })
             };
-            let (mut rivers, mut lakes, mut sea) = (RiverAttrs::new(), LakeAttrs::new(), 0u64);
+            let (mut rivers, mut lakes, mut sea) = (RiverAttrs::new(), BTreeMap::new(), 0u64);
             let mut ids = vec![0u32; core.cells()];
             for (k, id) in ids.iter_mut().enumerate() {
                 let (x, y) = core.world_xy(k);
-                let j = win.local(x, y).expect("core in window");
+                let j = v.at(x, y);
                 *id = body_at(x, y)?;
-                if node[j] == 1 {
+                if v.node[j] == 1 {
                     sea += 1;
-                } else if node[j] >= 2 && lake_id.contains_key(&(node[j] - 2)) {
-                    lakes.entry(*id).or_default().0 += 1;
+                } else if v.node[j] >= 2 && lake_id.contains_key(&(v.node[j] - 2)) {
+                    *lakes.entry(*id).or_insert(0u64) += 1;
                 }
-                if let Some(list) = outlet_of.get(&world.index(x, y)) {
-                    for o in list {
-                        lakes.entry(lake_id[o]).or_default().1.push(*id);
-                    }
-                }
-                if flow[j] & 16 == 0 {
+                if v.flow[j] & 16 == 0 || stems.in_pool(v.node[j]) {
                     continue;
                 }
                 ensure(*id >= 2, format!("thalweg cell ({x}, {y}) has no body"))?;
-                let dir = flow[j] & 15;
+                let dir = v.flow[j] & 15;
                 let e = rivers.entry(*id).or_default();
                 if dir > 4 {
                     e.1 += 1;
@@ -292,10 +420,9 @@ pub(crate) fn label(
                 let (rx, ry) = world
                     .neighbour(x, y, dir as usize - 1)
                     .ok_or_else(|| invalid("a receiver lies outside the world"))?;
-                let rj = win.local(rx, ry).expect("receiver in window");
                 let below = body_at(rx, ry)?;
-                if flow[rj] & 16 == 0 || below != *id {
-                    e.2.push((world.index(x, y), q[j], below));
+                if below != *id {
+                    e.2.push((world.index(x, y), v.q[j], below));
                 }
             }
             body.write(core, &ids)?;
@@ -304,7 +431,7 @@ pub(crate) fn label(
 
     // Merge.
     let km2 = s.cell_km2();
-    let (mut rivers, mut lakes, mut sea) = (RiverAttrs::new(), LakeAttrs::new(), 0u64);
+    let (mut rivers, mut lakes, mut sea) = (RiverAttrs::new(), BTreeMap::new(), 0u64);
     for (rv, lk, se) in parts {
         sea += se;
         for (id, (a, d, m)) in rv {
@@ -312,31 +439,60 @@ pub(crate) fn label(
             (e.0, e.1) = (e.0 + a, e.1 + d);
             e.2.extend(m);
         }
-        for (id, (n, p)) in lk {
-            let e = lakes.entry(id).or_default();
-            e.0 += n;
-            e.1.extend(p);
+        for (id, n) in lk {
+            *lakes.entry(id).or_insert(0u64) += n;
         }
     }
+    // A lake's parent: the first body down its outlet's receivers (as v2).
+    let one = |c: u64| {
+        let (x, y) = world.xy(c);
+        Rect {
+            x0: x,
+            y0: y,
+            w: 1,
+            h: 1,
+        }
+    };
+    let parent_below = |mut c: u64| -> Result<u32> {
+        for _ in 0..world.w * world.h {
+            let b = body.read(one(c))?[0];
+            if b != 0 {
+                return Ok(b);
+            }
+            let d = r.flow.read(one(c))?[0] & 15;
+            if d == 0 {
+                return Ok(0);
+            }
+            let (x, y) = world.xy(c);
+            let (nx, ny) = world
+                .neighbour(x, y, d as usize - 1)
+                .ok_or_else(|| invalid("a receiver lies outside the world"))?;
+            c = world.index(nx, ny);
+        }
+        Err(invalid("a lake's outflow runs in a cycle"))
+    };
     let cell = |c: u64| {
         let (x, y) = world.xy(c);
         json!([x, y])
     };
     let mut list = vec![json!({
-        "id": 1, "kind": "sea", "level_m": 0.0, "parent": 0, "area_km2": sea as f64 * km2,
+        "id": 1, "kind": "sea", "level_m": 0.0, "parent": 0,
+        "area_km2": round(sea as f64 * km2, 6),
     })];
     for (&o, &id) in &lake_id {
         let n = w.nodes.at(o);
-        let (cells, parents) = lakes.remove(&id).unwrap_or_default();
-        ensure(
-            parents.len() == usize::from(n.full),
-            format!("lake {} has {} outlet cells", n.key, parents.len()),
-        )?;
+        let cells = lakes.get(&id).copied().unwrap_or(0);
+        let parent = if n.full {
+            parent_below(n.outlet[1])?
+        } else {
+            0
+        };
         list.push(json!({
-            "id": id, "kind": "lake", "node": n.key, "level_m": n.level,
-            "area_km2": cells as f64 * km2, "max_depth_m": n.level - n.low,
+            "id": id, "kind": "lake", "node": n.key, "level_m": round(f64::from(n.level), 2),
+            "area_km2": round(cells as f64 * km2, 6),
+            "max_depth_m": round(f64::from(n.level - n.low), 2),
             "exit_cell": if n.full { cell(n.outlet[1]) } else { Value::Null },
-            "endorheic": !n.full, "parent": parents.first().copied().unwrap_or(0),
+            "endorheic": !n.full, "parent": parent,
         }));
     }
     for h in &heads {
@@ -348,18 +504,17 @@ pub(crate) fn label(
                 mouths.len()
             )));
         };
+        let km = (axial as f64 + diagonal as f64 * std::f64::consts::SQRT_2) * s.spacing_m / 1000.0;
         list.push(json!({
-            "id": id, "kind": "river",
-            "length_km": (axial as f64 + diagonal as f64 * std::f64::consts::SQRT_2)
-                * s.spacing_m / 1000.0,
-            "drainage_km2": q, "mouth_cell": cell(mouth), "parent": parent,
+            "id": id, "kind": "river", "length_km": round(km, 3),
+            "drainage_km2": round(f64::from(q), 6), "mouth_cell": cell(mouth), "parent": parent,
         }));
     }
     let min_cells = (DRY_MIN_KM2 / km2).ceil() as u64;
     for d in dry_basins(w, min_cells) {
         list.push(json!({
-            "id": next_id, "kind": "dry", "level_m": w.h.spill[d],
-            "area_km2": w.bal.n[d] as f64 * km2, "endorheic": true, "parent": 0,
+            "id": next_id, "kind": "dry", "level_m": round(f64::from(w.h.spill[d]), 2),
+            "area_km2": round(w.bal.n[d] as f64 * km2, 6), "endorheic": true, "parent": 0,
         }));
         next_id += 1;
     }
@@ -368,7 +523,8 @@ pub(crate) fn label(
         "cells": "[column, row] from the north-west corner; a lake's exit_cell is the first cell \
             its routed flow enters outside it",
         "note": "hydrology v3: lakes by node (smallest pit), rivers as main stems (larger \
-            discharge keeps the body), river pools labelled as their river",
+            discharge keeps the body; a full lake or pool competes at its outlet), river pools \
+            labelled as their river",
         "dry_min_km2": DRY_MIN_KM2, "bodies": list,
     }))
 }
@@ -400,6 +556,7 @@ fn dry_basins(w: &Water, min_cells: u64) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::water::nodes::{Node, Nodes};
     use crate::world::water::pipeline::{Model, model};
     use crate::world::water::testing::{setup, terrain};
 
@@ -526,10 +683,280 @@ mod tests {
         assert_eq!(river["kind"], "river");
     }
 
+    /// A hand-drawn 64 x 32 scene of rasters (flow, discharge, node) and its nodes. Rivers run
+    /// east along row 10 to the sea (column 63):
+    /// - lake A (x 4-8, y 8-12, full, total 50) drains at (9, 10); a gully down column 9
+    ///   (y 3-9) drains into (9, 10) too;
+    /// - pool P (lake, x 22-25, y 9-11) takes the row-10 river at (22, 10) and a small
+    ///   tributary down column 23 (y 4-8); it drains at (26, 10);
+    /// - pool Q (pond with flat receivers along row 10, x 41-43, y 9-11) drains at (44, 10);
+    /// - lake B (x 44-47, y 20-23) is fed down column 46 (y 14-19) and drains at (48, 22),
+    ///   in another tile at tiles of 8 and 16, east along row 22 to the sea;
+    /// - lake C (x 30-31, y 2-3, total 0.5) drains at (32, 2) over dry cells along row 2 to
+    ///   (35, 2) and down column 35 into the row-10 river at (35, 10);
+    /// - lake D (x 2-3, y 25-26) is closed.
+    struct Scene {
+        flow: Vec<u8>,
+        q: Vec<f32>,
+        node: Vec<u32>,
+        nodes: Nodes,
+        /// Pool keys → outlet cells.
+        pools: BTreeMap<u64, u64>,
+    }
+
+    const SW: u64 = 64;
+
+    fn at(x: u64, y: u64) -> u64 {
+        y * SW + x
+    }
+
+    fn dir_to(a: (u64, u64), b: (u64, u64)) -> u8 {
+        let d = (b.1 as i64 - a.1 as i64, b.0 as i64 - a.0 as i64);
+        OFFSETS.iter().position(|&o| o == d).expect("neighbours") as u8 + 1
+    }
+
+    fn scene() -> Scene {
+        let n = (SW * 32) as usize;
+        let (mut flow, mut q, mut node) = (vec![0u8; n], vec![0f32; n], vec![0u32; n]);
+        // Thalweg path: each cell drains to the next; the last one to `then`; discharge
+        // from q0 rising by 1 a cell.
+        let mut path = |cells: &[(u64, u64)], then: (u64, u64), q0: f32, thalweg: bool| {
+            for (i, &c) in cells.iter().enumerate() {
+                let to = cells.get(i + 1).copied().unwrap_or(then);
+                let k = at(c.0, c.1) as usize;
+                flow[k] = dir_to(c, to) | if thalweg { 16 } else { 0 };
+                q[k] = q0 + i as f32;
+            }
+        };
+        let row = |y: u64, xs: std::ops::RangeInclusive<u64>| -> Vec<(u64, u64)> {
+            xs.map(|x| (x, y)).collect()
+        };
+        let col = |x: u64, ys: std::ops::RangeInclusive<u64>| -> Vec<(u64, u64)> {
+            ys.map(|y| (x, y)).collect()
+        };
+        path(&col(9, 3..=9), (9, 10), 1.0, true);
+        path(&row(10, 9..=21), (22, 10), 58.0, true);
+        path(&col(23, 4..=8), (23, 9), 1.0, true);
+        path(&row(10, 26..=40), (41, 10), 80.0, true);
+        path(&row(10, 44..=62), (63, 10), 100.0, true);
+        path(&col(46, 14..=19), (46, 20), 1.0, true);
+        path(&row(22, 48..=62), (63, 22), 10.0, true);
+        path(&row(2, 32..=34), (35, 2), 0.6, false);
+        path(&col(35, 2..=9), (35, 10), 0.7, false);
+        // Pool Q's flat receivers: its row 10 runs east to the outlet, rows 9 and 11 into it.
+        for x in 41..=43u64 {
+            let k = at(x, 10) as usize;
+            flow[k] = dir_to((x, 10), (x + 1, 10)) | 16;
+            q[k] = 96.0 + (x - 41) as f32;
+            for y in [9, 11] {
+                let k = at(x, y) as usize;
+                flow[k] = dir_to((x, y), (x, 10));
+                q[k] = 1.0;
+            }
+        }
+        for y in 0..32 {
+            node[at(63, y) as usize] = 1;
+        }
+        // Nodes: (cells, lake, full, outlet [inside, outside], total).
+        let rect = |x: std::ops::RangeInclusive<u64>, y: std::ops::RangeInclusive<u64>| {
+            x.flat_map(|x| y.clone().map(move |y| (x, y)))
+                .collect::<Vec<_>>()
+        };
+        let mut list = vec![
+            (rect(4..=8, 8..=12), true, true, [(8, 10), (9, 10)], 50.0),
+            (
+                rect(22..=25, 9..=11),
+                true,
+                true,
+                [(25, 10), (26, 10)],
+                79.0,
+            ),
+            (
+                rect(41..=43, 9..=11),
+                false,
+                true,
+                [(43, 10), (44, 10)],
+                98.0,
+            ),
+            (
+                rect(44..=47, 20..=23),
+                true,
+                true,
+                [(47, 22), (48, 22)],
+                9.0,
+            ),
+            (rect(30..=31, 2..=3), true, true, [(31, 2), (32, 2)], 0.5),
+            (rect(2..=3, 25..=26), true, false, [(0, 0), (0, 0)], 1.0),
+        ];
+        list.sort_by_key(|l| l.0.iter().map(|&(x, y)| at(x, y)).min());
+        let mut nodes = Vec::new();
+        for (o, (cells, lake, full, outlet, total)) in list.into_iter().enumerate() {
+            let key = cells.iter().map(|&(x, y)| at(x, y)).min().unwrap();
+            for &(x, y) in &cells {
+                let k = at(x, y) as usize;
+                node[k] = o as u32 + 2;
+                if lake {
+                    q[k] = total;
+                }
+            }
+            nodes.push(Node {
+                key,
+                level: 5.0,
+                low: 4.0,
+                full,
+                lake,
+                outlet: outlet.map(|(x, y)| at(x, y)),
+                cells: cells.len() as u64,
+                ..Default::default()
+            });
+        }
+        let pools = nodes
+            .iter()
+            .filter(|n| n.key == at(22, 9) || n.key == at(41, 9))
+            .map(|n| (n.key, n.outlet[1]))
+            .collect();
+        Scene {
+            flow,
+            q,
+            node,
+            nodes: Nodes(nodes),
+            pools,
+        }
+    }
+
+    fn label_scene(sc: &Scene, tile: u64, pools: &BTreeMap<u64, u64>) -> (Vec<u32>, Value) {
+        let world = World { w: SW, h: 32 };
+        let s = setup(world, tile, 1e-5);
+        let r = Rasters::memory(world);
+        r.flow.write(Rect::whole(world), &sc.flow).unwrap();
+        r.discharge.write(Rect::whole(world), &sc.q).unwrap();
+        r.node.write(Rect::whole(world), &sc.node).unwrap();
+        let w = Water {
+            h: Default::default(),
+            resolver: Default::default(),
+            top: Vec::new(),
+            bal: Default::default(),
+            minpit: Vec::new(),
+            nodes: sc.nodes.clone(),
+            solved: Vec::new(),
+            remote: Vec::new(),
+            remote_of: BTreeMap::new(),
+            exits: Default::default(),
+        };
+        let body = Layer::filled(world, 0u32);
+        let json = label(&s, &w, &r, &body, pools, None, "t").expect("bodies");
+        (body.to_vec().unwrap(), json)
+    }
+
+    /// The scene at tiles of 64 (whole), 16 and 8: bit-identical.
+    fn scene_labels(pools: bool) -> (Vec<u32>, Value) {
+        let sc = scene();
+        let p = if pools {
+            sc.pools.clone()
+        } else {
+            BTreeMap::new()
+        };
+        let whole = label_scene(&sc, 64, &p);
+        for tile in [16, 8] {
+            assert_eq!(label_scene(&sc, tile, &p), whole, "tiles {tile}");
+        }
+        whole
+    }
+
+    fn entry(json: &Value, id: u32) -> &Value {
+        json["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["id"] == id)
+            .unwrap_or_else(|| panic!("body {id} listed"))
+    }
+
+    #[test]
+    fn a_gully_at_a_lake_outlet_joins_the_lake_outflow() {
+        let (body, json) = scene_labels(true);
+        let id = |x, y| body[at(x, y) as usize];
+        let (outflow, gully, lake) = (id(9, 10), id(9, 9), id(6, 10));
+        assert_ne!(outflow, gully, "the lake's outflow keeps its own river");
+        assert_eq!(id(9, 3), gully);
+        assert_eq!(
+            entry(&json, gully)["parent"],
+            outflow,
+            "the gully is a tributary"
+        );
+        assert_eq!(entry(&json, gully)["mouth_cell"], json!([9, 9]));
+        assert_eq!(entry(&json, lake)["kind"], "lake");
+        assert_eq!(entry(&json, lake)["parent"], outflow);
+        assert_eq!(entry(&json, outflow)["kind"], "river");
+    }
+
+    #[test]
+    fn a_river_keeps_one_id_and_one_mouth_through_its_pools() {
+        let (body, json) = scene_labels(true);
+        let id = |x, y| body[at(x, y) as usize];
+        let main = id(9, 10);
+        for (x, y) in [
+            (21, 10),
+            (23, 9),
+            (24, 11),
+            (26, 10),
+            (40, 10),
+            (42, 9),
+            (44, 10),
+            (62, 10),
+        ] {
+            assert_eq!(id(x, y), main, "({x}, {y}) on the main river");
+        }
+        let river = entry(&json, main);
+        assert_eq!(river["mouth_cell"], json!([62, 10]));
+        assert_eq!(river["parent"], 1, "the sea");
+        // Cells 9..=21, 26..=40, 44..=62 of row 10 (pool cells are not counted).
+        assert_eq!(river["length_km"], 0.047);
+        let trib = id(23, 4);
+        assert_ne!(trib, main);
+        assert_eq!(entry(&json, trib)["parent"], main);
+        assert_eq!(entry(&json, trib)["mouth_cell"], json!([23, 8]));
+        // No lake entry for pool P.
+        let rows = json["bodies"].as_array().unwrap();
+        assert!(rows.iter().all(|b| b["node"] != at(22, 9)));
+        // Lake C's parent: down the dry cells to the main river.
+        assert_eq!(entry(&json, id(30, 2))["parent"], main);
+    }
+
+    #[test]
+    fn without_pools_a_pool_lake_is_a_lake_with_its_own_outflow() {
+        let (body, json) = scene_labels(false);
+        let id = |x, y| body[at(x, y) as usize];
+        let (inflow, lake, outflow) = (id(21, 10), id(23, 10), id(26, 10));
+        assert_eq!(entry(&json, lake)["kind"], "lake");
+        assert_ne!(inflow, outflow);
+        assert_eq!(entry(&json, inflow)["parent"], lake);
+        assert_eq!(entry(&json, lake)["parent"], outflow);
+        // Pond Q is no body: its thalweg row is the river that leaves it.
+        assert_eq!(id(42, 10), outflow);
+        assert_eq!(id(42, 9), 0);
+        assert_eq!(id(44, 10), outflow);
+    }
+
+    #[test]
+    fn a_lake_draining_into_another_tile_starts_its_river_there() {
+        let (body, json) = scene_labels(true);
+        let id = |x, y| body[at(x, y) as usize];
+        let (lake, outflow, feeder) = (id(45, 21), id(48, 22), id(46, 14));
+        assert_eq!(entry(&json, lake)["kind"], "lake");
+        assert_eq!(entry(&json, lake)["parent"], outflow);
+        assert_eq!(entry(&json, lake)["exit_cell"], json!([48, 22]));
+        assert_eq!(entry(&json, feeder)["parent"], lake);
+        assert_eq!(entry(&json, outflow)["mouth_cell"], json!([62, 22]));
+        assert_eq!(entry(&json, id(2, 25))["parent"], 0, "closed");
+        assert_eq!(entry(&json, id(2, 25))["endorheic"], true);
+    }
+
     /// Real terrain: the canyon window (E27169 N44546, 2,048², river start 0.05 km², the
-    /// layout's classes, uniform rain). River bodies, their length, and river pairs running
-    /// within 20 m of each other for over 100 m (a double river). Writes
-    /// t10-canyon-bodies.png, each river body in its own colour, lakes blue.
+    /// layout's classes, uniform rain), whole uncontracted and in 512² tiles with contraction:
+    /// identical bodies. River bodies, their length, and river pairs running within 20 m of
+    /// each other for over 100 m (a double river). Writes t10-canyon-bodies.png, each river
+    /// body in its own colour, lakes blue.
     /// cargo test … bodies -- --ignored --nocapture
     #[test]
     #[ignore]
@@ -548,16 +975,28 @@ mod tests {
             w: win.w as u64,
             h: win.h as u64,
         };
-        let mut s = setup(world, 512, 0.05);
-        s.table.lake_min_m2 = Table::parse(DEFAULT).expect("table").lake_min_m2;
-        s.threads = 4;
-        s.nw_m = [win.x0 as f64, (probe::WORLD.h - win.y0) as f64];
-        s.classes = Some(Classes::new(Layer::memory(world, class), 1, world).expect("classes"));
-        let r = Rasters::memory(world);
-        let m = model(&s, &Layer::memory(world, z.clone()), None, "m", Some(&r)).expect("model");
-        let body = Layer::filled(world, 0u32);
-        let json = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
-        let body = body.to_vec().unwrap();
+        let classes = Layer::memory(world, class);
+        let ground = Layer::memory(world, z.clone());
+        let run = |tile: u64, contract: bool| {
+            let mut s = setup(world, tile, 0.05);
+            s.table.lake_min_m2 = Table::parse(DEFAULT).expect("table").lake_min_m2;
+            s.threads = 4;
+            s.contract = contract;
+            s.nw_m = [win.x0 as f64, (probe::WORLD.h - win.y0) as f64];
+            s.classes = Some(Classes::new(classes.clone(), 1, world).expect("classes"));
+            let r = Rasters::memory(world);
+            let m = model(&s, &ground, None, "m", Some(&r)).expect("model");
+            let body = Layer::filled(world, 0u32);
+            let json = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
+            (body.to_vec().unwrap(), json)
+        };
+        let (body, json) = run(512, true);
+        let whole = run(2048, false);
+        assert!(
+            whole == (body.clone(), json.clone()),
+            "whole and tiled bodies differ"
+        );
+        eprintln!("canyon: bodies whole uncontracted = 512² tiles with contraction");
         let list = json["bodies"].as_array().unwrap();
         let kind: HashMap<u32, &str> = list
             .iter()
@@ -585,8 +1024,7 @@ mod tests {
         let (w, h) = (win.w as i64, win.h as i64);
         let mut near: BTreeMap<(u32, u32), (u64, usize)> = BTreeMap::new();
         let mut seen = Vec::new();
-        for k in 0..body.len() {
-            let a = body[k];
+        for (k, &a) in body.iter().enumerate() {
             if !is_river(a) {
                 continue;
             }
