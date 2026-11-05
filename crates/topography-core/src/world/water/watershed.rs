@@ -394,5 +394,26 @@ pub(crate) mod tests {
             g.edges.len(),
             g.cycles
         );
+        // Pits whose lowest in-tile spill is at their own floor (flats, no depth).
+        let mut spill: HashMap<Next, f32> = HashMap::new();
+        for e in &g.edges {
+            for n in [e.a, e.b] {
+                let s = spill.entry(n).or_insert(f32::INFINITY);
+                *s = s.min(e.saddle);
+            }
+        }
+        let flat = g
+            .pits
+            .iter()
+            .filter(|&&(k, z)| spill.get(&Next::Node(k)).is_some_and(|&s| s <= z))
+            .count();
+        let km2 = core.cells() as f64 / 1e6;
+        eprintln!(
+            "core {:.3} km², pits/km² {:.0}, zero-depth pits {} ({:.0}/km²)",
+            km2,
+            g.pits.len() as f64 / km2,
+            flat,
+            flat as f64 / km2
+        );
     }
 }
