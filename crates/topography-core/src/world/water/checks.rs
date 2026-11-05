@@ -1081,6 +1081,8 @@ pub(crate) fn report(
         json!({"count": bank.0, "highest_m": bank.1, "cells": bank.2}),
     );
     figures.insert("labelled_lakes_per_class".into(), Value::Object(per_class));
+    // Every full node, and listed lakes apart (small hillside ponds dominate the first lists).
+    let mut lake_falls: Vec<Fall> = falls.iter().filter(|f| f.lake.is_some()).copied().collect();
     figures.insert(
         "exit_falls".into(),
         json!({
@@ -1088,6 +1090,12 @@ pub(crate) fn report(
             "largest_5m": falls_json(&mut falls, 0, 10),
             "largest_10m": falls_json(&mut falls, 1, 10),
             "largest_50m": falls_json(&mut falls, 2, 10),
+            "lakes": {
+                "exits": lake_falls.len(),
+                "largest_5m": falls_json(&mut lake_falls, 0, 10),
+                "largest_10m": falls_json(&mut lake_falls, 1, 10),
+                "largest_50m": falls_json(&mut lake_falls, 2, 10),
+            },
         }),
     );
     figures.insert("relax".into(), extra.relax.unwrap_or(Value::Null));
