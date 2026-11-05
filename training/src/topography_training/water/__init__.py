@@ -1,2 +1,2 @@
-"""Hydrology v3 at 1 m. Planned: the resumable world driver (Task 16) and review figures
+"""Hydrology v3 at 1 m: the resumable world driver (`run`); review figures are planned
 (Task 17). The exact graph passes are the Rust `topography world water`."""
