@@ -7,6 +7,8 @@ use std::path::Path;
 
 pub(crate) const RAW: &str = "../../data/worlds/fujix-55-l4v2/elevation-raw.f32";
 pub(crate) const OUT: &str = "../../scratch/hydrology-v3/probes";
+/// The layout's class map: 512² classes of 128 m over the world.
+pub(crate) const CLASSES: &str = "../../data/worlds/fujix-collage-55/class.u8";
 pub(crate) const WORLD: World = World { w: 65536, h: 65536 };
 
 /// A `size`² window of the raw surface centred on (east, north) metres; None only when the
@@ -40,6 +42,24 @@ pub(crate) fn window(east: u64, north: u64, size: usize) -> Option<(Rect, Vec<f3
         .read(r)
         .unwrap_or_else(|e| panic!("read {RAW} window {r:?}: {e}"));
     Some((r, z))
+}
+
+/// The class of every cell of window `r` (1 m cells); None only when the file is missing.
+pub(crate) fn classes(r: Rect) -> Option<Vec<u8>> {
+    if !Path::new(CLASSES).exists() {
+        eprintln!("no data: {CLASSES}");
+        return None;
+    }
+    let map = std::fs::read(CLASSES).unwrap_or_else(|e| panic!("read {CLASSES}: {e}"));
+    assert_eq!(map.len(), 512 * 512, "{CLASSES} is not 512²");
+    Some(
+        (0..r.cells())
+            .map(|k| {
+                let (x, y) = r.world_xy(k);
+                map[(y / 128) as usize * 512 + (x / 128) as usize]
+            })
+            .collect(),
+    )
 }
 
 /// A hillshade (north-west sun) of `z`, `w` cells wide, with `wet` cells tinted blue, written

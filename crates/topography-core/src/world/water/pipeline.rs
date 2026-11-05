@@ -113,30 +113,30 @@ impl Exits {
         Self(v)
     }
     /// The ring cell where a path that enters a tile at `c` stops leaving tiles.
-    pub fn entry(&self, mut c: u64) -> u64 {
-        // `build` refuses cycles across tiles, so the walk ends.
+    /// Errs on a cycle (possible only with stale cached graphs).
+    pub fn entry(&self, mut c: u64) -> Result<u64> {
         for _ in 0..=self.0.len() {
             match self.0.binary_search_by_key(&c, |e| e.0) {
                 Ok(i) => c = self.0[i].1,
-                Err(_) => return c,
+                Err(_) => return Ok(c),
             }
         }
-        panic!("flow cycles across tiles at cell {c}");
+        Err(invalid(format!("flow cycles across tiles at cell {c}")))
     }
 }
 
 /// The r supply of paths that leave their tile, by the ring cell where they stop leaving
 /// tiles (sorted, summed): a settled tree's water from cells outside its tile's own (B1).
-fn foreign_supply(graphs: &[TileGraph], exits: &Exits) -> Vec<(u64, u64)> {
+fn foreign_supply(graphs: &[TileGraph], exits: &Exits) -> Result<Vec<(u64, u64)>> {
     let mut v: Vec<(u64, u64)> = graphs
         .iter()
         .flat_map(|g| {
             g.supply.iter().filter_map(|(&t, &s)| match t {
-                Next::Out(c) => Some((exits.entry(c), s)),
+                Next::Out(c) => Some(exits.entry(c).map(|e| (e, s))),
                 _ => None,
             })
         })
-        .collect();
+        .collect::<Result<_>>()?;
     v.sort_unstable_by_key(|e| e.0);
     let mut out: Vec<(u64, u64)> = Vec::with_capacity(v.len());
     for (c, s) in v {
@@ -145,7 +145,7 @@ fn foreign_supply(graphs: &[TileGraph], exits: &Exits) -> Vec<(u64, u64)> {
             _ => out.push((c, s)),
         }
     }
-    out
+    Ok(out)
 }
 
 /// The water of a run (global).
@@ -195,12 +195,12 @@ impl Local {
     /// (pre-contraction), in any tile: an `Out` path is followed ring cell by ring cell until
     /// it stops leaving tiles; if that ring cell drains to a pit of this fragment, its leaf
     /// (B1). None when the path ends elsewhere.
-    pub fn leaf_of_end(&self, exits: &Exits, end: Next) -> Option<u32> {
-        match end {
+    pub fn leaf_of_end(&self, exits: &Exits, end: Next) -> Result<Option<u32>> {
+        Ok(match end {
             Next::Node(p) => self.frag.leaf(p),
-            Next::Out(c) => self.frag.ring_leaf(exits.entry(c)),
+            Next::Out(c) => self.frag.ring_leaf(exits.entry(c)?),
             Next::Cell(_) | Next::End => None,
-        }
+        })
     }
     /// (held, node key and level) of a cell at `z` on local leaf `l` of a tree solved here.
     fn water_at(&self, l: u32, z: f32) -> (bool, Option<(u64, f32)>) {
@@ -257,8 +257,6 @@ pub(crate) struct Model {
     /// Receivers of full ponds that cross tiles, by world cell.
     pub ponds: HashMap<u64, u8>,
     pub flow: Solved,
-    /// Cells on flow cycles; always 0, since a run with a cycle fails.
-    pub cycles: u64,
     /// Each tile's `Local` (runs without a work directory; with one, they are read back).
     pub locals: Vec<Local>,
 }
@@ -366,7 +364,7 @@ pub(crate) fn state(
                         )));
                     }
                 };
-                let l = t.leaf_of_end(&w.exits, end).ok_or_else(|| {
+                let l = t.leaf_of_end(&w.exits, end)?.ok_or_else(|| {
                     invalid(format!(
                         "a cell held by tree {key} does not reach its fragment"
                     ))
@@ -514,7 +512,7 @@ impl Trees<'_> {
             let (x, y) = core.world_xy(k);
             let z = zw[win.local(x, y).expect("core in window")];
             if z <= self.h.spill[sl as usize] {
-                let l = t.leaf_of_end(self.exits, d.end[k]).ok_or_else(|| {
+                let l = t.leaf_of_end(self.exits, d.end[k])?.ok_or_else(|| {
                     invalid(format!(
                         "a cell held by tree {key} does not reach its fragment"
                     ))
@@ -545,7 +543,9 @@ impl Trees<'_> {
             }
         }
         for &(cell, pit) in &frag.ring_pit {
-            let l = frag.leaf(pit).expect("ring pits are candidates");
+            let l = frag
+                .leaf(pit)
+                .ok_or_else(|| invalid(format!("ring pit {pit} is no candidate of its tile")))?;
             let key = frag.tree[l as usize];
             if !tops.contains_key(&key) {
                 continue;
@@ -686,7 +686,7 @@ pub(crate) fn model(
     // `build` refuses tile graphs with cycles.
     let (h, resolver) = cached(work, &format!("{tag}/g1"), || build(world, s.tile, &graphs))?;
     let exits = Exits::new(&graphs);
-    let foreign = foreign_supply(&graphs, &exits);
+    let foreign = foreign_supply(&graphs, &exits)?;
     drop(graphs);
     let top = top_spill(&h);
     let frag_at = |i: usize| -> Result<Frag> {
@@ -774,7 +774,7 @@ pub(crate) fn model(
                     let (cx, cy) = world.xy(cell);
                     match core.local(cx, cy) {
                         Some(k) => {
-                            let l = probe.leaf_of_end(&exits, d.end[k]).ok_or_else(|| {
+                            let l = probe.leaf_of_end(&exits, d.end[k])?.ok_or_else(|| {
                                 invalid(format!("a pour into tree {key} does not reach it"))
                             })?;
                             entries.push((l, amount));
@@ -862,7 +862,7 @@ pub(crate) fn model(
                                 continue;
                             };
                             let l = probes[r as usize]
-                                .leaf_of_end(&exits, d.end[k])
+                                .leaf_of_end(&exits, d.end[k])?
                                 .ok_or_else(|| {
                                     invalid(format!("a pour into tree {key} does not reach it"))
                                 })?;
@@ -872,31 +872,29 @@ pub(crate) fn model(
                     Ok((cells, pours))
                 })
             })?;
+        // Grouped by tree once; the solve only sums and sorts them, so order does not matter.
+        let mut cells_by: BTreeMap<u64, Vec<(u32, f32, u64, u64)>> = BTreeMap::new();
+        let mut pours_by: BTreeMap<u64, Vec<(u32, u64)>> = BTreeMap::new();
+        for (cells, pours) in gathered {
+            for (key, l, z, x, y) in cells {
+                cells_by.entry(key).or_default().push((l, z, x, y));
+            }
+            for (key, l, amount) in pours {
+                pours_by.entry(key).or_default().push((l, amount));
+            }
+        }
         for p in probes {
-            let mine: Vec<(u32, f32, u64, u64)> = gathered
-                .iter()
-                .flat_map(|g| g.0.iter())
-                .filter(|c| p.solved.contains_key(&c.0))
-                .map(|c| (c.1, c.2, c.3, c.4))
-                .collect();
+            let (mut mine, mut pours) = (Vec::new(), Vec::new());
             for &key in p.solved.keys() {
-                let n = gathered
-                    .iter()
-                    .flat_map(|g| g.0.iter())
-                    .filter(|c| c.0 == key)
-                    .count() as u64;
-                let want = bal.n[trees.leaf(key)?];
+                let cells = cells_by.remove(&key).unwrap_or_default();
+                let (n, want) = (cells.len() as u64, bal.n[trees.leaf(key)?]);
                 ensure(
                     n == want,
                     format!("tree {key}: {n} cells gathered, {want} held globally"),
                 )?;
+                mine.extend(cells);
+                pours.extend(pours_by.remove(&key).unwrap_or_default());
             }
-            let pours: Vec<(u32, u64)> = gathered
-                .iter()
-                .flat_map(|g| g.1.iter())
-                .filter(|c| p.solved.contains_key(&c.0))
-                .map(|c| (c.1, c.2))
-                .collect();
             let (local, nodes) = trees.solve(p.frag, p.solved, &mine, &pours)?;
             remote_nodes.extend(nodes.0);
             remote.push(local);
@@ -1129,7 +1127,6 @@ pub(crate) fn model(
         water,
         ponds,
         flow,
-        cycles: 0,
         locals: mem_locals,
     })
 }
@@ -1165,7 +1162,6 @@ mod tests {
         assert_eq!(a.3, b.3, "discharge, {at}");
         assert_eq!(a.4, b.4, "flow, {at}");
         assert_eq!(a.0.water.nodes, b.0.water.nodes, "nodes, {at}");
-        assert_eq!(a.0.cycles, 0);
     }
 
     fn run_with(world: World, z: &[f32], tile: u64, contract: bool) -> Out {
@@ -1196,13 +1192,22 @@ mod tests {
                 }
             }
         }
-        // The terraced ground has zero-depth pits (R32), which stay global leaves.
-        let s = setup(world, 64, 1e-5);
+        // The terraced ground has zero-depth pits (R32): with contraction on, some lie in a
+        // tile whose fragment settled a tree of several pits, and they stay global leaves.
+        let s = setup(world, 16, 1e-5);
         let m = run_on(&s, &Layer::memory(world, terraced)).0;
         let h = &m.water.h;
+        let contracted = |l: usize| {
+            let (x, y) = world.xy(h.leaf_pit[l]);
+            m.locals[tile_of(world, 16, x, y)]
+                .frag
+                .size
+                .iter()
+                .any(|&n| n >= 2)
+        };
         assert!(
-            (0..h.len()).any(|d| h.spill[d] <= h.low[d]),
-            "a zero-depth depression"
+            (0..h.leaves).any(|l| h.spill[l] <= h.low[l] && contracted(l)),
+            "a zero-depth pit stays a global leaf in a contracted tile"
         );
     }
 
@@ -1417,7 +1422,7 @@ mod tests {
             .count();
         eprintln!(
             "global leaves {} depressions {} nodes {} lakes {lakes} ponds {} trees solved apart {} \
-             (across tiles {}) lake cells {lake_cells} river cells {} cycles {}",
+             (across tiles {}) lake cells {lake_cells} river cells {} (cycles fail the run)",
             m.water.h.leaves,
             m.water.h.len(),
             nodes.len(),
@@ -1425,7 +1430,6 @@ mod tests {
             m.water.solved.len(),
             m.water.remote.len(),
             flow.iter().filter(|&&f| f & 16 != 0).count(),
-            m.cycles
         );
         let mut area = [0u64; 24];
         let mut depth = [0u64; 32];
@@ -1464,47 +1468,125 @@ mod tests {
         probe::shade_png("t9-dam-spot-water", &z, win.w, &wet);
     }
 
-    /// Exactness on real terrain: the Grand Canyon window (E27169 N44546, 2,048², class 19,
-    /// r = 0.05, so settled trees keep closed lakes) uncontracted as one tile against tiles of
-    /// 512² with contraction; every raster and the node table bit-identical.
+    /// Exactness on real terrain: arid windows with water (r between 0 and 1; dunes and
+    /// badlands have r = 0 and hold none), 2,048² with the layout's classes, uncontracted as
+    /// one tile against tiles of 512², 300², 256² and 128² with contraction. Every raster
+    /// and the node table bit-identical, and some tree solved across tiles (pass L2).
     #[test]
     #[ignore]
-    fn probe_tiles_match_the_whole_on_the_canyon() {
+    fn probe_tiles_match_the_whole_on_arid_windows() {
         use crate::world::water::probe;
-        let Some((win, z)) = probe::window(27169, 44546, 2048) else {
-            return;
-        };
+        let mut across = 0;
+        for (name, east, north) in [
+            ("Grand Canyon (19, r 0.05)", 27169, 44546),
+            ("tower karst (14, r 0.02)", 33280, 19327),
+            ("stratovolcano (11, r 0.5)", 33280, 31487),
+        ] {
+            let Some((win, z)) = probe::window(east, north, 2048) else {
+                return;
+            };
+            let Some(class) = probe::classes(win) else {
+                return;
+            };
+            let world = World {
+                w: win.w as u64,
+                h: win.h as u64,
+            };
+            let ground = Layer::memory(world, z);
+            let classes = Layer::memory(world, class);
+            let run = |tile: u64, contract: bool| {
+                let mut s = setup(world, tile, 0.05);
+                s.table.lake_min_m2 = 500.0;
+                s.threads = 4;
+                s.contract = contract;
+                s.nw_m = [win.x0 as f64, (probe::WORLD.h - win.y0) as f64];
+                s.classes = Some(Classes::new(classes.clone(), 1, world).expect("classes"));
+                let t = std::time::Instant::now();
+                let out = run_on(&s, &ground);
+                let w = &out.0.water;
+                eprintln!(
+                    "{name} E{east} N{north} tiles {tile}² contraction {contract}: {:.0} s; \
+                     global leaves {}, nodes {} (closed {}), trees solved apart {} (across \
+                     tiles {})",
+                    t.elapsed().as_secs_f64(),
+                    w.h.leaves,
+                    w.nodes.0.len(),
+                    w.nodes.0.iter().filter(|n| n.need > 0).count(),
+                    w.solved.len(),
+                    w.remote.len()
+                );
+                out
+            };
+            let whole = run(2048, false);
+            for tile in [512, 300, 256, 128] {
+                let tiled = run(tile, true);
+                assert_same(&tiled, &whole, &format!("{name}, tiles {tile}"));
+                across += tiled.0.water.remote.len();
+            }
+            eprintln!("{name}: every tiling with contraction = whole uncontracted, bit for bit");
+        }
+        eprintln!("trees solved across tiles (pass L2), all windows and tilings: {across}");
+        assert!(across > 0, "a tree solved across tiles (pass L2)");
+    }
+
+    /// Upstream area (cells) of the raw surface's own D8 network: steepest strictly lower
+    /// neighbour, no fill (pits end paths), world edges drain off.
+    fn raw_d8(w: usize, z: &[f32]) -> Vec<u64> {
         let world = World {
-            w: win.w as u64,
-            h: win.h as u64,
+            w: w as u64,
+            h: (z.len() / w) as u64,
         };
-        let ground = Layer::memory(world, z);
-        let run = |tile: u64, contract: bool| {
-            let mut s = setup(world, tile, 0.05);
-            s.table.lake_min_m2 = 500.0;
-            s.threads = 4;
-            s.contract = contract;
-            s.nw_m = [win.x0 as f64, (probe::WORLD.h - win.y0) as f64];
-            s.classes = Some(Classes::new(Layer::filled(world, 19), 1, world).expect("classes"));
-            let t = std::time::Instant::now();
-            let out = run_on(&s, &ground);
-            let w = &out.0.water;
-            eprintln!(
-                "canyon tiles {tile}² contraction {contract}: {:.0} s; global leaves {}, nodes \
-                 {} (closed {}), trees solved apart {} (across tiles {})",
-                t.elapsed().as_secs_f64(),
-                w.h.leaves,
-                w.nodes.0.len(),
-                w.nodes.0.iter().filter(|n| n.need > 0).count(),
-                w.solved.len(),
-                w.remote.len()
-            );
-            out
+        let next = |k: usize| {
+            let (x, y) = world.xy(k as u64);
+            if world.is_edge(x, y) {
+                return Next::End;
+            }
+            let mut best: Option<(f32, u64)> = None;
+            for j in 0..8 {
+                let (nx, ny) = world.neighbour(x, y, j).expect("inside");
+                let n = world.index(nx, ny);
+                let drop = (z[k] - z[n as usize])
+                    / crate::world::water::geom::step_len(j as u8 + 1) as f32;
+                if drop > 0.0 && best.is_none_or(|(b, _)| drop > b) {
+                    best = Some((drop, n));
+                }
+            }
+            best.map_or(Next::End, |b| Next::Cell(b.1 as u32))
         };
-        let whole = run(2048, false);
-        let tiled = run(512, true);
-        assert_same(&tiled, &whole, "canyon, tiles 512 with contraction");
-        eprintln!("canyon: tiles 512² with contraction = whole uncontracted, bit for bit");
+        let acc = accumulate(z.len(), next, |_| 1);
+        assert_eq!(acc.cycles, 0, "steepest descent has no cycles");
+        acc.q
+    }
+
+    /// 8-neighbour steps from each cell to the nearest cell of `on`, capped at 255.
+    fn distance_to(w: usize, on: &[bool]) -> Vec<u8> {
+        let world = World {
+            w: w as u64,
+            h: (on.len() / w) as u64,
+        };
+        let mut dist = vec![255u8; on.len()];
+        let mut queue = std::collections::VecDeque::new();
+        for (k, _) in on.iter().enumerate().filter(|p| *p.1) {
+            dist[k] = 0;
+            queue.push_back(k);
+        }
+        while let Some(k) = queue.pop_front() {
+            if dist[k] >= 254 {
+                continue;
+            }
+            let (x, y) = world.xy(k as u64);
+            for j in 0..8 {
+                let Some((nx, ny)) = world.neighbour(x, y, j) else {
+                    continue;
+                };
+                let n = world.index(nx, ny) as usize;
+                if dist[n] == 255 && !on[n] {
+                    dist[n] = dist[k] + 1;
+                    queue.push_back(n);
+                }
+            }
+        }
+        dist
     }
 
     /// Straight runs of a receiver field on the cells `on`: (cells on, of them in a
@@ -1641,15 +1723,9 @@ mod tests {
             w: w as u64,
             h: win.h as u64,
         };
-        let classes_path = "../../data/worlds/fujix-collage-55/class.u8";
-        let cmap = std::fs::read(classes_path).expect("class map");
-        assert_eq!(cmap.len(), 512 * 512);
-        let class: Vec<u8> = (0..z.len())
-            .map(|k| {
-                let (x, y) = win.world_xy(k);
-                cmap[(y / 128) as usize * 512 + (x / 128) as usize]
-            })
-            .collect();
+        let Some(class) = probe::classes(win) else {
+            return;
+        };
         let mut s = setup(world, 1024, 0.05);
         s.table = Table::parse(DEFAULT).expect("table");
         s.threads = 4;
@@ -1702,12 +1778,62 @@ mod tests {
             share(straight_runs(w, &raw_dir, &raw_on))
         );
 
-        // Placement: Q >= 1 km² rivers on dry land against the lowest raw cell across the
-        // valley (±10 cells perpendicular to the flow).
-        // Also the floor of the river's own cross-section: from the river cell, descend along
-        // the transect while the ground strictly falls (to the local minimum it sits above).
-        let (mut offsets, mut floor) = ([0u64; 11], [0u64; 11]);
-        let (mut rise, mut floor_rise) = (0f64, 0f64);
+        // Placement: distance (8-neighbour steps) from each Q >= 1 km² model river cell to
+        // the nearest Q >= 1 km² cell of the raw surface's own D8 network (steepest descent
+        // on raw, no fill: pits end paths).
+        let bins: [(u8, u8); 10] = [
+            (0, 0),
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (4, 5),
+            (6, 10),
+            (11, 20),
+            (21, 50),
+            (51, 254),
+            (255, 255),
+        ];
+        let placement = |label: &str, area: &[u64]| {
+            let on: Vec<bool> = area.iter().map(|&a| a >= 1_000_000).collect();
+            let near = distance_to(w, &on);
+            let mut hist = [0u64; 10];
+            let mut rivers = 0u64;
+            for k in 0..z.len() {
+                if thalweg[k] && q[k] >= 1.0 {
+                    rivers += 1;
+                    let b = bins.iter().position(|b| (b.0..=b.1).contains(&near[k]));
+                    hist[b.expect("bin")] += 1;
+                }
+            }
+            let within = |cap: u8| {
+                let n: u64 = bins
+                    .iter()
+                    .zip(&hist)
+                    .filter(|(b, _)| b.1 <= cap)
+                    .map(|(_, &n)| n)
+                    .sum();
+                n as f64 / rivers.max(1) as f64
+            };
+            eprintln!(
+                "placement against {label}: {rivers} model river cells with Q >= 1 km²; {} \
+                 network cells with Q >= 1 km² (largest area {} m²)\n  distance to the nearest \
+                 (cells) 0, 1, 2, 3, 4-5, 6-10, 11-20, 21-50, 51-254, 255+: {hist:?}\n  within \
+                 3 cells {:.3}, within 10 cells {:.3}",
+                on.iter().filter(|&&o| o).count(),
+                area.iter().max().copied().unwrap_or(0),
+                within(3),
+                within(10)
+            );
+        };
+        placement("the raw D8 network (no fill)", &raw_d8(w, &z));
+        placement(
+            "the raw network routed through depressions (fallback: pits end every D8 path)",
+            &raw_q,
+        );
+
+        // Secondary: the lowest raw cell within ±10 cells across the flow (dry rivers).
+        let mut offsets = [0u64; 11];
+        let mut rise = 0f64;
         let mut big = 0u64;
         for k in 0..z.len() {
             if !dry[k] || q[k] < 1.0 {
@@ -1730,40 +1856,15 @@ mod tests {
             }
             offsets[low.1.unsigned_abs() as usize] += 1;
             rise += f64::from(z[k] - low.0);
-            let side = match (at(-1), at(1)) {
-                (Some(a), Some(b)) if a.min(b) < z[k] => {
-                    if a < b {
-                        -1
-                    } else {
-                        1
-                    }
-                }
-                _ => 0,
-            };
-            let (mut t, mut zt) = (0i64, z[k]);
-            while side != 0 && t.abs() < 10 {
-                match at(t + side) {
-                    Some(zn) if zn < zt => (t, zt) = (t + side, zn),
-                    _ => break,
-                }
-            }
-            floor[t.unsigned_abs() as usize] += 1;
-            floor_rise += f64::from(z[k] - zt);
             big += 1;
         }
-        let within = |v: &[u64; 11]| {
-            let n: u64 = v[..4].iter().sum();
-            format!("within 3 cells {n} ({:.3})", n as f64 / big.max(1) as f64)
-        };
+        let n3: u64 = offsets[..4].iter().sum();
         eprintln!(
-            "Q >= 1 km² river cells on dry land: {big}\n  lowest raw cell within ±10 cells \
-             across the flow, offset 0..10: {offsets:?}; {}; mean height above it {:.3} m\n  \
-             floor of its own cross-section (descending), offset 0..10: {floor:?}; {}; mean \
-             height above it {:.3} m",
-            within(&offsets),
-            rise / big.max(1) as f64,
-            within(&floor),
-            floor_rise / big.max(1) as f64
+            "secondary, {big} dry river cells: lowest raw cell within ±10 cells across the \
+             flow at offset 0..10: {offsets:?}; within 3 cells {:.3}; mean height above it \
+             {:.3} m",
+            n3 as f64 / big.max(1) as f64,
+            rise / big.max(1) as f64
         );
 
         // Confetti check: labelled lakes per km² per class (by the class at the lake's key).
