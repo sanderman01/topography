@@ -990,6 +990,7 @@ pub fn run(options: &Options) -> Result<Outcome> {
                         .copied()
                         .unwrap_or(f32::NEG_INFINITY)
                 },
+                floor: &|i| carve_floor[i],
                 seam: &seam_step,
             },
         );

@@ -746,6 +746,8 @@ pub(super) fn fill_to_spill(
 const PATH_HELD_UP: &str = "the coarse river path its outflow runs into is held above the level";
 /// Why `fill_river_sinks` leaves a sink whose lake would stand above a coarse path beside it.
 const PATH_CAPPED: &str = "a coarse river path beside it is held below the level";
+/// Why it leaves one whose outflow runs over a carve floor above the level downstream.
+const FLOOR_HELD_UP: &str = "its outflow runs over a carve floor above the level downstream";
 
 /// Which basins `fill_river_sinks` fills.
 pub(super) struct RiverSinkRule<'a> {
@@ -764,6 +766,8 @@ pub(super) struct RiverSinkRule<'a> {
     pub cap: &'a dyn Fn(usize) -> f32,
     /// The lowest a coarse path cell's water may stand (-inf elsewhere).
     pub low: &'a dyn Fn(usize) -> f32,
+    /// The carve floor: a river's water stands on it, upstream too (a backwater).
+    pub floor: &'a dyn Fn(usize) -> f32,
     pub seam: &'a SeamStep,
 }
 
@@ -875,6 +879,23 @@ pub(super) fn fill_river_sinks(
                 .flatten()
                 .any(|c| (rule.keep)(c) && (rule.low)(c) > level + tolerance)
         };
+        // Down the outflow to other water or an end, the water stands on the carve floor; one
+        // above the level would back up over the exit (water rising out of the lake).
+        let floor_held_up = |e: usize, level: f32| {
+            let mut at = Some(e);
+            for _ in 0..body.len() {
+                let Some(c) =
+                    at.filter(|&c| flags[c] & (SEA | FIXED | OUTLET) == 0 && body[c] == 0)
+                else {
+                    return false;
+                };
+                if (rule.floor)(c) + super::rivers::MIN_DEPTH_M > level + tolerance {
+                    return true;
+                }
+                at = receiver(dims, dir, c);
+            }
+            false
+        };
         if !rule.fine {
         } else if let Some(moves) = drained {
             if capped[b + 1] < basin.level - tolerance {
@@ -885,6 +906,10 @@ pub(super) fn fill_river_sinks(
                 || (basin.exit != NO_EXIT && path_held_up(basin.exit as usize, basin.level))
             {
                 *done.left.entry(PATH_HELD_UP).or_insert(0) += 1;
+                continue;
+            }
+            if basin.exit != NO_EXIT && floor_held_up(basin.exit as usize, basin.level) {
+                *done.left.entry(FLOOR_HELD_UP).or_insert(0) += 1;
                 continue;
             }
             for (j, d) in moves {
@@ -915,6 +940,10 @@ pub(super) fn fill_river_sinks(
                 || spill.pieces.iter().flatten().any(high_path)
             {
                 *done.left.entry(PATH_HELD_UP).or_insert(0) += 1;
+                continue;
+            }
+            if floor_held_up(spill.outlet, spill.level) {
+                *done.left.entry(FLOOR_HELD_UP).or_insert(0) += 1;
                 continue;
             }
             for &(j, d) in &spill.moves {
@@ -1072,6 +1101,7 @@ mod tests {
             keep: &|_| false,
             cap: &|_| f32::INFINITY,
             low: &|_| f32::NEG_INFINITY,
+            floor: &|_| f32::NEG_INFINITY,
             seam: &SeamStep::none(),
         };
         fill_river_sinks(
