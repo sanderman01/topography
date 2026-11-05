@@ -1,0 +1,36 @@
+crates/topography-core/src/world/water/geom.rs
+  s_8c1b40ea9c1e0d::t_9a862f77553f5d 147-156,166-171,178,188-201
+  s_8c1b40ea9c1e0d::t_2af87125778b30 6-15,58-63,85-90,157-165,172-177,179-187
+  s_8c1b40ea9c1e0d::t_1a6e816466e6af 1-5,16-57,64-84,91-146
+crates/topography-core/src/world/water/rain.rs
+  s_8c1b40ea9c1e0d::t_1a6e816466e6af 1-48,53-56,67-71,80-101
+  s_8c1b40ea9c1e0d::t_2af87125778b30 49-52,57-66,72-79,109-116
+  s_8c1b40ea9c1e0d::t_9a862f77553f5d 102-108,117-124
+crates/topography-core/src/world/water/layers.rs
+  s_8c1b40ea9c1e0d::t_1a6e816466e6af 1-39,48-52,57-65,71,76-119,124-152,157-180,187-197
+  s_8c1b40ea9c1e0d::t_2af87125778b30 40-47,53-56,66-70,72-75,120-123,153-156,181-186,206-224,227-233,239-250
+  s_8c1b40ea9c1e0d::t_9a862f77553f5d 198-205,225-226,234-238,251-253
+crates/topography-core/src/world/water/store.rs
+  s_8c1b40ea9c1e0d::t_2af87125778b30 11-14,155-158,161-164,166-168,177-180,204-208,229-244,249-252,287-290,299-306
+  s_8c1b40ea9c1e0d::t_9a862f77553f5d 263-268,271-275,277-286,291-298,307-310
+  s_8c1b40ea9c1e0d::t_1a6e816466e6af 1-10,15-154,159-160,165,169-176,181-203,209-228,245-248,253-262
+  s_8c1b40ea9c1e0d::t_bbc1a6a56df833 269-270,276
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_c2d7c83735e47c 10-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de03ccbe02617f3738fe38945d353fbc786c6d57",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
