@@ -330,6 +330,8 @@ impl Stage {
             }
             hasher.update(&buf[..n]);
         }
+        // On disk before `publish` renames the stage into place.
+        io_context(format!("sync {name}"), file.sync_all())?;
         self.digests
             .insert(name.into(), hex(&hasher.finalize()).into());
         Ok(())
@@ -337,10 +339,12 @@ impl Stage {
 
     pub fn json(&mut self, name: &str, value: &Value) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(value)?;
-        io_context(
-            format!("write {name}"),
-            fs::write(self.dir.path().join(name), &bytes),
+        let mut file = io_context(
+            format!("create {name}"),
+            fs::File::create(self.dir.path().join(name)),
         )?;
+        io_context(format!("write {name}"), file.write_all(&bytes))?;
+        io_context(format!("sync {name}"), file.sync_all())?;
         self.digests
             .insert(name.into(), hex(&Sha256::digest(&bytes)).into());
         Ok(())
