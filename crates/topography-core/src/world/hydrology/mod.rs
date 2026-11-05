@@ -1496,15 +1496,8 @@ pub fn run(options: &Options) -> Result<Outcome> {
     bodies["next_id"] = json!(next);
     let mut figures = report::figures(&ctx, &carve, extended);
     if coarse.is_some() {
-        let (carving, carving_figures) = report::carving(
-            &ctx,
-            &carve_floor,
-            &carve_floor[held[0] * w..held[1] * w],
-            fixed_rows,
-            &body_id,
-            &carve,
-            &slots,
-        );
+        let (carving, carving_figures) =
+            report::carving(&ctx, &carve_floor, fixed_rows, &body_id, &carve, &slots);
         checks.extend(carving);
         figures.insert("carving".into(), carving_figures);
     }
