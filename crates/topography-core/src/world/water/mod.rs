@@ -8,6 +8,7 @@
 #![allow(dead_code)]
 
 mod balance;
+mod bodies;
 mod contract;
 mod flats;
 mod flow;

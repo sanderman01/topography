@@ -65,6 +65,17 @@ pub(crate) fn classes(r: Rect) -> Option<Vec<u8>> {
 /// A hillshade (north-west sun) of `z`, `w` cells wide, with `wet` cells tinted blue, written
 /// to scratch/hydrology-v3/probes/<name>.png.
 pub(crate) fn shade_png(name: &str, z: &[f32], w: usize, wet: &[bool]) {
+    shade_tinted(name, z, w, |k| wet[k].then_some([2, 3, 6]));
+}
+
+/// A hillshade with cells tinted by `tint` (RGB weights in sixths of the shade, lit at least
+/// to 96 so tints show in shadow).
+pub(crate) fn shade_tinted(
+    name: &str,
+    z: &[f32],
+    w: usize,
+    tint: impl Fn(usize) -> Option<[u8; 3]>,
+) {
     let h = z.len() / w;
     let at = |x: usize, y: usize| f64::from(z[y.min(h - 1) * w + x.min(w - 1)]);
     let mut rgb = Vec::with_capacity(w * h * 3);
@@ -76,10 +87,9 @@ pub(crate) fn shade_png(name: &str, z: &[f32], w: usize, wet: &[bool]) {
             let (az, alt) = (315f64.to_radians(), 45f64.to_radians());
             let s = alt.sin() * slope.cos() + alt.cos() * slope.sin() * (az - aspect).cos();
             let g = (s.clamp(0.0, 1.0) * 255.0) as u8;
-            if wet[y * w + x] {
-                rgb.extend_from_slice(&[g / 3, g / 2, g]);
-            } else {
-                rgb.extend_from_slice(&[g, g, g]);
+            match tint(y * w + x) {
+                Some(t) => rgb.extend(t.map(|c| (u16::from(g.max(96)) * u16::from(c) / 6) as u8)),
+                None => rgb.extend_from_slice(&[g, g, g]),
             }
         }
     }
