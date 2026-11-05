@@ -112,6 +112,11 @@ class RunTest(unittest.TestCase):
             self.assertEqual(W.run_world(src, other, tile=64, threads=2), 2)
             self.assertEqual(W.run_window(src, 1, (128.0, 128.0), 64, other, 64, 2), 2)
             self.assertEqual(sorted(p.name for p in other.iterdir()), before)
+            # A fresh run directory holding only its launcher's log is accepted.
+            fresh = root / "fresh"
+            fresh.mkdir()
+            (fresh / "run.log").write_text("")
+            self.assertIn(W.run_window(src, 1, (128.0, 128.0), 64, fresh, 64, 2), (0, 1))
 
     def test_an_unexpected_error_exits_2(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:

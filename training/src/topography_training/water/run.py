@@ -35,7 +35,9 @@ RAW = "elevation-raw.f32"
 DISK_BYTES = 54
 DISK_MARGIN = 1.1
 DISK_SPARE = 10e9
-MOISTURE_KEYS = ("file", "size", "spacing_m", "nw_m", "scale_mm_h")
+# A launcher's own files in a fresh run directory (AGENTS.md long jobs).
+LAUNCH_FILES = {"run.log", "run.pid", "exit_code"}
+MOISTURE_KEYS =("file", "size", "spacing_m", "nw_m", "scale_mm_h")
 
 
 class Refused(Exception):
@@ -404,7 +406,7 @@ def _guard(out: Path, src: Path, m: dict) -> None:
     for p in {src.resolve(), *([Path(m["source_world"]).resolve()] if m.get("source_world") else [])}:
         if o == p or p in o.parents:
             raise Refused(f"--out {out} lies in the source {p}")
-    if out.exists() and any(out.iterdir()):
+    if out.exists() and any(p.name not in LAUNCH_FILES for p in out.iterdir()):
         progress = out / "progress.json"
         if not progress.exists() or "source" not in _json(progress):
             raise Refused(f"{out} exists and is not a run of this driver (no progress.json)")
