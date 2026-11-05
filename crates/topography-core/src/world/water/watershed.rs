@@ -490,6 +490,24 @@ pub(crate) mod tests {
         pit_probe("plains", 18944, 36863);
     }
 
+    /// One window per class, each a 2 km block the class owns on all 256 class cells of
+    /// fujix-collage-55/class.u8 (the dominated block nearest the centroid of all such).
+    #[test]
+    #[ignore]
+    fn probe_pits_per_class() {
+        for (name, east, north) in [
+            ("star dunes (8)", 57216, 47231),
+            ("crest-train dunes (16)", 54784, 57343),
+            ("badlands (7)", 27264, 59391),
+            ("braided (9)", 51072, 7551),
+            ("tower karst (14)", 33280, 19327),
+            ("alpine (6)", 41600, 20095),
+            ("stratovolcano (11)", 33280, 31487),
+        ] {
+            pit_probe(name, east, north);
+        }
+    }
+
     /// Pit and in-tile edge density of a 2048² window, extrapolated to the world.
     fn pit_probe(name: &str, east: u64, north: u64) {
         use crate::world::water::probe;
