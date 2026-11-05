@@ -9,6 +9,7 @@
 
 mod flow;
 mod geom;
+mod hierarchy;
 mod layers;
 #[cfg(test)]
 mod probe;
