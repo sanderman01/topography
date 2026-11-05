@@ -1,0 +1,25 @@
+crates/topography-core/src/world/water/watershed.rs
+  s_8c1b40ea9c1e0d::t_4da8443eccf0b9 60-63
+  s_8c1b40ea9c1e0d::t_3b3bc9d4cb91f4 1-59,64-234,261-262,268-270,276-279,294-297
+  s_8c1b40ea9c1e0d::t_13a911473d7019 280-293,298-355,367,398
+  s_8c1b40ea9c1e0d::t_62b36c6107d1f5 368-397
+  s_8c1b40ea9c1e0d::t_39a34da33932f3 235-260,263-267,271-275,356-366
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_ec5d4a62433680 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4268f3a1111f5bea1de2f70978a54a71d8b38ce",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
