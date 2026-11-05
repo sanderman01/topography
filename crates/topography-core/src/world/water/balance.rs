@@ -1,0 +1,521 @@
+//! Fill-Spill-Merge (Barnes, Callaghan and Wickert 2020) with a water balance by area. A
+//! depression's catchment supplies Σ r over its cells (thousandths of a cell); a lake of that
+//! many cells evaporates it. A depression that cannot hold its supply below its spill fills,
+//! and the rest overflows: into its sibling, into its parent when both are full, or (top-level)
+//! across its outlet into the tree beyond. Trees are taken in reverse of the order they joined
+//! the ocean, so overflow always runs into a tree not yet taken. All amounts are integers.
+
+use super::LAKE_DEPTH_M;
+use super::hierarchy::{Hierarchy, NONE};
+use super::store::{Blob, Dec, Enc};
+use super::table::MILLI;
+use crate::acquisition::{Result, ensure};
+use std::collections::BTreeMap;
+
+/// Metres as integer millimetres.
+pub(crate) fn mm(z: f32) -> i64 {
+    (f64::from(z) * 1000.0).round() as i64
+}
+
+/// The spill of each leaf's top-level ancestor (cells above it are in no depression).
+pub(crate) fn top_spill(h: &Hierarchy) -> Vec<f32> {
+    let mut top = vec![0.0f32; h.len()];
+    for d in (0..h.len()).rev() {
+        let p = h.parent[d];
+        top[d] = if p == NONE {
+            h.spill[d]
+        } else {
+            top[p as usize]
+        };
+    }
+    top.truncate(h.leaves);
+    top
+}
+
+/// The lowest depression on `leaf`'s chain whose spill is at or above `z`; NONE above all.
+pub(crate) fn holding(h: &Hierarchy, top: &[f32], leaf: u32, z: f32) -> u32 {
+    if leaf == NONE || z > top[leaf as usize] {
+        return NONE;
+    }
+    let mut d = leaf;
+    while h.spill[d as usize] < z {
+        d = h.parent[d as usize];
+    }
+    d
+}
+
+/// A tile's cells by holding depression: count, Σ ground (mm), bbox [x0, y0, x1, y1].
+pub(crate) type TileCounts = BTreeMap<u32, (u64, i64, [u64; 4])>;
+
+pub(crate) fn count(t: &mut TileCounts, d: u32, z: f32, x: u64, y: u64) {
+    let e = t.entry(d).or_insert((0, 0, [u64::MAX, u64::MAX, 0, 0]));
+    e.0 += 1;
+    e.1 += mm(z);
+    e.2 = [e.2[0].min(x), e.2[1].min(y), e.2[2].max(x), e.2[3].max(y)];
+}
+
+fn union(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Counts {
+    pub cells: Vec<u64>,
+    pub sum_mm: Vec<i64>,
+    pub bbox: Vec<[u64; 4]>,
+}
+
+impl Counts {
+    pub fn dense(nd: usize, tiles: &[TileCounts]) -> Self {
+        let mut c = Counts {
+            cells: vec![0; nd],
+            sum_mm: vec![0; nd],
+            bbox: vec![[u64::MAX, u64::MAX, 0, 0]; nd],
+        };
+        for t in tiles {
+            for (&d, &(n, s, b)) in t {
+                let d = d as usize;
+                c.cells[d] += n;
+                c.sum_mm[d] += s;
+                c.bbox[d] = union(c.bbox[d], b);
+            }
+        }
+        c
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Balance {
+    /// In a tree that joins the ocean at or below 0 m.
+    pub sea: Vec<bool>,
+    /// Cells at or below the spill, over the subtree.
+    pub n: Vec<u64>,
+    /// Volume to the spill, mm × cells.
+    pub vfill_mm: Vec<i64>,
+    pub bbox: Vec<[u64; 4]>,
+    pub full: Vec<bool>,
+    /// Water held at this depression's own level (beyond its children's capacities).
+    pub own: Vec<u64>,
+    /// The depression whose water covers this one's cells (itself or its top wet ancestor).
+    pub node: Vec<u32>,
+    /// Water level of node depressions (NaN elsewhere, and for closed nodes until set).
+    pub level: Vec<f32>,
+    /// Closed wet nodes: how many cells their level covers.
+    pub need: Vec<u64>,
+    /// Supply that reached the sea or left the map.
+    pub to_sea: u64,
+    /// Overflow poured into a leaf from outside it: (leaf, the outlet cell it entered by,
+    /// amount), sorted. A contracted super-leaf (Task 8b) re-solves its inside from these.
+    pub pours: Vec<(u32, u64, u64)>,
+}
+
+struct Fsm<'a> {
+    h: &'a Hierarchy,
+    cap: Vec<u64>,
+    sea: Vec<bool>,
+    top_of: Vec<u32>,
+    taken: Vec<bool>,
+    full: Vec<bool>,
+    own: Vec<u64>,
+    pending: Vec<u64>,
+    to_sea: u64,
+    pours: Vec<(u32, u64, u64)>,
+}
+
+impl Fsm<'_> {
+    fn pour(&mut self, mut d: u32, mut w: u64) {
+        let h = self.h;
+        while w > 0 {
+            let du = d as usize;
+            if !self.full[du] {
+                let kids: u64 = if h.is_leaf(d) {
+                    0
+                } else {
+                    h.children[du].iter().map(|&c| self.cap[c as usize]).sum()
+                };
+                let room = self.cap[du] - kids - self.own[du];
+                if w < room {
+                    self.own[du] += w;
+                    return;
+                }
+                self.own[du] += room;
+                w -= room;
+                self.full[du] = true;
+            }
+            let p = h.parent[du];
+            if p == NONE {
+                let g = h.geolink[du];
+                if g == NONE || self.sea[self.top_of[g as usize] as usize] {
+                    self.to_sea += w;
+                } else {
+                    debug_assert!(
+                        !self.taken[self.top_of[g as usize] as usize],
+                        "overflow into a taken tree"
+                    );
+                    self.pending[g as usize] += w;
+                    self.pours.push((g, h.outlet[du][1], w));
+                }
+                return;
+            }
+            let [a, b] = h.children[p as usize];
+            let sibling = if a == d { b } else { a };
+            d = if self.full[sibling as usize] {
+                p
+            } else {
+                self.pours.push((h.geolink[du], h.outlet[du][1], w));
+                h.geolink[du]
+            };
+        }
+    }
+}
+
+/// `sea_at_zero`: top-level trees spilling at or below 0 m are sea (the world's hierarchy);
+/// false for a tile's settled fragment, whose tops are not top-level in the world (Task 8b).
+pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Balance {
+    let nd = h.len();
+    let (mut n, mut sum, mut bbox) = (c.cells.clone(), c.sum_mm.clone(), c.bbox.clone());
+    // Children come before their parents.
+    for d in 0..nd {
+        let p = h.parent[d];
+        if p != NONE {
+            let p = p as usize;
+            n[p] += n[d];
+            sum[p] += sum[d];
+            bbox[p] = union(bbox[p], bbox[d]);
+        }
+    }
+    let vfill_mm = (0..nd)
+        .map(|d| mm(h.spill[d]) * n[d] as i64 - sum[d])
+        .collect();
+    let mut sea = vec![false; nd];
+    let mut top_of = vec![0u32; nd];
+    for d in (0..nd).rev() {
+        let p = h.parent[d];
+        (sea[d], top_of[d]) = if p == NONE {
+            (sea_at_zero && h.spill[d] <= 0.0, d as u32)
+        } else {
+            (sea[p as usize], top_of[p as usize])
+        };
+    }
+    let mut by_top: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for l in 0..h.leaves as u32 {
+        by_top.entry(top_of[l as usize]).or_default().push(l);
+    }
+    let mut f = Fsm {
+        h,
+        cap: n.iter().map(|&k| MILLI * k).collect(),
+        sea: sea.clone(),
+        top_of,
+        taken: vec![false; nd],
+        // A depression of zero depth (a flat with an outlet) holds no water: it is full from
+        // the start and drains on, whatever its r (R32, review N15).
+        full: (0..nd).map(|d| !sea[d] && h.spill[d] <= h.low[d]).collect(),
+        own: vec![0; nd],
+        pending: h.supply.clone(),
+        to_sea: 0,
+        pours: Vec::new(),
+    };
+    for &t in h.ocean_order.iter().rev() {
+        f.taken[t as usize] = true;
+        for l in by_top.remove(&t).unwrap_or_default() {
+            let w = std::mem::take(&mut f.pending[l as usize]);
+            if sea[t as usize] {
+                f.to_sea += w;
+            } else {
+                f.pour(l, w);
+            }
+        }
+    }
+    let both_full =
+        |d: usize| !h.is_leaf(d as u32) && h.children[d].iter().all(|&k| f.full[k as usize]);
+    let wet = |d: usize| !sea[d] && (f.full[d] || f.own[d] > 0 || both_full(d));
+    let mut node = vec![NONE; nd];
+    for d in (0..nd).rev() {
+        let p = h.parent[d];
+        let up = if p == NONE { NONE } else { node[p as usize] };
+        node[d] = if up != NONE {
+            up
+        } else if wet(d) {
+            d as u32
+        } else {
+            NONE
+        };
+    }
+    let mut level = vec![f32::NAN; nd];
+    let mut need = vec![0u64; nd];
+    for d in 0..nd {
+        if node[d] != d as u32 {
+            continue;
+        }
+        if f.full[d] {
+            level[d] = h.spill[d];
+            continue;
+        }
+        let kids = if h.is_leaf(d as u32) {
+            0
+        } else {
+            h.children[d].iter().map(|&k| n[k as usize]).sum()
+        };
+        match f.own[d].div_ceil(MILLI) {
+            0 => level[d] = h.spill[h.children[d][0] as usize],
+            more => need[d] = kids + more,
+        }
+    }
+    let mut pours = f.pours;
+    pours.sort_unstable();
+    Balance {
+        sea,
+        n,
+        vfill_mm,
+        bbox,
+        full: f.full,
+        own: f.own,
+        node,
+        level,
+        need,
+        to_sea: f.to_sea,
+        pours,
+    }
+}
+
+impl Balance {
+    /// Levels of closed wet nodes from their cells' ground (gathered from the tiles): the
+    /// `need`-th lowest.
+    pub fn set_closed_levels(&mut self, gathered: &[(u32, f32)]) -> Result<()> {
+        let mut by: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
+        for &(d, z) in gathered {
+            by.entry(d).or_default().push(z);
+        }
+        for (d, mut zs) in by {
+            let k = self.need[d as usize] as usize;
+            ensure(
+                k >= 1 && k <= zs.len(),
+                format!("closed basin {d} has {} cells, needs {k}", zs.len()),
+            )?;
+            zs.sort_unstable_by(f32::total_cmp);
+            self.level[d as usize] = zs[k - 1];
+        }
+        ensure(
+            self.need
+                .iter()
+                .zip(&self.level)
+                .all(|(&k, l)| k == 0 || l.is_finite()),
+            "a closed basin got no level",
+        )
+    }
+
+    /// Cells a node's water covers: all held cells when full, the needed cells when closed,
+    /// both children's when it stands exactly at their merge saddle.
+    pub fn area_cells(&self, h: &Hierarchy, d: u32) -> u64 {
+        let d = d as usize;
+        if self.full[d] {
+            self.n[d]
+        } else if self.need[d] > 0 {
+            self.need[d]
+        } else if !h.is_leaf(d as u32) {
+            h.children[d].iter().map(|&k| self.n[k as usize]).sum()
+        } else {
+            0
+        }
+    }
+
+    /// A node labelled a lake: at least 0.3 m deep (spec) and at least `min_cells` in area
+    /// (`lake_min_m2`, review C2); other nodes are ponds.
+    pub fn is_lake(&self, h: &Hierarchy, d: u32, min_cells: u64) -> bool {
+        self.level[d as usize] - h.low[d as usize] >= LAKE_DEPTH_M
+            && self.area_cells(h, d) >= min_cells
+    }
+}
+
+impl Blob for Balance {
+    fn put(&self, e: &mut Enc) {
+        self.sea.put(e);
+        self.n.put(e);
+        self.vfill_mm.put(e);
+        self.bbox.put(e);
+        self.full.put(e);
+        self.own.put(e);
+        self.node.put(e);
+        self.level.put(e);
+        self.need.put(e);
+        self.to_sea.put(e);
+        self.pours.put(e);
+    }
+    fn get(d: &mut Dec) -> Result<Self> {
+        let (sea, n, vfill_mm, bbox, full) = Blob::get(d)?;
+        let (own, node, level, need, to_sea) = Blob::get(d)?;
+        let pours = Blob::get(d)?;
+        Ok(Self {
+            sea,
+            n,
+            vfill_mm,
+            bbox,
+            full,
+            own,
+            node,
+            level,
+            need,
+            to_sea,
+            pours,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Leaves 0 and 1 merge at 5 m into meta 2, which spills to the ocean at 7 m. Cells at or
+    /// below each spill (by first holding depression): leaf 0: 3, leaf 1: 2, meta 2: 4 more.
+    fn handmade(supply: [u64; 2], ocean_spill: f32) -> (Hierarchy, Counts) {
+        let h = Hierarchy {
+            leaves: 2,
+            leaf_pit: vec![10, 20],
+            low: vec![1.0, 2.0, 1.0],
+            spill: vec![5.0, 5.0, ocean_spill],
+            parent: vec![2, 2, NONE],
+            children: vec![[NONE, NONE], [NONE, NONE], [0, 1]],
+            outlet: vec![[11, 12], [12, 11], [13, 14]],
+            geolink: vec![1, 0, NONE],
+            ocean_order: vec![2],
+            supply: supply.to_vec(),
+        };
+        let c = Counts {
+            cells: vec![3, 2, 4],
+            sum_mm: vec![6000, 5000, 24000],
+            bbox: vec![[0, 0, 1, 1]; 3],
+        };
+        (h, c)
+    }
+
+    #[test]
+    fn a_humid_pair_fills_and_spills_to_the_sea() {
+        let (h, c) = handmade([10_000, 10_000], 7.0);
+        let b = solve(&h, &c, true);
+        assert_eq!(b.n, vec![3, 2, 9]);
+        assert_eq!(b.full, vec![true, true, true]);
+        assert_eq!(b.node, vec![2, 2, 2]);
+        assert_eq!(b.level[2], 7.0);
+        assert_eq!(b.to_sea, 20_000 - 9_000);
+        assert_eq!(b.vfill_mm[0], 5000 * 3 - 6000);
+    }
+
+    #[test]
+    fn overflow_runs_into_the_sibling_first() {
+        // Leaf 0 holds 3 cells; its extra 2 cells' worth fills leaf 1 exactly: one lake at 5 m.
+        let (h, c) = handmade([5_000, 0], 7.0);
+        let b = solve(&h, &c, true);
+        assert_eq!(b.full, vec![true, true, false]);
+        assert_eq!(b.node, vec![2, 2, 2], "both full: one lake at their saddle");
+        assert_eq!(b.level[2], 5.0);
+        assert_eq!(b.to_sea, 0);
+    }
+
+    #[test]
+    fn an_arid_basin_stands_where_its_area_meets_its_supply() {
+        let (h, c) = handmade([2_500, 0], 7.0);
+        let mut b = solve(&h, &c, true);
+        assert_eq!(b.full, vec![false, false, false]);
+        assert_eq!(b.node, vec![0, NONE, NONE]);
+        assert_eq!(b.need[0], 3, "2.5 cells of supply cover 3 cells");
+        assert!(b.level[0].is_nan());
+        b.set_closed_levels(&[(0, 4.0), (0, 1.0), (0, 2.5)])
+            .expect("levels");
+        assert_eq!(b.level[0], 4.0);
+        assert!(!b.is_lake(&h, 1, 1));
+        assert_eq!(b.area_cells(&h, 0), 3);
+        assert!(b.is_lake(&h, 0, 3), "3 m deep over 3 cells");
+        assert!(
+            !b.is_lake(&h, 0, 4),
+            "smaller than the lake minimum: a pond"
+        );
+    }
+
+    #[test]
+    fn a_flat_with_an_outlet_is_never_a_closed_basin() {
+        // Leaf 1 is a flat at 5 m whose spill is its own level: zero depth, no supply (r = 0).
+        let (mut h, c) = handmade([0, 0], 7.0);
+        h.low[1] = 5.0;
+        let b = solve(&h, &c, true);
+        assert!(b.full[1], "zero depth: full by definition (R32)");
+        assert_eq!(b.node[1], 1, "a node with an outlet, so flow crosses it");
+        assert_eq!(b.level[1], 5.0);
+        assert!(!b.full[0], "leaf 0 has depth and no water: dry");
+    }
+
+    #[test]
+    fn overflow_into_a_leaf_is_recorded_with_its_entry_cell() {
+        let (h, c) = handmade([5_000, 0], 7.0);
+        let b = solve(&h, &c, true);
+        assert_eq!(
+            b.pours,
+            vec![(1, 12, 2_000)],
+            "leaf 0's extra entered leaf 1 by cell 12"
+        );
+    }
+
+    #[test]
+    fn no_supply_leaves_a_dry_basin_and_sea_trees_take_everything() {
+        let (h, c) = handmade([0, 0], 7.0);
+        assert_eq!(solve(&h, &c, true).node, vec![NONE; 3]);
+        let (h, c) = handmade([10_000, 1], -1.0);
+        let b = solve(&h, &c, true);
+        assert_eq!(b.sea, vec![true; 3]);
+        assert_eq!(b.node, vec![NONE; 3]);
+        assert_eq!(b.to_sea, 10_001);
+    }
+
+    #[test]
+    fn overflow_crosses_into_a_tree_that_joined_the_ocean_earlier() {
+        // Leaf 1 joined the ocean first (spill 2 m); leaf 0 spills at 3 m into leaf 1.
+        let h = Hierarchy {
+            leaves: 2,
+            leaf_pit: vec![10, 20],
+            low: vec![1.0, 1.0],
+            spill: vec![3.0, 2.0],
+            parent: vec![NONE, NONE],
+            children: vec![[NONE, NONE]; 2],
+            outlet: vec![[11, 21], [22, 23]],
+            geolink: vec![1, NONE],
+            ocean_order: vec![1, 0],
+            supply: vec![5_000, 0],
+        };
+        let c = Counts {
+            cells: vec![2, 4],
+            sum_mm: vec![0, 0],
+            bbox: vec![[0, 0, 0, 0]; 2],
+        };
+        let b = solve(&h, &c, true);
+        assert!(b.full[0]);
+        assert!(!b.full[1], "3 cells of overflow do not fill 4");
+        assert_eq!(b.need[1], 3);
+        assert_eq!(b.to_sea, 0);
+    }
+
+    #[test]
+    fn balance_round_trips() {
+        use crate::world::water::store::{decode, encode};
+        let (h, c) = handmade([5_000, 0], 7.0);
+        let b = solve(&h, &c, true);
+        // Levels hold NaN, so compare the encodings.
+        let back: Balance = decode(&encode(&b)).expect("decode");
+        assert_eq!(encode(&back), encode(&b));
+        assert_eq!(back.pours, b.pours);
+    }
+
+    #[test]
+    fn holding_finds_the_first_spill_above() {
+        let (h, _) = handmade([0, 0], 7.0);
+        let top = top_spill(&h);
+        assert_eq!(top, vec![7.0, 7.0]);
+        assert_eq!(holding(&h, &top, 0, 4.0), 0);
+        assert_eq!(holding(&h, &top, 0, 6.0), 2);
+        assert_eq!(holding(&h, &top, 0, 7.5), NONE);
+        assert_eq!(holding(&h, &top, NONE, 0.0), NONE);
+    }
+}
