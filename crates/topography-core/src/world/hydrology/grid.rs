@@ -253,7 +253,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// Output files written into a temporary sibling of `out`, then renamed into place.
-pub(super) struct Stage {
+pub(crate) struct Stage {
     dir: tempfile::TempDir,
     out: PathBuf,
     pub digests: Map<String, Value>,
@@ -305,6 +305,36 @@ impl Stage {
         Ok(())
     }
 
+    /// A finished file (e.g. a 17 GB raster from a work directory) copied into the stage as a
+    /// reflink where the file system has them (btrfs: no extra space), a plain copy elsewhere,
+    /// never a hard link: work rasters are written in place, and a rerun must not change a
+    /// published output behind its digest (N17). Then digested.
+    pub fn copy(&mut self, name: &str, src: &Path) -> Result<()> {
+        let dst = self.dir.path().join(name);
+        let done = std::process::Command::new("cp")
+            .arg("--reflink=auto")
+            .arg(src)
+            .arg(&dst)
+            .status();
+        ensure(
+            io_context(format!("copy {}", src.display()), done)?.success(),
+            format!("copy {} failed", src.display()),
+        )?;
+        let mut file = io_context(format!("open {name}"), fs::File::open(&dst))?;
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 1 << 22];
+        loop {
+            let n = io_context(format!("read {name}"), file.read(&mut buf))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        self.digests
+            .insert(name.into(), hex(&hasher.finalize()).into());
+        Ok(())
+    }
+
     pub fn json(&mut self, name: &str, value: &Value) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(value)?;
         io_context(
@@ -329,6 +359,27 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_staged_copy_is_digested_and_never_shares_the_source() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let src = dir.path().join("work.f32");
+        fs::write(&src, b"abcd").expect("source");
+        let mut stage = Stage::new(&dir.path().join("out")).expect("stage");
+        stage.copy("elevation.f32", &src).expect("copy");
+        assert_eq!(
+            stage.digests["elevation.f32"],
+            hex(&Sha256::digest(b"abcd"))
+        );
+        // A rerun writing the work file in place leaves the published copy alone (N17).
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&src)
+            .and_then(|mut f| f.write_all(b"wxyz"))
+            .expect("rewrite");
+        let out = stage.publish().expect("publish");
+        assert_eq!(fs::read(out.join("elevation.f32")).expect("read"), b"abcd");
+    }
 
     #[test]
     fn a_body_list_over_1_mib_is_read() {

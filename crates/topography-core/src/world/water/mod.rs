@@ -11,6 +11,7 @@ mod balance;
 mod bodies;
 mod breach;
 mod channel;
+mod checks;
 mod contract;
 mod flats;
 mod flow;
@@ -30,7 +31,7 @@ mod table;
 mod testing;
 mod watershed;
 
-use crate::acquisition::{Result, digest, ensure, io_context, read_small};
+use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -314,6 +315,194 @@ pub fn run(o: &Options) -> Result<String> {
     ))
 }
 
+pub struct FinishOptions {
+    pub grid: PathBuf,
+    pub work: PathBuf,
+    /// The final ground: `work/relaxed.f32` after the relaxation (`carved.f32` without it).
+    pub ground: PathBuf,
+    pub out: PathBuf,
+    pub tile: u64,
+    pub threads: usize,
+    pub water: Option<PathBuf>,
+    pub river_km2: Option<f64>,
+    /// The relaxation's report (`max_overlap_diff_m`, iterations, halo), if it ran.
+    pub relax: Option<PathBuf>,
+}
+
+pub struct Outcome {
+    pub out: PathBuf,
+    pub passed: bool,
+    pub summary: String,
+}
+
+/// Checks the finished run on the final ground and publishes `out` (also when a check fails,
+/// so the report can be read).
+pub fn finish(o: &FinishOptions) -> Result<Outcome> {
+    ensure(
+        !o.out.exists(),
+        format!("{} already exists", o.out.display()),
+    )?;
+    let (s, raw, stamp) = setup(&o.grid, o.tile, o.threads, o.water.as_deref(), o.river_km2)?;
+    let work = store::Work::open(&o.work, &stamp)?;
+    let stages: Value = serde_json::from_slice(&io_context(
+        "read stages.json (run `world water` to the end first)",
+        fs::read(work.path("stages.json")),
+    )?)?;
+    let tag = |i: usize| {
+        stages["tags"][i]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| AcquisitionError::Invalid("stages.json lists no stage tags".into()))
+    };
+    let (m2_tag, l_tag, c_tag) = (tag(2)?, tag(3)?, tag(4)?);
+    ensure(
+        work.is_done(&format!("{l_tag}/bodies")),
+        "run `world water` to the end first",
+    )?;
+    let rasters = pipeline::Rasters::files(s.world, &work.path(""), "m2")?;
+    let breached = layers::Layer::open(s.world, &work.path("breached.f32"))?;
+    // The second run's nodes (cached): the lakes as written.
+    let m2 = pipeline::model(&s, &breached, Some(&work), &m2_tag, None)?;
+    let bodies: Value = serde_json::from_slice(&io_context(
+        "read bodies.json",
+        fs::read(work.path("bodies.json")),
+    )?)?;
+    let list = bodies["bodies"].as_array().cloned().unwrap_or_default();
+    let mut lakes = checks::LakeInfo::new();
+    let mut lake_short = 0u64;
+    for b in list.iter().filter(|b| b["kind"] == "lake") {
+        let id = u32::try_from(b["id"].as_u64().unwrap_or(0))
+            .map_err(|_| AcquisitionError::Invalid("a lake id exceeds u32".into()))?;
+        let key = b["node"].as_u64().unwrap_or(u64::MAX);
+        let n = m2.water.nodes.get(key).ok_or_else(|| {
+            AcquisitionError::Invalid(format!("lake {id}: node {key} not in the model"))
+        })?;
+        lakes.insert(id, (n.level, n.full, n.outlet, n.need));
+        // Its labelled cells against the balance's need.
+        let area = b["area_km2"].as_f64().unwrap_or(0.0);
+        if n.need > 0 && ((area / s.cell_km2()).round() as u64) < n.need {
+            lake_short += 1;
+        }
+    }
+    drop(m2);
+    // The third model run, on the final ground (R27); its tag names the ground file and the
+    // channels it came from, so a finish on another ground never reads stale passes.
+    let ground = layers::Layer::open(s.world, &o.ground)?;
+    let meta = io_context("inspect the final ground", fs::metadata(&o.ground))?;
+    let m3_tag = stage_tag(
+        "m3",
+        &json!({"after": c_tag, "ground": o.ground.display().to_string(), "bytes": meta.len(),
+                "modified": format!("{:?}", meta.modified().ok())}),
+    );
+    let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
+    let m3 = pipeline::model(&s, &ground, Some(&work), &m3_tag, Some(&finals))?;
+    let ponds = m3.water.nodes.0.iter().filter(|n| !n.lake).count();
+    drop(m3);
+    let layers = checks::CheckLayers {
+        raw,
+        ground,
+        surface: layers::Layer::open(s.world, &work.path("water-surface.f32"))?,
+        body: layers::Layer::open(s.world, &work.path("water-body.u32"))?,
+        level: finals.level.clone(),
+        node: finals.node.clone(),
+        flow: finals.flow.clone(),
+        discharge: finals.discharge.clone(),
+        flow_written: rasters.flow.clone(),
+    };
+    let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |_, core| {
+        checks::check_tile(&s, &layers, core, &lakes)
+    })?;
+    let relax = match &o.relax {
+        Some(p) => Some(serde_json::from_slice(&io_context(
+            "read relax report",
+            fs::read(p),
+        )?)?),
+        None => None,
+    };
+    let of = |kind: &'static str| list.iter().filter(move |e| e["kind"] == kind);
+    let sum = |kind: &'static str, field: &str| {
+        // From +0.0: an empty float sum is −0.0.
+        of(kind)
+            .filter_map(|e| e[field].as_f64())
+            .fold(0.0, |a, v| a + v)
+    };
+    let (n_lakes, n_rivers) = (of("lake").count(), of("river").count());
+    let mut figures = Map::new();
+    figures.insert("stages".into(), stages.clone());
+    figures.insert("lakes".into(), json!(n_lakes));
+    figures.insert("lake_km2".into(), json!(sum("lake", "area_km2")));
+    figures.insert("ponds".into(), json!(ponds));
+    figures.insert("rivers".into(), json!(n_rivers));
+    figures.insert("river_km".into(), json!(sum("river", "length_km")));
+    figures.insert("sea_km2".into(), json!(sum("sea", "area_km2")));
+    let extra = checks::CheckExtra {
+        // The model refuses flow cycles (an error ends `finish`), so none reach the checks.
+        cycles: 0,
+        bodies: n_lakes + n_rivers,
+        lake_short,
+        relax,
+        lakes,
+        cell_km2: s.cell_km2(),
+    };
+    let (report, passed) = checks::report(tiles, extra, figures);
+
+    let mut stage = crate::world::hydrology::grid::Stage::new(&o.out)?;
+    stage.copy("elevation.f32", &o.ground)?;
+    stage.copy("water-surface.f32", &work.path("water-surface.f32"))?;
+    stage.copy("water-body.u32", &work.path("water-body.u32"))?;
+    stage.copy(
+        "discharge.f32",
+        &work.path(&format!("{m3_tag}-discharge.f32")),
+    )?;
+    stage.copy("flow.u8", &work.path(&format!("{m3_tag}-flow.u8")))?;
+    stage.json("bodies.json", &bodies)?;
+    stage.json("report.json", &report)?;
+    let mut manifest: Map<String, Value> =
+        serde_json::from_slice(&read_small(&o.grid.join("grid.json"))?)?;
+    manifest.insert("water_model".into(), json!("hydrology v3"));
+    manifest.insert(
+        "discharge".into(),
+        json!({
+            "file": "discharge.f32",
+            "unit": "km² at the mean land precipitation (drainage area weighted by rain / mean)",
+            "mean_land_mm_h": s.rain.mean_land_mm_h,
+        }),
+    );
+    manifest.insert(
+        "flow".into(),
+        json!({
+            "file": "flow.u8",
+            "bits": "low 4: D8 receiver (0 none; 1 N, 2 S, 3 W, 4 E, 5 NW, 6 NE, 7 SW, 8 SE); \
+                     16 river thalweg; 32 dry basin; 64 endorheic",
+        }),
+    );
+    manifest.insert(
+        "provenance".into(),
+        json!({
+            "tool": "topography world water", "version": env!("CARGO_PKG_VERSION"),
+            "stamp": stamp, "stages": stages["tags"], "final_model": m3_tag,
+            "outputs": stage.digests.clone(),
+        }),
+    );
+    stage.json("grid.json", &Value::Object(manifest))?;
+    let out = stage.publish()?;
+    let summary = format!(
+        "{}\nwater {}: {n_lakes} lakes, {n_rivers} rivers{}",
+        out.display(),
+        if passed { "passed" } else { "FAILED" },
+        if passed {
+            String::new()
+        } else {
+            format!("\nfailed checks: {}", report["failures"])
+        },
+    );
+    Ok(Outcome {
+        out,
+        passed,
+        summary,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,7 +739,10 @@ mod tests {
             count(1)
         );
         assert!(below_raw <= CHANNEL_CAP_M + 1e-4 && raised == 0, "R9");
-        assert_eq!(dry_in_crossed, 0, "river-crossed ponds are wet (R7/R26 ruling)");
+        assert_eq!(
+            dry_in_crossed, 0,
+            "river-crossed ponds are wet (R7/R26 ruling)"
+        );
         probe::shade_tinted(&format!("t12-{name}-carved"), &carved, size, |k| {
             if !surface[k].is_finite() {
                 (corridor[k] == 1).then_some([6, 6, 3])
@@ -579,5 +771,59 @@ mod tests {
     #[ignore]
     fn probe_stages_at_the_dam_spot() {
         probe_stages("dam-spot", 25645, 24400, 2048);
+    }
+
+    /// The stages probe, then `finish` on its carved ground (no relaxation yet) into
+    /// scratch/hydrology-v3/probes/t13-<name>-out; prints the checks and the failures' cells.
+    fn probe_finish(name: &str, east: u64, north: u64) {
+        if probe::window(east, north, 16).is_none() {
+            return;
+        }
+        probe_stages(name, east, north, 2048);
+        let out = Path::new(probe::OUT);
+        let work = out.join(format!("t12-{name}-work"));
+        let dst = out.join(format!("t13-{name}-out"));
+        let _ = fs::remove_dir_all(&dst);
+        let f = FinishOptions {
+            grid: out.join(format!("t12-{name}-grid")),
+            work: work.clone(),
+            ground: work.join("carved.f32"),
+            out: dst.clone(),
+            tile: 512,
+            threads: 4,
+            water: None,
+            river_km2: None,
+            relax: None,
+        };
+        let started = std::time::Instant::now();
+        let outcome = finish(&f).expect("finish");
+        let report: Value =
+            serde_json::from_slice(&fs::read(dst.join("report.json")).unwrap()).expect("report");
+        eprintln!(
+            "{name}: {} ({:.0} s{})\nchecks: {}\nexamples: {}",
+            outcome.summary,
+            started.elapsed().as_secs_f64(),
+            peak(),
+            report["checks"],
+            report["examples"]
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn probe_finish_in_the_canyon() {
+        probe_finish("canyon", 27169, 44546);
+    }
+
+    #[test]
+    #[ignore]
+    fn probe_finish_at_e49249() {
+        probe_finish("e49249", 49249, 16381);
+    }
+
+    #[test]
+    #[ignore]
+    fn probe_finish_at_the_dam_spot() {
+        probe_finish("dam-spot", 25645, 24400);
     }
 }
