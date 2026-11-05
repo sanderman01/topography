@@ -2,7 +2,6 @@
 //! level. Exact graph passes on tiles: the priority-flood spill graph (Barnes 2016), the
 //! depression hierarchy and Fill-Spill-Merge (Barnes, Callaghan and Wickert 2020), fall-line
 //! receivers, flat ponds (Barnes 2014) and accumulation (Barnes 2017); at 1 m also channels.
-//! The GPU bank relaxation runs in Python between `run` and `finish`.
 //! See docs/superpowers/specs/2026-11-05-hydrology-v3-design.md.
 
 mod balance;
@@ -299,7 +298,7 @@ pub fn run(o: &Options) -> Result<String> {
     let c_tag = stage_tag(
         "c",
         &json!({"after": l_tag, "m3s_per_km2": geo.m3s_per_km2, "cap": CHANNEL_CAP_M,
-                "halo": channel::HALO, "corridor": channel::CORRIDOR, "backwater": channel::BACKWATER,
+                "halo": channel::HALO, "backwater": channel::BACKWATER,
                 "walls": channel::WALL_ROUNDS}),
     );
     let out = channel::Layers::files(s.world, &work.path(""))?;
@@ -355,7 +354,7 @@ pub fn run(o: &Options) -> Result<String> {
     )?;
     eprintln!("water: done{}", peak());
     Ok(format!(
-        "{}: {} lakes, {} rivers, {} breaches, {} river cells; next: relax, then water-finish",
+        "{}: {} lakes, {} rivers, {} breaches, {} river cells; next: water-finish",
         o.work.display(),
         n("lake"),
         n("river"),
@@ -367,15 +366,13 @@ pub fn run(o: &Options) -> Result<String> {
 pub struct FinishOptions {
     pub grid: PathBuf,
     pub work: PathBuf,
-    /// The final ground: `work/relaxed.f32` after the relaxation (`carved.f32` without it).
+    /// The final ground (`work/carved.f32`).
     pub ground: PathBuf,
     pub out: PathBuf,
     pub tile: u64,
     pub threads: usize,
     pub water: Option<PathBuf>,
     pub river_km2: Option<f64>,
-    /// The relaxation's report (`max_overlap_diff_m`, iterations, halo), if it ran.
-    pub relax: Option<PathBuf>,
 }
 
 pub struct Outcome {
@@ -483,13 +480,6 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
         checks::check_tile(&s, &layers, core, &lakes, &exits[i])
     })?;
-    let relax = match &o.relax {
-        Some(p) => Some(serde_json::from_slice(&io_context(
-            "read relax report",
-            fs::read(p),
-        )?)?),
-        None => None,
-    };
     let of = |kind: &'static str| list.iter().filter(move |e| e["kind"] == kind);
     let sum = |kind: &'static str, field: &str| {
         // From +0.0: an empty float sum is −0.0.
@@ -511,7 +501,6 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         cycles: 0,
         bodies: n_lakes + n_rivers,
         lake_short,
-        relax,
         lakes,
         cell_km2: s.cell_km2(),
     };
@@ -668,8 +657,7 @@ mod tests {
     /// A `size`² grid directory of the raw surface at (east, north) with the layout's classes
     /// and the world's moisture (mean rain from the chain's 4 m grid), run through every stage
     /// into scratch/hydrology-v3/probes/t12-<name>-{grid,work}; writes t12-<name>-carved.png
-    /// (hillshade of the carved ground: lakes and sea blue, rivers cyan, the dry corridor
-    /// yellow) and prints stages.json with R9 and no-rise figures.
+    /// (hillshade of the carved ground: lakes and sea blue, rivers cyan) and prints stages.json with R9 and no-rise figures.
     fn probe_stages(name: &str, east: u64, north: u64, size: usize) {
         const L4V2: &str = "../../data/worlds/fujix-55-l4v2";
         const CHAIN: &str = "../../data/worlds/fujix-55-chain/hydrology/4m/grid.json";
@@ -732,10 +720,6 @@ mod tests {
         let carved = layer("carved.f32").to_vec().unwrap();
         let surface = layer("water-surface.f32").to_vec().unwrap();
         let body = layers::Layer::<u32>::open(world, &work.join("water-body.u32"))
-            .unwrap()
-            .to_vec()
-            .unwrap();
-        let corridor = layers::Layer::<u8>::open(world, &work.join("corridor.u8"))
             .unwrap()
             .to_vec()
             .unwrap();
@@ -813,14 +797,10 @@ mod tests {
             under.0,
             under.1
         );
-        let count = |c: u8| corridor.iter().filter(|&&v| v == c).count();
         eprintln!(
             "{name}: deepest below raw {below_raw:.3} m (cap {CHANNEL_CAP_M}), raised cells {raised}, \
-             surface rises downstream {} (largest {:.3} m), corridor: {} lowered, {} dry",
-            rises.0,
-            rises.1,
-            count(2),
-            count(1)
+             surface rises downstream {} (largest {:.3} m)",
+            rises.0, rises.1
         );
         assert!(below_raw <= CHANNEL_CAP_M + 1e-4 && raised == 0, "R9");
         assert_eq!(
@@ -829,7 +809,7 @@ mod tests {
         );
         probe::shade_tinted(&format!("t12-{name}-carved"), &carved, size, |k| {
             if !surface[k].is_finite() {
-                (corridor[k] == 1).then_some([6, 6, 3])
+                None
             } else if river_ids.contains(&u64::from(body[k])) {
                 Some([1, 5, 6])
             } else {
@@ -857,7 +837,7 @@ mod tests {
         probe_stages("dam-spot", 25645, 24400, 2048);
     }
 
-    /// The stages probe, then `finish` on its carved ground (no relaxation yet) into
+    /// The stages probe, then `finish` on its carved ground into
     /// scratch/hydrology-v3/probes/t13-<name>-out; prints the checks and the failures' cells.
     fn probe_finish(name: &str, east: u64, north: u64) {
         if probe::window(east, north, 16).is_none() {
@@ -877,7 +857,6 @@ mod tests {
             threads: 4,
             water: None,
             river_km2: None,
-            relax: None,
         };
         let started = std::time::Instant::now();
         let outcome = finish(&f).expect("finish");

@@ -860,7 +860,6 @@ pub(crate) struct CheckExtra {
     pub bodies: usize,
     /// Closed lakes covering fewer cells than their supply needs.
     pub lake_short: u64,
-    pub relax: Option<Value>,
     /// The lakes, for the lowest-saddle check over all tiles.
     pub lakes: LakeInfo,
     pub cell_km2: f64,
@@ -972,14 +971,6 @@ pub(crate) fn report(
     fails.insert("facets", u64::from(planar[1] > planar[0]));
     fails.insert("change_p99", u64::from(p99 > 1.0));
     fails.insert("export_bodies", u64::from(extra.bodies > BODY_BUDGET));
-    let overlap = extra
-        .relax
-        .as_ref()
-        .and_then(|r| r["max_overlap_diff_m"].as_f64());
-    fails.insert(
-        "relax_overlap",
-        u64::from(overlap.is_some_and(|d| d > 0.001)),
-    );
     // A full lake stands at its lowest saddle (C1).
     let off_sill: Vec<u32> = extra
         .lakes
@@ -1086,7 +1077,6 @@ pub(crate) fn report(
             },
         }),
     );
-    figures.insert("relax".into(), extra.relax.unwrap_or(Value::Null));
     let failures: Vec<&str> = fails
         .iter()
         .filter(|(_, v)| **v > 0)
@@ -1201,7 +1191,6 @@ mod tests {
                 cycles: 0,
                 bodies: 0,
                 lake_short: 0,
-                relax: None,
                 lakes: self.lakes.clone(),
                 cell_km2: 1e-6,
             };
@@ -1717,7 +1706,6 @@ mod tests {
             threads: 2,
             water: Some(grid.join("water.toml")),
             river_km2: Some(1e-5),
-            relax: None,
         };
         let outcome = finish(&f).expect("finish");
         let report: Value =
@@ -1801,7 +1789,6 @@ mod tests {
             threads: 2,
             water: Some(grid.join("water.toml")),
             river_km2: Some(1e-5),
-            relax: None,
         };
         let outcome = finish(&f).expect("finish");
         assert!(!outcome.passed);

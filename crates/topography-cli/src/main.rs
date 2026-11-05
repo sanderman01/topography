@@ -46,7 +46,7 @@ Usage: topography [--help | --version]
        topography world hydrology --grid <grid-dir> --out <new-output-dir> [--coarse <coarse-out-dir>] [--north <band-out-dir>] [--wind-deg 225] [--water water.toml] [--river-km2 10]
        topography world hydrology-seam --north <band-out-dir> --south <band-out-dir>
        topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
-       topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--relax relax.json] [--water water.toml] [--river-km2 0.05]
+       topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
@@ -649,7 +649,7 @@ fn water(args: &[std::ffi::OsString]) -> ExitCode {
 }
 
 /// `world water-finish --grid DIR --work DIR --ground FILE --out DIR [--tile N] [--threads N]
-/// [--relax FILE] [--water FILE] [--river-km2 A]`
+/// [--water FILE] [--river-km2 A]`
 fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
     use topography_core::world::water;
     let mut o = water::FinishOptions {
@@ -661,7 +661,6 @@ fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
         threads: 4,
         water: None,
         river_km2: None,
-        relax: None,
     };
     for pair in args.chunks(2) {
         let [flag, value] = pair else {
@@ -670,7 +669,6 @@ fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
         match flag.to_str() {
             Some("--ground") => o.ground = value.into(),
             Some("--out") => o.out = value.into(),
-            Some("--relax") => o.relax = Some(value.into()),
             _ => {
                 if !water_flag(
                     flag,

@@ -11,9 +11,8 @@
 //! CHANNEL_CAP_M below raw (R9); a section cell next to a lake whose level stands above the
 //! river's surface is left as it is (R14). Lakes, pools and the sea keep their level. A river
 //! cell below the surface of the cell it flows into is raised to it over BACKWATER cells
-//! (N18). Dry cells within CORRIDOR cells of a lowered river cell form the corridor the GPU
-//! relaxation may touch. At coarser spacings (no channels) rivers are their thalweg cells at
-//! R and nothing is cut.
+//! (N18). At coarser spacings (no channels) rivers are their thalweg cells at R and nothing
+//! is cut.
 
 use super::CHANNEL_CAP_M;
 use super::checks::{CHANGED_M, horn_deg, is_wall};
@@ -27,11 +26,10 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-/// Window halo: the widest section's radius plus the corridor fits well inside it.
+/// Window halo: the widest section's radius plus the backwater fits inside it.
 pub(crate) const HALO: u64 = 64;
-pub(crate) const CORRIDOR: u64 = 8;
 /// A river cell's surface is raised to that of the river cell it flows into over at most
-/// this many cells upstream (N18). HALO covers the widest radius + BACKWATER + CORRIDOR.
+/// this many cells upstream (N18). HALO covers the widest radius + BACKWATER.
 pub(crate) const BACKWATER: u64 = 16;
 /// Section radii are clamped here (cells) so every section reaching a tile's area lies in
 /// its window; real rivers stay far below (30 m wide at most, R5).
@@ -40,14 +38,13 @@ const MAX_RADIUS: f64 = (HALO - BACKWATER) as f64;
 /// most this many Jacobi rounds; each round reaches 2 cells further, so the area carries a
 /// margin of 2 per round (+ 1 for the slope stencil) and every tiling agrees.
 pub(crate) const WALL_ROUNDS: u64 = 16;
-/// The area's margin beyond the core: corridor, backwater and the wall rounds.
-const MARGIN: u64 = CORRIDOR + BACKWATER + 2 * WALL_ROUNDS + 1;
+/// The area's margin beyond the core: backwater and the wall rounds.
+const MARGIN: u64 = BACKWATER + 2 * WALL_ROUNDS + 1;
 
 pub(crate) struct Layers {
     pub carved: Layer<f32>,
     pub surface: Layer<f32>,
     pub body: Layer<u32>,
-    pub corridor: Layer<u8>,
 }
 
 impl Layers {
@@ -57,7 +54,6 @@ impl Layers {
             carved: Layer::filled(world, 0.0),
             surface: Layer::filled(world, f32::NAN),
             body: Layer::filled(world, 0),
-            corridor: Layer::filled(world, 0),
         }
     }
     pub fn files(world: World, dir: &Path) -> Result<Self> {
@@ -65,7 +61,6 @@ impl Layers {
             carved: Layer::open_or_create(world, &dir.join("carved.f32"), 0.0)?,
             surface: Layer::open_or_create(world, &dir.join("water-surface.f32"), f32::NAN)?,
             body: Layer::open_or_create(world, &dir.join("water-body.u32"), 0)?,
-            corridor: Layer::open_or_create(world, &dir.join("corridor.u8"), 0)?,
         })
     }
 }
@@ -75,33 +70,6 @@ impl Layers {
 type Figure = (u64, f32, f64, u64, f32);
 /// Per tile: (river body, largest discharge) and (pond ordinal, crossing body).
 type Sizes = (Vec<(u32, f32)>, Vec<(u32, u32)>);
-
-/// Whether each cell of `area` lies within Euclidean distance `c` of a `set` cell (a round
-/// dilation, so the relaxation stamps no squares), by per-row prefix counts.
-fn dilate(area: Rect, set: &[bool], c: usize) -> Vec<bool> {
-    let (w, h) = (area.w, area.h);
-    // Each row's prefix counts: pre[y * (w + 1) + x] = set cells of row y left of x.
-    let mut pre = vec![0u32; h * (w + 1)];
-    for y in 0..h {
-        let p = &mut pre[y * (w + 1)..(y + 1) * (w + 1)];
-        for x in 0..w {
-            p[x + 1] = p[x] + u32::from(set[y * w + x]);
-        }
-    }
-    // The disc's half-width at each row offset.
-    let half: Vec<usize> = (0..=c).map(|d| (c * c - d * d).isqrt()).collect();
-    let mut out = vec![false; w * h];
-    for y in 0..h {
-        for x in 0..w {
-            out[y * w + x] = (y.saturating_sub(c)..(y + c + 1).min(h)).any(|yy| {
-                let hw = half[yy.abs_diff(y)];
-                let p = &pre[yy * (w + 1)..];
-                p[(x + hw + 1).min(w)] > p[x.saturating_sub(hw)]
-            });
-        }
-    }
-    out
-}
 
 /// Keeps the two best candidates of distinct river bodies, least first (a body's candidate
 /// is replaced only by a better one of the same body). Exact under any insertion order.
@@ -329,8 +297,8 @@ pub(crate) fn channels(
                     keep[a] = true;
                 }
             }
-            // Walls: no changed cell may end steeper than max(40°, raw) (the `walls` check;
-            // the relaxation does not reach bed cells). The cut of every lowered cell in the
+            // Walls: no changed cell may end steeper than max(40°, raw) (the `walls` check).
+            // The cut of every lowered cell in the
             // 3 × 3 of such a cell is halved, Jacobi, at most WALL_ROUNDS rounds.
             let in_area = |a: usize| {
                 let (x, y) = area.world_xy(a);
@@ -440,31 +408,16 @@ pub(crate) fn channels(
                     surface[a] = v;
                 }
             }
-            // The corridor: dry cells within CORRIDOR cells of a lowered river cell.
-            let near = dilate(area, &lowered, CORRIDOR as usize);
             let at = |k: usize| {
                 let (x, y) = core.world_xy(k);
                 area.local(x, y).expect("core in area")
             };
-            let corridor: Vec<u8> = (0..core.cells())
-                .map(|k| {
-                    let a = at(k);
-                    if lowered[a] {
-                        2
-                    } else if surface[a].is_finite() || !near[a] {
-                        0
-                    } else {
-                        1
-                    }
-                })
-                .collect();
             let cc: Vec<f32> = (0..core.cells()).map(|k| carved[at(k)]).collect();
             let cs: Vec<f32> = (0..core.cells()).map(|k| surface[at(k)]).collect();
             let ci: Vec<u32> = (0..core.cells()).map(|k| ids[at(k)]).collect();
             out.carved.write(core, &cc)?;
             out.surface.write(core, &cs)?;
             out.body.write(core, &ci)?;
-            out.corridor.write(core, &corridor)?;
             let mut fig: Figure = (0, 0.0, 0.0, 0, 0.0);
             for k in 0..core.cells() {
                 let (x, y) = core.world_xy(k);
@@ -692,7 +645,7 @@ mod tests {
     use crate::world::water::pipeline::model;
     use crate::world::water::testing::{setup, terrain};
 
-    type Run = (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<u8>, Vec<u8>);
+    type Run = (Vec<f32>, Vec<f32>, Vec<f32>, Vec<u32>, Vec<u8>);
 
     /// The synthetic world at 256²: with 32-cell tiles a window (tile + 2 · 72) is smaller than
     /// the world, so window edges fall among the rivers (N9).
@@ -720,7 +673,7 @@ mod tests {
         label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
         let out = Layers::memory(world);
         // Wide channels on a small grid at 3.6e4 m³/s per km² (radii up to about 25 cells,
-        // inside HALO with BACKWATER and CORRIDOR).
+        // inside HALO with BACKWATER).
         let geo = Geometry::new(m3s_per_km2);
         channels(&s, &m.water, &raw, &raw, &r, &body, &out, &geo, None, "c").expect("channels");
         if let Some(v) = rasters {
@@ -733,14 +686,13 @@ mod tests {
             out.carved.to_vec().unwrap(),
             out.surface.to_vec().unwrap(),
             out.body.to_vec().unwrap(),
-            out.corridor.to_vec().unwrap(),
             r.flow.to_vec().unwrap(),
         )
     }
 
     #[test]
     fn only_river_cells_are_lowered_and_never_past_the_cap() {
-        let (raw, carved, surface, body, corridor, _) = run(32);
+        let (raw, carved, surface, body, _) = run(32);
         let mut lowered = 0;
         for k in 0..raw.len() {
             assert!(carved[k] <= raw[k], "raised at {k}");
@@ -758,11 +710,9 @@ mod tests {
                     carved[k] < surface[k],
                     "a lowered cell above its river at {k}"
                 );
-                assert_eq!(corridor[k], 2);
             }
         }
         assert!(lowered > 20, "channels were cut");
-        assert!(corridor.contains(&1));
     }
 
     /// Every wet cell with a receiver: the receiver's surface is not higher.
@@ -781,7 +731,7 @@ mod tests {
 
     #[test]
     fn river_surfaces_never_rise_downstream() {
-        let (_, _, surface, _, _, flow) = run(32);
+        let (_, _, surface, _, flow) = run(32);
         assert_no_rise(256, &surface, &flow);
     }
 
@@ -804,7 +754,7 @@ mod tests {
                 trunk.min(trib)
             })
             .collect();
-        let (raw, carved, surface, body, _, flow) = run_on(world, z, 32, 3.6e4, 1e-5);
+        let (raw, carved, surface, body, flow) = run_on(world, z, 32, 3.6e4, 1e-5);
         assert_no_rise(256, &surface, &flow);
         // The tributary's cell next to the trunk thalweg carries the trunk's body (I3b).
         let at = |x: usize, y: usize| y * 256 + x;
@@ -839,7 +789,7 @@ mod tests {
             .collect();
         // About 5 m wide and 0.4 m deep where the valley leaves the map.
         let m3s = 1e3;
-        let (raw, carved, surface, _, _, flow) = run_on(world, z, 32, m3s, 1e-3);
+        let (raw, carved, surface, _, flow) = run_on(world, z, 32, m3s, 1e-3);
         let geo = Geometry::new(m3s);
         let (s, r) = (setup(world, 32, 1e-3), Rasters::memory(world));
         model(&s, &Layer::memory(world, raw.clone()), None, "m", Some(&r)).expect("model");
@@ -885,7 +835,7 @@ mod tests {
         let mut s = setup(world, 32, 1e-5);
         s.table.lake_min_m2 = 1e9;
         let mut nl = (Vec::new(), Vec::new());
-        let (_, carved, surface, body, _, _) = run_setup(s, z, 1e3, Some(&mut nl));
+        let (_, carved, surface, body, _) = run_setup(s, z, 1e3, Some(&mut nl));
         let (node, level) = nl;
         let pond = node[20 * 96 + 40];
         assert!(pond >= 2, "the dam holds a pond");
@@ -977,24 +927,5 @@ mod tests {
         assert_eq!(bits(&a.1), bits(&b.1));
         assert_eq!(bits(&a.2), bits(&b.2));
         assert_eq!(a.3, b.3);
-        assert_eq!(a.4, b.4);
-    }
-
-    #[test]
-    fn a_dilation_reaches_c_cells() {
-        let area = Rect {
-            x0: 0,
-            y0: 0,
-            w: 9,
-            h: 7,
-        };
-        let mut set = vec![false; 63];
-        set[3 * 9 + 4] = true;
-        let d = dilate(area, &set, 2);
-        for (k, &v) in d.iter().enumerate() {
-            let (x, y) = (k % 9, k / 9);
-            let d2 = x.abs_diff(4).pow(2) + y.abs_diff(3).pow(2);
-            assert_eq!(v, d2 <= 4, "at {x},{y}: round, not square");
-        }
     }
 }

@@ -81,7 +81,7 @@ water_grid=tests/fixtures/water/grid
 water_args=(--tile 16 --threads 2 --water "$water_grid/water.toml" --river-km2 0.00001)
 water_out="$("${cli[@]}" world water --grid "$water_grid" --work "$water_tmp/work" "${water_args[@]}" 2>&1)" ||
   { printf 'world water failed: %s\n' "$water_out" >&2; exit 1; }
-[[ "$water_out" =~ :\ [1-9][0-9]*\ lakes,\ [1-9][0-9]*\ rivers,\ [1-9][0-9]*\ breaches,.*next:\ relax ]] ||
+[[ "$water_out" =~ :\ [1-9][0-9]*\ lakes,\ [1-9][0-9]*\ rivers,\ [1-9][0-9]*\ breaches,.*next:\ water-finish ]] ||
   { printf 'world water found no lakes, rivers or breaches: %s\n' "$water_out" >&2; exit 1; }
 water_out="$("${cli[@]}" world water-finish --grid "$water_grid" --work "$water_tmp/work" \
   --ground "$water_tmp/work/carved.f32" --out "$water_tmp/out" "${water_args[@]}" 2>&1)" ||
