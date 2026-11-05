@@ -1,8 +1,9 @@
 //! Breach or fill (Lindsay 2016's hybrid). A full depression is cut through when a graded
 //! gorge drains it for less volume than it would hold: the gorge runs from the depression's
-//! pit up its receivers to the spill and down the outlet's receivers to the first cell below
-//! the pit; its bed falls linearly over at least GORGE_RATIO × its deepest cut, it is at least
-//! 3 cells wide, and its deepest cut stays within the level's breach cap (at 1 m the 2 m
+//! pit up its receivers to the spill and down the outlet's receivers to where the gentlest
+//! grade from the pit meets the ground; its bed falls linearly over at least GORGE_RATIO × its
+//! deepest cut, it is at least 3 cells wide (each cut tapered across the section, so no wall
+//! loses more than its centre), and its deepest cut stays within the level's breach cap (at 1 m the 2 m
 //! channel cap for every river, R9; the channels' raw − 2 m clamp keeps breach plus channel
 //! within it; and only depressions a river flows into). Otherwise the depression keeps its
 //! water. Gorges lie within `Params::breach_radius` cells of their spill, so every tiling
@@ -78,6 +79,8 @@ pub(crate) struct Gorge {
     pub depth: f32,
     pub volume_mm: i64,
     pub length_m: f64,
+    /// The graded path, from the pit to where the grade meets the ground.
+    pub axis: Vec<u64>,
 }
 
 /// The gorge draining `c`, or None (fill): it would leave the radius, cut deeper than the
@@ -133,82 +136,100 @@ pub(crate) fn gorge(
     }
     path.reverse();
     let zp = z(path[0]);
-    // Down: from the outlet to the first cell below the pit.
+    // Down: the outlet's receivers as far as the radius reaches.
+    let spill = path.len();
     let mut cur = c.outside;
     path.push(cur);
-    while z(cur) >= zp {
-        cur = receiver(cur).filter(|&n| near(n))?;
-        path.push(cur);
+    while let Some(next) = receiver(cur).filter(|&n| near(n)) {
+        path.push(next);
+        cur = next;
     }
-    // Lengthen downstream until the bed falls over GORGE_RATIO × the deepest cut.
-    loop {
-        let mut s = vec![0.0f64; path.len()];
-        for i in 1..path.len() {
-            let (a, b) = (world.xy(path[i - 1]), world.xy(path[i]));
-            let diag = a.0 != b.0 && a.1 != b.1;
-            s[i] = s[i - 1] + step_len(if diag { 5 } else { 1 }) * spacing_m;
-        }
-        let (len, z1) = (s[path.len() - 1], z(*path.last()?));
-        let line = |i: usize| zp + ((z1 - zp) as f64 * s[i] / len) as f32;
-        let depth = (0..path.len())
-            .map(|i| z(path[i]) - line(i))
-            .fold(0.0f32, f32::max);
-        if depth <= 0.0 || depth > c.cap {
-            return None;
-        }
-        if len < f64::from(GORGE_RATIO * depth) {
-            path.push(receiver(*path.last()?).filter(|&n| near(n))?);
+    let mut s = vec![0.0f64; path.len()];
+    for i in 1..path.len() {
+        let (a, b) = (world.xy(path[i - 1]), world.xy(path[i]));
+        let diag = a.0 != b.0 && a.1 != b.1;
+        s[i] = s[i - 1] + step_len(if diag { 5 } else { 1 }) * spacing_m;
+    }
+    let line = |k: f64, i: usize| (f64::from(zp) - k * s[i]) as f32;
+    let cut_at = |k: f64, i: usize| (z(path[i]) - line(k, i)).max(0.0);
+    // The grade: from the pit at the gentlest slope that meets the ground at a downstream cell
+    // e at least GORGE_RATIO × its deepest cut away (the smallest cut; ties to the nearer e).
+    let mut best: Option<(f64, usize)> = None;
+    for e in spill..path.len() {
+        let drop = f64::from(zp - z(path[e]));
+        if drop <= 0.0 {
             continue;
         }
-        // The section: a Euclidean disc of radius half + 1 cells around each path cell with a
-        // parabolic bed, the line at the centre rising to the ground at the edge (M1), so the
-        // gorge is at least 3 cells wide and has no square, stair-stepped walls; its sides stay
-        // for the relaxation.
-        let mut new: HashMap<u64, f32> = HashMap::new();
-        let radius = c.half as f32 + 1.0;
-        let h = c.half as i64 + 1;
-        for (i, &p) in path.iter().enumerate() {
-            let (px, py) = world.xy(p);
-            for dy in -h..=h {
-                for dx in -h..=h {
-                    let r = ((dx * dx + dy * dy) as f32).sqrt();
-                    if r >= radius {
-                        continue;
-                    }
-                    let (Some(x), Some(y)) = (px.checked_add_signed(dx), py.checked_add_signed(dy))
-                    else {
-                        continue;
-                    };
-                    if x >= world.w || y >= world.h {
-                        continue;
-                    }
-                    let cell = world.index(x, y);
-                    if !near(cell) {
-                        return None;
-                    }
-                    let (ground, centre) = (z(cell), line(i));
-                    let bed = centre + (ground - centre).max(0.0) * (r / radius).powi(2);
-                    if bed < ground {
-                        let e = new.entry(cell).or_insert(bed);
-                        *e = e.min(bed);
-                    }
+        let k = drop / s[e];
+        if best.is_some_and(|(b, _)| k >= b) {
+            continue;
+        }
+        let depth = (0..=e).map(|i| cut_at(k, i)).fold(0.0f32, f32::max);
+        if s[e] >= f64::from(GORGE_RATIO * depth) {
+            best = Some((k, e));
+        }
+    }
+    let (k, e) = best?;
+    // The section: around each path cell that needs a cut, a Euclidean disc of radius half + 1
+    // cells lowered by that cut tapered parabolically to nothing at its edge, never below the
+    // grade at that cell (no new pits), so the gorge is at least 3 cells wide, has no square
+    // walls and cuts no wall more than its centre; its sides stay for the relaxation.
+    let mut new: HashMap<u64, f32> = HashMap::new();
+    let radius = c.half as f32 + 1.0;
+    let h = c.half as i64 + 1;
+    for (i, &p) in path.iter().enumerate().take(e + 1) {
+        let d = cut_at(k, i);
+        if d <= 0.0 {
+            continue;
+        }
+        let (px, py) = world.xy(p);
+        for dy in -h..=h {
+            for dx in -h..=h {
+                let r = ((dx * dx + dy * dy) as f32).sqrt();
+                if r >= radius {
+                    continue;
+                }
+                let (Some(x), Some(y)) = (px.checked_add_signed(dx), py.checked_add_signed(dy))
+                else {
+                    continue;
+                };
+                if x >= world.w || y >= world.h {
+                    continue;
+                }
+                let cell = world.index(x, y);
+                if !near(cell) {
+                    return None;
+                }
+                let ground = z(cell);
+                let bed = (ground - d * (1.0 - (r / radius).powi(2))).max(line(k, i));
+                if bed < ground {
+                    let v = new.entry(cell).or_insert(bed);
+                    *v = v.min(bed);
                 }
             }
         }
-        let volume_mm: i64 = new.iter().map(|(&cell, &v)| mm(z(cell)) - mm(v)).sum();
-        if volume_mm >= c.vfill_mm {
-            return None;
-        }
-        let mut cut: Vec<(u64, f32)> = new.into_iter().collect();
-        cut.sort_unstable_by_key(|p| p.0);
-        return Some(Gorge {
-            key: c.key,
-            cut,
-            depth,
-            volume_mm,
-            length_m: len,
-        });
     }
+    let depth = new
+        .iter()
+        .map(|(&cell, &v)| z(cell) - v)
+        .fold(0.0f32, f32::max);
+    if depth <= 0.0 || depth > c.cap {
+        return None;
+    }
+    let volume_mm: i64 = new.iter().map(|(&cell, &v)| mm(z(cell)) - mm(v)).sum();
+    if volume_mm >= c.vfill_mm {
+        return None;
+    }
+    let mut cut: Vec<(u64, f32)> = new.into_iter().collect();
+    cut.sort_unstable_by_key(|p| p.0);
+    Some(Gorge {
+        key: c.key,
+        cut,
+        depth,
+        volume_mm,
+        length_m: s[e],
+        axis: path[..=e].to_vec(),
+    })
 }
 
 /// Breach figures of one gorge: (node key, deepest cut, volume, length, spill cell).
@@ -300,19 +321,18 @@ mod tests {
     use crate::world::water::pipeline::{Rasters, model};
     use crate::world::water::testing::setup;
 
-    /// A V valley `w` cells long falling east 5 cm a cell with sides of 1:5 (a steeper V holds
-    /// less than a 3-cell gorge costs), walled at its west end (so the pond can only leave
-    /// over the dam, N8) and dammed at `at` by a one-cell wall `dam` m high at its centre,
-    /// whose crest rises 2 cm a row (a flat crest ties with the valley sides, and the spill
-    /// would wander along it).
-    fn dammed_at(w: u64, at: f32, dam: f32) -> (World, Vec<f32>) {
-        let world = World { w, h: 41 };
+    /// A V valley `w` cells long falling east 5 cm a cell, its sides rising `wall` m a cell,
+    /// walled at its west end (so the pond can only leave over the dam, N8) and dammed at `at`
+    /// by a one-cell wall `dam` m high at its centre, whose crest rises 2 cm a row (a flat
+    /// crest ties with the valley sides, and the spill would wander along it).
+    fn dammed_at(w: u64, at: f32, dam: f32, wall: f32) -> (World, Vec<f32>) {
+        let world = World { w, h: 21 };
         let z = (0..world.w * world.h)
             .map(|i| {
                 let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
-                let side = (y - 20.0).abs();
-                let v = 10.0 - 0.05 * x + 0.2 * side + if x <= 1.0 { 30.0 } else { 0.0 };
-                if x == at && side <= 16.0 {
+                let side = (y - 10.0).abs();
+                let v = 10.0 - 0.05 * x + wall * side + if x <= 1.0 { 30.0 } else { 0.0 };
+                if x == at && side <= 6.0 {
                     10.0 - 0.05 * (at - 1.0) + dam + 0.02 * side
                 } else {
                     v
@@ -323,7 +343,7 @@ mod tests {
     }
 
     fn dammed(dam: f32) -> (World, Vec<f32>) {
-        dammed_at(100, 40.0, dam)
+        dammed_at(100, 40.0, dam, 0.5)
     }
 
     fn the_candidate(world: World, z: &[f32], cap: f32) -> (Candidate, Rect) {
@@ -399,7 +419,7 @@ mod tests {
     fn breaching_is_alike_at_every_tiling() {
         // A dam on the tile seam at x = 64; a breach radius of 24 keeps the windows (tile + 49)
         // smaller than the world, so the gorge is cut across tiles (N9).
-        let (world, z) = dammed_at(128, 64.0, 1.0);
+        let (world, z) = dammed_at(128, 64.0, 1.0, 0.5);
         let ground = Layer::memory(world, z.clone());
         let mut out = Vec::new();
         for tile in [128, 32] {
@@ -424,6 +444,99 @@ mod tests {
             "the gorge crosses the seam"
         );
     }
+
+    #[test]
+    fn steep_walls_lose_no_more_than_the_cap() {
+        let (world, z) = dammed_at(100, 40.0, 1.8, 1.0);
+        let (c, all) = the_candidate(world, &z, 2.0);
+        let g = gorge(world, all, &z, &c, 1.0).expect("breached");
+        let most = g
+            .cut
+            .iter()
+            .map(|&(k, v)| z[k as usize] - v)
+            .fold(0.0f32, f32::max);
+        assert!(most <= c.cap, "deepest cut {most}");
+        assert_eq!(most, g.depth, "the depth is the deepest cut of any cell");
+        // A wall cell off the axis loses no more than the axis cells whose discs cover it.
+        let bed: HashMap<u64, f32> = g.cut.iter().copied().collect();
+        let reach = c.half as f64 + 1.0;
+        for &(k, v) in &g.cut {
+            if !g.axis.contains(&k) {
+                let (x, y) = world.xy(k);
+                let centre = g
+                    .axis
+                    .iter()
+                    .filter(|&&a| {
+                        let (ax, ay) = world.xy(a);
+                        (ax.abs_diff(x) as f64).hypot(ay.abs_diff(y) as f64) < reach
+                    })
+                    .filter_map(|a| bed.get(a).map(|b| z[*a as usize] - b))
+                    .fold(0.0f32, f32::max);
+                assert!(
+                    z[k as usize] - v <= centre + 1e-6,
+                    "wall {:?} cut {} beside an axis cut {centre}",
+                    world.xy(k),
+                    z[k as usize] - v
+                );
+            }
+        }
+    }
+
+    /// A valley with its pit 18 cells upstream of a dam at x = 40 (off the 16-cell seams): the
+    /// floor rises 1 cm a cell from the pit to the dam (0.3 m), drops 0.5 m below the pit past
+    /// it and falls 1 cm a cell, so the gentlest grade meets the ground at the radius' end and
+    /// the gorge spans both sides of the spill. Sides 1:20 so the pond is worth the cut.
+    fn spanning() -> (World, Vec<f32>) {
+        let world = World { w: 128, h: 41 };
+        let z = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                let side = (y - 20.0).abs();
+                let (floor, wall) = if x <= 1.0 {
+                    (40.0, 0.05)
+                } else if x <= 22.0 {
+                    (10.0 + 0.05 * (22.0 - x), 0.05)
+                } else if x < 40.0 || (x == 40.0 && side > 16.0) {
+                    (10.0 + 0.01 * (x - 22.0), 0.05)
+                } else if x == 40.0 {
+                    (10.47, 0.02)
+                } else {
+                    (9.5 - 0.01 * (x - 41.0), 0.05)
+                };
+                floor + wall * side
+            })
+            .collect();
+        (world, z)
+    }
+
+    #[test]
+    fn a_gorge_spanning_its_spill_is_cut_alike_at_every_tiling() {
+        let (world, z) = spanning();
+        let ground = Layer::memory(world, z.clone());
+        let mut out = Vec::new();
+        for tile in [128, 16] {
+            let mut s = setup(world, tile, 1e-5);
+            s.classes = None;
+            s.params.breach_radius = 24;
+            let m = model(&s, &ground, None, "m", Some(&Rasters::memory(world))).expect("model");
+            let breached = Layer::filled(world, 0.0f32);
+            let figures =
+                breach(&s, &m, &ground, &breached, &Geometry::new(2.0), None, "b").expect("breach");
+            assert_eq!(figures["breaches"], 1, "tile {tile}: {figures}");
+            out.push(breached.to_vec().unwrap());
+        }
+        let cut: Vec<u64> = (0..z.len())
+            .filter(|&k| out[0][k] < z[k])
+            .map(|k| k as u64 % 128)
+            .collect();
+        assert!(
+            cut.iter().any(|&x| x <= 25) && cut.iter().any(|&x| x >= 40),
+            "the gorge spans the spill: {cut:?}"
+        );
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&out[0]), bits(&out[1]));
+    }
+
     /// Expert review: the model, breach and the model again on a 1,024² raw window at E43966
     /// N21633 (the staircase), tiles of 256², the layout's classes, the table's width factor,
     /// river start 0.05 km², uniform rain. Prints the breach figures and node counts before and
@@ -509,6 +622,24 @@ mod tests {
         );
         let cut = (0..z.len()).filter(|&k| after[k] < z[k]).count();
         eprintln!("cut cells {cut}");
+        // Off-axis cuts: wall cells beside each gorge's graded path.
+        for c in candidates(&s, &m, &geo) {
+            if let Some(g) = gorge(world, Rect::whole(world), &z, &c, s.spacing_m) {
+                let off = g
+                    .cut
+                    .iter()
+                    .filter(|p| !g.axis.contains(&p.0))
+                    .map(|&(k, v)| z[k as usize] - v)
+                    .fold(0.0f32, f32::max);
+                eprintln!(
+                    "gorge {}: depth {:.2} m, length {:.1} m, {} cells, max off-axis cut {off:.2} m",
+                    g.key,
+                    g.depth,
+                    g.length_m,
+                    g.cut.len()
+                );
+            }
+        }
         run("t11-e43966-after", &after);
         // A cross-section (cut depth, m) across the deepest gorge at its spill, rows and columns.
         if let Some(d) = figures["deepest"].as_array().and_then(|a| a.first()) {
