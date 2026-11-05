@@ -676,7 +676,8 @@ mod tests {
     /// A `size`² grid directory of the raw surface at (east, north) with the layout's classes
     /// and the world's moisture (mean rain from the chain's 4 m grid), run through every stage
     /// into scratch/hydrology-v3/probes/t12-<name>-{grid,work}; writes t12-<name>-carved.png
-    /// (hillshade of the carved ground: lakes and sea blue, rivers cyan) and prints stages.json with R9 and no-rise figures.
+    /// (hillshade of the carved ground: lakes and sea blue, rivers cyan) and prints stages.json
+    /// with R9 and no-rise figures.
     fn probe_stages(name: &str, east: u64, north: u64, size: usize) {
         const L4V2: &str = "../../data/worlds/fujix-55-l4v2";
         const CHAIN: &str = "../../data/worlds/fujix-55-chain/hydrology/4m/grid.json";

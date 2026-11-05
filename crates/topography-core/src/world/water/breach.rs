@@ -174,7 +174,8 @@ pub(crate) fn gorge(
     // The section: around each path cell that needs a cut, a Euclidean disc of radius half + 1
     // cells lowered by that cut tapered parabolically to nothing at its edge, never below the
     // grade at that cell (no new pits), so the gorge is at least 3 cells wide, has no square
-    // walls and cuts no wall more than its centre; its sides stay for the relaxation.
+    // walls and cuts no wall more than its centre; its sides stay as cut, guarded by the
+    // `walls` check.
     let mut new: HashMap<u64, f32> = HashMap::new();
     let radius = c.half as f32 + 1.0;
     let h = c.half as i64 + 1;

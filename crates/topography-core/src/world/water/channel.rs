@@ -298,8 +298,8 @@ pub(crate) fn channels(
                 }
             }
             // Walls: no changed cell may end steeper than max(40°, raw) (the `walls` check).
-            // The cut of every lowered cell in the
-            // 3 × 3 of such a cell is halved, Jacobi, at most WALL_ROUNDS rounds.
+            // The cut of every lowered cell in the 3 × 3 of such a cell is halved, Jacobi, at
+            // most WALL_ROUNDS rounds.
             let in_area = |a: usize| {
                 let (x, y) = area.world_xy(a);
                 win.local(x, y).expect("area in window")
