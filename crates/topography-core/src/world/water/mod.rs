@@ -7,6 +7,7 @@
 // Items are wired to the CLI in Task 14, which removes this allow.
 #![allow(dead_code)]
 
+mod flow;
 mod geom;
 mod layers;
 #[cfg(test)]
