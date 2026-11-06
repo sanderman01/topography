@@ -48,9 +48,11 @@ pub(crate) fn receivers(world: World, win: Rect, z: &[f32], core: Rect) -> Vec<u
 }
 
 /// Receivers on `z` that keep `prior`'s (the ground before channels were carved) wherever that
-/// neighbour is still strictly lower on `z`; elsewhere `z`'s own. Carving can tip a dithered
-/// Horn pick off the carved river (scale diagnosis 3); this keeps the routing on it. `prior`
-/// covers `win` like `z`.
+/// neighbour is not higher on `z` (ties keep it: a bed carved flat to a pond's level must not
+/// send the river off its line); elsewhere `z`'s own. Carving can tip a dithered Horn pick off
+/// the carved river (scale diagnosis 3); this keeps the routing on it. No cycle: kept edges
+/// never rise, new picks strictly fall, and equal-height kept edges come from the acyclic prior
+/// routing. `prior` covers `win` like `z`.
 pub(crate) fn kept_receivers(
     world: World,
     win: Rect,
@@ -69,7 +71,7 @@ pub(crate) fn kept_receivers(
             .neighbour(x, y, d as usize - 1)
             .expect("receiver inside");
         let at = |x: u64, y: u64| z[win.local(x, y).expect("receivers need a one-cell halo")];
-        if at(nx, ny) < at(x, y) {
+        if at(nx, ny) <= at(x, y) {
             *o = d;
         }
     }
@@ -151,8 +153,8 @@ mod tests {
     }
 
     /// A cell on a slope falling W and N: its Horn pick on the ground before carving (W or NW)
-    /// stays after a carve that turns the gradient, as long as it is still strictly lower;
-    /// once it is not, the carved ground's own pick takes over.
+    /// stays after a carve that turns the gradient, as long as it is not higher (a tie keeps
+    /// it); once it is higher, the carved ground's own pick takes over.
     #[test]
     fn kept_receivers_hold_the_prior_pick_while_it_stays_lower() {
         let world = World { w: 5, h: 5 };
@@ -173,9 +175,12 @@ mod tests {
         let fresh = receivers(world, all, &carved, all)[c];
         assert_ne!(fresh, pick, "carving flips the plain pick");
         assert_eq!(kept_receivers(world, all, &carved, &prior, all)[c], pick);
-        // The prior receiver no longer lower: the carved ground's pick.
+        // A bed carved flat to its prior receiver (fix round 3, a pond rim's level): kept.
         let (dy, dx) = OFFSETS[pick as usize - 1];
         let r = ((2 + dy) * 5 + 2 + dx) as usize;
+        carved[c] = carved[r];
+        assert_eq!(kept_receivers(world, all, &carved, &prior, all)[c], pick);
+        // The prior receiver higher: the carved ground's pick.
         carved[c] = carved[r] - 0.1;
         assert_eq!(
             kept_receivers(world, all, &carved, &prior, all)[c],

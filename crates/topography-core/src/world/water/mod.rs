@@ -225,7 +225,7 @@ fn final_tag(c_tag: &str, ground: &Path) -> Result<String> {
     let path = io_context("resolve the final ground", fs::canonicalize(ground))?;
     Ok(stage_tag(
         "m3",
-        &json!({"after": c_tag, "ground": path.display().to_string(), "bytes": meta.len(), "kept": true,
+        &json!({"after": c_tag, "ground": path.display().to_string(), "bytes": meta.len(), "kept": true, "kept_ties": true,
                 "modified": format!("{:?}", meta.modified().ok())}),
     ))
 }
@@ -302,7 +302,7 @@ pub fn run(o: &Options) -> Result<String> {
                 "halo": channel::HALO, "backwater": channel::BACKWATER,
                 "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS,
                 "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true,
-                "pond_rims": true, "lake_mouths": true}),
+                "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M}),
     );
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
@@ -337,7 +337,7 @@ pub fn run(o: &Options) -> Result<String> {
     drop(m2);
     // The routing on the carved ground (m3: `finish` checks this ground on the same one) and
     // the written water settled on it (review: drainage_rises). m3 keeps m2's receivers where
-    // they are still strictly lower, so the routing stays on the carved rivers.
+    // they are not higher (ties keep them), so the routing stays on the carved rivers.
     let carved = layers::Layer::open(s.world, &work.path("carved.f32"))?;
     let m3_tag = final_tag(&c_tag, &work.path("carved.f32"))?;
     let s_tag = stage_tag("s", &json!({"after": m3_tag, "lakes_at_label": true}));

@@ -15,7 +15,7 @@
 //! is cut.
 
 use super::CHANNEL_CAP_M;
-use super::checks::{CHANGED_M, horn_deg, is_wall};
+use super::checks::{CHANGED_M, SILL_M, horn_deg, is_wall};
 use super::geom::{Rect, World};
 use super::hydraulic::Geometry;
 use super::layers::Layer;
@@ -109,10 +109,17 @@ fn offer(slots: &mut [(f32, u32, u32); 2], cand: (f32, u32, u32), body: impl Fn(
     }
 }
 
-/// A cut beside another m2 node (lakes included) stops at that node's level `rim` (or the
-/// ground, if lower), so carving never lowers a pond's outlet (fix round 2).
+/// A cut beside another m2 node (lakes included) stops at the floor `rim` (or the ground, if
+/// lower), so carving never lowers a pond's outlet (fix round 2).
 fn rim_floor(ground: f32, cut: f32, rim: Option<f32>) -> f32 {
     rim.map_or(cut, |lv| cut.max(ground.min(lv)))
+}
+
+/// The rim floor of a cell: SILL_M above the highest level of the other m2 nodes beside it, so
+/// carving never makes a new spill at their level (gate 2 fix 2b), or its own node's level
+/// where it stands at it (its spill cell); the higher of the two.
+fn rim_level(own: Option<f32>, others: impl Iterator<Item = f32>) -> Option<f32> {
+    others.map(|lv| lv + SILL_M).chain(own).reduce(f32::max)
 }
 
 /// A river cell beside a lake below its river's surface `rs`, cut below that lake's level
@@ -295,16 +302,17 @@ pub(crate) fn channels(
                             .and_then(|(nx, ny)| win.local(nx, ny))
                     })
                     .collect();
-                // Fix round 2: the highest level of a neighbouring m2 node (lakes included)
-                // other than j's own, or of j's own where j stands at it (its spill cell); a
-                // rim is not cut below it.
+                // Fix round 2: a rim beside a neighbouring m2 node (lakes included) other than
+                // j's own is not cut to within SILL_M of its level; j's own spill cell not
+                // below its level.
                 let own_rim = (node[j] >= 2 && g[j] >= level[j]).then_some(level[j]);
-                let pond_rim = around
-                    .iter()
-                    .filter(|&&j2| node[j2] >= 2 && node[j2] != node[j])
-                    .map(|&j2| level[j2])
-                    .chain(own_rim)
-                    .reduce(f32::max);
+                let pond_rim = rim_level(
+                    own_rim,
+                    around
+                        .iter()
+                        .filter(|&&j2| node[j2] >= 2 && node[j2] != node[j])
+                        .map(|&j2| level[j2]),
+                );
                 // The lowest neighbouring lake level below a river surface `rs`.
                 let lake_below = |rs: f32| {
                     around
@@ -1140,6 +1148,23 @@ mod tests {
         assert_eq!(rim_floor(10.0, 8.0, None), 8.0);
     }
 
+    #[test]
+    fn a_rim_beside_another_pond_stays_a_sill_above_its_level() {
+        // Gate 2 case 2 (E12336 N12293): rim cells beside a one-cell pond at 700.7356 were cut
+        // to exactly its level and became spills; they now stop a centimetre above it.
+        let lv = 700.7356f32;
+        let floor = rim_level(None, [lv].into_iter()).unwrap();
+        assert_eq!(floor, lv + SILL_M);
+        assert_eq!(rim_floor(700.879, 700.2, Some(floor)), lv + SILL_M);
+        // Ground below that floor is never raised.
+        assert_eq!(rim_floor(700.74, 700.2, Some(floor)), 700.74);
+        // Its own spill cell keeps the level itself; the higher floor wins.
+        assert_eq!(rim_level(Some(lv), std::iter::empty()), Some(lv));
+        assert_eq!(rim_level(Some(lv), [lv].into_iter()), Some(lv + SILL_M));
+        assert_eq!(rim_level(Some(lv + 1.0), [lv].into_iter()), Some(lv + 1.0));
+        assert_eq!(rim_level(None, std::iter::empty()), None);
+    }
+
     /// No cut leaves a changed cell steeper than max(40°, raw) (the `walls` check) or a dry
     /// thalweg bed rising where the ground falls (`bed_rises`): the synthetic world's rivers run
     /// down 42-47° slopes.
@@ -1395,7 +1420,7 @@ mod tests {
 
     /// The routing on the carved ground (m3, scale diagnosis 3): carving tips the plain Horn
     /// pick of some river cells off the carved river; kept receivers follow m2 wherever its
-    /// receiver is still strictly lower, alike at every tiling.
+    /// receiver is not higher, alike at every tiling.
     #[test]
     fn the_final_routing_stays_on_the_carved_rivers() {
         let world = World { w: 256, h: 256 };

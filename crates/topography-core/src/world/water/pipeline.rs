@@ -671,7 +671,7 @@ pub(crate) fn model(
 }
 
 /// `model` whose dry-land receivers keep those of `prior` (the ground before channels) where
-/// they are still strictly lower on `ground` (`kept_receivers`).
+/// they are not higher on `ground` (`kept_receivers`; ties keep them).
 pub(crate) fn model_on(
     s: &Setup,
     ground: &Layer<f32>,

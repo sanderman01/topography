@@ -42,7 +42,7 @@ const AGREEMENT: f64 = 0.95;
 /// |Δ| histogram: 1 cm bins to 10 m, the last bin holds the rest.
 pub(crate) const BINS: usize = 1001;
 const RISE_M: f32 = 1e-4;
-const SILL_M: f32 = 0.01;
+pub(crate) const SILL_M: f32 = 0.01;
 const DAM_STEP_M: f32 = 1.5;
 const DAM_RIM_M: f32 = 0.5;
 /// Exit falls are read this far below each exit (figures; the 50 m one is also `dam_steps`'s

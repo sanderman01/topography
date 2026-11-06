@@ -67,7 +67,8 @@ pub(crate) fn drain(world: World, win: Rect, z: &[f32], core: Rect) -> Drain {
     drain_with(world, win, z, core, dir)
 }
 
-/// `drain` with the receivers `dir` of `core` given (each strictly lower on `z`, or none).
+/// `drain` with the receivers `dir` of `core` given (each strictly lower on `z`, or a kept
+/// prior receiver at equal height; or none). An equal-height cycle is counted in `cycles`.
 pub(crate) fn drain_with(world: World, win: Rect, z: &[f32], core: Rect, dir: Vec<u8>) -> Drain {
     if let Some(k) = z.iter().position(|v| !v.is_finite()) {
         let (x, y) = win.world_xy(k);
