@@ -66,16 +66,24 @@ pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
     }
 }
 
-/// `terrain(world)` (64² or larger) with a V valley in x ≥ 24, y ≤ 20 falling east 8 cm a
-/// cell to the map edge, its sides rising 0.3 m a cell, and a one-cell dam at x = 40 whose
-/// crest is 1 m above the floor and rises 2 cm a row (one spill): the pond behind it is
-/// breached (as breach.rs's `dammed_at`).
+/// `terrain(world)` (64² or larger) with a V valley in x ≥ 24, y ≤ 20 falling east 2 cm a
+/// cell to x = 40 and 8 cm a cell past it to the map edge, its sides rising 0.3 m a cell, and
+/// a one-cell dam at x = 40 whose crest is 1 m above the floor and rises 2 cm a row (one
+/// spill): the pond behind it is long enough to be worth its gorge, and is breached (as
+/// breach.rs's `dammed_at`).
 pub(crate) fn dammed(world: World) -> Vec<f32> {
     let mut z = terrain(world);
     for y in 0..=20u64 {
         let side = (y as f32 - 10.0).abs();
         for x in 24..world.w {
-            let floor = |x: u64| 15.0 - 0.08 * (x as f32 - 24.0);
+            let floor = |x: u64| {
+                let x = x as f32;
+                if x <= 40.0 {
+                    15.0 - 0.02 * (x - 24.0)
+                } else {
+                    14.68 - 0.08 * (x - 40.0)
+                }
+            };
             let mut v = floor(x) + 0.3 * side;
             if x == 40 {
                 v = v.max(floor(39) + 1.0 + 0.02 * side);
