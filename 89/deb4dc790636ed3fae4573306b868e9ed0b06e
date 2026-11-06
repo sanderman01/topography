@@ -1,0 +1,71 @@
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_e08ced5a7f9cb8 346-350
+  s_8c1b40ea9c1e0d::t_a2ba19cff0a70e 41-43
+  s_8c1b40ea9c1e0d::t_906a53d3c6cec8 444,448-457,459-467,727
+  s_8c1b40ea9c1e0d::t_10862141838d3c 551
+  s_8c1b40ea9c1e0d::t_52e05fa93abffc 708-726
+  s_8c1b40ea9c1e0d::t_3352a35c108fed 308-309
+  s_8c1b40ea9c1e0d::t_4f1d8ee732479f 223-229,232
+  s_8c1b40ea9c1e0d::t_a84052b3d16c44 508
+  s_8c1b40ea9c1e0d::t_8b8b6485dc2aeb 434
+  s_8c1b40ea9c1e0d::t_e86219029a6d45 728
+crates/topography-core/src/world/water/channel.rs
+  s_8c1b40ea9c1e0d::t_cbdec2e024fa18 557-558,564-565,578
+  s_8c1b40ea9c1e0d::t_dafef0a2c15668 147-165,168
+  s_8c1b40ea9c1e0d::t_d36efc7ec1993c 1278-1291,1294-1310,1313
+  s_8c1b40ea9c1e0d::t_e58903b73f132c 669-670,680-683
+  s_8c1b40ea9c1e0d::t_e08ced5a7f9cb8 25
+  s_8c1b40ea9c1e0d::t_1973792f94e75d 553-554,556,562-563,566,568-577
+  s_8c1b40ea9c1e0d::t_9489c7c9517876 82-94
+  s_8c1b40ea9c1e0d::t_fd763fdd833af6 12-14
+  s_8c1b40ea9c1e0d::t_e4b5ddcc95bc1f 167,1208,1210-1219,1223-1244,1249-1277,1311-1312,1315
+  s_8c1b40ea9c1e0d::t_0676d91cedfad8 166
+  s_8c1b40ea9c1e0d::t_896be48591c413 1245-1248
+  s_8c1b40ea9c1e0d::t_486685be7fdbcf 579-583
+  s_8c1b40ea9c1e0d::t_7a022d360ca009 319,330
+  s_8c1b40ea9c1e0d::t_926c771fc53826 1168-1207,1209,1220-1222
+  s_8c1b40ea9c1e0d::t_a18507e9fe5a7c 1292-1293
+  s_8c1b40ea9c1e0d::t_35032cd24661e8 1155-1162
+  s_8c1b40ea9c1e0d::t_5a691ba9749db9 1314
+  s_8c1b40ea9c1e0d::t_285534c4bc9eb6 327
+  s_8c1b40ea9c1e0d::t_00e266429e1cb3 242
+  s_8c1b40ea9c1e0d::t_221662dfc6bc92 559-561
+  s_8c1b40ea9c1e0d::t_14be881626603b 662
+  s_8c1b40ea9c1e0d::t_05866c775f138d 567
+  s_8c1b40ea9c1e0d::t_ec401128b3592f 645-647
+  s_8c1b40ea9c1e0d::t_04cdd96523d074 1027-1032
+  s_8c1b40ea9c1e0d::t_89ca92221d4944 326,328-329,331
+  s_8c1b40ea9c1e0d::t_e9953aab3fd695 640
+  s_8c1b40ea9c1e0d::t_17d1c5f08c77ad 169
+  s_8c1b40ea9c1e0d::t_99227b617a0359 1316
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_740809fc8a1437 1472
+  s_8c1b40ea9c1e0d::t_8c12c39cdc1368 301
+  s_8c1b40ea9c1e0d::t_a35656f87a0d2e 703
+  s_8c1b40ea9c1e0d::t_558e3a6537428d 1978-1981
+  s_8c1b40ea9c1e0d::t_1d0d6265d46e05 1516
+  s_8c1b40ea9c1e0d::t_76d628a18d8292 686-702,704-708
+  s_8c1b40ea9c1e0d::t_7fec550a2b5bc0 2546-2566,2579,2585-2593
+  s_8c1b40ea9c1e0d::t_d187f1fe01370b 2261-2299
+  s_8c1b40ea9c1e0d::t_6df2d82243040d 1164-1167
+  s_8c1b40ea9c1e0d::t_71357a7ebb2dde 1446-1447
+  s_8c1b40ea9c1e0d::t_d0c8799e128716 88-89
+  s_8c1b40ea9c1e0d::t_c835c4e78b25ac 1529-1538
+  s_8c1b40ea9c1e0d::t_972a843c86952e 2300-2301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89deb4dc790636ed3fae4573306b868e9ed0b06e",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
