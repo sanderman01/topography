@@ -350,7 +350,11 @@ pub fn run(o: &Options) -> Result<String> {
         &work.path("carved.f32"),
         &work.path("breached.f32"),
     )?;
-    let s_tag = stage_tag("s", &json!({"after": m3_tag, "lakes_at_label": true}));
+    // Settle reads the channels' surfaces too: m3's content tag alone survives a channels rerun.
+    let s_tag = stage_tag(
+        "s",
+        &json!({"after": m3_tag, "channels": c_tag, "lakes_at_label": true}),
+    );
     let lakes: HashSet<u32> = bodies["bodies"]
         .as_array()
         .into_iter()
