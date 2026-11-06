@@ -916,18 +916,15 @@ pub(crate) fn check_tile(
                             || (wet && body[c] > 1 && joins(j, body[c]))
                             || (flow[c] & 16 != 0 && id.is_some_and(|b| joins(c, b)))
                     };
+                    // Fix round 2: written water of another body (body > 1; 0 none, 1 sea) is
+                    // not a second channel; an unwritten m3 channel is.
+                    let written = |c: usize| surf[c].is_finite() && body[c] > 1;
                     beside = (-2i64..=2).any(|oy| {
                         (-2i64..=2).any(|ox| {
                             at_i(px as i64 + ox, py as i64 + oy)
-                                .is_some_and(|c| q[c] >= thr && !own_cell(c))
+                                .is_some_and(|c| q[c] >= thr && !own_cell(c) && !written(c))
                         })
                     });
-                }
-                // Gate 1 ruling: not counted on or beside a dry m2 thalweg (the written
-                // river's routing put it there).
-                let dry_m2 = |c: usize| fw[c] & 16 != 0 && n2[c] == 0;
-                if beside && (dry_m2(j) || around(j).any(dry_m2)) {
-                    beside = false;
                 }
                 if beside {
                     t.fail("thalweg_beside", x, y);
@@ -1374,8 +1371,7 @@ mod tests {
                 (self.surf[k], self.body[k], self.fw[k]) = (self.z[k], id, self.flow[k]);
             }
         }
-        /// The rivers run off every written (m2) thalweg: `thalweg_beside` skips cells on or
-        /// beside a dry m2 thalweg (gate 1 ruling), so its other rules need this.
+        /// The rivers run off every written (m2) thalweg.
         fn m3_only(&mut self) {
             self.fw.fill(0);
         }
@@ -1947,33 +1943,6 @@ mod tests {
         assert!(fails(&t, "thalweg_beside") > 0, "{:?}", t.examples);
     }
 
-    /// Gate 1 ruling: a river on a dry m2 thalweg (or beside one) is not counted; on an m2
-    /// thalweg under standing water (an m2 node) it still is.
-    #[test]
-    fn a_river_on_or_beside_a_dry_m2_thalweg_is_not_beside() {
-        let c = lower_parallel();
-        assert_eq!(fails(&c.tile(), "thalweg_beside"), 0, "on its m2 thalweg");
-        let mut c = lower_parallel();
-        c.m3_only();
-        for x in 0..130 {
-            let k = c.k(x, 31);
-            c.fw[k] = 16 | 4;
-        }
-        assert_eq!(
-            fails(&c.tile(), "thalweg_beside"),
-            0,
-            "beside an m2 thalweg"
-        );
-        let mut c = lower_parallel();
-        c.n2.fill(2);
-        let t = c.tile();
-        assert!(
-            fails(&t, "thalweg_beside") > 0,
-            "m2 ponded: {:?}",
-            t.examples
-        );
-    }
-
     /// A gentle V valley (0.05 per cell across) with a river along row 30, x 10..120, off
     /// every m2 thalweg.
     fn gentle_valley(across: impl Fn(u64, f32) -> f32) -> Case {
@@ -2040,10 +2009,10 @@ mod tests {
         c.m3_only();
         let t = c.tile();
         assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
-        // Without the join it is a second, higher channel beside a lower one.
+        // Without the join too (fix round 2): the trunk is written water of another river.
         let k = c.k(80, 31);
         c.flow[k] = 32;
-        assert!(fails(&c.tile(), "thalweg_beside") > 0);
+        assert_eq!(fails(&c.tile(), "thalweg_beside"), 0);
     }
 
     /// An unlabelled m3 thalweg cell on a short detour 1.6 m above its river (rejoining it 4
@@ -2150,26 +2119,24 @@ mod tests {
         assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
     }
 
-    /// Gate 1 ruling (4a): the channel cell beside the lowest cell is the river's own when it
-    /// is water (body 8) that the river joins within 150 m.
+    /// Fix round 2: beside the lowest cell, a lower written river of another body (8) that
+    /// never joins is not a second channel; an unwritten m3 channel there is.
     #[test]
-    fn water_the_river_joins_beside_the_lowest_cell_is_its_own() {
-        let water = |join: bool| {
+    fn only_an_unwritten_channel_beside_the_lowest_cell_counts() {
+        let water = |written: bool| {
             hollow_with(move |c| {
-                for x in 50..70 {
-                    let k = c.k(x, 38);
-                    (c.surf[k], c.body[k], c.q[k]) = (c.z[k], 8, 0.06);
-                }
-                if join {
-                    let k = c.k(119, 30);
-                    (c.surf[k], c.body[k]) = (c.z[k], 8);
+                let line: Vec<(u64, u64)> = (50..=70).map(|x| (x, 38)).collect();
+                if written {
+                    c.river(&line, 0.06, 8);
+                } else {
+                    c.route(&line, 16, 0.06);
                 }
             })
         };
-        let t = water(false);
-        assert!(fails(&t, "thalweg_beside") > 0, "no join");
         let t = water(true);
         assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+        let t = water(false);
+        assert!(fails(&t, "thalweg_beside") > 0, "an unwritten m3 channel");
     }
 
     /// A dry m2 thalweg whose carved bed rises to its receiver where the ground falls fails
