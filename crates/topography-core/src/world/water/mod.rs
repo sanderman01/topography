@@ -268,7 +268,8 @@ pub fn run(o: &Options) -> Result<String> {
     let b_tag = stage_tag(
         "b",
         &json!({"after": m1_tag, "cap": p.breach_cap_m, "radius": p.breach_radius,
-                "channels": p.channels, "m3s_per_km2": geo.m3s_per_km2}),
+                "channels": p.channels, "m3s_per_km2": geo.m3s_per_km2,
+                "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true}),
     );
     let m1 = pipeline::model(&s, &raw, wk, &m1_tag, None)?;
     let breached = layers::Layer::open_or_create(s.world, &work.path("breached.f32"), 0.0)?;
