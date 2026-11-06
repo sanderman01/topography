@@ -1025,7 +1025,18 @@ a second thalweg only where it, or a cell within 2 cells, carries a channel (m3 
 threshold, 0.05 km² at 1 m) that is not this river's own; dry lower ground across a valley
 floor or fan does not fail. An unlabelled m3 thalweg cell (a short detour beside a pond) is
 judged as the labelled water its path reaches within 150 m. The cost: a river perched above a
-dry valley floor passes.
+dry valley floor passes. Gate 1 rulings: the channel cell near the lower cell is this river's
+own when it is water this river joins within 150 m or a thalweg joining this river within
+150 m; and a river cell on or next to a dry m2 thalweg cell (written thalweg outside any m2
+node) is not counted, so the check judges only where m3 leaves the written rivers or runs
+through m2 ponds. The cost: a bench river beside a raw gully passes.
+
+Settle (`s`) lifts written water to the m3 routing (a river or pool cell inside a higher m3
+pond stands at its level; a dry cell draining into higher labelled water is wetted) but leaves
+labelled lakes at their label's level and extent. The figure `closed_lake_m3_level_gap` is
+the largest |m3 level − label level| over closed lakes' cells; `stages.settled` names the
+largest lift's cell and body. The channel restore rounds stop at a hard cap of 64; a core
+cell still changing after that is an error.
 
 ### Settings, resuming and cost
 
@@ -1036,15 +1047,16 @@ breach cap.
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
 memory cap (`MemoryMax=10G` for 16,384² windows, 12G for the world). The work directory takes
-about 54 bytes per cell.
+about 49 bytes per cell.
 
-Measured at gate 1 (2026-11-06, fujix-55-l4v2 at the canyon, real rain):
+Measured at gate 1 (2026-11-06, fujix-55-l4v2 at the canyon, real rain; 16k rows from the
+gate 1 fix round):
 
 | Run | Time | Peak RAM (Rust) | Disk | Notes |
 | --- | --- | --- | --- | --- |
 | 2048² window, `--tile 512 --threads 4` | 10 s | 0.33 GB | 0.3 GB | driver peak 0.5 GB |
-| 16,384² window, `--tile 2048 --threads 4` | 10.5 min | 2.1 GB | 18 GB (13 GB work) | 243,257 leaves, 74 lakes, 790 rivers |
-| 16,384² window, `--tile 8192 --threads 1` | 37 min | 6.1 GB | 18 GB | byte-identical outputs to the 2048 tiling |
+| 16,384² window, `--tile 2048 --threads 4` | 10 min | 2.3 GB | 18 GB (13 GB work) | 243,257 leaves, 74 lakes, 790 rivers; fails drainage_rises 2, straight_runs, straight_share |
+| 16,384² window, `--tile 8192 --threads 1` | 36 min | 5.7 GB | 18 GB | byte-identical outputs to the 2048 tiling; same checks |
 | world 65,536², `--tile 2048 --threads 4` | about 3-5 h (estimate) | about 4-6 GB (estimate) | about 210 GB work | 16× the 16k window; I/O no longer fits the page cache |
 
 The world estimate scales the 16k run by its cell count. Tile passes dominate time; the global
