@@ -9,18 +9,20 @@
 //! there instead of running beside it; a thalweg cell the larger river does not take keeps its
 //! own. A cell is lowered only when it ends up under its river's surface, and never more than
 //! CHANNEL_CAP_M below raw (R9); a section cell next to a lake whose level stands above the
-//! river's surface is left as it is (R14). Lakes, pools and the sea keep their level. A river
+//! river's surface is left as it is (R14). Lakes, pools and the sea keep their level; their
+//! cells whose ground reaches the level are dry shore, as is a lake's exit cell at the level.
+//! Other river water over a bed left uncut runs MIN_DEPTH_M deep (export ruling). A river
 //! cell below the surface of the cell it flows into is raised to it over BACKWATER cells
 //! (N18). At coarser spacings (no channels) rivers are their thalweg cells at R and nothing
 //! is cut.
 
-use super::CHANNEL_CAP_M;
 use super::checks::{CHANGED_M, SILL_M, horn_deg, is_wall};
 use super::geom::{Rect, World};
 use super::hydraulic::Geometry;
 use super::layers::Layer;
 use super::pipeline::{Rasters, Setup, Water};
 use super::store::{Work, cached, for_tiles};
+use super::{CHANNEL_CAP_M, MIN_DEPTH_M};
 use crate::acquisition::{Result, ensure};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -77,8 +79,19 @@ impl Layers {
 
 /// Per tile: lowered cells, deepest lowering below the ground, volume m³, river cells,
 /// deepest lowering below raw, cuts removed next to walls, the last restore/grade round
-/// that changed a cell, beds raised by grading.
-type Figure = (u64, f32, f64, u64, f32, u64, u64, u64);
+/// that changed a cell, beds raised by grading; and cells by WetFix (index − 1).
+type Figure = ((u64, f32, f64, u64, f32, u64, u64, u64), [u64; 4]);
+/// How the export ruling changed a cell: river water raised to MIN_DEPTH_M over its bed, lake
+/// or sea ground at its level left dry, a lake's exit cell left dry, a thalweg returned to its
+/// own river.
+#[derive(Clone, Copy, PartialEq)]
+enum WetFix {
+    None,
+    MinDepth,
+    Shore,
+    Exit,
+    Returned,
+}
 /// Per tile: (river body, largest discharge) and (pond ordinal, crossing body).
 type Sizes = (Vec<(u32, f32)>, Vec<(u32, u32)>);
 
@@ -128,6 +141,29 @@ fn mouth_surface(rs: f32, cut: f32, lake: Option<f32>) -> f32 {
     match lake {
         Some(lv) if cut < lv => lv,
         _ => rs,
+    }
+}
+
+/// A section cell its smaller cut leaves at or above its river's surface is dry again (no
+/// surface, no label), unless it is its own m2 thalweg (`own`: its river's surface R and
+/// body), which returns to its own river: (surface, body, river, keep).
+fn dry_again(own: Option<(f32, u32)>) -> (f32, u32, bool, bool) {
+    match own {
+        Some((rs, id)) => (rs, id, true, true),
+        None => (f32::NAN, 0, false, false),
+    }
+}
+
+/// A river cell's surface over its bed `carved`: kept above it; none (dry shore) where a lake
+/// beside it stands at or above the bed (`sill`: its exit at the level); else flowing water
+/// over a bed left uncut, MIN_DEPTH_M deep (export ruling).
+fn above_bed(surface: f32, carved: f32, sill: bool) -> Option<f32> {
+    if surface > carved {
+        Some(surface)
+    } else if sill {
+        None
+    } else {
+        Some(carved + MIN_DEPTH_M)
     }
 }
 
@@ -203,7 +239,7 @@ pub(crate) fn channels(
             if let Some(wk) = work {
                 if wk.is_done(&name) {
                     return wk.cached(&format!("{name}-figures"), || {
-                        Ok((0, 0.0, 0.0, 0, 0.0, 0, 0, 0))
+                        Ok(((0, 0.0, 0.0, 0, 0.0, 0, 0, 0), [0; 4]))
                     });
                 }
             }
@@ -280,13 +316,19 @@ pub(crate) fn channels(
             let (mut lowered, mut is_river) = (vec![false; n], vec![false; n]);
             // River cells that stay wet whatever their cut: own thalwegs and wetted ponds.
             let mut keep = vec![false; n];
+            let mut fixed = vec![WetFix::None; n];
             for a in 0..n {
                 let (x, y) = area.world_xy(a);
                 let j = win.local(x, y).expect("area in window");
                 carved[a] = g[j];
                 ids[a] = bw[j];
                 if node[j] == 1 || is_lake(j) {
-                    surface[a] = level[j];
+                    // Ground at or above the level is dry shore.
+                    if g[j] < level[j] {
+                        surface[a] = level[j];
+                    } else {
+                        (ids[a], fixed[a]) = (0, WetFix::Shore);
+                    }
                     continue;
                 }
                 let ranked: Vec<(usize, u32)> = best[a]
@@ -508,9 +550,37 @@ pub(crate) fn channels(
             }
             for a in 0..n {
                 lowered[a] = carved[a] < ga[a];
-                // A section cell its smaller cut leaves above the river's surface is dry again.
+                // A section cell its smaller cut leaves above the river's surface is dry again;
+                // an own m2 thalweg returns to its own river.
                 if is_river[a] && !keep[a] && carved[a] >= surface[a] {
-                    (surface[a], ids[a], is_river[a]) = (f32::NAN, bw[in_area(a)], false);
+                    let j = in_area(a);
+                    (surface[a], ids[a], is_river[a], keep[a]) =
+                        dry_again(thalweg(j).then(|| (river(j), bw[j])));
+                    if keep[a] {
+                        fixed[a] = WetFix::Returned;
+                    }
+                }
+            }
+            // Every river cell stands above its bed (the backwater pass and settle absorb the
+            // rises this makes, raising water only).
+            for a in 0..n {
+                if !is_river[a] || surface[a].is_nan() || surface[a] > carved[a] {
+                    continue;
+                }
+                let (x, y) = area.world_xy(a);
+                let sill = (0..8)
+                    .filter_map(|k| {
+                        world
+                            .neighbour(x, y, k)
+                            .and_then(|(nx, ny)| win.local(nx, ny))
+                    })
+                    .any(|j2| is_lake(j2) && level[j2] >= carved[a]);
+                match above_bed(surface[a], carved[a], sill) {
+                    Some(v) => (surface[a], fixed[a]) = (v, WetFix::MinDepth),
+                    None => {
+                        (surface[a], ids[a], is_river[a]) = (f32::NAN, 0, false);
+                        fixed[a] = WetFix::Exit;
+                    }
                 }
             }
             // Backwater (N18): a river cell whose surface lies below that of the cell it flows
@@ -567,11 +637,14 @@ pub(crate) fn channels(
             out.carved.write(core, &cc)?;
             out.surface.write(core, &cs)?;
             out.body.write(core, &ci)?;
-            let mut fig: Figure = (0, 0.0, 0.0, 0, 0.0, 0, 0, 0);
+            let (mut fig, mut fixes): Figure = ((0, 0.0, 0.0, 0, 0.0, 0, 0, 0), [0; 4]);
             for k in 0..core.cells() {
                 let (x, y) = core.world_xy(k);
                 let j = win.local(x, y).expect("core in window");
                 let a = at(k);
+                if fixed[a] != WetFix::None {
+                    fixes[fixed[a] as usize - 1] += 1;
+                }
                 fig.5 += u64::from(restored[a]);
                 fig.6 = fig.6.max(undone[a]);
                 fig.7 += u64::from(graded[a]);
@@ -586,12 +659,15 @@ pub(crate) fn channels(
                     fig.3 += 1;
                 }
             }
+            let fig = (fig, fixes);
             if let Some(wk) = work {
                 wk.cached(&format!("{name}-figures"), || Ok(fig))?;
                 wk.mark_done(&name)?;
             }
             Ok(fig)
         })?;
+    let fixes = |i: usize| parts.iter().map(|p| p.1[i]).sum::<u64>();
+    let parts: Vec<_> = parts.iter().map(|p| p.0).collect();
     Ok(json!({
         "lowered_cells": parts.iter().map(|p| p.0).sum::<u64>(),
         "max_lowering_m": parts.iter().map(|p| p.1).fold(0.0f32, f32::max),
@@ -601,6 +677,10 @@ pub(crate) fn channels(
         "wall_cuts_removed": parts.iter().map(|p| p.5).sum::<u64>(),
         "wall_restore_rounds": parts.iter().map(|p| p.6).max().unwrap_or(0),
         "bed_graded_cells": parts.iter().map(|p| p.7).sum::<u64>(),
+        // Export ruling: river cells raised to MIN_DEPTH_M over their bed, lake and sea shore
+        // and lake exit cells left dry, thalwegs returned to their own river.
+        "min_depth_cells": fixes(0), "shore_dry_cells": fixes(1),
+        "exit_dry_cells": fixes(2), "thalweg_returned_cells": fixes(3),
         "width": "3 * Q^0.5 m, Q in m³/s", "depth": "min(0.3 * Q^0.4, 2) m",
         "m3s_per_km2": geo.m3s_per_km2,
     }))
@@ -944,7 +1024,12 @@ mod tests {
             let (dy, dx) = OFFSETS[(f & 15) as usize - 1];
             let j = ((k / w) as i64 + dy) as usize * w + ((k % w) as i64 + dx) as usize;
             if surface[j].is_finite() {
-                assert!(surface[j] <= surface[k] + 1e-5, "rises from {k} to {j}");
+                assert!(
+                    surface[j] <= surface[k] + 1e-5,
+                    "rises from {k} ({} m) to {j} ({} m)",
+                    surface[k],
+                    surface[j]
+                );
             }
         }
     }
@@ -1067,10 +1152,166 @@ mod tests {
             cells.len()
         );
         for &k in &cells {
-            assert_eq!(surface[k], level[k], "pond cell {k} at the level");
+            // The spill cell runs MIN_DEPTH_M deep; backwater lifts the pond behind it.
+            assert!(
+                surface[k] == level[k] || surface[k] == level[k] + MIN_DEPTH_M,
+                "pond cell {k} at {} m, level {} m",
+                surface[k],
+                level[k]
+            );
+            assert!(surface[k] > carved[k], "pond cell {k} above its ground");
             assert_eq!(body[k], body[cells[0]], "pond cell {k} in one body");
         }
         assert!(body[cells[0]] > 1);
+    }
+
+    /// Channels, then the routing on the carved ground (m3, keeping raw's receivers) and settle
+    /// on it, as `run` does (no breach, no lakes): raw, carved, surface, body, m3 flow, m2 node
+    /// and level.
+    #[allow(clippy::type_complexity)]
+    fn settled_run(
+        s: &Setup,
+        z: Vec<f32>,
+    ) -> (
+        Vec<f32>,
+        Vec<f32>,
+        Vec<f32>,
+        Vec<u32>,
+        Vec<u8>,
+        Vec<u32>,
+        Vec<f32>,
+    ) {
+        let world = s.world;
+        let raw = Layer::memory(world, z);
+        let r = Rasters::memory(world);
+        let m = model(s, &raw, None, "m", Some(&r)).expect("model");
+        let body = Layer::filled(world, 0u32);
+        label(s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
+        let out = Layers::memory(world);
+        let geo = Geometry::new(1e3);
+        channels(s, &m.water, &raw, &raw, &r, &body, &out, &geo, None, "c").expect("channels");
+        let carved = Layer::memory(world, out.carved.to_vec().unwrap());
+        let r3 = Rasters::memory(world);
+        model_on(s, &carved, Some(&raw), None, "m3", Some(&r3)).expect("m3");
+        settle(s, &r3, &carved, &out, &HashSet::new(), None, "s").expect("settle");
+        (
+            raw.to_vec().unwrap(),
+            carved.to_vec().unwrap(),
+            out.surface.to_vec().unwrap(),
+            out.body.to_vec().unwrap(),
+            r3.flow.to_vec().unwrap(),
+            r.node.to_vec().unwrap(),
+            r.level.to_vec().unwrap(),
+        )
+    }
+
+    /// Export ruling: a thalweg down a 45° slope (never cut) and a pond's spill cell (left at
+    /// the level) carry MIN_DEPTH_M of water, and after settle no surface rises downstream.
+    #[test]
+    fn uncut_river_cells_stand_a_centimetre_above_their_bed() {
+        let world = World { w: 96, h: 41 };
+        let noise = |i: u64| ((i * 7919) % 7) as f32 * 0.001;
+        let steep: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                200.0 - x + 0.3 * (y - 20.0).abs() + noise(i)
+            })
+            .collect();
+        let mut s = setup(world, 32, 1e-5);
+        s.table.lake_min_m2 = 1e9;
+        let (raw, carved, surface, body, flow, ..) = settled_run(&s, steep);
+        let mut uncut = 0;
+        for k in 0..raw.len() {
+            if body[k] == 0 {
+                continue;
+            }
+            assert!(surface[k] > carved[k], "wet cell {k} not above its bed");
+            if flow[k] & 16 != 0 && carved[k] == raw[k] {
+                uncut += 1;
+                assert!(surface[k] - carved[k] >= MIN_DEPTH_M - 1e-4, "cell {k}");
+            }
+        }
+        assert!(uncut > 30, "{uncut} uncut thalweg cells");
+        assert_no_rise(96, &surface, &flow);
+
+        // The dam of `a_pond_a_river_crosses_is_wet_at_its_level`: its spill cell.
+        let dam: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                let dam = if (46.0..=50.0).contains(&x) { 1.2 } else { 0.0 };
+                40.0 - 0.05 * x + 0.3 * (y - 20.0).abs() + dam + noise(i)
+            })
+            .collect();
+        let (_, carved, surface, body, flow, node, level) = settled_run(&s, dam);
+        for k in 0..body.len() {
+            assert!(body[k] == 0 || surface[k] > carved[k], "wet cell {k}");
+        }
+        let spill: Vec<usize> = (0..node.len())
+            .filter(|&k| node[k] >= 2 && carved[k] >= level[k] && surface[k].is_finite())
+            .collect();
+        assert!(!spill.is_empty(), "the pond has a wet spill cell");
+        for k in spill {
+            assert!(surface[k] - carved[k] >= MIN_DEPTH_M - 1e-4, "spill {k}");
+        }
+        assert_no_rise(96, &surface, &flow);
+    }
+
+    /// A tributary thalweg a larger river's section claimed, then gave up (its cut undone),
+    /// returns to its own river at its own surface; any other such cell is dry and unlabelled.
+    /// A river cell at a lake's exit at the level is dry shore; others run MIN_DEPTH_M deep.
+    #[test]
+    fn cells_a_cut_gives_up_return_to_their_own_river_or_dry() {
+        assert_eq!(dry_again(Some((12.5, 7))), (12.5, 7, true, true));
+        let (sf, id, river, keep) = dry_again(None);
+        assert!(sf.is_nan());
+        assert_eq!((id, river, keep), (0, false, false));
+        assert_eq!(above_bed(10.5, 10.0, true), Some(10.5));
+        assert_eq!(above_bed(10.0, 10.0, true), None);
+        assert_eq!(above_bed(10.0, 10.0, false), Some(10.0 + MIN_DEPTH_M));
+        assert_eq!(above_bed(9.99, 10.0, false), Some(10.0 + MIN_DEPTH_M));
+    }
+
+    /// Lake and sea cells whose ground reaches their level are dry shore; the others stand at
+    /// the level, above their ground.
+    #[test]
+    fn lake_ground_at_the_level_is_dry_shore() {
+        let world = World { w: 64, h: 64 };
+        // A shelf at exactly sea level along the coast.
+        let z: Vec<f32> = terrain(world)
+            .into_iter()
+            .map(|v| if (-0.5..=0.0).contains(&v) { 0.0 } else { v })
+            .collect();
+        let s = setup(world, 16, 1e-5);
+        let raw = Layer::memory(world, z);
+        let r = Rasters::memory(world);
+        let m = model(&s, &raw, None, "m", Some(&r)).expect("model");
+        let body = Layer::filled(world, 0u32);
+        label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
+        let out = Layers::memory(world);
+        let geo = Geometry::new(3.6e4);
+        let fig =
+            channels(&s, &m.water, &raw, &raw, &r, &body, &out, &geo, None, "c").expect("channels");
+        let (g, node, level) = (
+            raw.to_vec().unwrap(),
+            r.node.to_vec().unwrap(),
+            r.level.to_vec().unwrap(),
+        );
+        let (sf, b) = (out.surface.to_vec().unwrap(), out.body.to_vec().unwrap());
+        let (mut shore, mut lake) = (0, 0);
+        for k in 0..g.len() {
+            if node[k] == 1 || (node[k] >= 2 && m.water.nodes.at(node[k] - 2).lake) {
+                if g[k] >= level[k] {
+                    assert!(sf[k].is_nan() && b[k] == 0, "shore cell {k} is wet");
+                    shore += 1;
+                } else {
+                    assert_eq!(sf[k], level[k], "cell {k} at its level");
+                    assert!(b[k] > 0);
+                    lake += usize::from(node[k] >= 2);
+                }
+            }
+        }
+        assert!(shore > 0 && lake > 0, "{shore} shore, {lake} lake cells");
+        assert_eq!(fig["shore_dry_cells"], shore);
     }
 
     /// Fix round 2: the river over the dam cuts neither the pond's rim nor its spill cell (in

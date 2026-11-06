@@ -85,6 +85,8 @@ pub(crate) struct CheckLayers {
 
 /// Lakes by id: level, full, outlet [inside, outside], cells needed (closed).
 pub(crate) type LakeInfo = BTreeMap<u32, (f32, bool, [u64; 2], u64)>;
+/// Lake and sea levels by id as the export reads `bodies.json` (`lake_level_json`).
+pub(crate) type Levels = BTreeMap<u32, f32>;
 
 /// A full node's exit (a lake, an R26 pool or a pond), walked for the dam figures; a listed
 /// lake's also for the hard exit checks.
@@ -296,6 +298,7 @@ pub(crate) fn check_tile(
     l: &CheckLayers,
     core: Rect,
     lakes: &LakeInfo,
+    levels: &Levels,
     exits: &[Exit],
     spots: &[Spot],
 ) -> Result<Tile> {
@@ -679,6 +682,29 @@ pub(crate) fn check_tile(
         t.max_change = t.max_change.max(delta);
         if delta > s.params.change_max_m() {
             t.fail("change_max", x, y);
+        }
+        // The export's contract (export/water.rs `level0`): a lake or sea cell stands at its
+        // bodies.json level (exactly, so any height encoding agrees), and every labelled cell
+        // has a surface strictly above the ground.
+        if body[j] == 0 {
+            if surf[j].is_finite() {
+                t.fail("surface_without_body", x, y);
+            }
+        } else {
+            let sj = match levels.get(&body[j]) {
+                Some(&lv) if surf[j].is_finite() => {
+                    if surf[j] != lv {
+                        t.fail("lake_level_json", x, y);
+                    }
+                    lv
+                }
+                _ => surf[j],
+            };
+            if !sj.is_finite() {
+                t.fail("wet_without_surface", x, y);
+            } else if sj <= z[j] {
+                t.fail("wet_not_above_ground", x, y);
+            }
         }
         // Unlabelled rivers (a figure): dry m3 thalweg cells in no node; runs counted from
         // their upstream end.
@@ -1135,6 +1161,10 @@ pub(crate) fn report(
         "thalweg_beside",
         "walls",
         "change_max",
+        "wet_not_above_ground",
+        "wet_without_surface",
+        "surface_without_body",
+        "lake_level_json",
     ]
     .into_iter()
     .map(|k| (k, 0))
@@ -1413,6 +1443,8 @@ mod tests {
         l2: Vec<f32>,
         bz: Vec<f32>,
         lakes: LakeInfo,
+        /// bodies.json lake and sea levels (`lake_level_json`).
+        levels: Levels,
         exits: Vec<Exit>,
         spots: Vec<Spot>,
     }
@@ -1437,6 +1469,7 @@ mod tests {
                 n2: vec![0; n],
                 l2: vec![f32::NAN; n],
                 lakes: LakeInfo::new(),
+                levels: Levels::new(),
                 exits: Vec::new(),
                 spots: Vec::new(),
             }
@@ -1480,6 +1513,7 @@ mod tests {
                 &self.layers(),
                 Rect::whole(self.world),
                 &self.lakes,
+                &self.levels,
                 &self.exits,
                 &self.spots,
             )
@@ -1492,7 +1526,16 @@ mod tests {
                 .tiles()
                 .into_iter()
                 .map(|core| {
-                    check_tile(&s, &l, core, &self.lakes, &self.exits, &self.spots).expect("check")
+                    check_tile(
+                        &s,
+                        &l,
+                        core,
+                        &self.lakes,
+                        &self.levels,
+                        &self.exits,
+                        &self.spots,
+                    )
+                    .expect("check")
                 })
                 .collect();
             // With the figure-only counts (owner ruling 2026-11-06) under their check names.
@@ -1932,7 +1975,10 @@ mod tests {
             let tiles = s
                 .tiles()
                 .into_iter()
-                .map(|core| check_tile(&s, &l, core, &c.lakes, &c.exits, &c.spots).expect("check"))
+                .map(|core| {
+                    check_tile(&s, &l, core, &c.lakes, &c.levels, &c.exits, &c.spots)
+                        .expect("check")
+                })
                 .collect();
             report(tiles, c.extra(), Map::new()).0["figures"]["m2_pond_cells_lost"].clone()
         };
@@ -2212,6 +2258,47 @@ mod tests {
         assert_eq!(fails(&c.tile(), "thalweg_beside"), 0);
     }
 
+    /// The export's contract: labelled cells stand strictly above the ground with a surface,
+    /// surfaces carry a label, and lake and sea cells sit at their bodies.json level.
+    #[test]
+    fn the_export_contract_checks_fire_on_bad_cells() {
+        let mut c = Case::new(20, 10, |x, _| 10.0 - 0.1 * x as f32);
+        let path: Vec<(u64, u64)> = (2..12).map(|x| (x, 5)).collect();
+        // `river` wets its cells at the ground.
+        c.river(&path, 0.1, 5);
+        assert_eq!(fails(&c.tile(), "wet_not_above_ground"), 9);
+        for &(x, y) in &path[..9] {
+            let k = c.k(x, y);
+            c.surf[k] = c.z[k] + 0.01;
+        }
+        let t = c.tile();
+        for name in [
+            "wet_not_above_ground",
+            "wet_without_surface",
+            "surface_without_body",
+            "lake_level_json",
+        ] {
+            assert_eq!(fails(&t, name), 0, "{name}");
+        }
+        let k = c.k(3, 5);
+        c.surf[k] = f32::NAN;
+        let k = c.k(15, 2);
+        c.surf[k] = 20.0;
+        let t = c.tile();
+        assert_eq!(fails(&t, "wet_without_surface"), 1);
+        assert_eq!(fails(&t, "surface_without_body"), 1);
+        // A lake (body 9) at 9.5 m in bodies.json: a raster surface off it fails, and so does
+        // a cell whose ground reaches it (the export compares the bodies.json level).
+        c.levels.insert(9, 9.5);
+        let (a, b) = (c.k(1, 1), c.k(8, 1));
+        (c.surf[a], c.body[a]) = (9.5001, 9);
+        (c.surf[b], c.body[b]) = (9.5, 9);
+        let t = c.tile();
+        assert_eq!(fails(&t, "lake_level_json"), 1);
+        assert_eq!(fails(&t, "wet_not_above_ground"), 1);
+        assert_eq!(t.examples["wet_not_above_ground"], vec![[1, 1]]);
+    }
+
     /// An unlabelled m3 thalweg cell on a short detour 1.6 m above its river (rejoining it 4
     /// cells on) is judged as that river: its own water beside it is no second thalweg.
     #[test]
@@ -2456,6 +2543,27 @@ mod tests {
             river_km2: Some(1e-5),
         };
         run(&o).expect("run");
+        // Label runs before the export ruling rounded lake levels to 0.01 m; finish restores
+        // the exact levels.
+        let read_json = |p: &std::path::Path| -> Value {
+            serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap()
+        };
+        let exact = read_json(&o.work.join("bodies.json"));
+        let mut rounded = exact.clone();
+        let mut lakes = 0;
+        for b in rounded["bodies"].as_array_mut().unwrap() {
+            if b["kind"] == "lake" {
+                let lv = b["level_m"].as_f64().unwrap();
+                b["level_m"] = json!((lv * 100.0).round() / 100.0);
+                lakes += 1;
+            }
+        }
+        assert!(lakes > 0);
+        std::fs::write(
+            o.work.join("bodies.json"),
+            serde_json::to_vec(&rounded).unwrap(),
+        )
+        .unwrap();
         let f = FinishOptions {
             grid: grid.clone(),
             work: o.work.clone(),
@@ -2468,14 +2576,21 @@ mod tests {
             spots: Vec::new(),
         };
         let outcome = finish(&f).expect("finish");
-        let report: Value =
-            serde_json::from_slice(&std::fs::read(dir.path().join("out/report.json")).unwrap())
-                .unwrap();
+        let report = read_json(&dir.path().join("out/report.json"));
         assert!(
             outcome.passed,
             "{}",
             serde_json::to_string_pretty(&report).unwrap()
         );
+        assert_eq!(read_json(&dir.path().join("out/bodies.json")), exact);
+        for name in [
+            "wet_not_above_ground",
+            "wet_without_surface",
+            "surface_without_body",
+            "lake_level_json",
+        ] {
+            assert_eq!(report["checks"][name], 0, "{name}");
+        }
         for name in [
             "elevation.f32",
             "water-surface.f32",

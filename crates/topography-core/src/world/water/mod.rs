@@ -38,6 +38,9 @@ use std::path::{Path, PathBuf};
 pub(crate) const LAKE_DEPTH_M: f32 = 0.3;
 /// Channel depth cap at 1 m; a 1 m breach plus its channel cuts at most this much too.
 pub(crate) const CHANNEL_CAP_M: f32 = 2.0;
+/// Flowing water over a bed that is not cut runs this deep (export ruling: every wet cell
+/// stands above its ground).
+pub(crate) const MIN_DEPTH_M: f32 = 0.01;
 /// A gorge's bed falls over at least this many times its deepest cut (spec).
 pub(crate) const GORGE_RATIO: f32 = 20.0;
 /// Gorge cells lie within this many cells of their spill cell, so every tiling decides alike.
@@ -217,16 +220,16 @@ fn stage_tag(name: &str, inputs: &Value) -> String {
     format!("{name}-{}", &digest(inputs.to_string().as_bytes())[..12])
 }
 
-/// The final routing's tag for a ground file after channels `c_tag`: its path, size and
-/// modification time, so `finish` on the carved ground reuses the run's m3 and a finish on
-/// another ground never reads stale passes.
-fn final_tag(c_tag: &str, ground: &Path) -> Result<String> {
-    let meta = io_context("inspect the final ground", fs::metadata(ground))?;
-    let path = io_context("resolve the final ground", fs::canonicalize(ground))?;
+/// The final routing's tag: the run's settings (`m1_tag`) and the contents of the ground and
+/// of the prior (breached) ground its receivers keep, the only rasters m3 reads. So `finish`
+/// on the carved ground reuses the run's m3, a channels rerun that leaves the carved ground
+/// alone keeps it, and another ground never reads stale passes.
+fn final_tag(m1_tag: &str, ground: &Path, breached: &Path) -> Result<String> {
+    let (g, _) = crate::acquisition::hash_file(ground)?;
+    let (b, _) = crate::acquisition::hash_file(breached)?;
     Ok(stage_tag(
         "m3",
-        &json!({"after": c_tag, "ground": path.display().to_string(), "bytes": meta.len(), "kept": true, "kept_ties": true,
-                "modified": format!("{:?}", meta.modified().ok())}),
+        &json!({"after": m1_tag, "ground": g, "breached": b, "kept": true, "kept_ties": true}),
     ))
 }
 
@@ -302,7 +305,8 @@ pub fn run(o: &Options) -> Result<String> {
                 "halo": channel::HALO, "backwater": channel::BACKWATER,
                 "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS,
                 "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true,
-                "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M}),
+                "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M,
+                "min_depth_m": MIN_DEPTH_M, "shore_dry": true}),
     );
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
@@ -339,7 +343,11 @@ pub fn run(o: &Options) -> Result<String> {
     // the written water settled on it (review: drainage_rises). m3 keeps m2's receivers where
     // they are not higher (ties keep them), so the routing stays on the carved rivers.
     let carved = layers::Layer::open(s.world, &work.path("carved.f32"))?;
-    let m3_tag = final_tag(&c_tag, &work.path("carved.f32"))?;
+    let m3_tag = final_tag(
+        &m1_tag,
+        &work.path("carved.f32"),
+        &work.path("breached.f32"),
+    )?;
     let s_tag = stage_tag("s", &json!({"after": m3_tag, "lakes_at_label": true}));
     let lakes: HashSet<u32> = bodies["bodies"]
         .as_array()
@@ -423,7 +431,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             .map(str::to_string)
             .ok_or_else(|| AcquisitionError::Invalid("stages.json lists no stage tags".into()))
     };
-    let (m2_tag, l_tag, c_tag, s_tag) = (tag(2)?, tag(3)?, tag(4)?, tag(6)?);
+    let (m1_tag, m2_tag, l_tag, s_tag) = (tag(0)?, tag(2)?, tag(3)?, tag(6)?);
     ensure(
         work.is_done(&format!("{l_tag}/bodies"))
             && work.path(&format!("{s_tag}/settled.bin")).exists(),
@@ -433,11 +441,30 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let breached = layers::Layer::open(s.world, &work.path("breached.f32"))?;
     // The second run's nodes (cached): the lakes as written.
     let m2 = pipeline::model(&s, &breached, Some(&work), &m2_tag, None)?;
-    let bodies: Value = serde_json::from_slice(&io_context(
+    let mut bodies: Value = serde_json::from_slice(&io_context(
         "read bodies.json",
         fs::read(work.path("bodies.json")),
     )?)?;
+    // Lake levels as the exact f32 the rasters hold (earlier label runs rounded them to cm).
+    for b in bodies["bodies"].as_array_mut().into_iter().flatten() {
+        if b["kind"] == "lake" {
+            let key = b["node"].as_u64().unwrap_or(u64::MAX);
+            let n = m2.water.nodes.get(key).ok_or_else(|| {
+                AcquisitionError::Invalid(format!("lake {}: node {key} not in the model", b["id"]))
+            })?;
+            b["level_m"] = json!(f64::from(n.level));
+        }
+    }
     let list = bodies["bodies"].as_array().cloned().unwrap_or_default();
+    // Lake and sea levels as the export reads them (f64 → f32), for `lake_level_json`.
+    let json_levels: checks::Levels = list
+        .iter()
+        .filter(|b| b["kind"] == "lake" || b["kind"] == "sea")
+        .filter_map(|b| {
+            let id = u32::try_from(b["id"].as_u64()?).ok()?;
+            Some((id, b["level_m"].as_f64().map_or(f32::NAN, |v| v as f32)))
+        })
+        .collect();
     let mut lakes = checks::LakeInfo::new();
     let mut lake_short = 0u64;
     for b in list.iter().filter(|b| b["kind"] == "lake") {
@@ -478,7 +505,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     // The third model run, on the final ground (R27); `run` made it already for the carved
     // ground (same tag).
     let ground = layers::Layer::open(s.world, &o.ground)?;
-    let m3_tag = final_tag(&c_tag, &o.ground)?;
+    let m3_tag = final_tag(&m1_tag, &o.ground, &work.path("breached.f32"))?;
     // Receivers kept from the breached ground where still valid (scale diagnosis 3).
     let m3 = pipeline::model_on(
         &s,
@@ -521,7 +548,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         })
         .collect();
     let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
-        checks::check_tile(&s, &layers, core, &lakes, &exits[i], &spots)
+        checks::check_tile(&s, &layers, core, &lakes, &json_levels, &exits[i], &spots)
     })?;
     let of = |kind: &'static str| list.iter().filter(move |e| e["kind"] == kind);
     let sum = |kind: &'static str, field: &str| {
@@ -676,6 +703,27 @@ mod tests {
         let dir = std::path::Path::new("../../tests/fixtures/water");
         let _ = std::fs::remove_dir_all(dir.join("grid"));
         testing::grid_dir(dir, geom::World { w: 64, h: 64 });
+    }
+
+    /// m3 is keyed on the grounds' contents: a rewritten carved ground with the same bytes
+    /// (a channels rerun that changes surfaces only) keeps its tag; other bytes do not.
+    #[test]
+    fn the_final_tag_follows_the_grounds_contents() {
+        let dir = tempfile::tempdir().expect("temp");
+        let (g, b, g2) = (
+            dir.path().join("carved.f32"),
+            dir.path().join("breached.f32"),
+            dir.path().join("copy.f32"),
+        );
+        fs::write(&g, [1u8; 64]).unwrap();
+        fs::write(&b, [2u8; 64]).unwrap();
+        let tag = final_tag("m1-x", &g, &b).unwrap();
+        fs::write(&g2, [1u8; 64]).unwrap();
+        assert_eq!(final_tag("m1-x", &g2, &b).unwrap(), tag);
+        assert_ne!(final_tag("m1-y", &g, &b).unwrap(), tag);
+        fs::write(&g2, [3u8; 64]).unwrap();
+        assert_ne!(final_tag("m1-x", &g2, &b).unwrap(), tag);
+        assert_ne!(final_tag("m1-x", &g, &g).unwrap(), tag);
     }
 
     #[test]
