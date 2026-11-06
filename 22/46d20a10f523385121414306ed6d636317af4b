@@ -1,0 +1,20 @@
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_ba0582d21a6b73 911-1040,1054
+  s_8c1b40ea9c1e0d::t_1ab79de575b3ee 1041-1053
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2246d20a10f523385121414306ed6d636317af4b",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
