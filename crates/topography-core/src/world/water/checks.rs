@@ -120,6 +120,8 @@ pub(crate) struct Spot {
 /// An exit-walk drop over DAM_STEP_M near a spot: (spot index, node key, lake, cell, drop m,
 /// raw drop m).
 type SpotDrop = (usize, u64, Option<u32>, [u64; 2], f32, f32);
+/// Counted like checks but reported as figures `<name>_count` (owner ruling 2026-11-06).
+const FIGURE_ONLY: [&str; 3] = ["parallel_rivers", "straight_runs", "straight_share"];
 /// Spot drops are recorded this far from their spot.
 const SPOT_M: f64 = 100.0;
 /// `unlabelled_main_river_cells` also counts runs of this many unlabelled river cells.
@@ -1131,8 +1133,6 @@ pub(crate) fn report(
         "dam_steps",
         "dam_rims",
         "thalweg_beside",
-        "parallel_rivers",
-        "straight_runs",
         "walls",
         "change_max",
     ]
@@ -1365,6 +1365,14 @@ pub(crate) fn report(
             },
         }),
     );
+    // Owner ruling 2026-11-06: straight and parallel rivers from the terrain before hydrology
+    // are accepted, so these are figures (counts kept; examples stay in `examples`).
+    for name in FIGURE_ONLY {
+        figures.insert(
+            format!("{name}_count"),
+            json!(fails.remove(name).unwrap_or(0)),
+        );
+    }
     let failures: Vec<&str> = fails
         .iter()
         .filter(|(_, v)| **v > 0)
@@ -1487,7 +1495,13 @@ mod tests {
                     check_tile(&s, &l, core, &self.lakes, &self.exits, &self.spots).expect("check")
                 })
                 .collect();
-            report(tiles, self.extra(), Map::new()).0["checks"].clone()
+            // With the figure-only counts (owner ruling 2026-11-06) under their check names.
+            let r = report(tiles, self.extra(), Map::new()).0;
+            let mut checks = r["checks"].clone();
+            for name in FIGURE_ONLY {
+                checks[name] = r["figures"][format!("{name}_count")].clone();
+            }
+            checks
         }
         fn extra(&self) -> CheckExtra {
             CheckExtra {
@@ -1706,6 +1720,23 @@ mod tests {
         let whole = c.checks_at(4096);
         let n = whole["straight_runs"].as_u64().unwrap();
         assert!(n > 600 && n < 1429, "{n} cells");
+        // Owner ruling 2026-11-06: a figure, not a failure.
+        let r = c.report();
+        assert_eq!(r["figures"]["straight_runs_count"], n, "{}", r["figures"]);
+        assert!(r["checks"].get("straight_runs").is_none());
+        assert!(r["checks"].get("straight_share").is_none());
+        assert!(
+            r["examples"]["straight_runs"]
+                .as_array()
+                .is_some_and(|e| !e.is_empty())
+        );
+        let failures = r["failures"].as_array().unwrap();
+        assert!(
+            !failures
+                .iter()
+                .any(|f| f == "straight_runs" || f == "straight_share"),
+            "{failures:?}"
+        );
         for tile in [128, 200, 700] {
             assert_eq!(c.checks_at(tile), whole, "tile {tile}");
         }

@@ -1013,9 +1013,9 @@ final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-1
 | `dam_rims` | a guard: an exit-side dry cell stands over level + 0.5 m and raw did not (v3 never raises ground) |
 | `bed_rises` | on a dry m2 thalweg link where the ground before channels falls, the carved bed rises |
 | `thalweg_beside` | beside a thalweg with Q ≥ 1 km², the lowest standing cell across the flow (to the first ridge 0.5 m up, ±30 m) is more than 1 m below this river, belongs to no tributary, and carries a second channel (see below) |
-| `parallel_rivers` | along a river with Q ≥ 1 km², another flow line with Q ≥ 0.05 km² runs within 10 m and parallel (cosine ≥ 0.7) for over 100 m without joining it within 100 m |
-| `straight_share` | more than 5 % of river length lies in straight runs over 60 m (global, 0 or 1) |
-| `straight_runs` | a river thalweg stays within 1 m of its chord (any angle) for more than 150 m, unless the raw thalweg is straight there too (90 % of cells) |
+| `parallel_rivers` | figure (owner ruling 2026-11-06: raw-terrain straight/parallel rivers accepted), `figures.parallel_rivers_count`: along a river with Q ≥ 1 km², another flow line with Q ≥ 0.05 km² runs within 10 m and parallel (cosine ≥ 0.7) for over 100 m without joining it within 100 m |
+| `straight_share` | figure (owner ruling 2026-11-06: raw-terrain straight/parallel rivers accepted), `figures.straight_share_count`: more than 5 % of river length lies in straight runs over 60 m (global, 0 or 1; the share itself is `figures.straight_share`) |
+| `straight_runs` | figure (owner ruling 2026-11-06: raw-terrain straight/parallel rivers accepted), `figures.straight_runs_count`: a river thalweg stays within 1 m of its chord (any angle) for more than 150 m, unless the raw thalweg is straight there too (90 % of cells) |
 | `facets` | more planar 5×5 windows (residual < 2 cm, slope > 5°) among changed cells than raw had (global) |
 | `walls` | a changed cell's Horn slope exceeds max(40°, its raw slope) + 0.01° |
 | `change_p99` | p99 of \|Δ\| over all cells > 1 m (global) |
