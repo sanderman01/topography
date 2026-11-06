@@ -509,7 +509,7 @@ pub(crate) fn label(
             0
         };
         list.push(json!({
-            "id": id, "kind": "lake", "node": n.key, "level_m": round(f64::from(n.level), 2),
+            "id": id, "kind": "lake", "node": n.key, "level_m": f64::from(n.level),
             "area_km2": round(cells as f64 * km2, 6),
             "max_depth_m": round(f64::from(n.level - n.low), 2),
             "exit_cell": if n.full { cell(n.outlet[1]) } else { Value::Null },
@@ -534,7 +534,7 @@ pub(crate) fn label(
     let min_cells = (DRY_MIN_KM2 / km2).ceil() as u64;
     for d in dry_basins(w, min_cells) {
         list.push(json!({
-            "id": next_id, "kind": "dry", "level_m": round(f64::from(w.h.spill[d]), 2),
+            "id": next_id, "kind": "dry", "level_m": f64::from(w.h.spill[d]),
             "area_km2": round(w.bal.n[d] as f64 * km2, 6), "endorheic": true, "parent": 0,
         }));
         next_id += 1;
