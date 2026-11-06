@@ -1,0 +1,39 @@
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_2e4248a2c91e57 45
+crates/topography-core/src/world/water/channel.rs
+  s_8c1b40ea9c1e0d::t_1d4b9d2536b56f 1151-1167
+  s_8c1b40ea9c1e0d::t_418991154d93cb 112-113,118-122
+  s_8c1b40ea9c1e0d::t_77ef0a77e481a1 305-307,309-315
+  s_8c1b40ea9c1e0d::t_0f9ee6b8d15227 1423
+  s_8c1b40ea9c1e0d::t_624e38807a312f 18
+  s_8c1b40ea9c1e0d::t_19d12af9668b84 123-124
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_827beca990906f 305
+  s_8c1b40ea9c1e0d::t_772819c94a3ca2 340
+  s_8c1b40ea9c1e0d::t_da1e123b0c4fdb 228
+crates/topography-core/src/world/water/receivers.rs
+  s_8c1b40ea9c1e0d::t_557e42de7c451b 51-55
+  s_8c1b40ea9c1e0d::t_f5fa8f63e9cc5d 74
+  s_8c1b40ea9c1e0d::t_c07f7a433f6eb2 156-157
+  s_8c1b40ea9c1e0d::t_746c17d91b201e 178,181-183
+crates/topography-core/src/world/water/watershed.rs
+  s_8c1b40ea9c1e0d::t_2018680831152b 70-71
+crates/topography-core/src/world/water/pipeline.rs
+  s_8c1b40ea9c1e0d::t_20bbbfd8c634e7 674
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c450f4b3516c993a5df9728f5aa610539732bd59",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
