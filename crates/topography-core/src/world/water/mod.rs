@@ -30,7 +30,7 @@ mod watershed;
 
 use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -338,14 +338,30 @@ pub fn run(o: &Options) -> Result<String> {
     // they are still strictly lower, so the routing stays on the carved rivers.
     let carved = layers::Layer::open(s.world, &work.path("carved.f32"))?;
     let m3_tag = final_tag(&c_tag, &work.path("carved.f32"))?;
-    let s_tag = stage_tag("s", &json!({"after": m3_tag}));
+    let s_tag = stage_tag("s", &json!({"after": m3_tag, "lakes_at_label": true}));
+    let lakes: HashSet<u32> = bodies["bodies"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["kind"] == "lake")
+        .filter_map(|b| b["id"].as_u64().and_then(|id| u32::try_from(id).ok()))
+        .collect();
     let settled = work.cached(&format!("{s_tag}/settled"), || {
         let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
         pipeline::model_on(&s, &carved, Some(&breached), wk, &m3_tag, Some(&finals))?;
-        channel::settle(&s, &finals, &carved, &out, wk, &s_tag)
+        channel::settle(&s, &finals, &carved, &out, &lakes, wk, &s_tag)
     })?;
+    let lift_cell = (settled.3 != u64::MAX).then(|| s.world.xy(settled.3));
     stages["settled"] = json!({"raised_cells": settled.0, "wetted_cells": settled.1,
-                               "max_raise_m": settled.2});
+                               "max_raise_m": settled.2,
+                               "max_raise_cell": lift_cell.map(|(x, y)| [x, y]),
+                               "max_raise_body": settled.4});
+    if let Some((x, y)) = lift_cell {
+        eprintln!(
+            "water: settle raised {} cells ({} wetted), most {:.2} m at ({x}, {y}) body {}",
+            settled.0, settled.1, settled.2, settled.4
+        );
+    }
     stages["tags"] = json!([m1_tag, b_tag, m2_tag, l_tag, c_tag, m3_tag, s_tag]);
     io_context(
         "write stages.json",

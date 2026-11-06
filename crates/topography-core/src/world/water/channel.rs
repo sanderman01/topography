@@ -23,7 +23,7 @@ use super::pipeline::{Rasters, Setup, Water};
 use super::store::{Work, cached, for_tiles};
 use crate::acquisition::{Result, ensure};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// Window halo: the widest section's radius plus the backwater fits inside it.
@@ -569,6 +569,19 @@ type Drained = (f32, u32);
 /// and the cell the path enters outside the tile (NO_EXIT when it ends inside).
 type PathMax = (f32, u32, u64);
 const NO_EXIT: u64 = u64::MAX;
+/// Settle's figures: cells raised, of them wetted, the largest lift (m), its world cell
+/// (u64::MAX for none) and body.
+pub(crate) type Settled = (u64, u64, f32, u64, u32);
+
+/// The larger lift of two; ties keep the smaller cell (exact under any tile order).
+fn more_lift(a: Settled, b: Settled) -> Settled {
+    let top = if b.2 > a.2 || (b.2 == a.2 && b.3 < a.3) {
+        b
+    } else {
+        a
+    };
+    (a.0 + b.0, a.1 + b.1, top.2, top.3, top.4)
+}
 
 /// The higher of a cell's own value and its path downstream; ties keep the cell's own.
 fn downstream(own: Drained, down: PathMax) -> PathMax {
@@ -629,24 +642,29 @@ fn path_max(world: World, core: Rect, flow: &[u8], d0: &[Drained]) -> Result<Vec
 /// takes the highest labelled water on its path downstream when that lies above it: a dry or
 /// pond cell is wetted as that water's body, a wet one raised. Labels and
 /// surfaces only. Exact over tiles: per-tile path maxima, then the paths across tile rings.
+/// Labelled lakes (`lakes`, body ids) keep their label's level and extent (gate 1 ruling:
+/// labels from m3 would be circular).
 pub(crate) fn settle(
     s: &Setup,
     r3: &Rasters,
     ground: &Layer<f32>,
     out: &Layers,
+    lakes: &HashSet<u32>,
     work: Option<&Work>,
     tag: &str,
-) -> Result<(u64, u64, f32)> {
+) -> Result<Settled> {
     let world = s.world;
     let tiles = s.tiles();
     let read = |core: Rect| -> Result<(Vec<u8>, Vec<Drained>)> {
         let (sf, b) = (out.surface.read(core)?, out.body.read(core)?);
         let (lv, z) = (r3.level.read(core)?, ground.read(core)?);
-        // A wet cell inside a higher pond stands at the pond's level (bank pockets, scale
-        // diagnosis 2).
+        // A wet river or pool cell inside a higher pond stands at the pond's level (bank
+        // pockets, scale diagnosis 2); a labelled lake at its label.
         let d0 = (0..core.cells())
             .map(|k| {
-                if sf[k].is_finite() {
+                if sf[k].is_finite() && lakes.contains(&b[k]) {
+                    (sf[k], b[k])
+                } else if sf[k].is_finite() {
                     (sf[k].max(lv[k]), b[k])
                 } else if lv[k].is_finite() {
                     (lv[k], 0)
@@ -702,19 +720,24 @@ pub(crate) fn settle(
         }
     }
     // 2: every cell's whole-path maximum; raise where it lies above the cell.
-    let parts: Vec<(u64, u64, f32)> =
+    let none: Settled = (0, 0, 0.0, u64::MAX, 0);
+    let parts: Vec<Settled> =
         for_tiles(&tiles, s.threads, &format!("{tag} settle 2"), |i, core| {
             let name = format!("{tag}/s2/{i:05}");
             if let Some(wk) = work {
                 if wk.is_done(&name) {
-                    return wk.cached(&format!("{name}-figures"), || Ok((0, 0, 0.0)));
+                    return wk.cached(&format!("{name}-figures"), || Ok(none));
                 }
             }
             let (flow, d0) = read(core)?;
             let pm = path_max(world, core, &flow, &d0)?;
             let (mut sf, mut b) = (out.surface.read(core)?, out.body.read(core)?);
-            let mut fig = (0u64, 0u64, 0f32);
+            let mut fig = none;
             for k in 0..core.cells() {
+                // Labelled lakes keep their surface and body.
+                if sf[k].is_finite() && lakes.contains(&b[k]) {
+                    continue;
+                }
                 let (v, id, exit) = pm[k];
                 let top = match exit {
                     NO_EXIT => (v, id),
@@ -737,9 +760,10 @@ pub(crate) fn settle(
                     v = top;
                 }
                 if v.0 != was && !(v.0.is_nan() && was.is_nan()) {
-                    fig.0 += 1;
-                    fig.1 += u64::from(!was.is_finite());
-                    fig.2 = fig.2.max(v.0 - if was.is_finite() { was } else { d0[k].0 });
+                    let lift = v.0 - if was.is_finite() { was } else { d0[k].0 };
+                    let (x, y) = core.world_xy(k);
+                    let cell = (1, u64::from(!was.is_finite()), lift, world.index(x, y), v.1);
+                    fig = more_lift(fig, cell);
                     (sf[k], b[k]) = v;
                 }
             }
@@ -753,11 +777,7 @@ pub(crate) fn settle(
             }
             Ok(fig)
         })?;
-    Ok((
-        parts.iter().map(|p| p.0).sum(),
-        parts.iter().map(|p| p.1).sum(),
-        parts.iter().map(|p| p.2).fold(0.0, f32::max),
-    ))
+    Ok(parts.into_iter().fold(none, more_lift))
 }
 
 #[cfg(test)]
@@ -1124,7 +1144,7 @@ mod tests {
             out.surface.write(Rect::whole(world), &sf).unwrap();
             out.body.write(Rect::whole(world), &b).unwrap();
             let ground = Layer::memory(world, z);
-            let fig = settle(&s, &r3, &ground, &out, None, "s").expect("settle");
+            let fig = settle(&s, &r3, &ground, &out, &HashSet::new(), None, "s").expect("settle");
             (
                 fig,
                 out.surface.to_vec().unwrap(),
@@ -1172,7 +1192,7 @@ mod tests {
             out.surface.write(Rect::whole(world), &sf).unwrap();
             out.body.write(Rect::whole(world), &b).unwrap();
             let ground = Layer::memory(world, z.clone());
-            settle(&s, &r3, &ground, &out, None, "s").expect("settle");
+            settle(&s, &r3, &ground, &out, &HashSet::new(), None, "s").expect("settle");
             let (sf, b) = (out.surface.to_vec().unwrap(), out.body.to_vec().unwrap());
             // What the drainage check reads: no rise along row 1.
             let d = |k: usize| {
@@ -1194,6 +1214,70 @@ mod tests {
         assert_eq!((sf[12 + 4], b[12 + 4]), (9.6, 7), "upstream");
         assert!(sf[12 + 6].is_nan(), "the spill stays dry");
         let (sf4, b4) = settled(4);
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!((bits(&sf4), b4), (bits(&sf), b), "tiles of 4 alike");
+    }
+
+    /// Gate 1 ruling (lake 21): a labelled lake (9.0 m) inside a higher m3 pond (9.3 m) keeps
+    /// its label's level and extent; a river bank pocket in a higher pond (row 2) is still
+    /// raised, and settle names it as the largest lift.
+    #[test]
+    fn a_labelled_lake_in_a_higher_pond_stays_at_its_label() {
+        let world = World { w: 12, h: 4 };
+        let settled = |tile: u64| {
+            let s = setup(world, tile, 1e-5);
+            let mut z: Vec<f32> = (0..48).map(|i| 10.0 - 0.1 * (i % 12) as f32).collect();
+            let (mut sf, mut b) = (vec![f32::NAN; 48], vec![0u32; 48]);
+            let mut lv = vec![f32::NAN; 48];
+            // Row 1: lake 9 at x = 3..6 in an m3 pond over x = 2..7.
+            for x in 2..8 {
+                lv[12 + x] = 9.3;
+                z[12 + x] = if (3..7).contains(&x) { 8.5 } else { 9.1 };
+            }
+            for x in 3..7 {
+                (sf[12 + x], b[12 + x]) = (9.0, 9);
+            }
+            // Row 2: river 7's bank pocket at x = 5 in a pond at 9.6 m.
+            (z[24 + 5], z[24 + 6], lv[24 + 5]) = (9.0, 9.6, 9.6);
+            (sf[24 + 4], b[24 + 4]) = (9.25, 7);
+            (sf[24 + 5], b[24 + 5]) = (9.2, 7);
+            let r3 = Rasters::memory(world);
+            let flow: Vec<u8> = (0..48)
+                .map(|i| {
+                    if (1..3).contains(&(i / 12)) && i % 12 < 11 {
+                        4
+                    } else {
+                        32
+                    }
+                })
+                .collect();
+            r3.flow.write(Rect::whole(world), &flow).unwrap();
+            r3.level.write(Rect::whole(world), &lv).unwrap();
+            let out = Layers::memory(world);
+            out.surface.write(Rect::whole(world), &sf).unwrap();
+            out.body.write(Rect::whole(world), &b).unwrap();
+            let ground = Layer::memory(world, z);
+            let lakes = HashSet::from([9]);
+            let fig = settle(&s, &r3, &ground, &out, &lakes, None, "s").expect("settle");
+            (
+                fig,
+                out.surface.to_vec().unwrap(),
+                out.body.to_vec().unwrap(),
+            )
+        };
+        let (fig, sf, b) = settled(12);
+        for x in 3..7 {
+            assert_eq!((sf[12 + x], b[12 + x]), (9.0, 9), "lake at x = {x}");
+        }
+        for x in [0, 1, 2, 7, 8] {
+            assert!(sf[12 + x].is_nan(), "row 1 x = {x} stays dry");
+        }
+        assert_eq!((sf[24 + 5], b[24 + 5]), (9.6, 7), "the pocket");
+        assert_eq!((sf[24 + 4], b[24 + 4]), (9.6, 7), "upstream");
+        assert_eq!((fig.3, fig.4), (24 + 5, 7), "the pocket lifts most");
+        assert!((fig.2 - 0.4).abs() < 1e-5, "{fig:?}");
+        let (fig4, sf4, b4) = settled(4);
+        assert_eq!(fig4, fig);
         let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
         assert_eq!((bits(&sf4), b4), (bits(&sf), b), "tiles of 4 alike");
     }
