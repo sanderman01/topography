@@ -41,14 +41,14 @@ pub(crate) const WALL_ROUNDS: u64 = 16;
 /// Then, at most this many Jacobi rounds, every cut in the 3 × 3 of a cell still a wall is
 /// removed (2 cells' reach) and dry m2 thalweg beds are graded (1 cell's reach: a bed never
 /// rises to its receiver where the ground falls); a core cell a further round would change is
-/// an error (hard cap, gate 1 ruling; the worst seen at gate 1 was 15).
-pub(crate) const RESTORE_ROUNDS: u64 = 64;
+/// an error (hard cap, gate 1 ruling; the worst seen at gate 1 was 31; 4x headroom).
+pub(crate) const RESTORE_ROUNDS: u64 = 128;
 /// Raw slopes from this steep are never cut, so the restore rounds never undo long steep
 /// reaches (a cut of a few cm there is invisible).
 pub(crate) const NO_CUT_DEG: f64 = 39.0;
 /// The area's margin beyond the core: backwater (16), the halving rounds (2 × 16), the
-/// restore and grade rounds with the closing test round (3 × 65) and the slope stencil (1):
-/// 244 cells.
+/// restore and grade rounds with the closing test round (3 × 129) and the slope stencil (1):
+/// 436 cells.
 const MARGIN: u64 = BACKWATER + 2 * WALL_ROUNDS + 3 * (RESTORE_ROUNDS + 1) + 1;
 
 pub(crate) struct Layers {

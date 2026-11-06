@@ -1035,7 +1035,7 @@ Settle (`s`) lifts written water to the m3 routing (a river or pool cell inside 
 pond stands at its level; a dry cell draining into higher labelled water is wetted) but leaves
 labelled lakes at their label's level and extent. The figure `closed_lake_m3_level_gap` is
 the largest |m3 level − label level| over closed lakes' cells; `stages.settled` names the
-largest lift's cell and body. The channel restore rounds stop at a hard cap of 64; a core
+largest lift's cell and body. The channel restore rounds stop at a hard cap of 128 (31 seen at gate 1); a core
 cell still changing after that is an error.
 
 Carving keeps m2 ponds (fix round 2): a cut beside another m2 node (lakes included), or on a
