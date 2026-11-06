@@ -1,0 +1,19 @@
+crates/topography-core/src/world/water/mod.rs
+  s_774c09797904fe::t_d35144e666a7e5 353-357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d4079fa817ce4df9ee77fe205a0e3ee5e53de73",
+  "prompts": {},
+  "sessions": {
+    "s_774c09797904fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db136362-a5cc-4efa-8192-13bacc041efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
