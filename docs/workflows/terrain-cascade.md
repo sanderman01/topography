@@ -980,7 +980,9 @@ so a rerun resumes and a changed input is refused:
 | `m3` model on the carved ground, `s` settle | `m3-<tag>-*.{f32,u32,u8}`, `water-surface.f32`, `water-body.u32` |
 | figures | `stages.json` (breaches, channels, nodes, leaves, lakes, ponds, area and depth histograms) |
 
-`world water-finish` checks the carved ground with the m3 model and publishes `--out`.
+`world water-finish` checks the carved ground with the m3 model and publishes `--out`. The m3
+tag is keyed on the run's settings and the sha256 of the carved and breached grounds (the only
+rasters m3 reads), so a channels rerun that changes surfaces and labels only reuses m3.
 
 ### Outputs
 
@@ -1022,6 +1024,16 @@ final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-1
 | `change_max` | a cell's \|Δ\| > the breach cap + 0.5 m (2.5 m at 1 m) |
 | `label_agreement` | the written rivers' thalwegs (m2) and m3's agree less than 0.95 within one cell (global) |
 | `export_bodies` | lakes + rivers > 50,000 (global) |
+| `wet_not_above_ground` | a labelled cell's surface (a lake's or the sea's `bodies.json` level) is not strictly above the final ground |
+| `wet_without_surface` | a labelled cell has no surface |
+| `surface_without_body` | a cell has a surface but no label |
+| `lake_level_json` | a lake or sea cell's surface differs from its `bodies.json` `level_m` (as f32) |
+
+The last four are the heightmap export's water contract (`export/water.rs`), so a world that
+passes `water-finish` is not refused by the export. Rivers over a bed left uncut (steep raw
+reaches, rim floors, pond spill cells) run 0.01 m deep; lake and sea cells whose ground reaches
+their level, and a lake's exit cell at the level, are dry shore. `water-finish` writes lake
+levels to `bodies.json` as the exact f32 the rasters hold.
 
 `thalweg_beside` ruling (departs from the spec's "lowest raw ground"): the lower cell counts as
 a second thalweg only where it, or a cell within 2 cells, carries a channel (m3 Q at the river
