@@ -952,8 +952,11 @@ The two Rust commands, by hand:
 ```sh
 target/release/topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
 target/release/topography world water-finish --grid <grid-dir> --work <work-dir> --ground <work-dir>/carved.f32 \
-    --out <new-out-dir> [--tile 4096] [--threads 4]
+    --out <new-out-dir> [--tile 4096] [--threads 4] [--spots E,N;E,N]
 ```
+
+`--spots` (metres; the driver passes the review spots) only feeds the `dam_drops_at_spots`
+figure; it is not part of the work stamp.
 
 ### Grid and work directories
 
@@ -1038,11 +1041,25 @@ the largest |m3 level − label level| over closed lakes' cells; `stages.settled
 largest lift's cell and body. The channel restore rounds stop at a hard cap of 128 (31 seen at gate 1); a core
 cell still changing after that is an error.
 
-Carving keeps m2 ponds (fix round 2): a cut beside another m2 node (lakes included), or on a
-node's own cell standing at its level (its spill cell), stops at that level or the ground if
-lower; a river cell cut below a lower lake beside it stands at the lake's level, keeping its
-body. The figure `m2_pond_cells_lost` counts m2 node cells in no m3 node and names the largest
-m2 level − m3 level (ground where dry) with its m2 node and cell.
+Carving keeps m2 ponds (fix round 2): a cut beside another m2 node (lakes included) stops
+0.01 m above that node's level (gate 2 fix round 1: cut to the level itself it became a new
+spill), and a cut on a node's own cell standing at its level (its spill cell) stops at that
+level; ground below that floor is left as it is. A river cell cut below a lower lake beside it
+stands at the lake's level, keeping its body. The figure `m2_pond_cells_lost` counts m2 node
+cells in no m3 node and names the largest m2 level − m3 level (ground where dry) with its m2
+node and cell. m3 keeps an m2 receiver that is not higher on the carved ground (ties
+included), so a bed carved flat does not send the river off its labelled line.
+
+Breach (gate 2 fix round 1): cells beside the gorge's path whose raw slope is at least 39° are
+not cut (path cells always are); each path cell's taper reaches max(half-width + 1,
+2·cut / tan 35°) cells; and a gorge that would still leave a changed cell steeper than
+max(40°, raw) is refused, so the depression stays filled. `stages.breach.breaches_rejected_walls`
+counts the refused gorges and lists the 20 deepest (node, cut, spill cell, filled depth).
+
+Two more figures: `dam_drops_at_spots` lists, per review spot, the exit-walk drops over 1.5 m
+within 100 m with their raw drop (count and largest 10), and `unlabelled_main_river_cells`
+counts dry m3 thalweg cells in no node with Q ≥ 1 km², plus runs of 10 or more such cells at
+the river threshold.
 
 ### Settings, resuming and cost
 

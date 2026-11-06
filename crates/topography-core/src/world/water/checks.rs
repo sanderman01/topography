@@ -110,6 +110,21 @@ pub(crate) struct Fall {
 /// A dry cell beside an exit above its level: (node key, lake, cell, after m, before m).
 type Rim = (u64, Option<u32>, [u64; 2], f32, f32);
 
+/// A review spot (east, north in metres) and its cell, when inside the grid.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Spot {
+    pub en: [f64; 2],
+    pub cell: Option<[u64; 2]>,
+}
+
+/// An exit-walk drop over DAM_STEP_M near a spot: (spot index, node key, lake, cell, drop m,
+/// raw drop m).
+type SpotDrop = (usize, u64, Option<u32>, [u64; 2], f32, f32);
+/// Spot drops are recorded this far from their spot.
+const SPOT_M: f64 = 100.0;
+/// `unlabelled_main_river_cells` also counts runs of this many unlabelled river cells.
+const UNLABELLED_RUN_CELLS: usize = 10;
+
 /// A cluster of overlapping straight thalweg runs (R30), by its longest member.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Run {
@@ -149,6 +164,12 @@ pub(crate) struct Tile {
     pub drops_any: Vec<(u64, Option<u32>, [u64; 2], f32)>,
     /// Dry cells beside an exit above its level: (node key, lake, cell, after m, before m).
     pub rims_any: Vec<Rim>,
+    /// Exit-walk drops near the review spots (`dam_drops_at_spots`).
+    pub spot_drops: Vec<SpotDrop>,
+    /// Dry m3 thalweg cells in no node (`unlabelled_main_river_cells`): those with Q ≥ 1 km²,
+    /// runs of UNLABELLED_RUN_CELLS or more at the river threshold and their cells, and the
+    /// largest-Q cells (Q, cell).
+    pub unlabelled: (u64, u64, u64, Vec<(f32, [u64; 2])>),
     /// Label agreement (R27): written thalweg cells, of them matched within one cell, m3
     /// thalweg cells, of them matched.
     pub agree: [u64; 4],
@@ -274,6 +295,7 @@ pub(crate) fn check_tile(
     core: Rect,
     lakes: &LakeInfo,
     exits: &[Exit],
+    spots: &[Spot],
 ) -> Result<Tile> {
     let world = s.world;
     let win = core.grow(HALO, world);
@@ -656,6 +678,29 @@ pub(crate) fn check_tile(
         if delta > s.params.change_max_m() {
             t.fail("change_max", x, y);
         }
+        // Unlabelled rivers (a figure): dry m3 thalweg cells in no node; runs counted from
+        // their upstream end.
+        let unlabelled =
+            |c: usize| flow[c] & 16 != 0 && !surf[c].is_finite() && node[c] == 0 && q[c] >= thr;
+        if unlabelled(j) {
+            if f64::from(q[j]) >= MAIN_RIVER_KM2 {
+                t.unlabelled.0 += 1;
+                t.unlabelled.3.push((q[j], [x, y]));
+            }
+            if !around(j).any(|p| unlabelled(p) && down(p) == Some(j)) {
+                let (mut c, mut n) = (j, 1usize);
+                while let Some(d) = down(c).filter(|&d| unlabelled(d)) {
+                    (c, n) = (d, n + 1);
+                    if n > win.cells() {
+                        break;
+                    }
+                }
+                if n >= UNLABELLED_RUN_CELLS {
+                    t.unlabelled.1 += 1;
+                    t.unlabelled.2 += n as u64;
+                }
+            }
+        }
         if node[j] >= 2 && !lake_cell(j) {
             t.pond_cells += 1;
         }
@@ -969,6 +1014,15 @@ pub(crate) fn check_tile(
             let drop = prev - dsurf(c);
             if drop > DAM_STEP_M {
                 t.drops_any.push((e.key, e.lake, [cx, cy], drop));
+                for (i, spot) in spots.iter().enumerate() {
+                    let Some([sx, sy]) = spot.cell else { continue };
+                    let d = (sx.abs_diff(cx) as f64).hypot(sy.abs_diff(cy) as f64) * s.spacing_m;
+                    if d <= SPOT_M {
+                        let raw_drop = prev_raw - raw[c];
+                        t.spot_drops
+                            .push((i, e.key, e.lake, [cx, cy], drop, raw_drop));
+                    }
+                }
                 if e.lake.is_some() && prev_raw - raw[c] < drop - SILL_M {
                     t.fail("dam_steps", cx, cy);
                 }
@@ -1025,6 +1079,10 @@ pub(crate) fn check_tile(
     }
     t.runs.sort_by(|a, b| b.length_m.total_cmp(&a.length_m));
     t.runs.truncate(20);
+    t.unlabelled
+        .3
+        .sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    t.unlabelled.3.truncate(10);
     Ok(t)
 }
 
@@ -1037,6 +1095,8 @@ pub(crate) struct CheckExtra {
     /// The lakes, for the lowest-saddle check over all tiles.
     pub lakes: LakeInfo,
     pub cell_km2: f64,
+    /// The review spots of `dam_drops_at_spots`.
+    pub spots: Vec<Spot>,
 }
 
 /// The largest `n` falls by reach `i` (0: 5 m, 1: 10 m, 2: 50 m), as JSON.
@@ -1094,7 +1154,14 @@ pub(crate) fn report(
     let mut class_lakes: BTreeSet<(u8, u32)> = BTreeSet::new();
     let mut lake_gap = None;
     let mut pond_lost = (0u64, None);
+    let mut spot_drops: Vec<SpotDrop> = Vec::new();
+    let mut unlabelled = (0u64, 0u64, 0u64, Vec::new());
     for t in tiles {
+        spot_drops.extend(t.spot_drops.iter().copied());
+        unlabelled.0 += t.unlabelled.0;
+        unlabelled.1 += t.unlabelled.1;
+        unlabelled.2 += t.unlabelled.2;
+        unlabelled.3.extend(t.unlabelled.3.iter().copied());
         lake_gap = wider_gap(lake_gap, t.lake_m3_gap);
         pond_lost = (
             pond_lost.0 + t.pond_lost.0,
@@ -1220,6 +1287,28 @@ pub(crate) fn report(
                             "after_above_level_m": d.3, "before_above_level_m": d.4}))
             .collect::<Vec<_>>()}),
     );
+    // Per review spot: the exit-walk drops within SPOT_M, the 10 largest with their raw drop.
+    spot_drops.sort_by(|a, b| b.4.total_cmp(&a.4).then(a.3.cmp(&b.3)));
+    figures.insert(
+        "dam_drops_at_spots".into(),
+        json!(extra.spots.iter().enumerate().map(|(i, sp)| {
+            let mine: Vec<&SpotDrop> = spot_drops.iter().filter(|d| d.0 == i).collect();
+            json!({"spot_en": sp.en, "cell": sp.cell, "within_m": SPOT_M, "count": mine.len(),
+                   "largest": mine.iter().take(10).map(|d| json!({
+                       "node": d.1, "lake": d.2, "cell": d.3, "drop_m": d.4, "raw_drop_m": d.5,
+                   })).collect::<Vec<_>>()})
+        }).collect::<Vec<_>>()),
+    );
+    unlabelled
+        .3
+        .sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    figures.insert(
+        "unlabelled_main_river_cells".into(),
+        json!({"cells": unlabelled.0, "runs_10_cells": unlabelled.1,
+               "run_cells": unlabelled.2,
+               "largest": unlabelled.3.iter().take(10)
+                   .map(|u| json!({"q_km2": u.0, "cell": u.1})).collect::<Vec<_>>()}),
+    );
     figures.insert("big_rivers_into_closed_nodes".into(), json!(closed_ends));
     figures.insert(
         "closed_lake_m3_level_gap".into(),
@@ -1317,6 +1406,7 @@ mod tests {
         bz: Vec<f32>,
         lakes: LakeInfo,
         exits: Vec<Exit>,
+        spots: Vec<Spot>,
     }
 
     impl Case {
@@ -1340,6 +1430,7 @@ mod tests {
                 l2: vec![f32::NAN; n],
                 lakes: LakeInfo::new(),
                 exits: Vec::new(),
+                spots: Vec::new(),
             }
         }
         fn k(&self, x: u64, y: u64) -> usize {
@@ -1382,6 +1473,7 @@ mod tests {
                 Rect::whole(self.world),
                 &self.lakes,
                 &self.exits,
+                &self.spots,
             )
             .expect("check")
         }
@@ -1391,7 +1483,9 @@ mod tests {
             let tiles = s
                 .tiles()
                 .into_iter()
-                .map(|core| check_tile(&s, &l, core, &self.lakes, &self.exits).expect("check"))
+                .map(|core| {
+                    check_tile(&s, &l, core, &self.lakes, &self.exits, &self.spots).expect("check")
+                })
                 .collect();
             report(tiles, self.extra(), Map::new()).0["checks"].clone()
         }
@@ -1402,6 +1496,7 @@ mod tests {
                 lake_short: 0,
                 lakes: self.lakes.clone(),
                 cell_km2: 1e-6,
+                spots: self.spots.clone(),
             }
         }
         fn layers(&self) -> CheckLayers {
@@ -1806,7 +1901,7 @@ mod tests {
             let tiles = s
                 .tiles()
                 .into_iter()
-                .map(|core| check_tile(&s, &l, core, &c.lakes, &c.exits).expect("check"))
+                .map(|core| check_tile(&s, &l, core, &c.lakes, &c.exits, &c.spots).expect("check"))
                 .collect();
             report(tiles, c.extra(), Map::new()).0["figures"]["m2_pond_cells_lost"].clone()
         };
@@ -1865,6 +1960,77 @@ mod tests {
         let t = c.tile();
         assert_eq!(fails(&t, "dam_steps"), 0, "raw has the step");
         assert_eq!(t.drops_any.len(), 1, "still a figure (R31)");
+    }
+
+    #[test]
+    fn drops_near_a_spot_are_listed_with_their_raw_drop() {
+        let mut c = lake_case(true, 12.0);
+        let path: Vec<(u64, u64)> = (6..9).map(|x| (x, 4)).collect();
+        for (i, &(x, y)) in path.iter().enumerate() {
+            let k = c.k(x, y);
+            c.z[k] = if i < 2 { 10.0 - 0.01 * i as f32 } else { 7.9 };
+        }
+        c.raw = c.z.clone();
+        let k = c.k(8, 4);
+        c.raw[k] = 9.99;
+        c.route(&path, 0, 0.0);
+        c.exits.push(Exit {
+            key: 1,
+            level: 10.0,
+            outlet: c.lakes[&3].2,
+            lake: Some(3),
+        });
+        c.spots = vec![
+            Spot {
+                en: [8.5, 1.5],
+                cell: Some([8, 50]),
+            },
+            Spot {
+                en: [0.0, 0.0],
+                cell: Some([8, 200]),
+            },
+            Spot {
+                en: [-5.0, 0.0],
+                cell: None,
+            },
+        ];
+        let f = c.report()["figures"]["dam_drops_at_spots"].clone();
+        assert_eq!(f[0]["count"], 1, "{f}");
+        let d = &f[0]["largest"][0];
+        assert_eq!(d["cell"], json!([8, 4]));
+        assert!((d["drop_m"].as_f64().unwrap() - 2.09).abs() < 1e-3, "{d}");
+        assert!(d["raw_drop_m"].as_f64().unwrap().abs() < 1e-3, "{d}");
+        assert_eq!(f[0]["spot_en"], json!([8.5, 1.5]));
+        assert_eq!(f[1]["count"], 0, "196 m away: {f}");
+        assert_eq!(f[2]["count"], 0);
+        assert_eq!(f[2]["cell"], Value::Null);
+    }
+
+    #[test]
+    fn unlabelled_main_river_cells_are_counted() {
+        let mut c = Case::new(40, 10, |x, _| 20.0 - 0.1 * x as f32);
+        // A dry m3 river (no body, no node) 13 cells along row 2, Q 2 km²: 12 routed cells.
+        let main: Vec<(u64, u64)> = (2..15).map(|x| (x, 2)).collect();
+        c.route(&main, 16, 2.0);
+        // A short dry rill at Q 0.1 (5 routed cells): no main-river cells and no 10-cell run.
+        let rill: Vec<(u64, u64)> = (2..8).map(|x| (x, 6)).collect();
+        c.route(&rill, 16, 0.1);
+        // A written river is labelled.
+        let wet: Vec<(u64, u64)> = (20..35).map(|x| (x, 4)).collect();
+        c.river(&wet, 2.0, 5);
+        let f = c.report()["figures"]["unlabelled_main_river_cells"].clone();
+        assert_eq!(f["cells"], 12, "{f}");
+        assert_eq!(f["runs_10_cells"], 1, "{f}");
+        assert_eq!(f["run_cells"], 12, "{f}");
+        assert_eq!(f["largest"][0]["q_km2"], 2.0);
+        // Wetting the middle splits it into two runs under 10 cells.
+        for x in 7..9 {
+            let k = c.k(x, 2);
+            (c.surf[k], c.body[k]) = (c.z[k], 6);
+        }
+        let f = c.report()["figures"]["unlabelled_main_river_cells"].clone();
+        assert_eq!(f["cells"], 10, "{f}");
+        assert_eq!(f["runs_10_cells"], 0, "{f}");
     }
 
     /// One thalweg (I3): a river along row 30 of a valley with a lower valley beyond a ridge,
@@ -2268,6 +2434,7 @@ mod tests {
             threads: 2,
             water: Some(grid.join("water.toml")),
             river_km2: Some(1e-5),
+            spots: Vec::new(),
         };
         let outcome = finish(&f).expect("finish");
         let report: Value =
@@ -2351,6 +2518,7 @@ mod tests {
             threads: 2,
             water: Some(grid.join("water.toml")),
             river_km2: Some(1e-5),
+            spots: Vec::new(),
         };
         let outcome = finish(&f).expect("finish");
         assert!(!outcome.passed);

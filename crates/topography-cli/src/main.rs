@@ -46,7 +46,7 @@ Usage: topography [--help | --version]
        topography world hydrology --grid <grid-dir> --out <new-output-dir> [--coarse <coarse-out-dir>] [--north <band-out-dir>] [--wind-deg 225] [--water water.toml] [--river-km2 10]
        topography world hydrology-seam --north <band-out-dir> --south <band-out-dir>
        topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
-       topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
+       topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05] [--spots E,N;E,N]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
@@ -648,8 +648,22 @@ fn water(args: &[std::ffi::OsString]) -> ExitCode {
     workflow_result(water::run(&o))
 }
 
+/// Review spots "E,N;E,N" (metres); None when malformed.
+fn spots(value: &std::ffi::OsStr) -> Option<Vec<[f64; 2]>> {
+    value
+        .to_str()?
+        .split(';')
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let (e, n) = p.split_once(',')?;
+            let (e, n) = (e.trim().parse::<f64>().ok()?, n.trim().parse::<f64>().ok()?);
+            (e.is_finite() && n.is_finite()).then_some([e, n])
+        })
+        .collect()
+}
+
 /// `world water-finish --grid DIR --work DIR --ground FILE --out DIR [--tile N] [--threads N]
-/// [--water FILE] [--river-km2 A]`
+/// [--water FILE] [--river-km2 A] [--spots E,N;E,N...]`
 fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
     use topography_core::world::water;
     let mut o = water::FinishOptions {
@@ -661,6 +675,7 @@ fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
         threads: 4,
         water: None,
         river_km2: None,
+        spots: Vec::new(),
     };
     for pair in args.chunks(2) {
         let [flag, value] = pair else {
@@ -669,6 +684,10 @@ fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
         match flag.to_str() {
             Some("--ground") => o.ground = value.into(),
             Some("--out") => o.out = value.into(),
+            Some("--spots") => match spots(value) {
+                Some(v) => o.spots = v,
+                None => return usage_error(),
+            },
             _ => {
                 if !water_flag(
                     flag,

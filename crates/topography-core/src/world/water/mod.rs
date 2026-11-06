@@ -393,6 +393,9 @@ pub struct FinishOptions {
     pub threads: usize,
     pub water: Option<PathBuf>,
     pub river_km2: Option<f64>,
+    /// Review spots (east, north in metres) for the `dam_drops_at_spots` figure; checks only,
+    /// never part of the work stamp.
+    pub spots: Vec<[f64; 2]>,
 }
 
 pub struct Outcome {
@@ -502,8 +505,23 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         level_written: rasters.level.clone(),
         breached: breached.clone(),
     };
+    let spots: Vec<checks::Spot> = o
+        .spots
+        .iter()
+        .map(|&[e, n]| {
+            let (x, y) = (
+                ((e - s.nw_m[0]) / s.spacing_m).floor(),
+                ((s.nw_m[1] - n) / s.spacing_m).floor(),
+            );
+            let inside = x >= 0.0 && y >= 0.0 && x < s.world.w as f64 && y < s.world.h as f64;
+            checks::Spot {
+                en: [e, n],
+                cell: inside.then_some([x as u64, y as u64]),
+            }
+        })
+        .collect();
     let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
-        checks::check_tile(&s, &layers, core, &lakes, &exits[i])
+        checks::check_tile(&s, &layers, core, &lakes, &exits[i], &spots)
     })?;
     let of = |kind: &'static str| list.iter().filter(move |e| e["kind"] == kind);
     let sum = |kind: &'static str, field: &str| {
@@ -528,6 +546,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         lake_short,
         lakes,
         cell_km2: s.cell_km2(),
+        spots,
     };
     let (report, passed) = checks::report(tiles, extra, figures);
 
@@ -902,6 +921,7 @@ mod tests {
             threads: 4,
             water: None,
             river_km2: None,
+            spots: Vec::new(),
         };
         let started = std::time::Instant::now();
         let outcome = finish(&f).expect("finish");
