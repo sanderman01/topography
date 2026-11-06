@@ -79,18 +79,17 @@ impl Layers {
 
 /// Per tile: lowered cells, deepest lowering below the ground, volume m³, river cells,
 /// deepest lowering below raw, cuts removed next to walls, the last restore/grade round
-/// that changed a cell, beds raised by grading; and cells by WetFix (index − 1).
+/// that changed a cell, beds raised by grading; and cells by WetFix (index − 1), then
+/// thalwegs returned to their own river.
 type Figure = ((u64, f32, f64, u64, f32, u64, u64, u64), [u64; 4]);
 /// How the export ruling changed a cell: river water raised to MIN_DEPTH_M over its bed, lake
-/// or sea ground at its level left dry, a lake's exit cell left dry, a thalweg returned to its
-/// own river.
+/// or sea ground at its level left dry, a lake's exit cell left dry.
 #[derive(Clone, Copy, PartialEq)]
 enum WetFix {
     None,
     MinDepth,
     Shore,
     Exit,
-    Returned,
 }
 /// Per tile: (river body, largest discharge) and (pond ordinal, crossing body).
 type Sizes = (Vec<(u32, f32)>, Vec<(u32, u32)>);
@@ -316,7 +315,7 @@ pub(crate) fn channels(
             let (mut lowered, mut is_river) = (vec![false; n], vec![false; n]);
             // River cells that stay wet whatever their cut: own thalwegs and wetted ponds.
             let mut keep = vec![false; n];
-            let mut fixed = vec![WetFix::None; n];
+            let (mut fixed, mut returned) = (vec![WetFix::None; n], vec![false; n]);
             for a in 0..n {
                 let (x, y) = area.world_xy(a);
                 let j = win.local(x, y).expect("area in window");
@@ -556,9 +555,7 @@ pub(crate) fn channels(
                     let j = in_area(a);
                     (surface[a], ids[a], is_river[a], keep[a]) =
                         dry_again(thalweg(j).then(|| (river(j), bw[j])));
-                    if keep[a] {
-                        fixed[a] = WetFix::Returned;
-                    }
+                    returned[a] = keep[a];
                 }
             }
             // Every river cell stands above its bed (the backwater pass and settle absorb the
@@ -645,6 +642,7 @@ pub(crate) fn channels(
                 if fixed[a] != WetFix::None {
                     fixes[fixed[a] as usize - 1] += 1;
                 }
+                fixes[3] += u64::from(returned[a]);
                 fig.5 += u64::from(restored[a]);
                 fig.6 = fig.6.max(undone[a]);
                 fig.7 += u64::from(graded[a]);
