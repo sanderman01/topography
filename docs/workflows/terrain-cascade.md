@@ -1027,9 +1027,9 @@ floor or fan does not fail. An unlabelled m3 thalweg cell (a short detour beside
 judged as the labelled water its path reaches within 150 m. The cost: a river perched above a
 dry valley floor passes. Gate 1 rulings: the channel cell near the lower cell is this river's
 own when it is water this river joins within 150 m or a thalweg joining this river within
-150 m; and a river cell on or next to a dry m2 thalweg cell (written thalweg outside any m2
-node) is not counted, so the check judges only where m3 leaves the written rivers or runs
-through m2 ponds. The cost: a bench river beside a raw gully passes.
+150 m. Fix round 2: written water of another body (a lower river or lake) is no second
+channel; only an unwritten m3 channel near the lower cell counts. The cost: a bench river
+beside a lower written river passes.
 
 Settle (`s`) lifts written water to the m3 routing (a river or pool cell inside a higher m3
 pond stands at its level; a dry cell draining into higher labelled water is wetted) but leaves
@@ -1037,6 +1037,12 @@ labelled lakes at their label's level and extent. The figure `closed_lake_m3_lev
 the largest |m3 level − label level| over closed lakes' cells; `stages.settled` names the
 largest lift's cell and body. The channel restore rounds stop at a hard cap of 64; a core
 cell still changing after that is an error.
+
+Carving keeps m2 ponds (fix round 2): a cut beside another m2 node (lakes included), or on a
+node's own cell standing at its level (its spill cell), stops at that level or the ground if
+lower; a river cell cut below a lower lake beside it stands at the lake's level, keeping its
+body. The figure `m2_pond_cells_lost` counts m2 node cells in no m3 node and names the largest
+m2 level − m3 level (ground where dry) with its m2 node and cell.
 
 ### Settings, resuming and cost
 
@@ -1049,14 +1055,14 @@ Kill and rerun the same command to resume: finished stages and tiles are kept. R
 memory cap (`MemoryMax=10G` for 16,384² windows, 12G for the world). The work directory takes
 about 49 bytes per cell.
 
-Measured at gate 1 (2026-11-06, fujix-55-l4v2 at the canyon, real rain; 16k rows from the
-gate 1 fix round):
+Measured at gate 1 (2026-11-06, fujix-55-l4v2 at the canyon, real rain; 16k rows from gate 1
+fix round 2):
 
 | Run | Time | Peak RAM (Rust) | Disk | Notes |
 | --- | --- | --- | --- | --- |
 | 2048² window, `--tile 512 --threads 4` | 10 s | 0.33 GB | 0.3 GB | driver peak 0.5 GB |
-| 16,384² window, `--tile 2048 --threads 4` | 10 min | 2.3 GB | 18 GB (13 GB work) | 243,257 leaves, 74 lakes, 790 rivers; fails drainage_rises 2, straight_runs, straight_share |
-| 16,384² window, `--tile 8192 --threads 1` | 36 min | 5.7 GB | 18 GB | byte-identical outputs to the 2048 tiling; same checks |
+| 16,384² window, `--tile 2048 --threads 4` | 11 min | 2.3 GB | 18 GB (13 GB work) | 243,257 leaves, 74 lakes, 790 rivers; fails only straight_runs 4,719 and straight_share 0.068; 506 m2 pond cells lost |
+| 16,384² window, `--tile 8192 --threads 1` | 37 min | 5.3 GB | 18 GB | byte-identical outputs to the 2048 tiling; same checks |
 | world 65,536², `--tile 2048 --threads 4` | about 3-5 h (estimate) | about 4-6 GB (estimate) | about 210 GB work | 16× the 16k window; I/O no longer fits the page cache |
 
 The world estimate scales the 16k run by its cell count. Tile passes dominate time; the global
