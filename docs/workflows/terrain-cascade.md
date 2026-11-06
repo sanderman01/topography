@@ -908,6 +908,150 @@ several levels; beds rising downstream, except onto a bed held at its carve floo
 In the cascade on an 8 km Fujion crop, generating each level from the carved level above
 keeps cuts small: at 4 m all steps together lower ground at most 9 m, at 1 m at most 7 m.
 
+## Hydrology v3 (1 m)
+
+Water as one field over the whole 1 m world ([spec](../superpowers/specs/2026-11-05-hydrology-v3-design.md),
+[Plan A](../superpowers/plans/2026-11-05-hydrology-v3-a-water-model.md)): every cell has a
+ground height, a water surface or none, and a discharge. Lakes and rivers are labels read off
+that field. Rust (`world::water` in `topography-core`) runs exact graph passes on tiles with
+halos: the priority-flood spill graph, the depression hierarchy and Fill-Spill-Merge, fall-line
+receivers, flat ponds and accumulation, then breaches, labels and channel carving. Tiled runs
+give the same bytes as one tile, so there are no bands and no seam rules. It replaces the
+band-by-band `--hydrology-only` rerun for 1 m worlds; the 32 m and 4 m levels still use v2.
+
+Departure from the spec: the spec's GPU bank relaxation is dropped in Plan A. On an 8192²
+probe at the deepest cut (1.33 m) the carved ground alone passed `walls` and `facets`, the
+relaxed ground had more `drainage_rises`, and the hillshades looked the same. Plan A ships the
+carved ground (`relaxation: none` in the manifest). The relaxation is kept in git at
+`d0c0055` (`training/src/topography_training/water/relax.py`) for Plan B, should deeper cuts
+need bank shaping.
+
+### Commands
+
+`$P` and `CAP` as at the top of this page. The driver runs the whole chain, resumes when run
+again with the same arguments, and pins a copy of `target/release/topography` in the run
+directory (delete that `bin` directory, and with it every cache, to use a new build):
+
+```sh
+PYTHONPATH=training/src "${CAP[@]}" $P -m topography_training.water.run world \
+    --source data/worlds/fujix-55-l4v2 --out <new-world> [--tile 2048] [--threads 4]
+PYTHONPATH=training/src "${CAP[@]}" $P -m topography_training.water.run window \
+    --source data/worlds/fujix-55-l4v2 --level 1 --centre 27169,44546 --size 2048 --tile 512 --out <dir>
+```
+
+`world` needs an L4 world with a kept `elevation-raw.f32` and a `source_world` chain world
+whose `hydrology/4m/grid.json` carries the 128 m moisture field; without real rain the run is
+refused. It never writes to the source and refuses an `--out` inside it. `window` cuts a test
+window: `--level 1` from the L4 world's raw surface, `--level 4` and `--level 32` from the
+chain world (`--source data/worlds/fujix-55-chain`; the 4 m input is v2's carved 4 m ground,
+so these show the model's behaviour, not a v3 4 m result). Exit status: 0 passed, 1 a check
+failed (outputs kept; a world gets `manifest-failed.json`), 2 refused or failed.
+
+The two Rust commands, by hand:
+
+```sh
+target/release/topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
+target/release/topography world water-finish --grid <grid-dir> --work <work-dir> --ground <work-dir>/carved.f32 \
+    --out <new-out-dir> [--tile 4096] [--threads 4]
+```
+
+### Grid and work directories
+
+The grid directory is v2's ([Grids and outputs](#grids-and-outputs)) at 1 m: `elevation.f32`
+(the raw surface), `classes.u8` (the chain's 4 m classes, `classes_cell_m` 4), `moisture.f32`
+and `grid.json`. `grid.json` must have a `moisture` entry (`file`, `size`, `spacing_m`,
+`nw_m`, `scale_mm_h`) and `discharge.mean_land_mm_h`; the driver adds `window` and `inputs`
+(class map and moisture provenance).
+
+`world water` writes the work directory stage by stage; each stage's tag digests its inputs
+and settings, and `stamp.json` ties the directory to its grid, class map, moisture and binary,
+so a rerun resumes and a changed input is refused:
+
+| Stage | Files |
+| --- | --- |
+| `m1` model on raw | tile caches `m1-<tag>/` |
+| `b` breach | `breached.f32` |
+| `m2` model on the breached ground | `m2-level.f32`, `m2-node.u32`, `m2-discharge.f32`, `m2-flow.u8` |
+| `l` labels (lakes, rivers, river pools) | `body.u32`, `bodies.json` |
+| `c` channels | `carved.f32` |
+| `m3` model on the carved ground, `s` settle | `m3-<tag>-*.{f32,u32,u8}`, `water-surface.f32`, `water-body.u32` |
+| figures | `stages.json` (breaches, channels, nodes, leaves, lakes, ponds, area and depth histograms) |
+
+`world water-finish` checks the carved ground with the m3 model and publishes `--out`.
+
+### Outputs
+
+The world's `elevation.f32`, `water-surface.f32`, `water-body.u32`, `bodies.json` and
+`water.u8` have v2's names and formats, so `game_layers` and export are unchanged.
+`snow-ice.u8`, `vegetation.u8` and `moisture.f32` come from the source and chain worlds.
+`hydrology/1m` holds the published water output: those layers plus `discharge.f32` and
+`flow.u8` (both from m3, bits as v2), `report.json` and `grid.json` with provenance.
+`hydrology/review` holds the review figures (owner spots, longest straight runs, failing-check
+clusters, lake-exit sheets, overview) and `coarse-guide.json`, the comparison against the 4 m
+v2 network. A window run has the same under `out/` and `review/`.
+
+### Checks
+
+Every count must be 0. D is the water surface where wet, the pond level in ponds (m3), else the
+final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-11-05-hydrology-v3-a-water-model.md)
+(Task 13 and rulings R7, R11, R14, R16, R27, R29–R31):
+
+| Check | Fails a cell (or lake) when |
+| --- | --- |
+| `drainage_rises` | a non-sea cell with a receiver (m3) has D(receiver) > D(cell) + 1e-4 m |
+| `drainage_stuck` | a dry cell has no receiver, is not on the world edge and is not in a closed basin |
+| `drainage_cycles` | the m3 model found cells on cycles |
+| `lake_not_flat` | a lake cell's surface differs from its lake's level |
+| `lake_off_sill` | a full lake's lowest saddle on the final surfaces is more than 0.01 m off its level |
+| `lake_leaks` | a non-lake neighbour of a lake cell, other than its outlet, has D more than 0.01 m below the level |
+| `lake_exit_surface` | the first cell of a full lake's outflow is more than 0.01 m off the level |
+| `lake_balance` | a closed lake covers fewer cells than its supply needs |
+| `dam_steps` | within 50 m below a lake exit, D drops more than 1.5 m between adjacent path cells and raw does not drop as much |
+| `dam_rims` | a guard: an exit-side dry cell stands over level + 0.5 m and raw did not (v3 never raises ground) |
+| `bed_rises` | on a dry m2 thalweg link where the ground before channels falls, the carved bed rises |
+| `thalweg_beside` | beside a thalweg with Q ≥ 1 km², the lowest standing cell across the flow (to the first ridge 0.5 m up, ±30 m) is more than 1 m below this river, belongs to no tributary, and carries a second channel (see below) |
+| `parallel_rivers` | along a river with Q ≥ 1 km², another flow line with Q ≥ 0.05 km² runs within 10 m and parallel (cosine ≥ 0.7) for over 100 m without joining it within 100 m |
+| `straight_share` | more than 5 % of river length lies in straight runs over 60 m (global, 0 or 1) |
+| `straight_runs` | a river thalweg stays within 1 m of its chord (any angle) for more than 150 m, unless the raw thalweg is straight there too (90 % of cells) |
+| `facets` | more planar 5×5 windows (residual < 2 cm, slope > 5°) among changed cells than raw had (global) |
+| `walls` | a changed cell's Horn slope exceeds max(40°, its raw slope) + 0.01° |
+| `change_p99` | p99 of \|Δ\| over all cells > 1 m (global) |
+| `change_max` | a cell's \|Δ\| > the breach cap + 0.5 m (2.5 m at 1 m) |
+| `label_agreement` | the written rivers' thalwegs (m2) and m3's agree less than 0.95 within one cell (global) |
+| `export_bodies` | lakes + rivers > 50,000 (global) |
+
+`thalweg_beside` ruling (departs from the spec's "lowest raw ground"): the lower cell counts as
+a second thalweg only where it, or a cell within 2 cells, carries a channel (m3 Q at the river
+threshold, 0.05 km² at 1 m) that is not this river's own; dry lower ground across a valley
+floor or fan does not fail. An unlabelled m3 thalweg cell (a short detour beside a pond) is
+judged as the labelled water its path reaches within 150 m. The cost: a river perched above a
+dry valley floor passes.
+
+### Settings, resuming and cost
+
+`configs/hydrology/water-v2.toml` (built in; `--water` replaces it) gives each class's
+lake-to-catchment ratio `r`, the game setting `lake_min_m2` (smaller standing water is an
+unlabelled pond), the river-width factor `m3s_per_km2` and per level the river start and
+breach cap.
+
+Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
+memory cap (`MemoryMax=10G` for 16,384² windows, 12G for the world). The work directory takes
+about 54 bytes per cell.
+
+Measured at gate 1 (2026-11-06, fujix-55-l4v2 at the canyon, real rain):
+
+| Run | Time | Peak RAM (Rust) | Disk | Notes |
+| --- | --- | --- | --- | --- |
+| 2048² window, `--tile 512 --threads 4` | 10 s | 0.33 GB | 0.3 GB | driver peak 0.5 GB |
+| 16,384² window, `--tile 2048 --threads 4` | 10.5 min | 2.1 GB | 18 GB (13 GB work) | 243,257 leaves, 74 lakes, 790 rivers |
+| 16,384² window, `--tile 8192 --threads 1` | 37 min | 6.1 GB | 18 GB | byte-identical outputs to the 2048 tiling |
+| world 65,536², `--tile 2048 --threads 4` | about 3-5 h (estimate) | about 4-6 GB (estimate) | about 210 GB work | 16× the 16k window; I/O no longer fits the page cache |
+
+The world estimate scales the 16k run by its cell count. Tile passes dominate time; the global
+graph (about 70 MB serialized at 16k, so about 1.1 GB for the world) scales with the leaves
+left after contraction, which removes only about 1 % of depressions at 1 m. Each model run
+reads the ground about seven times (passes A, B, L, C, D, E, F).
+
 ## Export
 
 ```sh
