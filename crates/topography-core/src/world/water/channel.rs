@@ -109,6 +109,21 @@ fn offer(slots: &mut [(f32, u32, u32); 2], cand: (f32, u32, u32), body: impl Fn(
     }
 }
 
+/// A cut beside another m2 node (lakes included) stops at that node's level `rim` (or the
+/// ground, if lower), so carving never lowers a pond's outlet (fix round 2).
+fn rim_floor(ground: f32, cut: f32, rim: Option<f32>) -> f32 {
+    rim.map_or(cut, |lv| cut.max(ground.min(lv)))
+}
+
+/// A river cell beside a lake below its river's surface `rs`, cut below that lake's level
+/// `lake`, stands at the lake's level: no drainage rise at the mouth (fix round 2).
+fn mouth_surface(rs: f32, cut: f32, lake: Option<f32>) -> f32 {
+    match lake {
+        Some(lv) if cut < lv => lv,
+        _ => rs,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn channels(
     s: &Setup,
@@ -273,14 +288,34 @@ pub(crate) fn channels(
                     .map(|c| (c.2 as usize, c.1))
                     .collect();
                 let own = (thalweg(j) && ranked.iter().all(|c| c.0 != j)).then_some((j, 0));
-                for (t, d2) in ranked.into_iter().chain(own) {
-                    let rs = river(t);
-                    let below_a_lake = (0..8).any(|k| {
+                let around: Vec<usize> = (0..8)
+                    .filter_map(|k| {
                         world
                             .neighbour(x, y, k)
                             .and_then(|(nx, ny)| win.local(nx, ny))
-                            .is_some_and(|j2| is_lake(j2) && level[j2] > rs)
-                    });
+                    })
+                    .collect();
+                // Fix round 2: the highest level of a neighbouring m2 node (lakes included)
+                // other than j's own, or of j's own where j stands at it (its spill cell); a
+                // rim is not cut below it.
+                let own_rim = (node[j] >= 2 && g[j] >= level[j]).then_some(level[j]);
+                let pond_rim = around
+                    .iter()
+                    .filter(|&&j2| node[j2] >= 2 && node[j2] != node[j])
+                    .map(|&j2| level[j2])
+                    .chain(own_rim)
+                    .reduce(f32::max);
+                // The lowest neighbouring lake level below a river surface `rs`.
+                let lake_below = |rs: f32| {
+                    around
+                        .iter()
+                        .filter(|&&j2| is_lake(j2) && level[j2] < rs)
+                        .map(|&j2| level[j2])
+                        .reduce(f32::min)
+                };
+                for (t, d2) in ranked.into_iter().chain(own) {
+                    let rs = river(t);
+                    let below_a_lake = around.iter().any(|&j2| is_lake(j2) && level[j2] > rs);
                     if below_a_lake && t != j {
                         continue;
                     }
@@ -297,10 +332,11 @@ pub(crate) fn channels(
                             .max(rw[j] - CHANNEL_CAP_M)
                             .min(g[j])
                     };
+                    let cut = rim_floor(g[j], cut, pond_rim);
                     if cut < rs || t == j {
                         lowered[a] = cut < g[j];
                         carved[a] = cut;
-                        surface[a] = rs;
+                        surface[a] = mouth_surface(rs, cut, lake_below(rs));
                         ids[a] = bw[t];
                         is_river[a] = true;
                         keep[a] = t == j;
@@ -1027,6 +1063,81 @@ mod tests {
             assert_eq!(body[k], body[cells[0]], "pond cell {k} in one body");
         }
         assert!(body[cells[0]] > 1);
+    }
+
+    /// Fix round 2: the river over the dam cuts neither the pond's rim nor its spill cell (in
+    /// the node, at the level) below the level, so the routing on the carved ground (m3) keeps
+    /// every pond cell (the rim alone lost 7: the spill cell was cut 5.5 cm).
+    #[test]
+    fn a_river_over_a_dam_keeps_the_pond_behind_it() {
+        let world = World { w: 96, h: 41 };
+        let z: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+                let dam = if (46.0..=50.0).contains(&x) { 1.2 } else { 0.0 };
+                40.0 - 0.05 * x + 0.3 * (y - 20.0).abs() + dam + ((i * 7919) % 7) as f32 * 0.001
+            })
+            .collect();
+        let s = || {
+            let mut s = setup(world, 32, 1e-5);
+            s.table.lake_min_m2 = 1e9;
+            s
+        };
+        let mut nl = (Vec::new(), Vec::new());
+        let (raw, carved, ..) = run_setup(s(), z, 1e3, Some(&mut nl));
+        let (node, level) = nl;
+        let pond = node[20 * 96 + 40];
+        assert!(pond >= 2, "the dam holds a pond");
+        let w = 96i64;
+        let mut rim = 0;
+        for k in 0..node.len() {
+            let (x, y) = ((k as i64) % w, (k as i64) / w);
+            let lv = OFFSETS
+                .iter()
+                .map(|&(dy, dx)| (x + dx, y + dy))
+                .filter(|&(nx, ny)| nx >= 0 && ny >= 0 && nx < w && ny < 41)
+                .map(|(nx, ny)| (ny * w + nx) as usize)
+                .filter(|&k2| node[k2] == pond && node[k] != pond)
+                .map(|k2| level[k2])
+                .reduce(f32::max);
+            if let Some(lv) = lv {
+                rim += 1;
+                assert!(
+                    carved[k] >= raw[k].min(lv),
+                    "rim cell {k} cut to {} below the pond at {lv}",
+                    carved[k]
+                );
+            }
+        }
+        assert!(rim > 10);
+        let r3 = Rasters::memory(world);
+        model(
+            &s(),
+            &Layer::memory(world, carved.clone()),
+            None,
+            "m3",
+            Some(&r3),
+        )
+        .expect("m3");
+        let n3 = r3.node.to_vec().unwrap();
+        let lost = (0..node.len())
+            .filter(|&k| node[k] == pond && n3[k] == 0)
+            .count();
+        assert_eq!(lost, 0, "pond cells lost on the carved ground");
+    }
+
+    #[test]
+    fn a_river_cell_cut_below_a_lake_beside_it_stands_at_the_lake() {
+        // Cut below the lake (9.0 m) under a river at 9.3 m: at the lake.
+        assert_eq!(mouth_surface(9.3, 8.8, Some(9.0)), 9.0);
+        // Not cut below it, or no lower lake beside it: the river's surface.
+        assert_eq!(mouth_surface(9.3, 9.1, Some(9.0)), 9.3);
+        assert_eq!(mouth_surface(9.3, 8.8, None), 9.3);
+        // The rim floor: never below the neighbour's level, nor above the ground.
+        assert_eq!(rim_floor(10.0, 8.0, Some(9.0)), 9.0);
+        assert_eq!(rim_floor(8.5, 8.0, Some(9.0)), 8.5);
+        assert_eq!(rim_floor(10.0, 9.5, Some(9.0)), 9.5);
+        assert_eq!(rim_floor(10.0, 8.0, None), 8.0);
     }
 
     /// No cut leaves a changed cell steeper than max(40°, raw) (the `walls` check) or a dry

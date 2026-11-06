@@ -78,6 +78,8 @@ pub(crate) struct CheckLayers {
     pub flow_written: Layer<u8>,
     /// The m2 node layer and the ground channels were cut into, for `bed_rises`.
     pub node_written: Layer<u32>,
+    /// The m2 level layer, for `m2_pond_cells_lost`.
+    pub level_written: Layer<f32>,
     pub breached: Layer<f32>,
 }
 
@@ -161,6 +163,24 @@ pub(crate) struct Tile {
     pub class_lakes: BTreeSet<(u8, u32)>,
     /// Largest |m3 level − label level| over closed lakes' cells: (m, lake id).
     pub lake_m3_gap: Option<(f32, u32)>,
+    /// m2 node cells in no m3 node, and the largest m2 level − m3 level (ground where dry)
+    /// over m2 node cells: (m, m2 node, cell [x, y]).
+    pub pond_lost: (u64, Option<PondDrop>),
+}
+
+type PondDrop = (f32, u32, [u64; 2]);
+
+/// The larger drop; ties keep the smaller node, then the smaller cell (row first).
+fn deeper_drop(a: Option<PondDrop>, b: Option<PondDrop>) -> Option<PondDrop> {
+    let key = |d: &PondDrop| (d.1, d.2[1], d.2[0]);
+    match (a, b) {
+        (Some(x), Some(y)) => Some(if y.0 > x.0 || (y.0 == x.0 && key(&y) < key(&x)) {
+            y
+        } else {
+            x
+        }),
+        _ => a.or(b),
+    }
 }
 
 /// The larger gap; ties keep the smaller lake id.
@@ -269,6 +289,7 @@ pub(crate) fn check_tile(
     );
     let fw = l.flow_written.read(win)?;
     let (n2, bz) = (l.node_written.read(win)?, l.breached.read(win)?);
+    let l2 = l.level_written.read(win)?;
     let classes = match &s.classes {
         Some(c) => c.read(core)?,
         None => vec![0; core.cells()],
@@ -637,6 +658,13 @@ pub(crate) fn check_tile(
         }
         if node[j] >= 2 && !lake_cell(j) {
             t.pond_cells += 1;
+        }
+        // A figure (fix round 2): m2 pond water the carved ground's routing no longer holds.
+        if n2[j] >= 2 {
+            t.pond_lost.0 += u64::from(node[j] == 0);
+            let l3 = if level[j].is_finite() { level[j] } else { z[j] };
+            let drop = Some((l2[j] - l3, n2[j], [x, y]));
+            t.pond_lost.1 = deeper_drop(t.pond_lost.1, drop);
         }
         // Drainage.
         if node[j] != 1 {
@@ -1068,8 +1096,13 @@ pub(crate) fn report(
     let mut class_cells: BTreeMap<u8, u64> = BTreeMap::new();
     let mut class_lakes: BTreeSet<(u8, u32)> = BTreeSet::new();
     let mut lake_gap = None;
+    let mut pond_lost = (0u64, None);
     for t in tiles {
         lake_gap = wider_gap(lake_gap, t.lake_m3_gap);
+        pond_lost = (
+            pond_lost.0 + t.pond_lost.0,
+            deeper_drop(pond_lost.1, t.pond_lost.1),
+        );
         for (id, s) in &t.saddle {
             let e = saddle.entry(*id).or_insert(f32::INFINITY);
             *e = e.min(*s);
@@ -1196,6 +1229,12 @@ pub(crate) fn report(
         json!(lake_gap.map(|(m, id)| json!({"max_m": m, "lake": id}))),
     );
     figures.insert(
+        "m2_pond_cells_lost".into(),
+        json!({"cells": pond_lost.0, "max_drop": pond_lost.1.map(|(m, node, cell)| {
+            json!({"m": m, "m2_node": node, "cell": cell})
+        })}),
+    );
+    figures.insert(
         "thalweg_beside_tributary_excused".into(),
         json!({"channel_joins_river": excused[0], "river_joins_water": excused[1]}),
     );
@@ -1276,6 +1315,8 @@ mod tests {
         fw: Vec<u8>,
         /// m2 nodes and the ground before channels (bed_rises).
         n2: Vec<u32>,
+        /// m2 levels (m2_pond_cells_lost).
+        l2: Vec<f32>,
         bz: Vec<f32>,
         lakes: LakeInfo,
         exits: Vec<Exit>,
@@ -1299,6 +1340,7 @@ mod tests {
                 q: vec![0.0; n],
                 fw: vec![0; n],
                 n2: vec![0; n],
+                l2: vec![f32::NAN; n],
                 lakes: LakeInfo::new(),
                 exits: Vec::new(),
             }
@@ -1379,6 +1421,7 @@ mod tests {
                 discharge: Layer::memory(w, self.q.clone()),
                 flow_written: Layer::memory(w, self.fw.clone()),
                 node_written: Layer::memory(w, self.n2.clone()),
+                level_written: Layer::memory(w, self.l2.clone()),
                 breached: Layer::memory(w, self.bz.clone()),
             }
         }
@@ -1746,6 +1789,40 @@ mod tests {
             (gap["max_m"].as_f64().unwrap() - 0.31).abs() < 1e-5,
             "{gap}"
         );
+    }
+
+    /// An m2 pond at 10 m over x = 2..5 of row 2: m3 keeps x = 2..3 at 9.8 m and loses the
+    /// rest (ground 9.5 m and 9.4 m): 2 cells lost, the largest drop 0.6 m at (5, 2).
+    #[test]
+    fn m2_pond_cells_the_routing_drops_are_reported() {
+        let mut c = Case::new(8, 5, |_, _| 9.4);
+        for x in 2..6 {
+            let k = c.k(x, 2);
+            (c.n2[k], c.l2[k]) = (7, 10.0);
+            if x < 4 {
+                (c.node[k], c.level[k]) = (3, 9.8);
+            }
+        }
+        let k = c.k(4, 2);
+        c.z[k] = 9.5;
+        let figure = |c: &Case, tile: u64| {
+            let (s, l) = (setup(c.world, tile, 0.05), c.layers());
+            let tiles = s
+                .tiles()
+                .into_iter()
+                .map(|core| check_tile(&s, &l, core, &c.lakes, &c.exits).expect("check"))
+                .collect();
+            report(tiles, c.extra(), Map::new()).0["figures"]["m2_pond_cells_lost"].clone()
+        };
+        let f = figure(&c, 8);
+        assert_eq!(f["cells"], 2, "{f}");
+        assert_eq!(f["max_drop"]["m2_node"], 7);
+        assert_eq!(f["max_drop"]["cell"], json!([5, 2]));
+        assert!(
+            (f["max_drop"]["m"].as_f64().unwrap() - 0.6).abs() < 1e-5,
+            "{f}"
+        );
+        assert_eq!(figure(&c, 3), f, "tiles of 3 alike");
     }
 
     #[test]

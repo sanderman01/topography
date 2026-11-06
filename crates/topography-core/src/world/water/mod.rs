@@ -300,7 +300,8 @@ pub fn run(o: &Options) -> Result<String> {
         &json!({"after": l_tag, "m3s_per_km2": geo.m3s_per_km2, "cap": CHANNEL_CAP_M,
                 "halo": channel::HALO, "backwater": channel::BACKWATER,
                 "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS,
-                "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true}),
+                "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true,
+                "pond_rims": true, "lake_mouths": true}),
     );
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
@@ -497,6 +498,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         discharge: finals.discharge.clone(),
         flow_written: rasters.flow.clone(),
         node_written: rasters.node.clone(),
+        level_written: rasters.level.clone(),
         breached: breached.clone(),
     };
     let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
