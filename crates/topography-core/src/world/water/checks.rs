@@ -1421,6 +1421,7 @@ pub(crate) fn report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::water::MIN_DEPTH_M;
     use crate::world::water::geom::World;
     use crate::world::water::testing::setup;
 
@@ -2037,6 +2038,72 @@ mod tests {
         let t = c.tile();
         assert_eq!(fails(&t, "dam_steps"), 0, "raw has the step");
         assert_eq!(t.drops_any.len(), 1, "still a figure (R31)");
+    }
+
+    /// World rerun 2, lake 323: the exit cell's ground is the level (311.12152 m) and backwater
+    /// wets it at its receiver's MIN_DEPTH_M floor. At a 1 cm floor f32 put it 0.010009766 m
+    /// above the level, over SILL_M; the floor stays inside the tolerance.
+    #[test]
+    fn a_min_depth_exit_at_the_level_passes() {
+        let lv = 311.121_52_f32;
+        let mut c = lake_case(true, 10.5);
+        for k in 0..c.z.len() {
+            c.z[k] += 301.0;
+            if c.surf[k].is_finite() {
+                c.surf[k] = lv;
+            }
+        }
+        c.raw = c.z.clone();
+        c.lakes.get_mut(&3).unwrap().0 = lv;
+        c.levels.insert(3, lv);
+        let o = c.k(6, 4);
+        (c.z[o], c.raw[o]) = (lv, lv);
+        (c.surf[o], c.body[o]) = (lv + MIN_DEPTH_M, 5);
+        c.exits.push(Exit {
+            key: 1,
+            level: lv,
+            outlet: c.lakes[&3].2,
+            lake: Some(3),
+        });
+        assert_eq!(fails(&c.tile(), "lake_exit_surface"), 0);
+    }
+
+    /// World rerun 2, lake 331: an uncut cell (water MIN_DEPTH_M over raw 317.8263 m) above a
+    /// cut cell standing at its raw 316.0113 m, on the exit path. D falls raw's drop plus the
+    /// floor; at a 1 cm floor f32 made that 0.010009766 m more than raw, a dam step.
+    #[test]
+    fn a_min_depth_cell_above_a_cut_step_is_no_dam_step() {
+        let mut c = lake_case(true, 12.0);
+        for k in 0..c.z.len() {
+            c.z[k] += 308.0;
+            if c.surf[k].is_finite() {
+                c.surf[k] = 318.0;
+            }
+        }
+        c.lakes.get_mut(&3).unwrap().0 = 318.0;
+        let path: Vec<(u64, u64)> = (6..9).map(|x| (x, 4)).collect();
+        for (&(x, y), raw) in path.iter().zip([317.9f32, 317.8263, 316.0113]) {
+            let k = c.k(x, y);
+            c.z[k] = raw;
+        }
+        c.raw = c.z.clone();
+        c.route(&path, 16, 1.0);
+        for &(x, y) in &path[..2] {
+            let k = c.k(x, y);
+            (c.surf[k], c.body[k]) = (c.z[k] + MIN_DEPTH_M, 5);
+        }
+        // The cut cell: bed 0.19 m below raw, surface at raw (R).
+        let k = c.k(8, 4);
+        (c.surf[k], c.body[k], c.z[k]) = (c.raw[k], 5, c.raw[k] - 0.19);
+        c.exits.push(Exit {
+            key: 1,
+            level: 318.0,
+            outlet: c.lakes[&3].2,
+            lake: Some(3),
+        });
+        let t = c.tile();
+        assert_eq!(t.drops_any.len(), 1, "a drop over 1.5 m");
+        assert_eq!(fails(&t, "dam_steps"), 0);
     }
 
     #[test]

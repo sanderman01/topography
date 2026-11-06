@@ -39,8 +39,10 @@ pub(crate) const LAKE_DEPTH_M: f32 = 0.3;
 /// Channel depth cap at 1 m; a 1 m breach plus its channel cuts at most this much too.
 pub(crate) const CHANNEL_CAP_M: f32 = 2.0;
 /// Flowing water over a bed that is not cut runs this deep (export ruling: every wet cell
-/// stands above its ground).
-pub(crate) const MIN_DEPTH_M: f32 = 0.01;
+/// stands above its ground). At most half the checks' 1 cm tolerance (`SILL_M`), so f32
+/// rounding at world heights (ulp 4.9e-4 m at 4975 m) cannot push a min-depth surface over it.
+pub(crate) const MIN_DEPTH_M: f32 = 0.005;
+const _: () = assert!(MIN_DEPTH_M <= checks::SILL_M / 2.0);
 /// A gorge's bed falls over at least this many times its deepest cut (spec).
 pub(crate) const GORGE_RATIO: f32 = 20.0;
 /// Gorge cells lie within this many cells of their spill cell, so every tiling decides alike.

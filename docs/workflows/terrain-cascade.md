@@ -1031,9 +1031,11 @@ final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-1
 
 The last four are the heightmap export's water contract (`export/water.rs`), so a world that
 passes `water-finish` is not refused by the export. Rivers over a bed left uncut (steep raw
-reaches, rim floors, pond spill cells) run 0.01 m deep; lake and sea cells whose ground reaches
-their level, and a lake's exit cell at the level, are dry shore. `water-finish` writes lake
-levels to `bodies.json` as the exact f32 the rasters hold.
+reaches, rim floors, pond spill cells) run 0.005 m deep: half the checks' 1 cm tolerance, so
+f32 rounding cannot carry such water past a lake exit's or a dam step's 1 cm (at 0.01 m it did,
+by one ulp). Lake and sea cells whose ground reaches their level, and a lake's exit cell at the
+level, are dry shore. `water-finish` writes lake levels to `bodies.json` as the exact f32 the
+rasters hold.
 
 `thalweg_beside` ruling (departs from the spec's "lowest raw ground"): the lower cell counts as
 a second thalweg only where it, or a cell within 2 cells, carries a channel (m3 Q at the river
