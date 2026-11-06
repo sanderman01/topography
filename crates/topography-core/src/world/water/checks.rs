@@ -877,16 +877,29 @@ pub(crate) fn check_tile(
                 // thalweg only where it or a cell within 2 cells carries a channel (m3 Q at the
                 // river threshold, not this river's own cells); dry lower ground across a valley
                 // or fan is not.
+                // Gate 1 ruling: the tributary excuses apply to that channel cell too (water
+                // this river joins, or a thalweg joining this river).
                 if beside {
                     let (px, py) = win.world_xy(p);
-                    let own_cell =
-                        |c: usize| c == j || (surf[c].is_finite() && id == Some(body[c]));
+                    let own_cell = |c: usize| {
+                        let wet = surf[c].is_finite();
+                        c == j
+                            || (wet && id == Some(body[c]))
+                            || (wet && body[c] > 1 && joins(j, body[c]))
+                            || (flow[c] & 16 != 0 && id.is_some_and(|b| joins(c, b)))
+                    };
                     beside = (-2i64..=2).any(|oy| {
                         (-2i64..=2).any(|ox| {
                             at_i(px as i64 + ox, py as i64 + oy)
                                 .is_some_and(|c| q[c] >= thr && !own_cell(c))
                         })
                     });
+                }
+                // Gate 1 ruling: not counted on or beside a dry m2 thalweg (the written
+                // river's routing put it there).
+                let dry_m2 = |c: usize| fw[c] & 16 != 0 && n2[c] == 0;
+                if beside && (dry_m2(j) || around(j).any(dry_m2)) {
+                    beside = false;
                 }
                 if beside {
                     t.fail("thalweg_beside", x, y);
@@ -1318,6 +1331,11 @@ mod tests {
                 let k = self.k(x, y);
                 (self.surf[k], self.body[k], self.fw[k]) = (self.z[k], id, self.flow[k]);
             }
+        }
+        /// The rivers run off every written (m2) thalweg: `thalweg_beside` skips cells on or
+        /// beside a dry m2 thalweg (gate 1 ruling), so its other rules need this.
+        fn m3_only(&mut self) {
+            self.fw.fill(0);
         }
         fn tile(&self) -> Tile {
             check_tile(
@@ -1794,6 +1812,7 @@ mod tests {
         let path: Vec<(u64, u64)> = (10..120).map(|x| (x, 30)).collect();
         let mut c = Case::new(130, 70, ground);
         c.river(&path, 2.0, 5);
+        c.m3_only();
         assert_eq!(
             fails(&c.tile(), "thalweg_beside"),
             0,
@@ -1802,6 +1821,7 @@ mod tests {
         // Its own wet bank cell lowest across: fine.
         let mut c = Case::new(130, 70, ground);
         c.river(&path, 2.0, 5);
+        c.m3_only();
         for &(x, _) in &path {
             let k = c.k(x, 31);
             c.raw[k] -= 0.5;
@@ -1811,6 +1831,7 @@ mod tests {
         // A river incised 1.5 m below every raw cell across is no failure (one-sided).
         let mut c = Case::new(130, 70, ground);
         c.river(&path, 2.0, 5);
+        c.m3_only();
         for &(x, y) in &path {
             let k = c.k(x, y);
             c.surf[k] = c.raw[k] - 1.5;
@@ -1824,8 +1845,7 @@ mod tests {
 
     /// A true lower parallel channel 20 m away (no divide between), 1.5 m below every own
     /// cell within that distance: beside.
-    #[test]
-    fn a_lower_parallel_channel_is_beside() {
+    fn lower_parallel() -> Case {
         let mut c = Case::new(130, 70, |x, y| {
             let floor = 20.0 - 0.01 * x as f32;
             let dy = y as f32 - 30.0;
@@ -1839,17 +1859,53 @@ mod tests {
         c.river(&path, 2.0, 5);
         let lower: Vec<(u64, u64)> = (10..120).map(|x| (x, 50)).collect();
         c.route(&lower, 16, 0.06);
+        c
+    }
+
+    #[test]
+    fn a_lower_parallel_channel_is_beside() {
+        let mut c = lower_parallel();
+        c.m3_only();
         let t = c.tile();
         assert!(fails(&t, "thalweg_beside") > 0, "{:?}", t.examples);
     }
 
-    /// A gentle V valley (0.05 per cell across) with a river along row 30, x 10..120.
+    /// Gate 1 ruling: a river on a dry m2 thalweg (or beside one) is not counted; on an m2
+    /// thalweg under standing water (an m2 node) it still is.
+    #[test]
+    fn a_river_on_or_beside_a_dry_m2_thalweg_is_not_beside() {
+        let c = lower_parallel();
+        assert_eq!(fails(&c.tile(), "thalweg_beside"), 0, "on its m2 thalweg");
+        let mut c = lower_parallel();
+        c.m3_only();
+        for x in 0..130 {
+            let k = c.k(x, 31);
+            c.fw[k] = 16 | 4;
+        }
+        assert_eq!(
+            fails(&c.tile(), "thalweg_beside"),
+            0,
+            "beside an m2 thalweg"
+        );
+        let mut c = lower_parallel();
+        c.n2.fill(2);
+        let t = c.tile();
+        assert!(
+            fails(&t, "thalweg_beside") > 0,
+            "m2 ponded: {:?}",
+            t.examples
+        );
+    }
+
+    /// A gentle V valley (0.05 per cell across) with a river along row 30, x 10..120, off
+    /// every m2 thalweg.
     fn gentle_valley(across: impl Fn(u64, f32) -> f32) -> Case {
         let mut c = Case::new(130, 70, |x, y| {
             20.0 - 0.01 * x as f32 + across(y, 0.05 * (y as f32 - 30.0).abs())
         });
         let path: Vec<(u64, u64)> = (10..120).map(|x| (x, 30)).collect();
         c.river(&path, 2.0, 5);
+        c.m3_only();
         c
     }
 
@@ -1904,6 +1960,7 @@ mod tests {
         let mut trib: Vec<(u64, u64)> = (10..80).map(|x| (x, 45)).collect();
         trib.extend((30..=45).rev().map(|y| (80, y)));
         c.river(&trib, 1.5, 6);
+        c.m3_only();
         let t = c.tile();
         assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
         // Without the join it is a second, higher channel beside a lower one.
@@ -1943,6 +2000,7 @@ mod tests {
             });
             let path: Vec<(u64, u64)> = (10..120).map(|x| (x, 30)).collect();
             c.river(&path, 2.0, 5);
+            c.m3_only();
             if channel {
                 let line: Vec<(u64, u64)> = (10..120).map(|x| (x, 56)).collect();
                 c.route(&line, 16, 0.06);
@@ -1980,6 +2038,61 @@ mod tests {
         let trib = hollow(true);
         assert_eq!(fails(&trib, "thalweg_beside"), 0, "{:?}", trib.examples);
         assert!(trib.tributary_excused[0] > 0);
+    }
+
+    /// A dry hollow 1.5 m below the river, 6–8 m beside it (rows 36–38), its nearest row the
+    /// lowest cell across; row 38 carries the channel (Q 0.06 km²) that `make` lays.
+    fn hollow_with(make: impl Fn(&mut Case)) -> Tile {
+        let mut c = gentle_valley(|_, v| v);
+        for x in 50..70 {
+            for y in 36..39 {
+                let (k, floor) = (c.k(x, y), 20.0 - 0.01 * x as f32);
+                (c.raw[k], c.z[k]) = (floor - 1.5, floor - 1.5);
+            }
+        }
+        make(&mut c);
+        c.tile()
+    }
+
+    /// Gate 1 ruling (4a): the channel cell beside the lowest cell is the river's own when it
+    /// is a thalweg joining the river within 150 m.
+    #[test]
+    fn a_channel_joining_the_river_beside_the_lowest_cell_is_its_own() {
+        let thalweg = |join: bool| {
+            hollow_with(move |c| {
+                let mut line: Vec<(u64, u64)> = (50..=70).map(|x| (x, 38)).collect();
+                if join {
+                    line.extend((30..38).rev().map(|y| (70, y)));
+                }
+                c.route(&line, 16, 0.06);
+            })
+        };
+        let t = thalweg(false);
+        assert!(fails(&t, "thalweg_beside") > 0, "no join");
+        let t = thalweg(true);
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+    }
+
+    /// Gate 1 ruling (4a): the channel cell beside the lowest cell is the river's own when it
+    /// is water (body 8) that the river joins within 150 m.
+    #[test]
+    fn water_the_river_joins_beside_the_lowest_cell_is_its_own() {
+        let water = |join: bool| {
+            hollow_with(move |c| {
+                for x in 50..70 {
+                    let k = c.k(x, 38);
+                    (c.surf[k], c.body[k], c.q[k]) = (c.z[k], 8, 0.06);
+                }
+                if join {
+                    let k = c.k(119, 30);
+                    (c.surf[k], c.body[k]) = (c.z[k], 8);
+                }
+            })
+        };
+        let t = water(false);
+        assert!(fails(&t, "thalweg_beside") > 0, "no join");
+        let t = water(true);
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
     }
 
     /// A dry m2 thalweg whose carved bed rises to its receiver where the ground falls fails
