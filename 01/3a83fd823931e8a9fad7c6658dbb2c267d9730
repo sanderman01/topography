@@ -1,0 +1,41 @@
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_961bafcce895d4 341-348,352,354,356-364
+  s_8c1b40ea9c1e0d::t_f4cee287c4adc8 33
+crates/topography-core/src/world/water/channel.rs
+  s_8c1b40ea9c1e0d::t_9be228ad9a8548 661-662,665-667
+  s_8c1b40ea9c1e0d::t_f12da8a9cbc649 26
+  s_8c1b40ea9c1e0d::t_413b0b47fd9f79 723-724,729,735
+  s_8c1b40ea9c1e0d::t_80601155b89d72 1246-1252
+  s_8c1b40ea9c1e0d::t_07e6891547e578 737-740
+  s_8c1b40ea9c1e0d::t_3aabaf6753915b 645-646,652,655
+  s_8c1b40ea9c1e0d::t_3c0de22bfe1bc2 572-584
+  s_8c1b40ea9c1e0d::t_29d1f7d41a7d94 1221-1245,1253-1280
+  s_8c1b40ea9c1e0d::t_c81af9ad91ca50 763-766,780
+  s_8c1b40ea9c1e0d::t_dcd9ea615d109a 1147,1195
+  s_8c1b40ea9c1e0d::t_615e3b64994438 1281-1283
+  s_ca2f06b0a70c3f::t_9a9fa373028e49 1284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "013a83fd823931e8a9fad7c6658dbb2c267d9730",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    },
+    "s_ca2f06b0a70c3f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab105f27ee107b8c8",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
