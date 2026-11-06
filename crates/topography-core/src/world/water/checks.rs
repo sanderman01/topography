@@ -159,6 +159,20 @@ pub(crate) struct Tile {
     /// Cells per class, and (class, lake) pairs seen.
     pub class_cells: BTreeMap<u8, u64>,
     pub class_lakes: BTreeSet<(u8, u32)>,
+    /// Largest |m3 level − label level| over closed lakes' cells: (m, lake id).
+    pub lake_m3_gap: Option<(f32, u32)>,
+}
+
+/// The larger gap; ties keep the smaller lake id.
+fn wider_gap(a: Option<(f32, u32)>, b: Option<(f32, u32)>) -> Option<(f32, u32)> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(if y.0 > x.0 || (y.0 == x.0 && y.1 < x.1) {
+            y
+        } else {
+            x
+        }),
+        _ => a.or(b),
+    }
 }
 
 impl Tile {
@@ -672,6 +686,10 @@ pub(crate) fn check_tile(
             if surf[j] != lv {
                 t.fail("lake_not_flat", x, y);
             }
+            // A figure (gate 1 ruling): the lake stays at its label, m3 may balance higher.
+            if !full && level[j].is_finite() {
+                t.lake_m3_gap = wider_gap(t.lake_m3_gap, Some(((level[j] - lv).abs(), body[j])));
+            }
             if z[j] < lv {
                 for n in around(j) {
                     let same = surf[n].is_finite() && body[n] == body[j];
@@ -1036,7 +1054,9 @@ pub(crate) fn report(
     let mut bank = (0u64, 0f32, Vec::new());
     let mut class_cells: BTreeMap<u8, u64> = BTreeMap::new();
     let mut class_lakes: BTreeSet<(u8, u32)> = BTreeSet::new();
+    let mut lake_gap = None;
     for t in tiles {
+        lake_gap = wider_gap(lake_gap, t.lake_m3_gap);
         for (id, s) in &t.saddle {
             let e = saddle.entry(*id).or_insert(f32::INFINITY);
             *e = e.min(*s);
@@ -1158,6 +1178,10 @@ pub(crate) fn report(
             .collect::<Vec<_>>()}),
     );
     figures.insert("big_rivers_into_closed_nodes".into(), json!(closed_ends));
+    figures.insert(
+        "closed_lake_m3_level_gap".into(),
+        json!(lake_gap.map(|(m, id)| json!({"max_m": m, "lake": id}))),
+    );
     figures.insert(
         "thalweg_beside_tributary_excused".into(),
         json!({"channel_joins_river": excused[0], "river_joins_water": excused[1]}),
@@ -1684,6 +1708,26 @@ mod tests {
         let o = c.k(6, 4);
         c.z[o] = 10.0;
         assert_eq!(c.report()["checks"]["lake_off_sill"], 0);
+    }
+
+    /// A closed lake labelled at 10 m whose m3 pond balances at 10.31 m: a figure, no failure.
+    #[test]
+    fn a_closed_lake_reports_its_m3_level_gap() {
+        let mut c = lake_case(false, 10.5);
+        for y in 3..6 {
+            for x in 3..6 {
+                let k = c.k(x, y);
+                c.level[k] = 10.31;
+            }
+        }
+        let r = c.report();
+        assert_eq!(r["checks"]["lake_not_flat"], 0);
+        let gap = &r["figures"]["closed_lake_m3_level_gap"];
+        assert_eq!(gap["lake"], 3);
+        assert!(
+            (gap["max_m"].as_f64().unwrap() - 0.31).abs() < 1e-5,
+            "{gap}"
+        );
     }
 
     #[test]
