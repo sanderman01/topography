@@ -1,0 +1,24 @@
+docs/workflows/terrain-cascade.md
+  s_774c09797904fe::t_b0a961ce827c50 1034-1038
+crates/topography-core/src/world/water/mod.rs
+  s_774c09797904fe::t_d01863b0e90dde 42-45
+crates/topography-core/src/world/water/checks.rs
+  s_774c09797904fe::t_9e1a5df00cc072 1424
+  s_774c09797904fe::t_b38808166ac443 2043-2108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de1042f0e394e4e20274fc54adebd0b1ddf8bf21",
+  "prompts": {},
+  "sessions": {
+    "s_774c09797904fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db136362-a5cc-4efa-8192-13bacc041efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
