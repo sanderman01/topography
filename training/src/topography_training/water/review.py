@@ -154,10 +154,6 @@ class Layers:
         self.table = _kind_table(self.bodies)
         self.by_id = {b["id"]: b for b in self.bodies}
 
-    def mm(self, name: str | Path, dtype) -> np.ndarray:
-        path = name if isinstance(name, Path) else self.out / name
-        return np.memmap(path, dtype, "r", shape=(self.h, self.w))
-
     def cell(self, e: float, n: float) -> tuple[int, int]:
         return int(math.floor((e - self.nw[0]) / self.spacing)), int(math.floor((self.nw[1] - n) / self.spacing))
 
@@ -199,9 +195,24 @@ def default_dest(path: Path) -> Path:
 Win = tuple[int, int, int, int]  # r0, c0, h, w
 
 
-def _read(L: Layers, name: str | Path, dtype, win: Win, k: int = 1) -> np.ndarray:
+def _rows(path: Path, dtype, width: int, win: Win, k: int = 1) -> np.ndarray:
+    """Every k-th row and column of window `win` of a `width`-wide raster, read row by row with
+    no lasting memory map (a long-lived map of the 17 GB body raster kept every touched page
+    in the driver's RSS)."""
     r0, c0, h, w = win
-    return np.asarray(L.mm(name, dtype)[r0 : r0 + h : k, c0 : c0 + w : k])
+    dtype = np.dtype(dtype)
+    with open(path, "rb") as f:
+        if k == 1 and c0 == 0 and w == width:
+            return np.fromfile(f, dtype, count=h * w, offset=r0 * width * dtype.itemsize).reshape(h, w)
+        out = np.empty((len(range(0, h, k)), len(range(0, w, k))), dtype)
+        for i, r in enumerate(range(r0, r0 + h, k)):
+            f.seek((r * width + c0) * dtype.itemsize)
+            out[i] = np.frombuffer(f.read(w * dtype.itemsize), dtype)[::k]
+        return out
+
+
+def _read(L: Layers, name: str | Path, dtype, win: Win, k: int = 1) -> np.ndarray:
+    return _rows(name if isinstance(name, Path) else L.out / name, dtype, L.w, win, k)
 
 
 def _reduce(kinds: np.ndarray, k: int) -> np.ndarray:
@@ -219,8 +230,8 @@ def _kinds_at(L: Layers, win: Win, k: int = 1) -> np.ndarray:
         return _kinds(L.table, _read(L, "water-body.u32", "<u4", win))
     r0, c0, h, w = win
     step = k * max(1, 512 // k)
-    body = L.mm("water-body.u32", "<u4")
-    return np.concatenate([_reduce(_kinds(L.table, np.asarray(body[y : min(y + step, r0 + h), c0 : c0 + w])), k)
+    return np.concatenate([_reduce(_kinds(L.table, _read(L, "water-body.u32", "<u4",
+                                                         (y, c0, min(y + step, r0 + h) - y, w))), k)
                            for y in range(r0, r0 + h, step)])
 
 
@@ -597,9 +608,15 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
     if x0 < 0 or y0 < 0 or x0 + pw > cw or y0 + ph > ch:
         raise ValueError(f"{fine_dir} lies outside {coarse}")
     cex, cny = _nw(cg)
-    cb = np.memmap(coarse / "water-body.u32", "<u4", "r", shape=(ch, cw))
-    cq = np.memmap(coarse / "discharge.f32", "<f4", "r", shape=(ch, cw))
-    fb = np.memmap(fine_dir / "water-body.u32", "<u4", "r", shape=(fh, fw))
+    # Rows [r0, r1) and columns [c0, c1), read per call (no lasting memory map).
+    def cb(r0, r1, c0, c1):
+        return _rows(coarse / "water-body.u32", "<u4", cw, (r0, c0, r1 - r0, c1 - c0))
+
+    def cq(r0, r1, c0, c1):
+        return _rows(coarse / "discharge.f32", "<f4", cw, (r0, c0, r1 - r0, c1 - c0))
+
+    def fb(r0, r1, c0, c1):
+        return _rows(fine_dir / "water-body.u32", "<u4", fw, (r0, c0, r1 - r0, c1 - c0))
     ckinds, clevels = _bodies(coarse)
     fkinds, flevels = _bodies(fine_dir)
     c_lake, c_river = _lookup(ckinds, "lake"), _lookup(ckinds, "river")
@@ -609,8 +626,8 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
     # Coarse lake boxes over the footprint, footprint-relative, by streaming rows.
     boxes: dict[int, list[int]] = {}
     for y in range(0, ph, 1024):
-        rows = np.asarray(cb[y0 + y : y0 + min(y + 1024, ph), x0 : x0 + pw])
-        lab = np.where(_is(c_lake, rows), rows, 0).astype(np.int64)
+        rows = cb(y0 + y, y0 + min(y + 1024, ph), x0, x0 + pw)
+        lab =np.where(_is(c_lake, rows), rows, 0).astype(np.int64)
         for i, sl in enumerate(ndimage.find_objects(lab), 1):
             if sl is None:
                 continue
@@ -624,8 +641,8 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
             cut += 1
             continue
         box_m = [cex + (x0 + c0) * cs, cny - (y0 + r0) * cs, cex + (x0 + c1 + 1) * cs, cny - (y0 + r1 + 1) * cs]
-        mask = np.asarray(cb[y0 + r0 : y0 + r1 + 1, x0 + c0 : x0 + c1 + 1]) == i
-        fine = np.asarray(fb[r0 * k : (r1 + 1) * k, c0 * k : (c1 + 1) * k])
+        mask = cb(y0 + r0, y0 + r1 + 1, x0 + c0, x0 + c1 + 1) == i
+        fine = fb(r0 * k, (r1 + 1) * k, c0 * k, (c1 + 1) * k)
         inside = np.kron(mask, np.ones((k, k), bool))
         ids, counts = np.unique(fine[inside], return_counts=True)
         lakes = [(int(c), int(j)) for j, c in zip(ids, counts) if _is(f_lake, np.array([j]))[0]]
@@ -652,7 +669,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
     has = np.zeros((ph, pw), bool)
     step = max(1, 512 // k) * k
     for y in range(0, ph * k, step):
-        rows = np.asarray(fb[y : min(y + step, ph * k), : pw * k])
+        rows = fb(y, min(y + step, ph * k), 0, pw * k)
         riv = _is(f_river, rows)
         has[y // k : y // k + rows.shape[0] // k] = riv.reshape(rows.shape[0] // k, k, pw, k).any(axis=(1, 3))
     has = ndimage.maximum_filter(has, size=2 * near + 1)
@@ -661,8 +678,8 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
          near if inner[1] else 0 : pw - near if inner[3] else pw] = True
     hits = total = 0
     for y in range(0, ph, 1024):
-        rows = np.asarray(cb[y0 + y : y0 + min(y + 1024, ph), x0 : x0 + pw])
-        q = np.asarray(cq[y0 + y : y0 + min(y + 1024, ph), x0 : x0 + pw])
+        rows = cb(y0 + y, y0 + min(y + 1024, ph), x0, x0 + pw)
+        q = cq(y0 + y, y0 + min(y + 1024, ph), x0, x0 + pw)
         sel = _is(c_river, rows) & (q >= RIVER_KM2_4M) & keep[y : y + rows.shape[0]]
         total += int(sel.sum())
         hits += int((sel & has[y : y + rows.shape[0]]).sum())

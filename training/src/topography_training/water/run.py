@@ -227,6 +227,44 @@ def _child_peak_mb() -> int:
     return resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // 1024
 
 
+def _rss_anon_mb() -> int:
+    """The driver's anonymous resident memory now (file-backed pages excluded), MB."""
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("RssAnon:"):
+                return int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    return 0
+
+
+class AnonPeak:
+    """Samples RssAnon every 0.2 s while open: the driver's real allocation peak (ru_maxrss also
+    counts mapped file pages)."""
+
+    def __enter__(self):
+        import threading
+
+        self.peak, self._stop = _rss_anon_mb(), threading.Event()
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+        return self
+
+    def _watch(self) -> None:
+        while not self._stop.wait(0.2):
+            self.peak = max(self.peak, _rss_anon_mb())
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        self._thread.join()
+        self.peak = max(self.peak, _rss_anon_mb())
+
+
+def _spots_arg() -> str:
+    """The review spots for `water-finish --spots` (the `dam_drops_at_spots` figure)."""
+    return ";".join(f"{e},{n}" for e, n in review.SPOTS)
+
+
 def _rust(cmd: list[str]) -> int:
     print("$", " ".join(cmd), flush=True)
     return subprocess.run(cmd).returncode
@@ -292,7 +330,7 @@ def _water(progress: Progress, binary: Path, grid: Path, work: Path, out1m: Path
             shutil.rmtree(out1m)
         started = time.time()
         code = _rust([str(binary), "world", "water-finish", *flags, "--ground", str(work / "carved.f32"),
-                      "--out", str(out1m)])
+                      "--out", str(out1m), "--spots", _spots_arg()])
         if code not in (0, 1) or not (out1m / "report.json").exists():
             raise Refused(f"world water-finish failed (exit {code})")
         step = {"code": code, "seconds": round(time.time() - started, 1), "peak_mb": _child_peak_mb()}
@@ -414,31 +452,35 @@ def _review(src: Path, fine: Path, coarse: Path | None, dest: Path) -> dict:
 
     started = time.time()
     entry: dict = {"coarse_guide": None, "review": None}
-    try:
-        if dest.exists():
-            shutil.rmtree(dest)
-        dest.mkdir(parents=True)
-        if coarse is not None and (coarse / "water-body.u32").exists():
-            guide = review.coarse_guide(src, coarse, fine_dir=fine)
-            cascade.save_json(dest / "coarse-guide.json", guide)
-            figures = review.guide_figures(src, coarse, guide, dest / "coarse-guide")
-            entry["coarse_guide"] = {k: guide[k] for k in review.GUIDE_SUMMARY} | {
-                "file": str((dest / "coarse-guide.json").relative_to(src)),
-                "figures": [str(p.relative_to(src)) for p in figures]}
-    except Exception as e:
-        traceback.print_exc()
-        entry["coarse_guide"] = {"error": f"{type(e).__name__}: {e}"}
-    try:
-        entry["review"] = [str(p.relative_to(src)) for p in review.crops(src, dest)]
-    except Exception as e:
-        traceback.print_exc()
-        entry["review"] = {"error": f"{type(e).__name__}: {e}"}
+    with AnonPeak() as anon:
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            dest.mkdir(parents=True)
+            if coarse is not None and (coarse / "water-body.u32").exists():
+                guide = review.coarse_guide(src, coarse, fine_dir=fine)
+                cascade.save_json(dest / "coarse-guide.json", guide)
+                figures = review.guide_figures(src, coarse, guide, dest / "coarse-guide")
+                entry["coarse_guide"] = {k: guide[k] for k in review.GUIDE_SUMMARY} | {
+                    "file": str((dest / "coarse-guide.json").relative_to(src)),
+                    "figures": [str(p.relative_to(src)) for p in figures]}
+        except Exception as e:
+            traceback.print_exc()
+            entry["coarse_guide"] = {"error": f"{type(e).__name__}: {e}"}
+        try:
+            entry["review"] = [str(p.relative_to(src)) for p in review.crops(src, dest)]
+        except Exception as e:
+            traceback.print_exc()
+            entry["review"] = {"error": f"{type(e).__name__}: {e}"}
     entry["review_seconds"] = round(time.time() - started, 1)
-    # The driver's peak so far: the review is its largest step after the Rust commands.
+    # The driver's peaks so far (the review is its largest step after the Rust commands):
+    # anonymous memory during the review, and ru_maxrss (which also counts mapped file pages).
+    entry["review_driver_anon_peak_mb"] = anon.peak
     entry["review_driver_peak_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
     figures = len(entry["review"]) if isinstance(entry["review"], list) else entry["review"]
-    print(f"review: {figures} figures in {dest} ({entry['review_seconds']} s, driver peak "
-          f"{entry['review_driver_peak_mb']} MB); coarse guide {entry['coarse_guide']}", flush=True)
+    print(f"review: {figures} figures in {dest} ({entry['review_seconds']} s, driver anonymous peak "
+          f"{entry['review_driver_anon_peak_mb']} MB, max RSS {entry['review_driver_peak_mb']} MB); "
+          f"coarse guide {entry['coarse_guide']}", flush=True)
     return entry
 
 

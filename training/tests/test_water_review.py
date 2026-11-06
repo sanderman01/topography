@@ -154,5 +154,18 @@ class CropsTest(unittest.TestCase):
             self.assertEqual([p.name for p in paths], ["lake-7-over_5m.png"])
 
 
+class RowsTest(unittest.TestCase):
+    def test_rows_match_array_slicing_at_any_stride(self):
+        a = np.arange(37 * 29, dtype="<u4").reshape(37, 29)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "a.u32"
+            a.tofile(path)
+            for win, k in [((0, 0, 37, 29), 1), ((5, 0, 9, 29), 1), ((3, 4, 20, 11), 1), ((0, 0, 37, 29), 4),
+                           ((2, 3, 30, 25), 3)]:
+                r0, c0, h, w = win
+                np.testing.assert_array_equal(review._rows(path, "<u4", 29, win, k),
+                                              a[r0 : r0 + h : k, c0 : c0 + w : k])
+
+
 if __name__ == "__main__":
     unittest.main()
