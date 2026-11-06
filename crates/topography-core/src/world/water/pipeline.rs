@@ -727,6 +727,13 @@ pub(crate) fn model_on(
     let (h, resolver) = cached(work, &format!("{tag}/g1"), || build(world, s.tile, &graphs))?;
     let exits = Exits::new(&graphs);
     let foreign = foreign_supply(&graphs, &exits)?;
+    // Sizes of the in-memory global structures (gate-1 world extrapolation).
+    eprintln!(
+        "water: {tag} global hierarchy {} nodes, exits {}, foreign {}",
+        h.len(),
+        exits.0.len(),
+        foreign.len()
+    );
     drop(graphs);
     let top = top_spill(&h);
     let frag_at = |i: usize| -> Result<Frag> {
