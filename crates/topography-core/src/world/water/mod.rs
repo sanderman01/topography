@@ -595,15 +595,25 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         }
     }
     let list = bodies["bodies"].as_array().cloned().unwrap_or_default();
-    // Lake and sea levels as the export reads them (f64 → f32), for `lake_level_json`.
-    let json_levels: checks::Levels = list
-        .iter()
-        .filter(|b| b["kind"] == "lake" || b["kind"] == "sea")
-        .filter_map(|b| {
-            let id = u32::try_from(b["id"].as_u64()?).ok()?;
-            Some((id, b["level_m"].as_f64().map_or(f32::NAN, |v| v as f32)))
-        })
-        .collect();
+    // bodies.json as the export reads it: lake and sea levels (f64 → f32) and the water body
+    // ids (the sea is id 1 even when unlisted).
+    let id_of = |b: &Value| u32::try_from(b["id"].as_u64()?).ok();
+    let listed = checks::Listed {
+        levels: list
+            .iter()
+            .filter(|b| b["kind"] == "lake" || b["kind"] == "sea")
+            .filter_map(|b| {
+                let lv = b["level_m"].as_f64().map_or(f32::NAN, |v| v as f32);
+                Some((id_of(b)?, lv))
+            })
+            .collect(),
+        ids: list
+            .iter()
+            .filter(|b| ["sea", "lake", "river"].iter().any(|k| b["kind"] == *k))
+            .filter_map(id_of)
+            .chain([1])
+            .collect(),
+    };
     let mut lakes = checks::LakeInfo::new();
     let mut lake_short = 0u64;
     for b in list.iter().filter(|b| b["kind"] == "lake") {
@@ -692,7 +702,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         })
         .collect();
     let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
-        checks::check_tile(&s, &layers, core, &lakes, &json_levels, &exits[i], &spots)
+        checks::check_tile(&s, &layers, core, &lakes, &listed, &exits[i], &spots)
     })?;
     let of = |kind: &'static str| list.iter().filter(move |e| e["kind"] == kind);
     let sum = |kind: &'static str, field: &str| {

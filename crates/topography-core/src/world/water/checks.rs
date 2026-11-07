@@ -88,6 +88,13 @@ pub(crate) type LakeInfo = BTreeMap<u32, (f32, bool, [u64; 2], u64)>;
 /// Lake and sea levels by id as the export reads `bodies.json` (`lake_level_json`).
 pub(crate) type Levels = BTreeMap<u32, f32>;
 
+/// What the export reads from `bodies.json`: lake and sea levels and every water body id (the
+/// export refuses a body id it does not list).
+pub(crate) struct Listed {
+    pub levels: Levels,
+    pub ids: BTreeSet<u32>,
+}
+
 /// A full node's exit (a lake, an R26 pool or a pond), walked for the dam figures; a listed
 /// lake's also for the hard exit checks.
 #[derive(Clone, Copy, Debug)]
@@ -298,7 +305,7 @@ pub(crate) fn check_tile(
     l: &CheckLayers,
     core: Rect,
     lakes: &LakeInfo,
-    levels: &Levels,
+    listed: &Listed,
     exits: &[Exit],
     spots: &[Spot],
 ) -> Result<Tile> {
@@ -685,13 +692,16 @@ pub(crate) fn check_tile(
         }
         // The export's contract (export/water.rs `level0`): a lake or sea cell stands at its
         // bodies.json level (exactly, so any height encoding agrees), and every labelled cell
-        // has a surface strictly above the ground.
+        // is a body bodies.json lists with a surface strictly above the ground.
         if body[j] == 0 {
             if surf[j].is_finite() {
                 t.fail("surface_without_body", x, y);
             }
         } else {
-            let sj = match levels.get(&body[j]) {
+            if !listed.ids.contains(&body[j]) {
+                t.fail("wet_unknown_body", x, y);
+            }
+            let sj = match listed.levels.get(&body[j]) {
                 Some(&lv) if surf[j].is_finite() => {
                     if surf[j] != lv {
                         t.fail("lake_level_json", x, y);
@@ -1165,6 +1175,7 @@ pub(crate) fn report(
         "wet_without_surface",
         "surface_without_body",
         "lake_level_json",
+        "wet_unknown_body",
     ]
     .into_iter()
     .map(|k| (k, 0))
@@ -1446,6 +1457,8 @@ mod tests {
         lakes: LakeInfo,
         /// bodies.json lake and sea levels (`lake_level_json`).
         levels: Levels,
+        /// Body ids bodies.json leaves out (`wet_unknown_body`).
+        unlisted: BTreeSet<u32>,
         exits: Vec<Exit>,
         spots: Vec<Spot>,
     }
@@ -1471,12 +1484,25 @@ mod tests {
                 l2: vec![f32::NAN; n],
                 lakes: LakeInfo::new(),
                 levels: Levels::new(),
+                unlisted: BTreeSet::new(),
                 exits: Vec::new(),
                 spots: Vec::new(),
             }
         }
         fn k(&self, x: u64, y: u64) -> usize {
             (y * self.world.w + x) as usize
+        }
+        /// bodies.json as the export reads it: every labelled id but `unlisted`.
+        fn listed(&self) -> Listed {
+            Listed {
+                levels: self.levels.clone(),
+                ids: self
+                    .body
+                    .iter()
+                    .copied()
+                    .filter(|b| *b != 0 && !self.unlisted.contains(b))
+                    .collect(),
+            }
         }
         /// The D8 byte from (x, y) to its neighbour (nx, ny).
         fn byte(a: (u64, u64), b: (u64, u64)) -> u8 {
@@ -1514,7 +1540,7 @@ mod tests {
                 &self.layers(),
                 Rect::whole(self.world),
                 &self.lakes,
-                &self.levels,
+                &self.listed(),
                 &self.exits,
                 &self.spots,
             )
@@ -1532,7 +1558,7 @@ mod tests {
                         &l,
                         core,
                         &self.lakes,
-                        &self.levels,
+                        &self.listed(),
                         &self.exits,
                         &self.spots,
                     )
@@ -1977,7 +2003,7 @@ mod tests {
                 .tiles()
                 .into_iter()
                 .map(|core| {
-                    check_tile(&s, &l, core, &c.lakes, &c.levels, &c.exits, &c.spots)
+                    check_tile(&s, &l, core, &c.lakes, &c.listed(), &c.exits, &c.spots)
                         .expect("check")
                 })
                 .collect();
@@ -2344,6 +2370,7 @@ mod tests {
             "wet_without_surface",
             "surface_without_body",
             "lake_level_json",
+            "wet_unknown_body",
         ] {
             assert_eq!(fails(&t, name), 0, "{name}");
         }
@@ -2364,6 +2391,14 @@ mod tests {
         assert_eq!(fails(&t, "lake_level_json"), 1);
         assert_eq!(fails(&t, "wet_not_above_ground"), 1);
         assert_eq!(t.examples["wet_not_above_ground"], vec![[1, 1]]);
+        // A labelled cell whose body bodies.json leaves out (the export refuses it).
+        assert_eq!(fails(&t, "wet_unknown_body"), 0);
+        c.unlisted.insert(5);
+        assert_eq!(
+            fails(&c.tile(), "wet_unknown_body"),
+            9,
+            "the river's 9 cells"
+        );
     }
 
     /// An unlabelled m3 thalweg cell on a short detour 1.6 m above its river (rejoining it 4
@@ -2655,6 +2690,7 @@ mod tests {
             "wet_without_surface",
             "surface_without_body",
             "lake_level_json",
+            "wet_unknown_body",
         ] {
             assert_eq!(report["checks"][name], 0, "{name}");
         }
