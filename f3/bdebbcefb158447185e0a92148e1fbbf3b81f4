@@ -1,0 +1,37 @@
+crates/topography-core/src/world/water/mod.rs
+  s_774c09797904fe::t_2ca64d46575049 33
+  s_774c09797904fe::t_47fc00a758b93e 392
+  s_774c09797904fe::t_24d45952c73619 976
+  s_774c09797904fe::t_52a0c10f750b51 556,560
+  s_774c09797904fe::t_3116bbd2849c50 557,559
+  s_774c09797904fe::t_3e85d1f5fd09ee 647-652
+  s_774c09797904fe::t_f52718a7205821 948-956
+  s_774c09797904fe::t_5abca594b85790 456-461,464-466,469-471
+  s_774c09797904fe::t_2e21f21cedc623 986
+  s_774c09797904fe::t_766d2939ee2faf 548-555
+  s_774c09797904fe::t_d5a9114547ce1c 467-468
+  s_774c09797904fe::t_9efb57a37a5e43 387
+  s_774c09797904fe::t_c49681fca55e13 381-382
+  s_774c09797904fe::t_fe6e16ac489f34 225-244,246-331,333-347
+  s_774c09797904fe::t_4ecef2202e98c9 408-415
+  s_774c09797904fe::t_4168ad536936fa 462-463
+  s_774c09797904fe::t_83e53af9304d4e 566-582
+  s_774c09797904fe::t_14ccfbb471d617 873-947,957-975,977-985,987-988
+  s_774c09797904fe::t_7b87a42c451b30 245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3bdebbcefb158447185e0a92148e1fbbf3b81f4",
+  "prompts": {},
+  "sessions": {
+    "s_774c09797904fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db136362-a5cc-4efa-8192-13bacc041efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
