@@ -3,10 +3,10 @@
 //! straight run through a core cell, up to STRAIGHT_STEPS cells, must fit).
 
 use super::bodies::main_up;
-use super::geom::{OFFSETS, Rect, UnionFind, step_len};
-use super::layers::Layer;
+use super::geom::{OFFSETS, Rect, UnionFind, World, step_len};
+use super::layers::{Classes, Layer};
 use super::pipeline::Setup;
-use super::{BELOW_SEA_OK, BODY_BUDGET, MAIN_RIVER_KM2};
+use super::{BELOW_SEA_OK, BODY_BUDGET, INTERIOR, KIND_MASK, MAIN_RIVER_KM2, STEEP};
 use crate::acquisition::Result;
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
@@ -63,6 +63,19 @@ const PLANE_DEG: f64 = 5.0;
 pub(crate) const CHANGED_M: f32 = 0.01;
 /// Bank water standing this far above the dry cell it drains into (a figure, I5).
 const BANK_STEP_M: f32 = 0.5;
+/// Change budget for real interiors at coarse levels (spec "Change budget").
+const INTERIOR_P99_M: f64 = 1.0;
+const INTERIOR_MAX_M: f32 = 3.0;
+/// A cut its 3 × 3 opening removes by more than this is narrower than 3 cells (B9).
+const NARROW_M: f32 = 0.5;
+const NARROW_SHARE: f32 = 0.5;
+/// Dam drops (B14): judged against the mean fall per cell over this far ahead, by this factor.
+const KNICK_AHEAD_M: f64 = 100.0;
+const KNICK_FACTOR: f32 = 3.0;
+/// Blend cells this far from a region border are near-pure source terrain (a figure).
+pub(crate) const BLEND_FAR_M: f64 = 2000.0;
+/// Seam lakes listed in the report.
+const SEAM_LAKES_LISTED: usize = 50;
 
 pub(crate) struct CheckLayers {
     pub raw: Layer<f32>,
@@ -79,11 +92,13 @@ pub(crate) struct CheckLayers {
     pub node_written: Layer<u32>,
     /// The m2 level layer, for `m2_pond_cells_lost`.
     pub level_written: Layer<f32>,
-    /// Breach cuts only: read by the interior change budget (a later Plan B task).
-    #[allow(dead_code)]
+    /// Breach cuts only: the interior change budget leaves breaches out.
     pub breached: Layer<f32>,
     /// The ground the channels cut into (eroded at coarse levels; B23).
     pub pre_channel: Layer<f32>,
+    /// 1 where a cell lies at least BLEND_FAR_M from a collage region border (`region.u8`);
+    /// None without regions.
+    pub blend_far: Option<Classes>,
 }
 
 /// Lakes by id: level, full, outlet [inside, outside], cells needed (closed).
@@ -180,6 +195,8 @@ pub(crate) struct Tile {
     pub rims_any: Vec<Rim>,
     /// Exit-walk drops near the review spots (`dam_drops_at_spots`).
     pub spot_drops: Vec<SpotDrop>,
+    /// Knickpoint drops (the `dam_drops` rule) near the review spots: (spot index, at a lake).
+    pub spot_knicks: Vec<(usize, bool)>,
     /// Dry m3 thalweg cells in no node (`unlabelled_main_river_cells`): those with Q ≥ 1 km²,
     /// runs of UNLABELLED_RUN_CELLS or more at the river threshold and their cells, and the
     /// largest-Q cells (Q, cell).
@@ -201,6 +218,27 @@ pub(crate) struct Tile {
     /// m2 node cells in no m3 node, and the largest m2 level − m3 level (ground where dry)
     /// over m2 node cells: (m, m2 node, cell [x, y]).
     pub pond_lost: (u64, Option<PondDrop>),
+    /// Coarse change budget over real-interior cells outside breaches: count, |Δ| histogram,
+    /// largest |Δ|.
+    pub interior_cells: u64,
+    pub hist_interior: Vec<u64>,
+    pub max_interior: f32,
+    /// The same over blend cells far from region borders, outside breaches (figures).
+    pub blend_cells: u64,
+    pub hist_blend: Vec<u64>,
+    pub max_blend: f32,
+    /// Largest cut − its 3 × 3 opening (`handoff_excess_max_m`).
+    pub handoff_excess: f32,
+    /// `dam_drops` cells carrying the steep-source bit (a tag only).
+    pub dam_steep: u64,
+    /// The `dam_drops` rule at pond exits (a figure): (node key, cell, drop m).
+    pub pond_knicks: Vec<(u64, [u64; 2], f32)>,
+    /// Exit-walk drops over DAM_STEP_M not judged, [lake exits, pond exits]: onto standing
+    /// water, and with under 2 steps ahead before the walk ends (expert ruling R2).
+    pub dam_into_water: [u64; 2],
+    pub dam_unjudged: [u64; 2],
+    /// Lakes whose outlet saddle cell is blend, painted or fill: (lake, cell, kind).
+    pub seam_lakes: Vec<(u32, [u64; 2], u8)>,
 }
 
 type PondDrop = (f32, u32, [u64; 2]);
@@ -293,6 +331,48 @@ pub(crate) fn p99_m(hist: &[u64]) -> f64 {
     (BINS - 1) as f64 / 100.0
 }
 
+/// Region cells (`cell_m` square) at least BLEND_FAR_M from a region border (a cell with an
+/// 8-neighbour of another region, sea outside every region included), as 1, else 0. Chamfer
+/// distance (1, √2): within 8 % of Euclidean, enough for a figure. Borders beyond the grid
+/// are not seen.
+pub(crate) fn far_from_borders(regions: &[u8], world: World, cell_m: f64) -> Vec<u8> {
+    let (w, h) = (world.w as usize, world.h as usize);
+    let border = |x: usize, y: usize| {
+        let r = regions[y * w + x];
+        (y.saturating_sub(1)..(y + 2).min(h))
+            .any(|ny| (x.saturating_sub(1)..(x + 2).min(w)).any(|nx| regions[ny * w + nx] != r))
+    };
+    let mut d: Vec<f64> = (0..w * h)
+        .map(|i| {
+            if border(i % w, i / w) {
+                0.0
+            } else {
+                f64::INFINITY
+            }
+        })
+        .collect();
+    let s2 = std::f64::consts::SQRT_2;
+    let mut relax = |i: usize, x: usize, y: usize, steps: &[(i64, i64, f64)]| {
+        for &(dx, dy, c) in steps {
+            let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+            if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
+                d[i] = d[i].min(d[ny as usize * w + nx as usize] + c);
+            }
+        }
+    };
+    let ahead = [(-1, 0, 1.0), (0, -1, 1.0), (-1, -1, s2), (1, -1, s2)];
+    let back = [(1, 0, 1.0), (0, 1, 1.0), (1, 1, s2), (-1, 1, s2)];
+    for i in 0..w * h {
+        relax(i, i % w, i / w, &ahead);
+    }
+    for i in (0..w * h).rev() {
+        relax(i, i % w, i / w, &back);
+    }
+    d.iter()
+        .map(|&v| u8::from(v * cell_m >= BLEND_FAR_M))
+        .collect()
+}
+
 /// Angle difference wrapped into (−π, π].
 fn wrap(a: f64) -> f64 {
     let t = std::f64::consts::TAU;
@@ -325,10 +405,35 @@ pub(crate) fn check_tile(
         l.discharge.read(win)?,
     );
     let fw = l.flow_written.read(win)?;
-    let (n2, bz) = (l.node_written.read(win)?, l.pre_channel.read(win)?);
+    let (n2, pc) = (l.node_written.read(win)?, l.pre_channel.read(win)?);
     let l2 = l.level_written.read(win)?;
     // Provenance over the window, indexed like `raw` and `z` (preflight F4).
     let flags = s.flags(win)?;
+    // Breach-only ground; levels with erosion get the coarse checks (B4, B9, B33).
+    let bo = l.breached.read(win)?;
+    let coarse = s.params.erosion.is_some();
+    let far = match (&l.blend_far, coarse) {
+        (Some(f), true) => f.read(win)?,
+        _ => vec![0; win.cells()],
+    };
+    // A window cell's cut below raw (0 outside the window), and whether a cell is lower than
+    // all 8 neighbours of `v` (window coordinates; callers stay one cell inside).
+    let cut_at = |x: i64, y: i64| -> f32 {
+        if x < 0 || y < 0 || x >= win.w as i64 || y >= win.h as i64 {
+            return 0.0;
+        }
+        let j = y as usize * win.w + x as usize;
+        (raw[j] - z[j]).max(0.0)
+    };
+    let strict_min = |v: &[f32], lx: usize, ly: usize| {
+        let c = v[ly * win.w + lx];
+        (-1i64..=1).all(|dy| {
+            (-1i64..=1).all(|dx| {
+                (dx, dy) == (0, 0)
+                    || v[(ly as i64 + dy) as usize * win.w + (lx as i64 + dx) as usize] > c
+            })
+        })
+    };
     let classes = match &s.classes {
         Some(c) => c.read(core)?,
         None => vec![0; core.cells()],
@@ -619,6 +724,8 @@ pub(crate) fn check_tile(
     let mut t = Tile {
         hist: vec![0; BINS],
         hist_changed: vec![0; BINS],
+        hist_interior: vec![0; BINS],
+        hist_blend: vec![0; BINS],
         ..Default::default()
     };
     for members in clusters.values() {
@@ -694,6 +801,24 @@ pub(crate) fn check_tile(
         t.max_change = t.max_change.max(delta);
         if delta > s.params.change_max_m() {
             t.fail("change_max", x, y);
+        }
+        // Coarse change budget (spec): real interiors outside breaches; far blend as figures.
+        let unbreached = raw[j] - bo[j] <= CHANGED_M;
+        if coarse && unbreached {
+            let kind = flags[j] & KIND_MASK;
+            if kind == INTERIOR {
+                t.interior_cells += 1;
+                t.hist_interior[bin] += 1;
+                t.max_interior = t.max_interior.max(delta);
+                // CHANGED_M of slack: the floor `bz − 3` rounds in f32 (preflight F22).
+                if delta > INTERIOR_MAX_M + CHANGED_M {
+                    t.fail("interior_max", x, y);
+                }
+            } else if kind == 2 && far[j] != 0 {
+                t.blend_cells += 1;
+                t.hist_blend[bin] += 1;
+                t.max_blend = t.max_blend.max(delta);
+            }
         }
         // The export's contract (export/water.rs `level0`): a lake or sea cell stands at its
         // bodies.json level (exactly, so any height encoding agrees), and every labelled cell
@@ -789,7 +914,7 @@ pub(crate) fn check_tile(
                 .neighbour(x, y, d2 as usize - 1)
                 .and_then(|(rx, ry)| at(rx, ry))
             && n2[r] == 0
-            && bz[r] <= bz[j]
+            && pc[r] <= pc[j]
             && z[r] > z[j] + RISE_M
         {
             t.fail("bed_rises", x, y);
@@ -862,6 +987,37 @@ pub(crate) fn check_tile(
             };
             t.planar[0] += u64::from(planar(&block(&raw), s.spacing_m));
             t.planar[1] += u64::from(planar(&block(&z), s.spacing_m));
+        }
+        // Hand-off narrowness (B9, review C2): the cut's grey opening with a 3 × 3 square (max
+        // over the 3 × 3 of each one's 3 × 3 min). A cut it removes by over max(NARROW_M,
+        // NARROW_SHARE × cut) is under 3 cells wide. A cut within 1 cm cannot fail.
+        if coarse && inner && raw[j] - z[j] > CHANGED_M {
+            let (lx, ly) = ((x - win.x0) as i64, (y - win.y0) as i64);
+            let open = (-1i64..=1)
+                .flat_map(|dy| (-1i64..=1).map(move |dx| (dx, dy)))
+                .map(|(dx, dy)| {
+                    (-1i64..=1)
+                        .flat_map(|ey| (-1i64..=1).map(move |ex| (ex, ey)))
+                        .map(|(ex, ey)| cut_at(lx + dx + ex, ly + dy + ey))
+                        .fold(f32::INFINITY, f32::min)
+                })
+                .fold(f32::NEG_INFINITY, f32::max);
+            let cut = cut_at(lx, ly);
+            t.handoff_excess = t.handoff_excess.max(cut - open);
+            // Expert ruling R3: only a trough in the final ground (both neighbours on one of
+            // the four axes over NARROW_M higher) is a slot; a narrowly lowered crest is not.
+            let zc = |dx: i64, dy: i64| z[(ly + dy) as usize * win.w + (lx + dx) as usize];
+            let trough = [(1, 0), (0, 1), (1, 1), (1, -1)]
+                .iter()
+                .any(|&(dx, dy)| zc(dx, dy).min(zc(-dx, -dy)) > zc(0, 0) + NARROW_M);
+            if trough && cut - open > NARROW_M.max(NARROW_SHARE * cut) {
+                t.fail("handoff_narrow", x, y);
+            }
+            // B33: a pit of the ground the channels cut into that the breached ground lacks.
+            let (lx, ly) = (lx as usize, ly as usize);
+            if strict_min(&pc, lx, ly) && !strict_min(&bo, lx, ly) {
+                t.fail("erosion_new_pits", x, y);
+            }
         }
         // Rivers: straightness, one thalweg, rivers beside rivers.
         if thal(j) && q[j] >= thr {
@@ -1054,6 +1210,92 @@ pub(crate) fn check_tile(
                 t.fail("lake_exit_surface", bx, by);
             }
         }
+        // Seam lakes (B25): the outlet's saddle cell (the higher of the spill edge's two) is
+        // blend, painted or fill.
+        if let Some(lake) = e.lake {
+            let a = at(ix, iy).unwrap_or(b);
+            let (sx, sy, sc) = if z[a] >= z[b] {
+                (ix, iy, a)
+            } else {
+                (bx, by, b)
+            };
+            let kind = flags[sc] & KIND_MASK;
+            if (2..=4).contains(&kind) {
+                t.seam_lakes.push((lake, [sx, sy], kind));
+            }
+        }
+        // Dam drops (B14, knickpoint): on a lake's exit walk, a drop of D over DAM_STEP_M
+        // between adjacent cells within FALL_M[2] that is over KNICK_FACTOR × the mean fall per
+        // and over KNICK_FACTOR × the mean fall per step from the level to the step's top
+        // (expert ruling R2, revised). The walk ends at standing water (its surface the last
+        // sample), a pit or the window edge; a drop with under 2 steps ahead of that end is not
+        // judged (`dam_drops_unjudged`; onto water also `dam_drops_into_water`). At levels with
+        // erosion a knickpoint fails only when it exceeds the raw step by DAM_STEP_M (a raw
+        // cliff); at 1 m raw is ignored (the l4v2 raw carries v2 dams). Pond exits are judged
+        // alike as a figure (`dam_drops_ponds`).
+        {
+            // (x, y, D, metres from the exit cell, raw, standing water) along the walk.
+            let mut walk: Vec<(u64, u64, f32, f64, f32, bool)> = Vec::new();
+            let (mut cx, mut cy, mut m) = (bx, by, 0.0f64);
+            let mut ended = true;
+            loop {
+                if m > FALL_M[2] + KNICK_AHEAD_M {
+                    ended = false;
+                    break;
+                }
+                let Some(c) = at(cx, cy) else { break };
+                let wet = node[c] >= 1 || surf[c].is_finite();
+                walk.push((cx, cy, dsurf(c), m, raw[c], wet));
+                let Some(n) = receiver(cx, cy, c) else { break };
+                m += if n.0 != cx && n.1 != cy {
+                    std::f64::consts::SQRT_2
+                } else {
+                    1.0
+                } * s.spacing_m;
+                (cx, cy) = n;
+            }
+            let (mut prev, mut prev_raw) = (lv, at(ix, iy).map_or(raw[b], |a| raw[a]));
+            for (i, &(cx, cy, dv, m, rv, wet)) in walk.iter().enumerate() {
+                if m > FALL_M[2] {
+                    break;
+                }
+                let (drop, top, raw_step) = (prev - dv, prev, prev_raw - rv);
+                (prev, prev_raw) = (dv, rv);
+                if drop <= DAM_STEP_M {
+                    continue;
+                }
+                let tally = usize::from(e.lake.is_none());
+                let j = i + walk[i..]
+                    .iter()
+                    .take_while(|q| q.3 <= m + KNICK_AHEAD_M)
+                    .count()
+                    - 1;
+                if ended && walk.last().is_some_and(|q| q.3 < m + KNICK_AHEAD_M) && j - i < 2 {
+                    t.dam_unjudged[tally] += 1;
+                    t.dam_into_water[tally] += u64::from(wet);
+                    continue;
+                }
+                let after = (dv - walk[j].2) / (j - i).max(1) as f32;
+                let before = if i == 0 { 0.0 } else { (lv - top) / i as f32 };
+                let knick = drop > KNICK_FACTOR * after && drop > KNICK_FACTOR * before;
+                if knick && (!coarse || drop - raw_step > DAM_STEP_M) {
+                    for (k, spot) in spots.iter().enumerate() {
+                        let Some([sx, sy]) = spot.cell else { continue };
+                        let d = (sx.abs_diff(cx) as f64).hypot(sy.abs_diff(cy) as f64);
+                        if d * s.spacing_m <= SPOT_M {
+                            t.spot_knicks.push((k, e.lake.is_some()));
+                        }
+                    }
+                    if e.lake.is_some() {
+                        t.fail("dam_drops", cx, cy);
+                        let c = at(cx, cy).expect("on the walk");
+                        t.dam_steep += u64::from(flags[c] & STEEP != 0);
+                    } else {
+                        t.pond_knicks.push((e.key, [cx, cy], drop));
+                    }
+                }
+            }
+        }
         let (mut prev, mut prev_raw) = (lv, at(ix, iy).map_or(raw[b], |a| raw[a]));
         let (mut cx, mut cy, mut walked) = (bx, by, 0.0f64);
         let mut fall = [f32::NAN; 3];
@@ -1145,6 +1387,9 @@ pub(crate) struct CheckExtra {
     pub cell_km2: f64,
     /// The review spots of `dam_drops_at_spots`.
     pub spots: Vec<Spot>,
+    /// A level with erosion: the coarse budget replaces `change_p99`, and `dam_steps` is a
+    /// figure (B4, ruling R2).
+    pub coarse: bool,
 }
 
 /// The largest `n` falls by reach `i` (0: 5 m, 1: 10 m, 2: 50 m), as JSON.
@@ -1178,7 +1423,11 @@ pub(crate) fn report(
         "lake_leaks",
         "lake_exit_surface",
         "dam_steps",
+        "dam_drops",
         "dam_rims",
+        "interior_max",
+        "handoff_narrow",
+        "erosion_new_pits",
         "thalweg_beside",
         "walls",
         "change_max",
@@ -1208,8 +1457,37 @@ pub(crate) fn report(
     let mut pond_lost = (0u64, None);
     let mut spot_drops: Vec<SpotDrop> = Vec::new();
     let mut unlabelled = (0u64, 0u64, 0u64, Vec::new());
+    let (mut hist_interior, mut hist_blend) = (vec![0u64; BINS], vec![0u64; BINS]);
+    let (mut interior_cells, mut blend_cells, mut max_interior, mut max_blend) =
+        (0u64, 0u64, 0.0f32, 0.0f32);
+    let (mut handoff_excess, mut dam_steep) = (0.0f32, 0u64);
+    let mut seam_lakes: Vec<(u32, [u64; 2], u8)> = Vec::new();
+    let mut pond_knicks: Vec<(u64, [u64; 2], f32)> = Vec::new();
+    let mut spot_knicks: Vec<(usize, bool)> = Vec::new();
+    let (mut into_water, mut unjudged) = ([0u64; 2], [0u64; 2]);
     for t in tiles {
+        for (h, v) in hist_interior.iter_mut().zip(&t.hist_interior) {
+            *h += v;
+        }
+        for (h, v) in hist_blend.iter_mut().zip(&t.hist_blend) {
+            *h += v;
+        }
+        (interior_cells, blend_cells) = (
+            interior_cells + t.interior_cells,
+            blend_cells + t.blend_cells,
+        );
+        max_interior = max_interior.max(t.max_interior);
+        max_blend = max_blend.max(t.max_blend);
+        handoff_excess = handoff_excess.max(t.handoff_excess);
+        dam_steep += t.dam_steep;
+        pond_knicks.extend(t.pond_knicks.iter().copied());
+        for k in 0..2 {
+            into_water[k] += t.dam_into_water[k];
+            unjudged[k] += t.dam_unjudged[k];
+        }
+        seam_lakes.extend(t.seam_lakes.iter().copied());
         spot_drops.extend(t.spot_drops.iter().copied());
+        spot_knicks.extend(t.spot_knicks.iter().copied());
         unlabelled.0 += t.unlabelled.0;
         unlabelled.1 += t.unlabelled.1;
         unlabelled.2 += t.unlabelled.2;
@@ -1274,6 +1552,11 @@ pub(crate) fn report(
     );
     fails.insert("facets", u64::from(planar[1] > planar[0]));
     fails.insert("change_p99", u64::from(p99 > 1.0));
+    let ip99 = p99_m(&hist_interior);
+    fails.insert(
+        "interior_p99",
+        u64::from(interior_cells > 0 && ip99 > INTERIOR_P99_M),
+    );
     fails.insert("export_bodies", u64::from(extra.bodies > BODY_BUDGET));
     // A full lake stands at its lowest saddle (C1).
     let off_sill: Vec<u32> = extra
@@ -1345,7 +1628,9 @@ pub(crate) fn report(
         "dam_drops_at_spots".into(),
         json!(extra.spots.iter().enumerate().map(|(i, sp)| {
             let mine: Vec<&SpotDrop> = spot_drops.iter().filter(|d| d.0 == i).collect();
+            let knicks = |lake: bool| spot_knicks.iter().filter(|k| **k == (i, lake)).count();
             json!({"spot_en": sp.en, "cell": sp.cell, "within_m": SPOT_M, "count": mine.len(),
+                   "knickpoint_lakes": knicks(true), "knickpoint_ponds": knicks(false),
                    "largest": mine.iter().take(10).map(|d| json!({
                        "node": d.1, "lake": d.2, "cell": d.3, "drop_m": d.4, "raw_drop_m": d.5,
                    })).collect::<Vec<_>>()})
@@ -1425,6 +1710,63 @@ pub(crate) fn report(
             json!(fails.remove(name).unwrap_or(0)),
         );
     }
+    figures.insert("interior_change_p99_m".into(), json!(ip99));
+    figures.insert("interior_change_max_m".into(), json!(max_interior));
+    figures.insert("interior_cells".into(), json!(interior_cells));
+    // Blend cells at least BLEND_FAR_M from a region border (Task 3 review): near-pure source
+    // terrain under full K.
+    figures.insert(
+        "blend_change_p99_m".into(),
+        json!((blend_cells > 0).then(|| p99_m(&hist_blend))),
+    );
+    figures.insert(
+        "blend_change_max_m".into(),
+        json!((blend_cells > 0).then_some(max_blend)),
+    );
+    figures.insert("blend_far_cells".into(), json!(blend_cells));
+    figures.insert("handoff_excess_max_m".into(), json!(handoff_excess));
+    figures.insert("dam_drops_steep_source".into(), json!(dam_steep));
+    figures.insert(
+        "dam_drops_into_water".into(),
+        json!({"lakes": into_water[0], "ponds": into_water[1]}),
+    );
+    figures.insert(
+        "dam_drops_unjudged".into(),
+        json!({"lakes": unjudged[0], "ponds": unjudged[1]}),
+    );
+    pond_knicks.sort_by(|a, b| {
+        b.2.total_cmp(&a.2)
+            .then(a.1[1].cmp(&b.1[1]))
+            .then(a.1[0].cmp(&b.1[0]))
+    });
+    figures.insert(
+        "dam_drops_ponds".into(),
+        json!({"count": pond_knicks.len(), "largest": pond_knicks.iter().take(50)
+            .map(|d| json!({"node": d.0, "cell": d.1, "drop_m": d.2}))
+            .collect::<Vec<_>>()}),
+    );
+    seam_lakes.sort_unstable();
+    seam_lakes.dedup_by_key(|s| s.0);
+    figures.insert(
+        "seam_lakes".into(),
+        json!({
+            "count": seam_lakes.len(),
+            "lakes": seam_lakes.iter().take(SEAM_LAKES_LISTED)
+                .map(|(l, c, k)| json!({"lake": l, "cell": c, "kind": k}))
+                .collect::<Vec<_>>(),
+        }),
+    );
+    if extra.coarse {
+        // B4 (review C3): the coarse budget is the interior one; the all-cell p99 is a figure.
+        fails.remove("change_p99");
+        figures.insert("change_p99_all_cells_m".into(), json!(p99));
+        // Ruling R2: 1.5 m per cell is a gentle grade at 32 m and erosion steepens below a
+        // retreating outlet; `dam_drops` is the coarse dam check.
+        figures.insert(
+            "dam_steps_over_raw".into(),
+            json!(fails.remove("dam_steps").unwrap_or(0)),
+        );
+    }
     let failures: Vec<&str> = fails
         .iter()
         .filter(|(_, v)| **v > 0)
@@ -1475,6 +1817,12 @@ mod tests {
         spots: Vec<Spot>,
         /// Provenance per cell (`Setup.provenance`; 0: no flags).
         flags: Vec<u8>,
+        /// The ground the channels cut into (`CheckLayers.pre_channel`); `bz` is breach-only.
+        pre_channel: Vec<f32>,
+        /// Cell size; over 1 m the level's params (erosion on at 32 m).
+        spacing: f64,
+        /// `CheckLayers.blend_far` per cell, when set.
+        far: Option<Vec<u8>>,
     }
 
     impl Case {
@@ -1486,6 +1834,9 @@ mod tests {
                 world,
                 raw: z.clone(),
                 bz: z.clone(),
+                pre_channel: z.clone(),
+                spacing: 1.0,
+                far: None,
                 z,
                 surf: vec![f32::NAN; n],
                 body: vec![0; n],
@@ -1520,19 +1871,103 @@ mod tests {
             c.levels.insert(2, level);
             c
         }
+        /// An `n` × `n` world at height `z` everywhere (raw, ground, breached, pre-channel).
+        fn flat(n: u64, z: f32) -> Self {
+            Case::new(n, n, |_, _| z)
+        }
+        /// 32 m cells with the table's 32 m params (erosion on).
+        fn coarse(&mut self) {
+            self.spacing = 32.0;
+        }
+        /// A labelled lake (body 2) at `level`, 3 × 3 cells at x 1..=3, y 3..=5, full, its
+        /// exit walk east along row 4 from (4, 4) over `shown` (ground, raw alike; the lake's
+        /// inside exit cell has raw at the level so `dam_steps` stays quiet), then a dead end.
+        fn lake_with_exit_walk(level: f32, shown: &[f32]) -> Self {
+            let n = shown.len() as u64;
+            let mut c = Case::new(n + 8, 9, |_, _| level + 5.0);
+            for y in 3..6 {
+                for x in 1..4 {
+                    let k = c.k(x, y);
+                    (c.z[k], c.raw[k], c.bz[k], c.pre_channel[k]) =
+                        (level - 1.0, level - 1.0, level - 1.0, level - 1.0);
+                    (c.surf[k], c.body[k], c.node[k], c.flow[k]) = (level, 2, 2, 0);
+                }
+            }
+            let inside = c.k(3, 4);
+            c.raw[inside] = level;
+            let path: Vec<(u64, u64)> = (4..4 + n).map(|x| (x, 4)).collect();
+            for (&(x, y), &v) in path.iter().zip(shown) {
+                let k = c.k(x, y);
+                (c.z[k], c.raw[k], c.bz[k], c.pre_channel[k]) = (v, v, v, v);
+            }
+            c.route(&path, 0, 0.0);
+            let outlet = [inside as u64, c.k(4, 4) as u64];
+            c.lakes.insert(2, (level, true, outlet, 0));
+            c.levels.insert(2, level);
+            c.exits.push(Exit {
+                key: 1,
+                level,
+                outlet,
+                lake: Some(2),
+            });
+            c
+        }
+        /// A second labelled lake (body 3) at `level` over row 4's cells x0..x1 of the exit
+        /// walk (no receivers, ground 0.5 m under); when `full`, its exit is (x1 − 1, 4) →
+        /// (x1, 4).
+        fn lake_on_walk(&mut self, x0: u64, x1: u64, level: f32, full: bool) {
+            for x in x0..x1 {
+                let k = self.k(x, 4);
+                let g = level - 0.5;
+                (self.z[k], self.raw[k], self.bz[k], self.pre_channel[k]) = (g, g, g, g);
+                (self.surf[k], self.body[k], self.node[k], self.flow[k]) = (level, 3, 3, 0);
+            }
+            let outlet = [self.k(x1 - 1, 4) as u64, self.k(x1, 4) as u64];
+            self.lakes.insert(3, (level, full, outlet, 0));
+            self.levels.insert(3, level);
+            if full {
+                self.exits.push(Exit {
+                    key: 2,
+                    level,
+                    outlet,
+                    lake: Some(3),
+                });
+            }
+        }
+        /// The lake becomes a pond: its node and level stay, its body id becomes 0.
+        fn unlabel_lake(&mut self) {
+            for k in 0..self.cells() {
+                if self.body[k] == 2 {
+                    self.level[k] = self.surf[k];
+                    (self.body[k], self.surf[k]) = (0, f32::NAN);
+                }
+            }
+            self.lakes.remove(&2);
+            self.levels.remove(&2);
+            for e in &mut self.exits {
+                e.lake = None;
+            }
+        }
+        fn at(&self, x: usize, y: usize) -> usize {
+            self.k(x as u64, y as u64)
+        }
         fn cells(&self) -> usize {
             (self.world.w * self.world.h) as usize
         }
         fn k(&self, x: u64, y: u64) -> usize {
             (y * self.world.w + x) as usize
         }
-        /// The run's setup at tiles of `tile` cells, with the case's provenance.
+        /// The run's setup at tiles of `tile` cells, with the case's provenance and spacing.
         fn setup(&self, tile: u64) -> Setup {
             let mut s = setup(self.world, tile, 0.05);
             s.provenance = Some(
                 Classes::new(Layer::memory(self.world, self.flags.clone()), 1, self.world)
                     .expect("provenance"),
             );
+            if self.spacing != 1.0 {
+                s.spacing_m = self.spacing;
+                s.params = crate::world::water::params(&s.table, self.spacing, None);
+            }
             s
         }
         /// bodies.json as the export reads it: every labelled id but `unlisted`.
@@ -1624,6 +2059,7 @@ mod tests {
                 lakes: self.lakes.clone(),
                 cell_km2: 1e-6,
                 spots: self.spots.clone(),
+                coarse: self.spacing > 1.0,
             }
         }
         fn layers(&self) -> CheckLayers {
@@ -1641,7 +2077,11 @@ mod tests {
                 node_written: Layer::memory(w, self.n2.clone()),
                 level_written: Layer::memory(w, self.l2.clone()),
                 breached: Layer::memory(w, self.bz.clone()),
-                pre_channel: Layer::memory(w, self.bz.clone()),
+                pre_channel: Layer::memory(w, self.pre_channel.clone()),
+                blend_far: self
+                    .far
+                    .clone()
+                    .map(|f| Classes::new(Layer::memory(w, f), 1, w).expect("blend far")),
             }
         }
         fn report(&self) -> Value {
@@ -2591,7 +3031,7 @@ mod tests {
             c.z[r] = c.z[j] + 0.05;
             c.n2[r] = node;
             if ground_rises {
-                c.bz[r] = c.bz[j] + 0.1;
+                c.pre_channel[r] = c.pre_channel[j] + 0.1;
             }
             let t = c.tile();
             (fails(&t, "bed_rises"), t.examples.get("bed_rises").cloned())
@@ -2662,6 +3102,312 @@ mod tests {
         assert_eq!(fails(&c.tile(), "change_max"), 0, "within 2 m + 0.5 m");
         c.z[k] -= 0.2;
         assert_eq!(fails(&c.tile(), "change_max"), 1);
+    }
+
+    #[test]
+    fn interior_budget_counts_interior_cells_outside_breaches_only() {
+        let mut f = Case::flat(32, 100.0);
+        f.coarse(); // spacing 32 m, params from levels.32 (erosion on)
+        f.flags = vec![crate::world::water::INTERIOR; f.cells()];
+        let i = f.at(10, 10);
+        f.z[i] = 96.0; // an interior cell lowered 4 m by erosion
+        let t = f.tile();
+        assert_eq!(t.fails.get("interior_max").copied().unwrap_or(0), 1);
+        // The same cut inside a breach (breached ground lower than raw there) is the breach's.
+        f.bz[i] = 96.0;
+        assert_eq!(f.tile().fails.get("interior_max").copied().unwrap_or(0), 0);
+    }
+
+    #[test]
+    fn interior_p99_fails_over_a_metre_and_reports_its_figures() {
+        let mut f = Case::flat(32, 100.0);
+        f.coarse();
+        f.flags = vec![crate::world::water::INTERIOR; f.cells()];
+        // Every interior cell lowered 1.2 m: p99 1.2 m.
+        for v in f.z.iter_mut() {
+            *v -= 1.2;
+        }
+        let r = f.report();
+        assert_eq!(r["checks"]["interior_p99"], 1);
+        assert_eq!(r["checks"]["interior_max"], 0);
+        assert_eq!(r["figures"]["interior_cells"], 1024);
+        assert!((r["figures"]["interior_change_p99_m"].as_f64().unwrap() - 1.2).abs() < 1e-9);
+        // A 1 m run has no coarse budget.
+        f.spacing = 1.0;
+        assert_eq!(f.report()["checks"]["interior_p99"], 0);
+    }
+
+    #[test]
+    fn far_blend_cells_get_change_figures() {
+        let mut f = Case::flat(16, 100.0);
+        f.coarse();
+        f.flags = vec![2; f.cells()];
+        let i = f.at(8, 8);
+        f.z[i] = 97.5;
+        assert_eq!(
+            f.report()["figures"]["blend_change_max_m"],
+            Value::Null,
+            "no regions"
+        );
+        f.far = Some(vec![1; f.cells()]);
+        let r = f.report();
+        assert_eq!(r["figures"]["blend_far_cells"], 256);
+        assert!((r["figures"]["blend_change_max_m"].as_f64().unwrap() - 2.5).abs() < 1e-6);
+        assert_eq!(r["figures"]["blend_change_p99_m"], 0.0);
+        f.far = Some(vec![0; f.cells()]);
+        assert_eq!(f.report()["figures"]["blend_far_cells"], 0, "near a border");
+    }
+
+    #[test]
+    fn a_one_cell_trench_fails_handoff_narrow_and_a_tapered_cut_passes() {
+        let mut f = Case::flat(32, 100.0);
+        f.coarse();
+        for y in 4..28 {
+            let i = f.at(16, y);
+            f.z[i] = 98.0; // a 2 m slot, one cell wide
+        }
+        assert!(
+            f.tile().fails.get("handoff_narrow").copied().unwrap_or(0) > 0,
+            "a one-cell slot"
+        );
+        // A V of profile 0, 1, 2, 1, 0: the opening is 1, the excess 1 m = 0.5 × the 2 m cut: passes.
+        for y in 4..28 {
+            for (dx, d) in [(-1i64, 1.0f32), (1, 1.0)] {
+                let i = f.at((16 + dx) as usize, y);
+                f.z[i] = 100.0 - d;
+            }
+        }
+        assert_eq!(
+            f.tile().fails.get("handoff_narrow").copied().unwrap_or(0),
+            0,
+            "a V three cells wide"
+        );
+        // Discs as B7 makes them (R = 2.5 cells): ground lowered by the deepest of several
+        // parabolic discs d·(1 − (ρ/2.5)²) centred on `cuts` (x, y, d).
+        let discs = |cuts: &[(i64, i64, f32)]| {
+            let mut g = Case::flat(32, 100.0);
+            g.coarse();
+            for y in 0..32i64 {
+                for x in 0..32i64 {
+                    let low = cuts
+                        .iter()
+                        .map(|&(cx, cy, d)| {
+                            let rho = (((x - cx).pow(2) + (y - cy).pow(2)) as f32).sqrt();
+                            if rho < 2.5 {
+                                d * (1.0 - (rho / 2.5).powi(2))
+                            } else {
+                                0.0
+                            }
+                        })
+                        .fold(0.0f32, f32::max);
+                    let i = g.at(x as usize, y as usize);
+                    g.z[i] = 100.0 - low;
+                }
+            }
+            g
+        };
+        // A trench of discs along a row, 6 m deep.
+        let trench: Vec<(i64, i64, f32)> = (4..28).map(|x| (x, 16, 6.0)).collect();
+        assert_eq!(
+            discs(&trench)
+                .tile()
+                .fails
+                .get("handoff_narrow")
+                .copied()
+                .unwrap_or(0),
+            0,
+            "a tapered trench"
+        );
+        // An isolated 2 m disc (preflight F1): opening 1.36 m at its centre, excess 0.64 <= 1.0.
+        assert_eq!(
+            discs(&[(16, 16, 2.0)])
+                .tile()
+                .fails
+                .get("handoff_narrow")
+                .copied()
+                .unwrap_or(0),
+            0,
+            "one disc"
+        );
+        // Task 5's seam-step lip: 1.94 m at the lip, 0.13 and 0.003 m on the cells beside it.
+        let lip = [(15, 16, 0.13), (16, 16, 1.94), (17, 16, 0.003)];
+        assert_eq!(
+            discs(&lip)
+                .tile()
+                .fails
+                .get("handoff_narrow")
+                .copied()
+                .unwrap_or(0),
+            0,
+            "a graded seam lip"
+        );
+    }
+
+    #[test]
+    fn dam_drops_fail_on_a_step_then_gentle_and_pass_a_steady_cascade() {
+        // Shown surface along a labelled lake's exit walk (1 m cells), level 10 m.
+        let dam: Vec<f32> = std::iter::once(7.0)
+            .chain((1..150).map(|i| 7.0 - 0.01 * i as f32))
+            .collect();
+        let f = Case::lake_with_exit_walk(10.0, &dam); // 3 m step, then 1 cm per cell
+        let t = f.tile();
+        assert!(t.fails.get("dam_drops").copied().unwrap_or(0) > 0, "a dam");
+        assert_eq!(t.examples["dam_drops"], vec![[4, 4]]);
+        assert_eq!(fails(&t, "dam_steps"), 0, "raw has the step");
+        let cascade: Vec<f32> = (0..150).map(|i| 8.0 - 2.0 * i as f32).collect();
+        let g = Case::lake_with_exit_walk(10.0, &cascade); // 2 m every cell
+        assert_eq!(
+            g.tile().fails.get("dam_drops").copied().unwrap_or(0),
+            0,
+            "a steady cascade"
+        );
+        let mut p = Case::lake_with_exit_walk(10.0, &dam);
+        p.unlabel_lake(); // the same step below a pond: a figure only
+        assert_eq!(p.tile().fails.get("dam_drops").copied().unwrap_or(0), 0);
+        assert!(!p.tile().drops_any.is_empty());
+        // The steep-source bit tags the failing cell; it exempts nothing (B14).
+        let mut s = Case::lake_with_exit_walk(10.0, &dam);
+        let k = s.k(4, 4);
+        s.flags[k] = STEEP;
+        let r = s.report();
+        assert_eq!(r["checks"]["dam_drops"], 1);
+        assert_eq!(r["figures"]["dam_drops_steep_source"], 1);
+    }
+
+    /// Expert ruling R2 (revised): the walk ends at standing water; a drop with under 2 steps
+    /// ahead of the walk's end is not judged (onto water: also `dam_drops_into_water`); a
+    /// knickpoint stands out from the fall both after and before it.
+    #[test]
+    fn dam_drops_judge_both_sides_and_skip_walks_ending_in_water() {
+        let gentle = |top: f32| -> Vec<f32> { (0..150).map(|i| top - 0.01 * i as f32).collect() };
+        let figure = |c: &Case, name: &str| c.report()["figures"][name]["lakes"].clone();
+        // A 3 m drop straight onto a second, full lake's surface (7 m): not judged.
+        let mut onto = Case::lake_with_exit_walk(10.0, &gentle(7.0));
+        onto.lake_on_walk(4, 8, 7.0, true);
+        assert_eq!(fails(&onto.tile(), "dam_drops"), 0, "a drop onto water");
+        assert_eq!(figure(&onto, "dam_drops_into_water"), 1);
+        assert_eq!(figure(&onto, "dam_drops_unjudged"), 1);
+        // A 3 m drop to dry ground, one cell above a lake, closed or full: the walk ends at the
+        // water, too little ahead to judge.
+        for full in [false, true] {
+            let mut next = Case::lake_with_exit_walk(10.0, &gentle(7.0));
+            next.lake_on_walk(5, 8, 6.99, full);
+            assert_eq!(
+                fails(&next.tile(), "dam_drops"),
+                0,
+                "water next (full {full})"
+            );
+            assert_eq!(figure(&next, "dam_drops_unjudged"), 1);
+        }
+        // A 2 m step after a 1 m first fall from the level: before = 1 m per step, 3 × 1 > 2.
+        let mut after_run: Vec<f32> = vec![9.0];
+        after_run.extend(gentle(7.0));
+        let run = Case::lake_with_exit_walk(10.0, &after_run);
+        assert_eq!(
+            fails(&run.tile(), "dam_drops"),
+            0,
+            "a step after a steep run"
+        );
+        // A steady 2 m cascade passes.
+        let cascade: Vec<f32> = (0..150).map(|i| 8.0 - 2.0 * i as f32).collect();
+        let steady = Case::lake_with_exit_walk(10.0, &cascade);
+        assert_eq!(fails(&steady.tile(), "dam_drops"), 0, "a cascade");
+    }
+
+    /// Revised R2 step 5: at levels with erosion a knickpoint fails only when the water rules
+    /// add over 1.5 m to the raw step; at 1 m raw is ignored.
+    #[test]
+    fn coarse_dam_drops_fail_only_beyond_the_raw_step() {
+        let dam: Vec<f32> = std::iter::once(7.0)
+            .chain((1..150).map(|i| 7.0 - 0.01 * i as f32))
+            .collect();
+        // Raw has the 3 m step (inside cell at the level, outside at 7 m): a cliff.
+        let mut cliff = Case::lake_with_exit_walk(10.0, &dam);
+        assert_eq!(fails(&cliff.tile(), "dam_drops"), 1, "1 m ignores raw");
+        cliff.coarse();
+        assert_eq!(fails(&cliff.tile(), "dam_drops"), 0, "the raw cliff");
+        // Raw only 1 m lower there: the water rules added 2 m.
+        let k = cliff.k(4, 4);
+        cliff.raw[k] = 9.0;
+        let t = cliff.tile();
+        assert_eq!(fails(&t, "dam_drops"), 1);
+        assert_eq!(t.examples["dam_drops"], vec![[4, 4]]);
+    }
+
+    /// Expert ruling R3: a narrow lowering of a ridge crest is no trough and carries no water.
+    #[test]
+    fn a_lowered_one_cell_ridge_crest_passes_handoff_narrow() {
+        let ridge = |x: u64, _| 100.0 - 2.0 * (x as f32 - 16.0).abs();
+        let mut f = Case::new(32, 32, ridge);
+        f.coarse();
+        for y in 4..28 {
+            let i = f.at(16, y);
+            f.z[i] -= 1.0; // the crest 1 m lower, still 1 m above its sides
+        }
+        assert_eq!(fails(&f.tile(), "handoff_narrow"), 0);
+    }
+
+    #[test]
+    fn erosion_new_pits_counts_pits_the_coarse_cutting_made() {
+        let mut f = Case::flat(32, 100.0);
+        f.coarse();
+        let i = f.at(10, 10);
+        f.pre_channel[i] = 99.0;
+        f.z[i] = 99.0;
+        assert_eq!(
+            f.tile().fails.get("erosion_new_pits").copied().unwrap_or(0),
+            1
+        );
+        f.bz[i] = 99.0; // already a pit after the breach: not erosion's
+        f.raw[i] = 99.0;
+        assert_eq!(
+            f.tile().fails.get("erosion_new_pits").copied().unwrap_or(0),
+            0
+        );
+    }
+
+    /// Ruling R2 and B4: at levels with erosion `dam_steps` and the all-cell `change_p99` are
+    /// figures; at 1 m they stay hard.
+    #[test]
+    fn at_erosion_levels_dam_steps_and_change_p99_are_figures() {
+        let dam: Vec<f32> = std::iter::once(7.0)
+            .chain((1..150).map(|i| 7.0 - 0.01 * i as f32))
+            .collect();
+        let mut f = Case::lake_with_exit_walk(10.0, &dam);
+        // Raw without the step, and every cell lowered 2 m from raw.
+        let k = f.k(4, 4);
+        f.raw[k] = 10.0;
+        for (r, z) in f.raw.iter_mut().zip(&f.z) {
+            *r = r.max(z + 2.0);
+        }
+        let r = f.report();
+        assert_eq!(r["checks"]["dam_steps"], 1);
+        assert_eq!(r["checks"]["change_p99"], 1);
+        f.coarse();
+        let r = f.report();
+        assert_eq!(r["checks"].get("dam_steps"), None);
+        assert_eq!(r["checks"].get("change_p99"), None);
+        assert_eq!(r["figures"]["dam_steps_over_raw"], 1);
+        assert_eq!(r["figures"]["change_p99_all_cells_m"], 2.0);
+        assert_eq!(
+            r["checks"]["dam_drops"], 1,
+            "the knickpoint check stays hard"
+        );
+    }
+
+    #[test]
+    fn a_lake_whose_saddle_is_blend_is_a_seam_lake() {
+        let dam: Vec<f32> = (0..20).map(|i| 9.99 - 0.1 * i as f32).collect();
+        let mut f = Case::lake_with_exit_walk(10.0, &dam);
+        assert_eq!(f.report()["figures"]["seam_lakes"]["count"], 0);
+        // The saddle is the higher spill cell: the inside one at the level's raw ground.
+        let (inside, outside) = (f.k(3, 4), f.k(4, 4));
+        f.z[inside] = 10.0;
+        f.flags[inside] = 2;
+        f.flags[outside] = 3;
+        let s = f.report()["figures"]["seam_lakes"].clone();
+        assert_eq!(s["count"], 1, "{s}");
+        assert_eq!(s["lakes"][0], json!({"lake": 2, "cell": [3, 4], "kind": 2}));
     }
 
     /// Written thalwegs along row 5; the final routing's along row 6 agrees (within a cell),

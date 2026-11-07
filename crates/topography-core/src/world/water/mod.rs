@@ -57,13 +57,12 @@ pub(crate) const MAIN_RIVER_KM2: f64 = 1.0;
 /// (judgment value, review C2).
 pub(crate) const BODY_BUDGET: usize = 50_000;
 /// Provenance bits (collage provenance32.u8; ruling B10): kind in bits 0–2 (erosion's K);
-/// steep is read by a later Plan B task (checks).
+/// steep tags `dam_drops` (checks).
 pub(crate) const KIND_MASK: u8 = 7;
 pub(crate) const INTERIOR: u8 = 1;
 /// An inland basin here may keep a lake below 0 m (hot-dry, far from the sea; B13).
 pub(crate) const BELOW_SEA_OK: u8 = 64;
-/// The collage is at least 30° steep here: a real cliff or cascade (B14).
-#[allow(dead_code)]
+/// The collage is at least 30° steep here: a real cliff or cascade (B14; a tag on `dam_drops`).
 pub(crate) const STEEP: u8 = 128;
 /// Default tile side in cells.
 pub const DEFAULT_TILE: u64 = 4096;
@@ -312,6 +311,39 @@ pub(crate) fn setup(
         contract: true,
     };
     Ok((s, raw, stamp))
+}
+
+/// At levels with erosion, the cells at least `checks::BLEND_FAR_M` from a collage region
+/// border, from the grid's optional `region.u8` (collage region32 ids at `provenance_cell_m`,
+/// like provenance.u8); a figure's mask only, so not part of the stamp.
+fn blend_far(grid: &Path, s: &pipeline::Setup) -> Result<Option<layers::Classes>> {
+    let path = grid.join("region.u8");
+    if s.params.erosion.is_none() || !path.exists() {
+        return Ok(None);
+    }
+    let manifest: Map<String, Value> =
+        serde_json::from_slice(&read_small(&grid.join("grid.json"))?)?;
+    let cell_m = manifest
+        .get("provenance_cell_m")
+        .and_then(Value::as_f64)
+        .unwrap_or(s.spacing_m);
+    let k = cell_m / s.spacing_m;
+    ensure(
+        k >= 1.0 && k.fract() == 0.0,
+        "provenance_cell_m must be a whole multiple of spacing_m",
+    )?;
+    let k = k as u64;
+    let rw = geom::World {
+        w: s.world.w.div_ceil(k),
+        h: s.world.h.div_ceil(k),
+    };
+    let regions = layers::Layer::<u8>::open(rw, &path)?.read(geom::Rect::whole(rw))?;
+    let far = checks::far_from_borders(&regions, rw, cell_m);
+    Ok(Some(layers::Classes::new(
+        layers::Layer::memory(rw, far),
+        k,
+        s.world,
+    )?))
 }
 
 /// The running binary's digest: any code change invalidates a work directory's caches,
@@ -862,6 +894,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         level_written: rasters.level.clone(),
         breached,
         pre_channel: pre,
+        blend_far: blend_far(&o.grid, &s)?,
     };
     let spots: Vec<checks::Spot> = o
         .spots
@@ -905,6 +938,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         lakes,
         cell_km2: s.cell_km2(),
         spots,
+        coarse: s.params.erosion.is_some(),
     };
     let (report, passed) = checks::report(tiles, extra, figures);
 
