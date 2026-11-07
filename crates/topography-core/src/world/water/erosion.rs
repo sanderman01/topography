@@ -6,12 +6,13 @@
 //!    its level as their base, and a full node's sill cell erodes with the node's whole
 //!    discharge while the level follows it (Cordonnier et al. 2019 with one outlet per node);
 //! 2. lowering-only hillslope diffusion (convex cells; no deposition, out of the spec's scope);
-//! 3. each cut re-expressed as Plan A's parabolic gorge taper, then wall rounds.
+//! 3. each cut re-expressed as Plan A's parabolic gorge taper, then wall and narrow rounds
+//!    that halve whole discs.
 //!
 //! Never below the floor (the breached ground less the cell's cap) and never raised. One
 //! global single-threaded pass in a fixed order: deterministic.
 
-use super::checks::{CHANGED_M, horn_deg, is_wall};
+use super::checks::{CHANGED_M, NARROW_M, NARROW_SHARE, horn_deg, is_wall};
 use super::geom::{OFFSETS, Rect, World};
 use super::layers::Layer;
 use super::nodes::Nodes;
@@ -126,6 +127,10 @@ pub(crate) struct Figures {
     pub wall_rounds: u64,
     /// Sills cut by stream power whose cut the wall rounds undid (that lake stays this routing).
     pub sills_reverted: u64,
+    /// Narrow cuts (`handoff_narrow`'s rule on raw − z) the rounds found and halved, and those
+    /// left on this routing's cells.
+    pub narrow_found: u64,
+    pub narrow_left: u64,
 }
 
 impl Figures {
@@ -146,6 +151,8 @@ impl Figures {
                 self.wall_cuts_removed,
                 self.wall_rounds,
                 self.sills_reverted,
+                self.narrow_found,
+                self.narrow_left,
             ],
             self.max_lowering_m,
         )
@@ -167,6 +174,8 @@ impl Figures {
             wall_cuts_removed: g(11),
             wall_rounds: g(12),
             sills_reverted: g(13),
+            narrow_found: g(14),
+            narrow_left: g(15),
             max_lowering_m: max,
         }
     }
@@ -186,6 +195,8 @@ impl Figures {
         self.wall_cuts_removed += o.wall_cuts_removed;
         self.wall_rounds = self.wall_rounds.max(o.wall_rounds);
         self.sills_reverted += o.sills_reverted;
+        self.narrow_found += o.narrow_found;
+        self.narrow_left = o.narrow_left; // the last routing's ground is what m2 reads
     }
     pub fn json(&self) -> Value {
         json!({
@@ -197,6 +208,7 @@ impl Figures {
             "hillslope_lowering_p99_m": self.hillslope_p99_m, "hillslope_lowering_max_m": self.hillslope_max_m,
             "wall_cuts_removed": self.wall_cuts_removed, "wall_rounds": self.wall_rounds,
             "sills_reverted": self.sills_reverted,
+            "narrow_found": self.narrow_found, "narrow_left": self.narrow_left,
         })
     }
 }
@@ -419,66 +431,121 @@ pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u6
     n
 }
 
-/// Each cut (before − z ≥ SHAPE_MIN_M) as a parabolic disc d·(1 − (ρ/R)²), R = max(2.5 cells,
-/// 2·d / (tan(wall)·spacing)); the deepest lowering over all discs, not under water or sea
-/// (a sill counts as dry), never below the floor or the water bound. Then wall rounds, each
-/// halving this step's lowering (removing it under 1 cm, and after WALL_ROUNDS rounds
-/// outright, as Plan A's channel restore) in the 3 × 3 of every changed cell steeper than
-/// max(wall, raw), and then grading beds (a changed cell below where it drains is lifted to
-/// it, never above `before`; B33, Plan A 16b), until nothing changes or REMOVE_ROUNDS more
-/// rounds are spent.
-/// Returns the taper and wall figures (walls left counted on the final ground).
+/// A cut's taper radius in cells (B7): max(2.5 cells, 2·d / (tan(wall)·spacing)); 0 (the cell
+/// alone) under SHAPE_MIN_M.
+fn disc_radius(d: f32, tan: f64, spacing_m: f64) -> f64 {
+    if d < SHAPE_MIN_M {
+        return 0.0;
+    }
+    (2.0 * f64::from(d) / (tan * spacing_m)).max(TAPER_MIN_CELLS)
+}
+
+/// A disc of depth `d` and radius `radius` at distance `rho` (cells): d·(1 − (ρ/R)²).
+fn disc_at(d: f32, rho: f64, radius: f64) -> f32 {
+    if rho == 0.0 {
+        d
+    } else if rho < radius {
+        (f64::from(d) * (1.0 - (rho / radius).powi(2))) as f32
+    } else {
+        0.0
+    }
+}
+
+/// Every cut (a source: depth d = before − z, not under water or sea; a sill counts as dry) as
+/// a parabolic disc of `disc_radius`; a cell takes the deepest lowering over all discs, not
+/// under water or sea, never below the floor or the water bound (its own cut excepted, which
+/// stream power already bounded). Then rounds: each first grades beds (a changed cell below
+/// where it drains is lifted to it, never above `before`; B33, Plan A 16b), then fixes the
+/// 3 × 3 of every changed cell steeper than max(wall, raw) and every changed cell that
+/// `handoff_narrow` fails on the whole cut (raw − z): the discs lowering such a cell by over
+/// half this step's cut there are halved (dropped under 1 cm, and after WALL_ROUNDS rounds
+/// every disc reaching it is dropped, as Plan A's channel restore). A held or reverted cut
+/// thus takes its whole disc and leaves no uncut pillar or one-cell slot (ruling R3). Until
+/// nothing changes or REMOVE_ROUNDS more rounds are spent; cells only rise in the rounds.
+/// `depth` is scratch (one f32 a cell) for the sources' depths.
+/// Returns the taper and wall figures (walls and narrow cuts left counted on the final ground).
 pub(crate) fn taper(
     r: &Routing,
     z: &mut [f32],
     before: &[f32],
     raw: &[f32],
     wall_deg: f64,
-    lower: &mut [f32],
+    depth: &mut [f32],
 ) -> Figures {
     let (w, h) = (r.world.w as usize, r.world.h as usize);
+    let n = z.len();
     let tan = wall_deg.to_radians().tan();
-    lower.fill(0.0);
-    for c in 0..z.len() {
-        let d = before[c] - z[c];
-        if d < SHAPE_MIN_M || wet(r, c) {
-            continue;
-        }
-        let radius = (2.0 * f64::from(d) / (tan * r.spacing_m)).max(TAPER_MIN_CELLS);
-        let k = radius.ceil() as i64;
-        let (cx, cy) = ((c % w) as i64, (c / w) as i64);
-        for dy in -k..=k {
-            for dx in -k..=k {
-                let rho = ((dx * dx + dy * dy) as f64).sqrt();
-                let (x, y) = (cx + dx, cy + dy);
-                if rho >= radius || x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
-                    continue;
-                }
-                let j = y as usize * w + x as usize;
-                if wet(r, j) {
-                    continue;
-                }
-                let lw = (f64::from(d) * (1.0 - (rho / radius).powi(2))) as f32;
-                if lw > lower[j] {
-                    lower[j] = lw;
+    let mut dmax = 0f32;
+    for c in 0..n {
+        depth[c] = if wet(r, c) {
+            0.0
+        } else {
+            (before[c] - z[c]).max(0.0)
+        };
+        dmax = dmax.max(depth[c]);
+    }
+    let radius = |depth: &[f32], s: usize| disc_radius(depth[s], tan, r.spacing_m);
+    let k = disc_radius(dmax, tan, r.spacing_m).ceil() as i64;
+    // The window every disc fits in: offsets and their distances.
+    let window: Vec<(i64, i64, f64)> = (-k..=k)
+        .flat_map(|dy| (-k..=k).map(move |dx| (dx, dy)))
+        .map(|(dx, dy)| (dx, dy, ((dx * dx + dy * dy) as f64).sqrt()))
+        .filter(|&(_, _, rho)| rho <= k as f64)
+        .collect();
+    let at = |c: usize, dx: i64, dy: i64| {
+        let (x, y) = ((c % w) as i64 + dx, (c / w) as i64 + dy);
+        (x >= 0 && y >= 0 && x < w as i64 && y < h as i64).then(|| y as usize * w + x as usize)
+    };
+    // The ground a cell gets from the discs, clamped; its own cut is never clamped.
+    let clamp = |depth: &[f32], j: usize, lw: f32| {
+        (before[j] - lw)
+            .max(r.floor[j])
+            .max(water_bound(r, j))
+            .min(before[j] - depth[j])
+    };
+    // The discs that lower cell `j` by more than `over`.
+    let discs_at = |depth: &[f32], j: usize, over: f32, out: &mut Vec<u32>| {
+        for &(dx, dy, rho) in &window {
+            if let Some(s) = at(j, dx, dy) {
+                let d = depth[s];
+                if d > 0.0 && disc_at(d, rho, radius(depth, s)) > over {
+                    out.push(s as u32);
                 }
             }
         }
-    }
-    let n = z.len();
+    };
+    // The deepest lowering of cell `j` over all discs.
+    let lower_at = |depth: &[f32], j: usize| {
+        let mut lw = 0f32;
+        for &(dx, dy, rho) in &window {
+            if let Some(s) = at(j, dx, dy) {
+                let d = depth[s];
+                if d > lw {
+                    lw = lw.max(disc_at(d, rho, radius(depth, s)));
+                }
+            }
+        }
+        lw
+    };
     let mut fig = Figures::default();
-    for j in 0..n {
-        if lower[j] <= 0.0 {
+    // The discs, scattered (z holds each source's own cut already).
+    for c in 0..n {
+        let d = depth[c];
+        let rc = radius(depth, c);
+        if rc == 0.0 {
             continue;
         }
-        let v = (before[j] - lower[j])
-            .max(r.floor[j])
-            .max(water_bound(r, j));
-        if v < z[j] {
-            z[j] = v;
-            fig.tapered_cells += 1;
+        let kc = rc.ceil() as i64;
+        for (dx, dy) in (-kc..=kc).flat_map(|dy| (-kc..=kc).map(move |dx| (dx, dy))) {
+            let Some(j) = at(c, dx, dy) else { continue };
+            let lw = disc_at(d, ((dx * dx + dy * dy) as f64).sqrt(), rc);
+            if lw <= 0.0 || before[j] - lw >= z[j] || wet(r, j) {
+                continue;
+            }
+            z[j] = z[j].min(clamp(depth, j, lw));
         }
     }
+    fig.tapered_cells = (0..n).filter(|&j| z[j] < before[j] - depth[j]).count() as u64;
     // Every cell this step lowered, however little: on raw slopes at the wall angle a
     // sub-centimetre cut below an earlier routing's cut makes a wall too. Bits: 1 bit a cell.
     let mut changed = Bits::new(n);
@@ -528,6 +595,93 @@ pub(crate) fn taper(
         walls.dedup();
         walls
     };
+    // Cells of `cells` (changed ones, two cells from the edge) that `handoff_narrow` fails on
+    // the whole cut so far (raw − z): over its 3 × 3 grey opening by more than
+    // max(NARROW_M, NARROW_SHARE × cut), on a trough of z (B9, ruling R3).
+    let find_narrow = |z: &[f32], cells: &mut dyn Iterator<Item = usize>| {
+        let cut = |x: i64, y: i64| {
+            if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+                return 0.0;
+            }
+            let j = y as usize * w + x as usize;
+            (raw[j] - z[j]).max(0.0)
+        };
+        let mut out: Vec<u32> = Vec::new();
+        for c in cells {
+            let (x, y) = ((c % w) as i64, (c / w) as i64);
+            if !changed.get(c) || x < 2 || y < 2 || x + 2 >= w as i64 || y + 2 >= h as i64 {
+                continue;
+            }
+            let cc = cut(x, y);
+            if cc <= CHANGED_M {
+                continue;
+            }
+            let zc = |dx: i64, dy: i64| z[(y + dy) as usize * w + (x + dx) as usize];
+            if ![(1, 0), (0, 1), (1, 1), (1, -1)]
+                .iter()
+                .any(|&(dx, dy)| zc(dx, dy).min(zc(-dx, -dy)) > zc(0, 0) + NARROW_M)
+            {
+                continue;
+            }
+            let mut open = f32::NEG_INFINITY;
+            for (dx, dy) in (-1..=1).flat_map(|dy| (-1..=1).map(move |dx| (dx, dy))) {
+                let mut m = f32::INFINITY;
+                for (ex, ey) in (-1..=1).flat_map(|ey| (-1..=1).map(move |ex| (ex, ey))) {
+                    m = m.min(cut(x + dx + ex, y + dy + ey));
+                }
+                open = open.max(m);
+            }
+            if cc - open > NARROW_M.max(NARROW_SHARE * cc) {
+                out.push(c as u32);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    };
+    // The 5 × 5 of cells in `a` or `b`: where a change can make or end a narrow cut.
+    let near5 = |a: &Bits, b: &Bits| {
+        let mut out: Vec<usize> = a
+            .ones()
+            .chain(b.ones())
+            .flat_map(|c| {
+                let (cx, cy) = ((c % w) as i64, (c / w) as i64);
+                (-2..=2)
+                    .flat_map(move |dy| (-2..=2).map(move |dx| (cx + dx, cy + dy)))
+                    .filter(|&(x, y)| x >= 0 && y >= 0 && x < w as i64 && y < h as i64)
+                    .map(|(x, y)| y as usize * w + x as usize)
+            })
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    };
+    // The footprints of the discs `hit` rise to what the discs now give (lifts kept); returns
+    // the cells raised.
+    let rerender = |depth: &[f32], z: &mut [f32], hit: &[u32]| {
+        let mut dirty: Vec<u32> = hit
+            .iter()
+            .flat_map(|&c| {
+                window
+                    .iter()
+                    .filter_map(move |&(dx, dy, _)| at(c as usize, dx, dy))
+            })
+            .filter(|&j| !wet(r, j))
+            .map(|j| j as u32)
+            .collect();
+        dirty.sort_unstable();
+        dirty.dedup();
+        dirty.retain(|&j| {
+            let ju = j as usize;
+            let v = clamp(depth, ju, lower_at(depth, ju));
+            let up = v > z[ju];
+            if up {
+                z[ju] = v;
+            }
+            up
+        });
+        dirty
+    };
     // Cells raised in the last round: a new wall lies in their 3 × 3 (round 0: every cut).
     let mut touched: Option<Bits> = None;
     for round in 0..WALL_ROUNDS + REMOVE_ROUNDS {
@@ -559,35 +713,56 @@ pub(crate) fn taper(
                 break;
             }
         }
-        if walls.is_empty() && !any {
+        // Narrow cuts after the bed grade (it lifts cells too).
+        let narrow = match &touched {
+            None => find_narrow(z, &mut changed.ones()),
+            Some(t) => find_narrow(z, &mut near5(t, &raised).into_iter()),
+        };
+        fig.narrow_found += narrow.len() as u64;
+        if walls.is_empty() && narrow.is_empty() && !any {
             break;
         }
+        // A wall's 3 × 3 and each narrow cell: their discs are halved alike.
         let mut fix: Vec<u32> = walls
             .iter()
             .flat_map(|&j| around(j as usize).map(|c| c as u32))
+            .chain(narrow.iter().copied())
             .collect();
         fix.sort_unstable();
         fix.dedup();
-        for j in fix {
-            let ju = j as usize;
-            let d = before[ju] - z[ju];
-            // Halved for WALL_ROUNDS rounds (outright under 1 cm), then removed (as Plan A's
-            // channel restore rounds).
-            if d > CHANGED_M && round < WALL_ROUNDS {
-                z[ju] = before[ju] - d / 2.0;
-                fig.wall_cells_restored += 1;
-            } else if d > 0.0 {
-                z[ju] = before[ju];
-                if round < WALL_ROUNDS {
-                    fig.wall_cells_restored += 1;
-                } else {
-                    fig.wall_cuts_removed += 1;
-                }
-            } else {
-                continue;
+        // The discs to halve (or drop): those lowering a fixed cell by over half its cut,
+        // every disc reaching it in the removal rounds.
+        let remove = round >= WALL_ROUNDS;
+        let mut hit: Vec<u32> = Vec::new();
+        for &j in &fix {
+            let cut = before[j as usize] - z[j as usize];
+            if cut > 0.0 {
+                discs_at(
+                    depth,
+                    j as usize,
+                    if remove { 0.0 } else { cut / 2.0 },
+                    &mut hit,
+                );
             }
-            raised.set(ju);
+        }
+        hit.sort_unstable();
+        hit.dedup();
+        for &c in &hit {
+            let d = &mut depth[c as usize];
+            *d = if remove || *d / 2.0 < SHAPE_MIN_M {
+                0.0
+            } else {
+                *d / 2.0
+            };
+        }
+        for j in rerender(depth, z, &hit) {
+            raised.set(j as usize);
             any = true;
+            if remove {
+                fig.wall_cuts_removed += 1;
+            } else {
+                fig.wall_cells_restored += 1;
+            }
         }
         fig.wall_rounds = round as u64 + 1;
         // Nothing raised: walls this routing did not cut stay (counted below), cells only
@@ -603,6 +778,7 @@ pub(crate) fn taper(
         .count() as u64;
     // Counted on the final ground (after the last bed grade), over every cut.
     fig.walls_left = find_walls(z, &mut changed.ones()).len() as u64;
+    fig.narrow_left = find_narrow(z, &mut changed.ones()).len() as u64;
     fig
 }
 
@@ -815,6 +991,8 @@ pub(crate) fn erode(
             fig.wall_rounds = t.wall_rounds;
             fig.sills_reverted = t.sills_reverted;
             fig.walls_left = t.walls_left;
+            fig.narrow_found = t.narrow_found;
+            fig.narrow_left = t.narrow_left;
             let left = t.walls_left;
             // B6 figure: full-K land outside the river cuts' footprint should not move.
             let mut hist = vec![0u64; super::checks::BINS];
@@ -1397,6 +1575,176 @@ mod tests {
             }
         }
         assert_eq!(left, 0);
+    }
+
+    /// Cells failing `handoff_narrow`'s rule (B9, ruling R3) for the cut `before − z`: the cut
+    /// exceeds its 3 × 3 grey opening by over max(0.5, 0.5 × cut) on a trough of `z`.
+    fn slots(z: &[f32], before: &[f32], w: usize, h: usize) -> Vec<(usize, usize)> {
+        let cut = |x: i64, y: i64| {
+            if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+                return 0.0;
+            }
+            let j = y as usize * w + x as usize;
+            (before[j] - z[j]).max(0.0)
+        };
+        let mut out = Vec::new();
+        for y in 2..h - 2 {
+            for x in 2..w - 2 {
+                let (xi, yi) = (x as i64, y as i64);
+                let c = cut(xi, yi);
+                if c <= CHANGED_M {
+                    continue;
+                }
+                let mut open = f32::NEG_INFINITY;
+                for (dx, dy) in (-1..=1).flat_map(|dy| (-1..=1).map(move |dx| (dx, dy))) {
+                    let mut m = f32::INFINITY;
+                    for (ex, ey) in (-1..=1).flat_map(|ey| (-1..=1).map(move |ex| (ex, ey))) {
+                        m = m.min(cut(xi + dx + ex, yi + dy + ey));
+                    }
+                    open = open.max(m);
+                }
+                let zc = |dx: i64, dy: i64| z[(yi + dy) as usize * w + (xi + dx) as usize];
+                let trough = [(1, 0), (0, 1), (1, 1), (1, -1)]
+                    .iter()
+                    .any(|&(dx, dy)| zc(dx, dy).min(zc(-dx, -dy)) > zc(0, 0) + 0.5);
+                if trough && c - open > 0.5f32.max(0.5 * c) {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
+
+    /// Uncut cells standing above a cut on both sides of one axis (both neighbours cut over
+    /// 0.5 m): a pillar left inside a cut reach.
+    fn pillars(z: &[f32], before: &[f32], w: usize, h: usize) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for y in 1..h - 1 {
+            for x in 1..w - 1 {
+                let c = y * w + x;
+                if before[c] - z[c] > CHANGED_M {
+                    continue;
+                }
+                let cut = |dx: i64, dy: i64| {
+                    let j = (y as i64 + dy) as usize * w + (x as i64 + dx) as usize;
+                    before[j] - z[j]
+                };
+                if [(1, 0), (0, 1), (1, 1), (1, -1)]
+                    .iter()
+                    .any(|&(dx, dy)| cut(dx, dy).min(cut(-dx, -dy)) > 0.5)
+                {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_trunk_cut_in_a_narrow_valley_floor_is_no_slot_and_still_drains() {
+        // 32 m cells; a trunk (row 7) falling east 0.5 m a cell on a 3-cell valley floor whose
+        // sides steepen to about 35° two cells out and 44° beyond. Stream power cuts the trunk
+        // alone; the side cells' discs make walls on the steep sides, whose wall rounds must not
+        // leave the trunk cut deeper than a 3-cell-wide cut.
+        let (w, h) = (21usize, 15usize);
+        let side = [0.0f32, 2.0, 6.0, 46.5, 67.5, 88.5, 109.5, 130.5];
+        let before: Vec<f32> = (0..w * h)
+            .map(|i| 100.0 - 0.5 * (i % w) as f32 + side[(i / w).abs_diff(7)])
+            .collect();
+        let mut s = Strip::new(&before);
+        s.flow = (0..w * h)
+            .map(|i| match (i % w, i / w) {
+                (x, 7) if x + 1 < w => 4,
+                (_, 7) => 0,
+                (_, y) if y < 7 => 2,
+                _ => 1,
+            })
+            .collect();
+        s.ka = (0..w * h)
+            .map(|i| if i / w == 7 { 200.0 } else { 0.0 })
+            .collect();
+        let mut r = s.routing();
+        r.world = World {
+            w: w as u64,
+            h: h as u64,
+        };
+        let mut z = before.clone();
+        stream_power(&r, &mut z);
+        let deepest = (0..w)
+            .map(|x| before[7 * w + x] - z[7 * w + x])
+            .fold(0.0, f32::max);
+        assert!(deepest > 2.0, "stream power cuts the trunk, got {deepest}");
+        let mut lower = vec![0.0f32; w * h];
+        let t = taper(&r, &mut z, &before, &before, 35.0, &mut lower);
+        assert!(t.wall_cells_restored > 0, "the setup makes walls");
+        assert_eq!(slots(&z, &before, w, h), [], "one-cell slots");
+        assert_eq!(pillars(&z, &before, w, h), [], "pillars");
+        for x in 0..w - 1 {
+            let c = 7 * w + x;
+            assert!(z[c] >= z[c + 1] - 1e-5, "trunk cell {x} below its receiver");
+        }
+        let none = Bits::new(w * h);
+        assert_eq!(new_pits(r.world, &z, &before, &none, &none), 0);
+        assert!(z.iter().zip(&before).all(|(a, b)| a <= b), "nothing rises");
+    }
+
+    /// A 25 × 25 grid of 32 m cells: a trunk (row 12) falling east 1 m a cell between sides
+    /// rising `rise` m a cell with `amp` m of hashed roughness (seed `seed`), cut by stream
+    /// power (trunk k·A^m `ka`) and tapered. Returns before, the result and the taper figures.
+    fn rough_trunk(seed: u64, amp: f32, rise: f32, ka: f32) -> (Vec<f32>, Vec<f32>, Figures) {
+        let (w, h) = (25usize, 25usize);
+        let noise = |i: usize| {
+            let v = (i as u64 ^ seed.rotate_left(32))
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .rotate_left(17);
+            (v % 1000) as f32 / 1000.0 - 0.5
+        };
+        let before: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let k = (i / w).abs_diff(12) as f32;
+                200.0 - (i % w) as f32 + rise * k + amp * noise(i) * k.min(1.0)
+            })
+            .collect();
+        let mut s = Strip::new(&before);
+        // The trunk flows east; other cells by steepest descent (0 in a pit).
+        s.flow = (0..w * h)
+            .map(|i| match (i % w, i / w) {
+                (x, 12) if x + 1 < w => 4,
+                (_, 12) => 0,
+                _ => (1..=8u8)
+                    .filter_map(|d| receiver(w, h, i, d).map(|t| (d, t)))
+                    .map(|(d, t)| (d, (before[i] - before[t]) as f64 / dist_cells(w, i, t)))
+                    .filter(|&(_, g)| g > 0.0)
+                    .max_by(|a, b| a.1.total_cmp(&b.1))
+                    .map_or(0, |(d, _)| d),
+            })
+            .collect();
+        s.ka = (0..w * h)
+            .map(|i| if i / w == 12 { ka } else { 0.0 })
+            .collect();
+        let mut r = s.routing();
+        r.world = World {
+            w: w as u64,
+            h: h as u64,
+        };
+        let mut z = before.clone();
+        stream_power(&r, &mut z);
+        let mut lower = vec![0.0f32; w * h];
+        let t = taper(&r, &mut z, &before, &before, 35.0, &mut lower);
+        (before, z, t)
+    }
+
+    #[test]
+    fn wall_rounds_on_rough_steep_ground_leave_no_pillar_or_slot() {
+        // Rough ground whose sides rise near the wall angle, as GLO-30 canyons do. Wall rounds
+        // hold and revert cuts here; a cell they leave uncut must not stand between cut cells,
+        // and no cut may be left a one-cell slot.
+        let (before, z, t) = rough_trunk(55, 45.0, 10.0, 1000.0);
+        assert!(t.wall_cells_restored > 0, "the setup makes walls");
+        assert_eq!(pillars(&z, &before, 25, 25), [], "pillars");
+        assert_eq!(slots(&z, &before, 25, 25), [], "one-cell slots");
+        assert_eq!(t.walls_left, 0);
+        assert!(z.iter().zip(&before).all(|(a, b)| a <= b), "nothing rises");
     }
 
     #[test]

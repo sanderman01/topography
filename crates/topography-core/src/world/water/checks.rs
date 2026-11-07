@@ -67,8 +67,8 @@ const BANK_STEP_M: f32 = 0.5;
 const INTERIOR_P99_M: f64 = 1.0;
 const INTERIOR_MAX_M: f32 = 3.0;
 /// A cut its 3 × 3 opening removes by more than this is narrower than 3 cells (B9).
-const NARROW_M: f32 = 0.5;
-const NARROW_SHARE: f32 = 0.5;
+pub(crate) const NARROW_M: f32 = 0.5;
+pub(crate) const NARROW_SHARE: f32 = 0.5;
 /// Dam drops (B14): judged against the mean fall per cell over this far ahead, by this factor.
 const KNICK_AHEAD_M: f64 = 100.0;
 const KNICK_FACTOR: f32 = 3.0;

@@ -986,7 +986,7 @@ so a rerun resumes and a changed input is refused:
 | --- | --- |
 | `m1` model on raw | tile caches `m1-<tag>/` |
 | `b` breach | `breached.f32` |
-| `e` erosion (32 m and 4 m only): per routing k, a model run and stream power, diffusion, taper and wall rounds | `e<k>.f32`, `e<k>-*.{f32,u32,u8}`, `e-<tag>/` |
+| `e` erosion (32 m and 4 m only): per routing k, a model run and stream power, diffusion, taper, and wall and narrow-cut rounds | `e<k>.f32`, `e<k>-*.{f32,u32,u8}`, `e-<tag>/` |
 | `m2` model on the pre-channel ground (the last `e<k>.f32`, else `breached.f32`) | `m2-level.f32`, `m2-node.u32`, `m2-discharge.f32`, `m2-flow.u8` |
 | `l` labels (lakes, rivers, river pools) | `body.u32`, `bodies.json` |
 | `c` channels | `carved.f32`, `water-surface.f32`, `water-body.u32` |
