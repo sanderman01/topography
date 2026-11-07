@@ -132,6 +132,14 @@ pub(crate) struct Figures {
     /// left on this routing's cells.
     pub narrow_found: u64,
     pub narrow_left: u64,
+    /// The deepest lowering diffusion made (ruling R3).
+    pub diffusion_max_m: f32,
+    /// The B6 figures outside the footprint widened by 3 cells (R3: past the taper discs).
+    pub hillslope_wide_p99_m: f32,
+    pub hillslope_wide_max_m: f32,
+    /// Cells lowered by at least SHAPE_MIN_M by the whole routing (R4; `lowered_cells`
+    /// counts stream power's).
+    pub lowered_1cm: u64,
 }
 
 impl Figures {
@@ -154,6 +162,10 @@ impl Figures {
                 self.sills_reverted,
                 self.narrow_found,
                 self.narrow_left,
+                u64::from(self.diffusion_max_m.to_bits()),
+                u64::from(self.hillslope_wide_p99_m.to_bits()),
+                u64::from(self.hillslope_wide_max_m.to_bits()),
+                self.lowered_1cm,
             ],
             self.max_lowering_m,
         )
@@ -177,6 +189,10 @@ impl Figures {
             sills_reverted: g(13),
             narrow_found: g(14),
             narrow_left: g(15),
+            diffusion_max_m: f32::from_bits(g(16) as u32),
+            hillslope_wide_p99_m: f32::from_bits(g(17) as u32),
+            hillslope_wide_max_m: f32::from_bits(g(18) as u32),
+            lowered_1cm: g(19),
             max_lowering_m: max,
         }
     }
@@ -198,6 +214,10 @@ impl Figures {
         self.sills_reverted += o.sills_reverted;
         self.narrow_found += o.narrow_found;
         self.narrow_left = o.narrow_left; // the last routing's ground is what m2 reads
+        self.diffusion_max_m = self.diffusion_max_m.max(o.diffusion_max_m);
+        self.hillslope_wide_p99_m = self.hillslope_wide_p99_m.max(o.hillslope_wide_p99_m);
+        self.hillslope_wide_max_m = self.hillslope_wide_max_m.max(o.hillslope_wide_max_m);
+        self.lowered_1cm += o.lowered_1cm;
     }
     pub fn json(&self) -> Value {
         json!({
@@ -210,6 +230,10 @@ impl Figures {
             "wall_cuts_removed": self.wall_cuts_removed, "wall_rounds": self.wall_rounds,
             "sills_reverted": self.sills_reverted,
             "narrow_found": self.narrow_found, "narrow_left": self.narrow_left,
+            "diffusion_max_m": self.diffusion_max_m,
+            "hillslope_lowering_wide_p99_m": self.hillslope_wide_p99_m,
+            "hillslope_lowering_wide_max_m": self.hillslope_wide_max_m,
+            "lowered_1cm_cells": self.lowered_1cm,
         })
     }
 }
@@ -365,8 +389,8 @@ pub(crate) fn stream_power(r: &Routing, z: &mut [f32]) -> Figures {
 }
 
 /// Cells within R_taper + 1 of a cell this routing's stream power lowered by at least
-/// SHAPE_MIN_M: where diffusion may act (B6, review I3).
-pub(crate) fn footprint(r: &Routing, before: &[f32], z: &[f32], wall_deg: f64) -> Bits {
+/// SHAPE_MIN_M: where diffusion may act (B6, review I3); `extra` cells wider for figures.
+pub(crate) fn footprint(r: &Routing, before: &[f32], z: &[f32], wall_deg: f64, extra: f64) -> Bits {
     let (w, h) = (r.world.w as usize, r.world.h as usize);
     let tan = wall_deg.to_radians().tan();
     let mut near = Bits::new(z.len());
@@ -375,7 +399,7 @@ pub(crate) fn footprint(r: &Routing, before: &[f32], z: &[f32], wall_deg: f64) -
         if d < SHAPE_MIN_M {
             continue;
         }
-        let radius = (2.0 * f64::from(d) / (tan * r.spacing_m)).max(TAPER_MIN_CELLS) + 1.0;
+        let radius = (2.0 * f64::from(d) / (tan * r.spacing_m)).max(TAPER_MIN_CELLS) + 1.0 + extra;
         let k = radius.ceil() as i64;
         let (cx, cy) = ((c % w) as i64, (c / w) as i64);
         for dy in -k..=k {
@@ -398,15 +422,15 @@ pub(crate) fn footprint(r: &Routing, before: &[f32], z: &[f32], wall_deg: f64) -
 /// Lowering-only hillslope diffusion, one explicit Jacobi step (alpha = D·dt/dx² <= 0.25),
 /// only on `near` cells (the river cuts' footprint, B6): a convex cell moves toward its 4
 /// neighbours' mean, never below the floor or its water bound; concave cells, interior, held,
-/// sea and edge cells stay. Returns the cells lowered.
-pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u64 {
+/// sea and edge cells stay. Returns the cells lowered and the deepest lowering.
+pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> (u64, f32) {
     let (w, h) = (r.world.w as usize, r.world.h as usize);
     if alpha <= 0.0 || w < 3 || h < 3 {
-        return 0;
+        return (0, 0.0);
     }
     let mut above = z[..w].to_vec();
     let mut row = vec![0f32; w];
-    let mut n = 0;
+    let (mut n, mut max) = (0, 0f32);
     for y in 1..h - 1 {
         row.copy_from_slice(&z[y * w..(y + 1) * w]);
         for x in 1..w - 1 {
@@ -423,13 +447,14 @@ pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u6
                 .max(r.floor[c])
                 .max(water_bound(r, c));
             if v < z[c] {
+                max = max.max(z[c] - v);
                 z[c] = v;
                 n += 1;
             }
         }
         std::mem::swap(&mut above, &mut row);
     }
-    n
+    (n, max)
 }
 
 /// A cut's taper radius in cells (B7): max(2.5 cells, 2·d / (tan(wall)·spacing)); 0 (the cell
@@ -663,17 +688,24 @@ pub(crate) fn taper(
         };
         let (mut raised, mut any) = (Bits::new(n), false);
         // Bed grade (to its fixed point inside the round): no changed cell below where it
-        // drains (a sill to its down cell).
+        // drains (a sill to its down cell; into water, the bed's ground); a dry drainage end
+        // (no receiver) that was no pit (a flat tie) no lower than its lowest neighbour, so no
+        // disc digs a new pit (B33).
+        let lowest = |v: &[f32], c: usize| {
+            around(c)
+                .filter(|&j| j != c)
+                .map(|j| v[j])
+                .fold(f32::INFINITY, f32::min)
+        };
         loop {
             let mut moved = false;
             for c in changed.ones() {
-                let Some(t) = target(r, c) else {
-                    continue;
+                let up = match target(r, c) {
+                    Some(t) => z[t],
+                    None if wet(r, c) || lowest(before, c) > before[c] => continue,
+                    None => lowest(z, c),
                 };
-                if wet(r, t) {
-                    continue;
-                }
-                let v = before[c].min(z[c].max(z[t]));
+                let v = before[c].min(z[c].max(up));
                 if v > z[c] {
                     z[c] = v;
                     raised.set(c);
@@ -934,8 +966,22 @@ pub(crate) fn erode(
                 nodes,
             };
             let mut fig = stream_power(&r, &mut z);
-            let near = footprint(&r, &before, &z, s.params.wall_deg);
-            fig.diffused_cells = diffuse(&r, &mut z, e.diffusion, &near);
+            let stream_s = started.elapsed().as_secs_f64();
+            // Diagnostic (calibration): the ground after stream power and after diffusion.
+            let trace = std::env::var_os("TOPOGRAPHY_EROSION_TRACE").is_some();
+            let snap = |name: &str, z: &[f32]| -> Result<()> {
+                Layer::open_or_create(world, &work.path(&format!("e{k}-{name}.f32")), 0.0)?
+                    .write(whole, z)
+            };
+            if trace {
+                snap("sp", &z)?;
+            }
+            let near = footprint(&r, &before, &z, s.params.wall_deg, 0.0);
+            let wide = footprint(&r, &before, &z, s.params.wall_deg, 3.0);
+            (fig.diffused_cells, fig.diffusion_max_m) = diffuse(&r, &mut z, e.diffusion, &near);
+            if trace {
+                snap("df", &z)?;
+            }
             // The taper does not read ka: its buffer is reused for the lowering.
             let r = Routing {
                 world,
@@ -952,7 +998,9 @@ pub(crate) fn erode(
             };
             let mut lower = ka;
             let rawv = raw.to_vec()?;
+            let taper_start = std::time::Instant::now();
             let t = taper(&r, &mut z, &before, &rawv, s.params.wall_deg, &mut lower);
+            let taper_s = taper_start.elapsed().as_secs_f64();
             drop((rawv, lower));
             fig.tapered_cells = t.tapered_cells;
             fig.wall_cells_restored = t.wall_cells_restored;
@@ -964,23 +1012,36 @@ pub(crate) fn erode(
             fig.narrow_left = t.narrow_left;
             let left = t.walls_left;
             // B6 figure: full-K land outside the river cuts' footprint should not move.
-            let mut hist = vec![0u64; super::checks::BINS];
-            let mut hmax = 0f32;
+            let bins = super::checks::BINS;
+            let (mut hist, mut hist_wide) = (vec![0u64; bins], vec![0u64; bins]);
+            let (mut hmax, mut hmax_wide) = (0f32, 0f32);
             for c in 0..n {
-                if !near.get(c) && !interior.get(c) && !held.get(c) && !sea.get(c) {
-                    let d = (before[c] - z[c]).max(0.0);
-                    hist[((d * 100.0) as usize).min(super::checks::BINS - 1)] += 1;
-                    hmax = hmax.max(d);
+                let d = (before[c] - z[c]).max(0.0);
+                if d >= SHAPE_MIN_M {
+                    fig.lowered_1cm += 1;
+                }
+                if near.get(c) || interior.get(c) || held.get(c) || sea.get(c) {
+                    continue;
+                }
+                let bin = ((d * 100.0) as usize).min(bins - 1);
+                hist[bin] += 1;
+                hmax = hmax.max(d);
+                if !wide.get(c) {
+                    hist_wide[bin] += 1;
+                    hmax_wide = hmax_wide.max(d);
                 }
             }
+            drop(wide);
             fig.hillslope_p99_m = super::checks::p99_m(&hist) as f32;
             fig.hillslope_max_m = hmax;
+            fig.hillslope_wide_p99_m = super::checks::p99_m(&hist_wide) as f32;
+            fig.hillslope_wide_max_m = hmax_wide;
             let bz = breached.to_vec()?;
             fig.new_pits = new_pits(world, &z, &bz, &held, &sea);
             out.write(whole, &z)?;
             eprintln!(
                 "erosion: routing {}/{} lowered {} cells (max {:.2} m), {} sills, {} new pits, \
-                 {} walls left; passes {:.0} s{}",
+                 {} walls left; passes {:.0} s (stream power {:.0} s, taper {:.0} s){}",
                 k + 1,
                 e.routings,
                 fig.lowered_cells,
@@ -989,6 +1050,8 @@ pub(crate) fn erode(
                 fig.new_pits,
                 left,
                 started.elapsed().as_secs_f64(),
+                stream_s,
+                taper_s,
                 super::peak()
             );
             Ok(fig.to_blob())
@@ -1176,13 +1239,13 @@ mod tests {
         let mut out = z.clone();
         let mut all = Bits::new(25);
         (0..25).for_each(|i| all.set(i));
-        let n = diffuse(&r, &mut out, 0.05, &all);
+        let (n, _) = diffuse(&r, &mut out, 0.05, &all);
         assert!(out[12] < 12.0 && n >= 1, "the bump drops");
         assert_eq!(out[13], 9.0, "the pit is not filled");
         assert!(out.iter().zip(&z).all(|(a, b)| a <= b), "nothing rises");
         let mut far = z.clone();
         assert_eq!(
-            diffuse(&r, &mut far, 0.05, &Bits::new(25)),
+            diffuse(&r, &mut far, 0.05, &Bits::new(25)).0,
             0,
             "no cut nearby: the bump stays (B6)"
         );
@@ -1203,6 +1266,50 @@ mod tests {
         for i in 0..before.len() - 1 {
             assert!(s.z[i] >= s.z[i + 1] - 1e-5, "cell {i} below its receiver");
         }
+    }
+
+    #[test]
+    fn a_dry_drainage_end_is_not_cut_into_a_new_pit() {
+        // A gentle bowl whose bottom is a tie (cells 24 and 25 at 10 m), so the breached ground
+        // has no strict minimum; cell 24 has no receiver (a dry drainage end, flow 0) and is
+        // cut 1 m. Its disc lowers the ring less, which must not leave cell 24 a new pit.
+        let (w, h) = (7usize, 7usize);
+        let before: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 - 3.0, (i / w) as f32 - 3.0);
+                10.0 + 0.5 * (x * x + y * y).min(x * x - 2.0 * x + 1.0 + y * y)
+            })
+            .collect();
+        assert_eq!((before[24], before[25]), (10.0, 10.0));
+        let mut s = Strip::new(&before);
+        s.flow = vec![0; w * h];
+        let mut r = s.routing();
+        r.world = World {
+            w: w as u64,
+            h: h as u64,
+        };
+        let mut z = before.clone();
+        z[24] -= 1.0;
+        let mut lower = vec![0f32; w * h];
+        taper(&r, &mut z, &before, &before, 35.0, &mut lower);
+        let (held, sea) = (Bits::new(w * h), Bits::new(w * h));
+        assert_eq!(new_pits(r.world, &z, &before, &held, &sea), 0, "{z:?}");
+        assert!(z.iter().zip(&before).all(|(a, b)| a <= b), "nothing rises");
+    }
+
+    #[test]
+    fn a_cut_draining_into_a_lake_stays_above_the_lake_bed() {
+        // Cell 2 drains into held cell 3 (a lake's bed at 10 m) and was cut below it: left
+        // there it would be a new pit beside the lake.
+        let before = [20.0, 15.0, 10.2, 10.0, 5.0f32];
+        let mut s = Strip::new(&before);
+        s.held.set(3);
+        let r = s.routing();
+        let mut z = before.to_vec();
+        z[2] = 9.9;
+        let mut lower = vec![0f32; 5];
+        taper(&r, &mut z, &before, &before, 35.0, &mut lower);
+        assert!(z[2] >= z[3], "{z:?}");
     }
 
     #[test]
