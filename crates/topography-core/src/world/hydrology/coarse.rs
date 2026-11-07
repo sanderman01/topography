@@ -3,8 +3,8 @@
 //! and its moisture grid.
 
 use super::flood::{Dims, FLOW_CENTRE, FLOW_DRY, FLOW_SINK};
-use super::grid::{self, Grid};
 use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
+use crate::world::water::grid::{self, Grid};
 use serde_json::{Map, Value};
 use std::{
     collections::{HashMap, HashSet},

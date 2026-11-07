@@ -45,6 +45,7 @@ Usage: topography [--help | --version]
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography world hydrology --grid <grid-dir> --out <new-output-dir> [--coarse <coarse-out-dir>] [--north <band-out-dir>] [--wind-deg 225] [--water water.toml] [--river-km2 10]
        topography world hydrology-seam --north <band-out-dir> --south <band-out-dir>
+       topography world rain --grid <grid-dir> [--wind-deg 225]
        topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
        topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05] [--spots E,N;E,N]
        topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
@@ -376,6 +377,9 @@ fn main() -> ExitCode {
         [command, action, rest @ ..] if command == "world" && action == "water" => {
             return water(rest);
         }
+        [command, action, rest @ ..] if command == "world" && action == "rain" => {
+            return rain(rest);
+        }
         [command, action, rest @ ..] if command == "world" && action == "water-finish" => {
             return water_finish(rest);
         }
@@ -646,6 +650,32 @@ fn water(args: &[std::ffi::OsString]) -> ExitCode {
         return usage_error();
     }
     workflow_result(water::run(&o))
+}
+
+/// `world rain --grid DIR [--wind-deg D]`
+fn rain(args: &[std::ffi::OsString]) -> ExitCode {
+    use topography_core::world::water;
+    let mut o = water::RainOptions {
+        grid: Default::default(),
+        wind_deg: None,
+    };
+    for pair in args.chunks(2) {
+        let [flag, value] = pair else {
+            return usage_error();
+        };
+        match flag.to_str() {
+            Some("--grid") => o.grid = value.into(),
+            Some("--wind-deg") => match number::<f64>(value) {
+                Some(d) if d.is_finite() => o.wind_deg = Some(d),
+                _ => return usage_error(),
+            },
+            _ => return usage_error(),
+        }
+    }
+    if o.grid.as_os_str().is_empty() {
+        return usage_error();
+    }
+    workflow_result(water::rain(&o))
 }
 
 /// Review spots "E,N;E,N" (metres); None when malformed.

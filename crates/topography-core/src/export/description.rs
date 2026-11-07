@@ -4,7 +4,7 @@
 
 use super::water::{Bodies, Kind, WaterStats};
 use crate::acquisition::{Result, digest, ensure, read_small, write_new};
-use crate::world::hydrology::grid;
+use crate::world::water::grid;
 use serde_json::{Map, Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},

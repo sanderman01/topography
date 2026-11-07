@@ -80,14 +80,14 @@ impl Grid {
 }
 
 /// Input rasters with their SHA-256 digests by file name.
-pub(super) struct Input {
+pub(crate) struct Input {
     pub grid: Grid,
     pub elevation: Vec<f32>,
     pub classes: Option<Vec<u8>>,
     pub digests: Map<String, Value>,
 }
 
-pub(super) fn read(dir: &Path) -> Result<Input> {
+pub(crate) fn read(dir: &Path) -> Result<Input> {
     let manifest_bytes = read_small(&dir.join("grid.json"))?;
     let manifest: Map<String, Value> = serde_json::from_slice(&manifest_bytes)?;
     let grid = shape(&manifest)?;
@@ -184,7 +184,7 @@ fn read_raw(path: &Path, len: usize) -> Result<(Vec<u8>, String)> {
 }
 
 /// Elevation of an input grid, streamed row by row (for comparisons after carving).
-pub(super) fn for_each_input_row(
+pub(crate) fn for_each_input_row(
     dir: &Path,
     w: usize,
     mut f: impl FnMut(usize, &[f32]),

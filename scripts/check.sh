@@ -95,6 +95,14 @@ grep -q '"passed": true' "$water_tmp/out/report.json" ||
   { printf 'water report not passed\n' >&2; exit 1; }
 grep -Eq '"breaches": [1-9]' "$water_tmp/out/report.json" ||
   { printf 'water report lists no breach\n' >&2; exit 1; }
+rain_grid="$water_tmp/rain"
+cp -r "$water_grid" "$rain_grid"
+jq 'del(.moisture, .discharge) | .spacing_m = 32 | .wind_from_deg = 270' "$water_grid/grid.json" > "$rain_grid/grid.json"
+rm "$rain_grid/moisture.f32"
+"${cli[@]}" world rain --grid "$rain_grid" >/dev/null ||
+  { printf 'world rain failed\n' >&2; exit 1; }
+test -s "$rain_grid/moisture.f32" || { printf 'world rain wrote no moisture\n' >&2; exit 1; }
+check_failure 2 'Unsupported arguments' world rain --grid
 check_failure 2 'Unsupported arguments' world water --grid
 check_failure 2 'Unsupported arguments' world water-finish --grid g --work w
 check_success 'excluded from prepared and training pools' validate source examples/manifests/source-v1.toml

@@ -2,17 +2,16 @@
 //! (2004), solved by FFT, plus a uniform background rate, both depleted downwind by the
 //! water already rained out over land.
 
-use super::flood::SEA;
 use rustfft::{FftPlanner, num_complex::Complex};
 use serde_json::{Value, json};
 use std::f64::consts::PI;
 
 /// Precipitation grid spacing.
-pub(super) const MOISTURE_M: f64 = 128.0;
+pub(crate) const MOISTURE_M: f64 = 128.0;
 
 /// Judgment constants with literature-typical values (Smith and Barstad 2004). Only the ratio
 /// of the orographic term to the background shapes discharge and moisture.
-pub(super) struct Params {
+pub(crate) struct Params {
     pub wind_ms: f64,
     /// Moist buoyancy frequency (s⁻¹).
     pub nm: f64,
@@ -30,7 +29,7 @@ pub(super) struct Params {
     pub budget_mm: f64,
 }
 
-pub(super) const PARAMS: Params = Params {
+pub(crate) const PARAMS: Params = Params {
     wind_ms: 10.0,
     nm: 0.005,
     hw_m: 2500.0,
@@ -62,7 +61,7 @@ impl Params {
 }
 
 /// Precipitation (mm/h) on a grid of `k` x `k` input cells per cell.
-pub(super) struct Rain {
+pub(crate) struct Rain {
     pub w: usize,
     pub h: usize,
     pub k: usize,
@@ -87,7 +86,7 @@ impl Rain {
 
 /// Land precipitation figures: the mean weights discharge, the 95th percentile scales
 /// `moisture.f32`.
-pub(super) struct Stats {
+pub(crate) struct Stats {
     pub mean_land_mm_h: f32,
     pub p95_land_mm_h: f32,
     /// Land means by map quadrant: NW, NE, SW, SE.
@@ -98,21 +97,26 @@ pub(super) struct Stats {
 }
 
 /// Judgment value: moisture without a wind, neither wet nor dry for vegetation.
-pub(super) const NEUTRAL_MOISTURE: f32 = 0.5;
+pub(crate) const NEUTRAL_MOISTURE: f32 = 0.5;
 
 impl Stats {
-    /// Land is input cells without `SEA` in `flags`; a rain cell is land when most of its
-    /// block is. Falls back to the background rate without land.
-    pub fn new(rain: &Rain, fine_w: usize, flags: &[u8], windless: bool) -> Self {
-        let fine_h = flags.len() / fine_w;
+    /// Land is input cells where `land` holds (of a `fine_w` x `fine_h` grid); a rain cell is
+    /// land when most of its block is. Falls back to the background rate without land.
+    pub fn new(
+        rain: &Rain,
+        fine_w: usize,
+        fine_h: usize,
+        land_at: impl Fn(usize) -> bool,
+        windless: bool,
+    ) -> Self {
         let mut land = vec![0u32; rain.mm_h.len()];
         let mut cells = vec![0u32; rain.mm_h.len()];
         let (mut sum, mut quad, mut quad_n) = (0f64, [0f64; 4], [0u64; 4]);
-        for (i, &f) in flags.iter().enumerate() {
+        for i in 0..fine_w * fine_h {
             let (x, y) = (i % fine_w, i / fine_w);
             let c = (y / rain.k) * rain.w + x / rain.k;
             cells[c] += 1;
-            if f & SEA == 0 {
+            if land_at(i) {
                 land[c] += 1;
                 let p = rain.at(fine_w, i) as f64;
                 sum += p;
@@ -143,8 +147,8 @@ impl Stats {
             windless,
         };
         let mut quad = [0f64; 4];
-        for (i, &f) in flags.iter().enumerate() {
-            if f & SEA == 0 {
+        for i in 0..fine_w * fine_h {
+            if land_at(i) {
                 let (x, y) = (i % fine_w, i / fine_w);
                 let q = usize::from(x >= fine_w / 2) + 2 * usize::from(y >= fine_h / 2);
                 quad[q] += stats.moisture(rain.at(fine_w, i)) as f64;
@@ -179,15 +183,45 @@ impl Stats {
     }
 }
 
+/// v2's sea for the rain (ruling B12): ground below 0 m connected 8-way to the grid edge.
+pub(crate) fn open_sea(ground: &[f32], w: usize, h: usize) -> Vec<bool> {
+    let mut sea = vec![false; ground.len()];
+    let edge = |i: usize| {
+        let (x, y) = (i % w, i / w);
+        x == 0 || y == 0 || x + 1 == w || y + 1 == h
+    };
+    let mut stack: Vec<usize> = (0..ground.len())
+        .filter(|&i| edge(i) && ground[i] < 0.0)
+        .collect();
+    for &i in &stack {
+        sea[i] = true;
+    }
+    while let Some(i) = stack.pop() {
+        let (x, y) = ((i % w) as i64, (i / w) as i64);
+        for (dy, dx) in super::geom::OFFSETS {
+            let (nx, ny) = (x + dx, y + dy);
+            if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                continue;
+            }
+            let j = ny as usize * w + nx as usize;
+            if !sea[j] && ground[j] < 0.0 {
+                sea[j] = true;
+                stack.push(j);
+            }
+        }
+    }
+    sea
+}
+
 /// Block factor from the input spacing to about 128 m (1 when the input is that coarse).
-pub(super) fn block(spacing_m: f64) -> usize {
+pub(crate) fn block(spacing_m: f64) -> usize {
     ((MOISTURE_M / spacing_m).round() as usize).max(1)
 }
 
 /// Precipitation over `ground` (`w` x `h`, `spacing_m`), with the wind coming from
 /// `wind_from_deg` (clockwise from north); uniform background rain without a wind. Rain
 /// depletes over cells where `land_at` holds (the input's non-sea cells).
-pub(super) fn precipitation(
+pub(crate) fn precipitation(
     ground: &[f32],
     land_at: impl Fn(usize) -> bool,
     w: usize,
@@ -410,5 +444,22 @@ mod tests {
         );
         let at = |x: usize, y: usize| rain.mm_h[y * n + x];
         assert!(at(114, 142) > 1.5 * bg && at(161, 95) < 1.01 * bg);
+    }
+
+    #[test]
+    fn the_rain_sea_is_below_zero_and_reaches_the_edge() {
+        // 5 x 4: a sea bay on the west edge, an inland pit below 0 m, a 0 m cell on the edge.
+        #[rustfmt::skip]
+        let g = [
+            -1.0, -1.0, 5.0, 5.0, 0.0,
+            -1.0,  2.0, 5.0, -3.0, 5.0,
+             3.0, -1.0, 5.0, 5.0, 5.0,
+             3.0,  3.0, 3.0, 3.0, 3.0f32,
+        ];
+        let sea = open_sea(&g, 5, 4);
+        let want = [0usize, 1, 5, 11];
+        for (i, &s) in sea.iter().enumerate() {
+            assert_eq!(s, want.contains(&i), "cell {i}");
+        }
     }
 }

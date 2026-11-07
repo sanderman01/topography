@@ -3,8 +3,8 @@
 //! check that compares two band outputs.
 
 use super::flood::{CENTRE, Dims, FLOW_CENTRE, FLOW_DRY, RIVER, SEA, receiver};
-use super::grid::{self, Grid};
 use crate::acquisition::{Result, digest, ensure, read_small};
+use crate::world::water::grid::{self, Grid};
 use serde_json::{Map, Value, json};
 use std::{collections::HashMap, path::Path};
 

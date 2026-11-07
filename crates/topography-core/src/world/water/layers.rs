@@ -177,8 +177,7 @@ impl<T: Cell> Layer<T> {
         }
         Ok(())
     }
-    /// The whole raster (tests).
-    #[cfg(test)]
+    /// The whole raster.
     pub fn to_vec(&self) -> Result<Vec<T>> {
         self.read(Rect::whole(self.world()))
     }

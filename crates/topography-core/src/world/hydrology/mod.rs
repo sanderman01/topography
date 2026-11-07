@@ -8,9 +8,9 @@ mod coarse;
 mod erosion;
 mod fine;
 mod flood;
-pub(crate) mod grid;
+pub(crate) use crate::world::water::grid;
 mod lakes;
-mod moisture;
+use crate::world::water::moisture;
 mod report;
 mod rivers;
 mod water;
@@ -419,7 +419,13 @@ pub fn run(options: &Options) -> Result<Outcome> {
             wind_from_deg,
             params,
         );
-        let stats = moisture::Stats::new(&rain, grid.w, &flags, wind_from_deg.is_none());
+        let stats = moisture::Stats::new(
+            &rain,
+            grid.w,
+            grid.h,
+            |i| flags[i] & SEA == 0,
+            wind_from_deg.is_none(),
+        );
         (rain, stats)
     });
     // Discharge entering across window edges and from the previous band.

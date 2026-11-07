@@ -54,7 +54,6 @@ pub(crate) struct Rect {
 }
 
 impl Rect {
-    #[cfg(test)]
     pub fn whole(world: World) -> Self {
         Rect {
             x0: 0,

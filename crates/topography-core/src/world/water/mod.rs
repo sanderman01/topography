@@ -13,9 +13,11 @@ mod contract;
 mod flats;
 mod flow;
 mod geom;
+pub(crate) mod grid;
 mod hierarchy;
 mod hydraulic;
 mod layers;
+pub(crate) mod moisture;
 mod nodes;
 mod pipeline;
 #[cfg(test)]
@@ -99,6 +101,86 @@ pub struct Options {
     pub river_km2: Option<f64>,
 }
 
+pub struct RainOptions {
+    pub grid: PathBuf,
+    /// Degrees the wind comes from (clockwise from north); else grid.json `wind_from_deg`;
+    /// without either the rain is uniform (moisture 0.5).
+    pub wind_deg: Option<f64>,
+}
+
+/// The trunk grid's 128 m moisture field (Smith and Barstad 2004, v2's code and sea rule) from
+/// its own ground, before any erosion (ruling B12): writes `moisture.f32` and the grid.json
+/// entries `moisture`, `discharge.mean_land_mm_h` and `precipitation` that `world water`
+/// reads. Finer levels copy them from the trunk.
+pub fn rain(o: &RainOptions) -> Result<String> {
+    let path = o.grid.join("grid.json");
+    let mut manifest: Map<String, Value> = serde_json::from_slice(&read_small(&path)?)?;
+    ensure(
+        !manifest.contains_key("moisture"),
+        format!("{} already has a moisture entry", path.display()),
+    )?;
+    let g = grid::shape(&manifest)?;
+    let world = geom::World {
+        w: g.w as u64,
+        h: g.h as u64,
+    };
+    let ground = layers::Layer::<f32>::open(world, &o.grid.join("elevation.f32"))?.to_vec()?;
+    let sea = moisture::open_sea(&ground, g.w, g.h);
+    let wind = o
+        .wind_deg
+        .or_else(|| manifest.get("wind_from_deg").and_then(Value::as_f64));
+    let p = &moisture::PARAMS;
+    let rain = moisture::precipitation(&ground, |i| !sea[i], g.w, g.h, g.spacing_m, wind, p);
+    let stats = moisture::Stats::new(&rain, g.w, g.h, |i| !sea[i], wind.is_none());
+    let bytes: Vec<u8> = rain
+        .mm_h
+        .iter()
+        .flat_map(|&v| stats.moisture(v).to_le_bytes())
+        .collect();
+    io_context(
+        "write moisture.f32",
+        fs::write(o.grid.join("moisture.f32"), bytes),
+    )?;
+    let mut precipitation = stats.json();
+    if let Value::Object(m) = &mut precipitation {
+        m.insert("wind_from_deg".into(), json!(wind));
+        m.insert("params".into(), p.json());
+    }
+    let spacing = g.spacing_m * rain.k as f64;
+    manifest.insert(
+        "moisture".into(),
+        json!({
+            "file": "moisture.f32", "size": [rain.w, rain.h],
+            "spacing_m": spacing, "nw_m": g.nw_m, "dtype": "float32",
+            "value": if wind.is_some() {
+                json!("precipitation / scale_mm_h, clipped to 0..1")
+            } else {
+                json!(format!("{} everywhere (no wind)", moisture::NEUTRAL_MOISTURE))
+            },
+            "scale_mm_h": stats.p95_land_mm_h,
+            "scale": "95th percentile of precipitation on land cells",
+        }),
+    );
+    manifest.insert(
+        "discharge".into(),
+        json!({"unit": "km² at the mean land precipitation", "mean_land_mm_h": stats.mean_land_mm_h}),
+    );
+    manifest.insert("precipitation".into(), precipitation);
+    manifest.insert("wind_from_deg".into(), json!(wind));
+    io_context(
+        "write grid.json",
+        fs::write(&path, serde_json::to_vec_pretty(&manifest)?),
+    )?;
+    Ok(format!(
+        "{}: moisture {}x{} at {} m, mean land rain {:.3} mm/h",
+        o.grid.display(),
+        rain.w,
+        rain.h,
+        spacing,
+        stats.mean_land_mm_h
+    ))
+}
+
 /// The run's setup from a grid directory (grid.json with a `moisture` entry, elevation.f32,
 /// optional classes.u8 with `classes_cell_m`), the raw ground, and the stamp a work directory
 /// must match to be resumed.
@@ -116,7 +198,7 @@ pub(crate) fn setup(
     )?;
     let bytes = read_small(&grid.join("grid.json"))?;
     let manifest: Map<String, Value> = serde_json::from_slice(&bytes)?;
-    let g = crate::world::hydrology::grid::shape(&manifest)?;
+    let g = grid::shape(&manifest)?;
     let world = geom::World {
         w: g.w as u64,
         h: g.h as u64,
@@ -731,7 +813,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     };
     let (report, passed) = checks::report(tiles, extra, figures);
 
-    let mut stage = crate::world::hydrology::grid::Stage::new(&o.out)?;
+    let mut stage = grid::Stage::new(&o.out)?;
     stage.copy("elevation.f32", &o.ground)?;
     stage.copy("water-surface.f32", &work.path("water-surface.f32"))?;
     stage.copy("water-body.u32", &work.path("water-body.u32"))?;
@@ -792,6 +874,45 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rain_writes_the_moisture_field_once() {
+        let dir = tempfile::tempdir().expect("temp");
+        let world = geom::World { w: 64, h: 64 };
+        let grid = testing::grid_dir(dir.path(), world);
+        // A trunk grid: no moisture yet, a wind from the west, 32 m cells.
+        let mut m: Map<String, Value> =
+            serde_json::from_slice(&fs::read(grid.join("grid.json")).unwrap()).unwrap();
+        m.remove("moisture");
+        m.remove("discharge");
+        m.insert("spacing_m".into(), json!(32.0));
+        m.insert("origin".into(), json!([0.0, 64.0 * 32.0]));
+        m.insert("wind_from_deg".into(), json!(270.0));
+        fs::write(grid.join("grid.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+        fs::remove_file(grid.join("moisture.f32")).unwrap();
+        let o = RainOptions {
+            grid: grid.clone(),
+            wind_deg: None,
+        };
+        rain(&o).expect("rain");
+        let m: Map<String, Value> =
+            serde_json::from_slice(&fs::read(grid.join("grid.json")).unwrap()).unwrap();
+        let entry = &m["moisture"];
+        assert_eq!(
+            entry["size"],
+            json!([16, 16]),
+            "128 m cells over a 2,048 m grid"
+        );
+        assert!(m["discharge"]["mean_land_mm_h"].as_f64().unwrap() > 0.0);
+        assert_eq!(
+            fs::read(grid.join("moisture.f32")).unwrap().len(),
+            16 * 16 * 4
+        );
+        // The model reads it.
+        let (s, _, _) = setup(&grid, 64, 1, Some(&grid.join("water.toml")), None).expect("setup");
+        assert!(s.rain.mean_land_mm_h > 0.0);
+        assert!(rain(&o).is_err(), "a grid with moisture is refused");
+    }
 
     #[test]
     fn run_resumes_from_its_work_directory() {
