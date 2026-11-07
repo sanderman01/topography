@@ -30,7 +30,7 @@ mod watershed;
 
 use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
 use serde_json::{Map, Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -222,17 +222,129 @@ fn stage_tag(name: &str, inputs: &Value) -> String {
     format!("{name}-{}", &digest(inputs.to_string().as_bytes())[..12])
 }
 
-/// The final routing's tag: the run's settings (`m1_tag`) and the contents of the ground and
-/// of the prior (breached) ground its receivers keep, the only rasters m3 reads. So `finish`
-/// on the carved ground reuses the run's m3, a channels rerun that leaves the carved ground
-/// alone keeps it, and another ground never reads stale passes.
+/// The stages' cache tags. Each digests the tags of the stages whose outputs it reads and its
+/// own settings; the stamp covers the grid, water table, tile size and binary. The flags
+/// (`walls`, `bed_grade`, ...) mark code changes; any other code change needs a rerun from
+/// that stage (docs/workflows/terrain-cascade.md, "Rerunning from a stage").
+#[derive(Clone, Debug, PartialEq)]
+struct Tags {
+    m1: String,
+    b: String,
+    m2: String,
+    l: String,
+    c: String,
+    m3: String,
+    s: String,
+}
+
+impl Tags {
+    /// m1 reads the raw ground.
+    fn m1(p: &Params, contract: bool) -> String {
+        stage_tag(
+            "m1",
+            &json!({"river_km2": p.river_km2, "contract": contract}),
+        )
+    }
+    /// b reads the raw ground and m1.
+    fn b(m1: &str, p: &Params, m3s_per_km2: f64) -> String {
+        stage_tag(
+            "b",
+            &json!({"after": m1, "cap": p.breach_cap_m, "radius": p.breach_radius,
+                    "channels": p.channels, "m3s_per_km2": m3s_per_km2,
+                    "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true}),
+        )
+    }
+    /// m2 reads the breached ground (b).
+    fn m2(b: &str) -> String {
+        stage_tag("m2", &json!({"after": b}))
+    }
+    /// l reads m2 and the river pools found on it.
+    fn l(m2: &str, pools: &BTreeMap<u64, u64>) -> String {
+        stage_tag("l", &json!({"after": m2, "pools": pools}))
+    }
+    /// c reads the raw and breached grounds, m2 and the labels (l, after m2 and b).
+    fn c(l: &str, m3s_per_km2: f64) -> String {
+        stage_tag(
+            "c",
+            &json!({"after": l, "m3s_per_km2": m3s_per_km2, "cap": CHANNEL_CAP_M,
+                    "halo": channel::HALO, "backwater": channel::BACKWATER,
+                    "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS,
+                    "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true,
+                    "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M,
+                    "min_depth_m": MIN_DEPTH_M, "shore_dry": true}),
+        )
+    }
+    /// The final routing reads the ground and the prior (breached) ground its receivers keep,
+    /// by content (sha256), with m1's settings. So `finish` on the carved ground reuses the
+    /// run's m3, a channels rerun that leaves the carved ground alone keeps it, and another
+    /// ground never reads stale passes.
+    fn m3(m1: &str, ground: &str, breached: &str) -> String {
+        stage_tag(
+            "m3",
+            &json!({"after": m1, "ground": ground, "breached": breached, "kept": true, "kept_ties": true}),
+        )
+    }
+    /// Settle reads m3 on the carved ground and the channels' surfaces, bodies and labelled
+    /// lakes (c): m3's content tag alone survives a channels rerun.
+    fn s(m3: &str, c: &str) -> String {
+        stage_tag(
+            "s",
+            &json!({"after": m3, "channels": c, "lakes_at_label": true}),
+        )
+    }
+    /// Every tag, from the settings, the pools on m2 and the carved and breached grounds'
+    /// sha256 (what `finish` recomputes; `run` builds them stage by stage alike).
+    fn all(
+        p: &Params,
+        contract: bool,
+        m3s_per_km2: f64,
+        pools: &BTreeMap<u64, u64>,
+        carved: &str,
+        breached: &str,
+    ) -> Self {
+        let m1 = Self::m1(p, contract);
+        let b = Self::b(&m1, p, m3s_per_km2);
+        let m2 = Self::m2(&b);
+        let l = Self::l(&m2, pools);
+        let c = Self::c(&l, m3s_per_km2);
+        let m3 = Self::m3(&m1, carved, breached);
+        let s = Self::s(&m3, &c);
+        Self {
+            m1,
+            b,
+            m2,
+            l,
+            c,
+            m3,
+            s,
+        }
+    }
+    fn list(&self) -> Value {
+        json!([self.m1, self.b, self.m2, self.l, self.c, self.m3, self.s])
+    }
+}
+
+fn sha256(path: &Path) -> Result<String> {
+    Ok(crate::acquisition::hash_file(path)?.0)
+}
+
+/// The final routing's tag on `ground` (see `Tags::m3`).
 fn final_tag(m1_tag: &str, ground: &Path, breached: &Path) -> Result<String> {
-    let (g, _) = crate::acquisition::hash_file(ground)?;
-    let (b, _) = crate::acquisition::hash_file(breached)?;
-    Ok(stage_tag(
-        "m3",
-        &json!({"after": m1_tag, "ground": g, "breached": b, "kept": true, "kept_ties": true}),
-    ))
+    Ok(Tags::m3(m1_tag, &sha256(ground)?, &sha256(breached)?))
+}
+
+/// Settle tag directories other than `keep`. Settle rewrites the channels' surfaces and
+/// bodies in place, so it must never run on surfaces another settle wrote.
+fn other_settles(work: &store::Work, keep: &str) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for e in io_context("list the work directory", fs::read_dir(work.path("")))? {
+        let e = io_context("list the work directory", e)?;
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with("s-") && name != keep && e.path().is_dir() {
+            out.push(e.path());
+        }
+    }
+    Ok(out)
 }
 
 /// Removes the final-routing sets (13 B per cell: level, node, discharge, flow; plus their
@@ -266,26 +378,18 @@ pub fn run(o: &Options) -> Result<String> {
     let wk = Some(&work);
     let geo = hydraulic::Geometry::new(s.table.m3s_per_km2);
     let p = &s.params;
-    let m1_tag = stage_tag(
-        "m1",
-        &json!({"river_km2": p.river_km2, "contract": s.contract}),
-    );
-    let b_tag = stage_tag(
-        "b",
-        &json!({"after": m1_tag, "cap": p.breach_cap_m, "radius": p.breach_radius,
-                "channels": p.channels, "m3s_per_km2": geo.m3s_per_km2,
-                "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true}),
-    );
+    let m1_tag = Tags::m1(p, s.contract);
+    let b_tag = Tags::b(&m1_tag, p, geo.m3s_per_km2);
     let m1 = pipeline::model(&s, &raw, wk, &m1_tag, None)?;
     let breached = layers::Layer::open_or_create(s.world, &work.path("breached.f32"), 0.0)?;
     let breaches = breach::breach(&s, &m1, &raw, &breached, &geo, wk, &b_tag)?;
     drop(m1);
-    let m2_tag = stage_tag("m2", &json!({"after": b_tag}));
+    let m2_tag = Tags::m2(&b_tag);
     let rasters = pipeline::Rasters::files(s.world, &work.path(""), "m2")?;
     let m2 = pipeline::model(&s, &breached, wk, &m2_tag, Some(&rasters))?;
     let body = layers::Layer::open_or_create(s.world, &work.path("body.u32"), 0)?;
     let pools = bodies::pools(&s, &m2, &geo);
-    let l_tag = stage_tag("l", &json!({"after": m2_tag, "pools": pools}));
+    let l_tag = Tags::l(&m2_tag, &pools);
     let done = format!("{l_tag}/bodies");
     let bodies = if work.is_done(&done) {
         serde_json::from_slice(&io_context(
@@ -301,15 +405,14 @@ pub fn run(o: &Options) -> Result<String> {
         work.mark_done(&done)?;
         v
     };
-    let c_tag = stage_tag(
-        "c",
-        &json!({"after": l_tag, "m3s_per_km2": geo.m3s_per_km2, "cap": CHANNEL_CAP_M,
-                "halo": channel::HALO, "backwater": channel::BACKWATER,
-                "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS,
-                "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true,
-                "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M,
-                "min_depth_m": MIN_DEPTH_M, "shore_dry": true}),
-    );
+    let c_tag = Tags::c(&l_tag, geo.m3s_per_km2);
+    // Channels about to (re)write the surfaces void every earlier settle of them.
+    let c_done = (0..s.tiles().len()).all(|i| work.is_done(&format!("{c_tag}/ch/{i:05}")));
+    if !c_done {
+        for d in other_settles(&work, "")? {
+            io_context(format!("remove {}", d.display()), fs::remove_dir_all(&d))?;
+        }
+    }
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
         &s, &m2.water, &raw, &breached, &rasters, &body, &out, &geo, wk, &c_tag,
@@ -350,11 +453,22 @@ pub fn run(o: &Options) -> Result<String> {
         &work.path("carved.f32"),
         &work.path("breached.f32"),
     )?;
-    // Settle reads the channels' surfaces too: m3's content tag alone survives a channels rerun.
-    let s_tag = stage_tag(
-        "s",
-        &json!({"after": m3_tag, "channels": c_tag, "lakes_at_label": true}),
-    );
+    let s_tag = Tags::s(&m3_tag, &c_tag);
+    if !work.path(&format!("{s_tag}/settled.bin")).exists() {
+        let old = other_settles(&work, &s_tag)?;
+        ensure(
+            old.is_empty(),
+            format!(
+                "the channels' surfaces were settled already ({}); delete {} to rerun from \
+                 the channels",
+                old.iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                work.path(&c_tag).display()
+            ),
+        )?;
+    }
     let lakes: HashSet<u32> = bodies["bodies"]
         .as_array()
         .into_iter()
@@ -431,22 +545,41 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         "read stages.json (run `world water` to the end first)",
         fs::read(work.path("stages.json")),
     )?)?;
-    let tag = |i: usize| {
-        stages["tags"][i]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| AcquisitionError::Invalid("stages.json lists no stage tags".into()))
-    };
-    let (m1_tag, m2_tag, l_tag, s_tag) = (tag(0)?, tag(2)?, tag(3)?, tag(6)?);
+    // The tags recomputed, not read: a run that stopped after rewriting a stage leaves an
+    // older stages.json.
+    let stale = "stages.json is not from this work directory's last stages; run `world water` \
+                 to the end first";
+    let geo = hydraulic::Geometry::new(s.table.m3s_per_km2);
+    let m1_tag = Tags::m1(&s.params, s.contract);
+    let b_tag = Tags::b(&m1_tag, &s.params, geo.m3s_per_km2);
+    let m2_tag = Tags::m2(&b_tag);
+    // Checked before m2 is read, so a stale m2 is refused rather than recomputed.
+    let first = [&m1_tag, &b_tag, &m2_tag];
     ensure(
-        work.is_done(&format!("{l_tag}/bodies"))
-            && work.path(&format!("{s_tag}/settled.bin")).exists(),
-        "run `world water` to the end first",
+        (0..3).all(|i| stages["tags"][i] == first[i].as_str()),
+        stale,
     )?;
     let rasters = pipeline::Rasters::open(s.world, &work.path(""), "m2")?;
     let breached = layers::Layer::open(s.world, &work.path("breached.f32"))?;
     // The second run's nodes (cached): the lakes as written.
     let m2 = pipeline::model(&s, &breached, Some(&work), &m2_tag, None)?;
+    let pools = bodies::pools(&s, &m2, &geo);
+    let carved = work.path("carved.f32");
+    let (carved_sha, breached_sha) = (sha256(&carved)?, sha256(&work.path("breached.f32"))?);
+    let tags = Tags::all(
+        &s.params,
+        s.contract,
+        geo.m3s_per_km2,
+        &pools,
+        &carved_sha,
+        &breached_sha,
+    );
+    ensure(stages["tags"] == tags.list(), stale)?;
+    ensure(
+        work.is_done(&format!("{}/bodies", tags.l))
+            && work.path(&format!("{}/settled.bin", tags.s)).exists(),
+        "run `world water` to the end first",
+    )?;
     let mut bodies: Value = serde_json::from_slice(&io_context(
         "read bodies.json",
         fs::read(work.path("bodies.json")),
@@ -511,7 +644,12 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     // The third model run, on the final ground (R27); `run` made it already for the carved
     // ground (same tag).
     let ground = layers::Layer::open(s.world, &o.ground)?;
-    let m3_tag = final_tag(&m1_tag, &o.ground, &work.path("breached.f32"))?;
+    let same = |a: &Path, b: &Path| matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y);
+    let m3_tag = if same(&o.ground, &carved) {
+        tags.m3.clone()
+    } else {
+        Tags::m3(&m1_tag, &sha256(&o.ground)?, &breached_sha)
+    };
     // Receivers kept from the breached ground where still valid (scale diagnosis 3).
     let m3 = pipeline::model_on(
         &s,
@@ -730,6 +868,122 @@ mod tests {
         fs::write(&g2, [3u8; 64]).unwrap();
         assert_ne!(final_tag("m1-x", &g2, &b).unwrap(), tag);
         assert_ne!(final_tag("m1-x", &g, &g).unwrap(), tag);
+    }
+
+    /// Each stage's tag changes with every input it reads (directly or through the stages
+    /// before it) and with nothing else. Before 7d4079f settle's tag missed the channels.
+    #[test]
+    fn each_stage_tag_follows_what_the_stage_reads() {
+        let p = params(&table::Table::parse(table::DEFAULT).unwrap(), 1.0, None);
+        let pools = BTreeMap::from([(7u64, 9u64)]);
+        let tags = |p: &Params, contract, m3s, pools: &BTreeMap<u64, u64>, g: &str, b: &str| {
+            Tags::all(p, contract, m3s, pools, g, b)
+        };
+        let base = tags(&p, true, 1.0, &pools, "g", "b");
+        let changed = |t: Tags| {
+            let names = ["m1", "b", "m2", "l", "c", "m3", "s"];
+            let (a, z) = (base.list(), t.list());
+            (0..7)
+                .filter(|&i| a[i] != z[i])
+                .map(|i| names[i])
+                .collect::<Vec<_>>()
+        };
+        let all = vec!["m1", "b", "m2", "l", "c", "m3", "s"];
+        // m3 reads the breached ground by content, so a new breach reaches it that way.
+        let after_b = vec!["b", "m2", "l", "c", "s"];
+        let with = |f: fn(&mut Params)| {
+            let mut q = p;
+            f(&mut q);
+            q
+        };
+        let other = BTreeMap::from([(7u64, 10u64)]);
+        assert_eq!(
+            changed(tags(
+                &with(|q| q.river_km2 = 0.1),
+                true,
+                1.0,
+                &pools,
+                "g",
+                "b"
+            )),
+            all
+        );
+        assert_eq!(changed(tags(&p, false, 1.0, &pools, "g", "b")), all);
+        for f in [
+            (|q: &mut Params| q.breach_cap_m = 3.0) as fn(&mut Params),
+            |q| q.breach_radius = 9,
+            |q| q.channels = false,
+        ] {
+            assert_eq!(
+                changed(tags(&with(f), true, 1.0, &pools, "g", "b")),
+                after_b
+            );
+        }
+        assert_eq!(changed(tags(&p, true, 2.0, &pools, "g", "b")), after_b);
+        assert_eq!(
+            changed(tags(&p, true, 1.0, &other, "g", "b")),
+            ["l", "c", "s"]
+        );
+        assert_eq!(changed(tags(&p, true, 1.0, &pools, "G", "b")), ["m3", "s"]);
+        assert_eq!(changed(tags(&p, true, 1.0, &pools, "g", "B")), ["m3", "s"]);
+    }
+
+    /// `finish` refuses a stages.json older than the stages; rerunning the channels clears
+    /// earlier settles of their surfaces, and settle never runs on surfaces another settle
+    /// rewrote.
+    #[test]
+    fn reruns_never_mix_stages() {
+        let dir = tempfile::tempdir().expect("temp");
+        let grid = testing::grid_dir(dir.path(), geom::World { w: 64, h: 64 });
+        let o = Options {
+            grid: grid.clone(),
+            work: dir.path().join("work"),
+            tile: 16,
+            threads: 2,
+            water: Some(grid.join("water.toml")),
+            river_km2: Some(1e-5),
+        };
+        let first = run(&o).expect("run");
+        let w = |f: &str| o.work.join(f);
+        let names = [
+            "stages.json",
+            "carved.f32",
+            "water-surface.f32",
+            "water-body.u32",
+        ];
+        let outputs = || names.map(|f| fs::read(w(f)).unwrap());
+        let before = outputs();
+        let stages: Value = serde_json::from_slice(&before[0]).unwrap();
+        let tag = |i: usize| stages["tags"][i].as_str().unwrap().to_string();
+        let (c_tag, s_tag) = (tag(4), tag(6));
+        let finish_to = |out: &str| {
+            finish(&FinishOptions {
+                grid: grid.clone(),
+                work: o.work.clone(),
+                ground: w("carved.f32"),
+                out: dir.path().join(out),
+                tile: 16,
+                threads: 2,
+                water: Some(grid.join("water.toml")),
+                river_km2: Some(1e-5),
+                spots: Vec::new(),
+            })
+        };
+        let mut stale = stages.clone();
+        stale["tags"][4] = json!("c-000000000000");
+        fs::write(w("stages.json"), serde_json::to_vec(&stale).unwrap()).unwrap();
+        assert!(finish_to("out1").is_err(), "a stale stages.json");
+        fs::write(w("stages.json"), &before[0]).unwrap();
+        assert!(finish_to("out2").expect("finish").passed);
+
+        // A settle under another tag (as after a settle code change) is refused...
+        fs::rename(w(&s_tag), w("s-000000000000")).unwrap();
+        assert!(run(&o).is_err(), "settled surfaces are not settled again");
+        // ...until the channels rerun, which clears it.
+        fs::remove_dir_all(w(&c_tag)).unwrap();
+        assert_eq!(run(&o).expect("rerun from the channels"), first);
+        assert!(!w("s-000000000000").exists());
+        assert!(outputs() == before, "the rerun writes the same bytes");
     }
 
     #[test]
