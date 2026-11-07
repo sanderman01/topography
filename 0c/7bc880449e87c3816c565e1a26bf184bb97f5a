@@ -1,0 +1,28 @@
+docs/superpowers/specs/2026-11-05-hydrology-v3-design.md
+  s_774c09797904fe::t_8b431f05c65776 7-30
+docs/workflows/terrain-cascade.md
+  s_774c09797904fe::t_7612ae0eebbd0b 981-984,988-995
+  s_774c09797904fe::t_b2b18aff8ea79e 1097,1100-1101,1106-1109
+  s_774c09797904fe::t_50eeba8aa1dcc4 933-935
+  s_774c09797904fe::t_44d906d404f507 1110
+  s_774c09797904fe::t_7cff529acf58ed 1041,1043
+  s_774c09797904fe::t_184c53c9938f9a 1112-1132,1135,1138-1168
+  s_774c09797904fe::t_d78f8692728a0a 1133-1134,1136-1137
+  s_774c09797904fe::t_d95515c52f06c8 1111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0c7bc880449e87c3816c565e1a26bf184bb97f5a",
+  "prompts": {},
+  "sessions": {
+    "s_774c09797904fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db136362-a5cc-4efa-8192-13bacc041efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
