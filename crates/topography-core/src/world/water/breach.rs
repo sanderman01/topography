@@ -15,6 +15,7 @@ use super::GORGE_RATIO;
 use super::balance::mm;
 use super::channel::NO_CUT_DEG;
 use super::checks::{CHANGED_M, horn_deg, is_wall};
+use super::erosion;
 use super::geom::{Rect, World, step_len};
 use super::hydraulic::Geometry;
 use super::layers::Layer;
@@ -41,6 +42,9 @@ pub(crate) struct Candidate {
     pub cap: f32,
     /// Gorge cells lie within this many cells of `inside`.
     pub radius: u64,
+    /// The narrowest taper (cells): erosion's TAPER_MIN_CELLS at erosion levels, so a gorge
+    /// passes `handoff_narrow` like an erosion cut (ruling on Task 6b); 0 at 1 m.
+    pub taper_min: f32,
     /// The depression's filled depth (level − lowest cell), m.
     pub fill_m: f32,
 }
@@ -84,6 +88,11 @@ pub(crate) fn candidates(s: &Setup, m: &Model, geo: &Geometry) -> Vec<Candidate>
                 half,
                 cap: s.params.breach_cap_m,
                 radius: s.params.breach_radius,
+                taper_min: if s.params.erosion.is_some() {
+                    erosion::TAPER_MIN_CELLS as f32
+                } else {
+                    0.0
+                },
                 fill_m: n.level - n.low,
             })
         })
@@ -207,7 +216,7 @@ pub(crate) fn gorge(
         .map(|(j, &p)| (p, j))
         .collect();
     // The section: around each path cell that needs a cut d, a Euclidean disc of radius
-    // max(half + 1, 2·d / (tan TAPER_DEG · spacing)) cells lowered by that cut tapered parabolically
+    // max(half + 1, taper_min, 2·d / (tan TAPER_DEG · spacing)) cells lowered by that cut tapered parabolically
     // to nothing at its edge, never below the grade at that cell (no new pits), so the gorge is at
     // least 3 cells wide, has no square walls and cuts no wall more than its centre. Path cells
     // are always cut; steep raw faces beside them are not.
@@ -220,7 +229,9 @@ pub(crate) fn gorge(
         }
         // Radius in cells: the parabola's edge slope 2·d / R metres per metre stays under the
         // taper angle (Plan A wrote 2·d / tan in cells, right only at 1 m).
-        let radius = (c.half as f32 + 1.0).max(2.0 * d / (tan * spacing_m as f32));
+        let radius = (c.half as f32 + 1.0)
+            .max(c.taper_min)
+            .max(2.0 * d / (tan * spacing_m as f32));
         let h = radius.ceil() as i64;
         let (px, py) = world.xy(p);
         for dy in -h..=h {
@@ -493,7 +504,7 @@ mod tests {
     }
 
     /// The dammed valley at 32 m with heights × 10 (a 10 m dam): its gorge's cells lie within
-    /// 2 cells of the graded axis (radius max(half + 1 = 2, 2·d / (tan 35° · 32 m)) ≤ 2 for
+    /// 2 cells of the graded axis (radius max(half + 1 = 2, 2.5, 2·d / (tan 35° · 32 m)) < 3 for
     /// d ≤ 20 m), not within 57 as with the radius in metres (preflight F20).
     #[test]
     fn coarse_gorges_stay_within_two_cells_of_their_axis() {
@@ -529,6 +540,41 @@ mod tests {
             });
             assert!(near, "cell ({x}, {y}) cut far from the axis");
         }
+    }
+
+    /// At erosion levels a gorge's taper is at least TAPER_MIN_CELLS wide (ruling on Task 6b),
+    /// so a 32 m gorge through a 2 m mound passes `handoff_narrow` (B9); with Plan A's
+    /// half + 1 = 2 cells its centre was a slot.
+    #[test]
+    fn a_coarse_gorge_passes_handoff_narrow() {
+        let (world, z) = mound(2.0, 3.0, 1.5, false);
+        let mut s = setup(world, 128, 1e-6);
+        s.spacing_m = 32.0;
+        s.params = crate::world::water::params(&s.table, 32.0, Some(1e-6));
+        assert!(s.params.erosion.is_some(), "32 m is an erosion level");
+        let m = model(&s, &Layer::memory(world, z.clone()), None, "m", None).expect("model");
+        let geo = Geometry::new(s.table.m3s_per_km2);
+        let g = candidates(&s, &m, &geo)
+            .iter()
+            .find_map(|c| {
+                gorge(
+                    world,
+                    Rect::whole(world),
+                    &z,
+                    c,
+                    s.spacing_m,
+                    s.params.wall_deg,
+                )
+                .ok()
+            })
+            .expect("the mound is breached at 32 m");
+        assert!(g.depth > 1.0, "a real cut, got {}", g.depth);
+        let mut cut = z.clone();
+        for &(cell, v) in &g.cut {
+            cut[cell as usize] = v;
+        }
+        let (w, h) = (world.w as usize, world.h as usize);
+        assert_eq!(crate::world::water::testing::slots(&cut, &z, w, h), []);
     }
 
     /// A raw sub-pit just inside the spill, joined by a neck to a deeper basin (review I1, the

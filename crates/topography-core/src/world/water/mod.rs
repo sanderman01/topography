@@ -407,7 +407,8 @@ impl Tags {
             "b",
             &json!({"after": m1, "cap": p.breach_cap_m, "radius": p.breach_radius,
                     "channels": p.channels, "wall_deg": p.wall_deg, "m3s_per_km2": m3s_per_km2,
-                    "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true}),
+                    "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true,
+                    "taper_min_cells": if p.erosion.is_some() { erosion::TAPER_MIN_CELLS } else { 0.0 }}),
         )
     }
     /// e reads the breached ground, the provenance and the classes (b's tag, B23).

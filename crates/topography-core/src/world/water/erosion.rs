@@ -1035,6 +1035,7 @@ pub(crate) fn erode(
 mod tests {
     use super::*;
     use crate::world::water::nodes::Node;
+    use crate::world::water::testing::slots;
 
     /// A w × 1 strip flowing east (direction 4) to an outlet at the east end; discharge 10 km²
     /// everywhere (A^0.5 = 3162 m), k_dt 7e-4 → ka = 2.21; 32 m cells.
@@ -1575,44 +1576,6 @@ mod tests {
             }
         }
         assert_eq!(left, 0);
-    }
-
-    /// Cells failing `handoff_narrow`'s rule (B9, ruling R3) for the cut `before − z`: the cut
-    /// exceeds its 3 × 3 grey opening by over max(0.5, 0.5 × cut) on a trough of `z`.
-    fn slots(z: &[f32], before: &[f32], w: usize, h: usize) -> Vec<(usize, usize)> {
-        let cut = |x: i64, y: i64| {
-            if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
-                return 0.0;
-            }
-            let j = y as usize * w + x as usize;
-            (before[j] - z[j]).max(0.0)
-        };
-        let mut out = Vec::new();
-        for y in 2..h - 2 {
-            for x in 2..w - 2 {
-                let (xi, yi) = (x as i64, y as i64);
-                let c = cut(xi, yi);
-                if c <= CHANGED_M {
-                    continue;
-                }
-                let mut open = f32::NEG_INFINITY;
-                for (dx, dy) in (-1..=1).flat_map(|dy| (-1..=1).map(move |dx| (dx, dy))) {
-                    let mut m = f32::INFINITY;
-                    for (ex, ey) in (-1..=1).flat_map(|ey| (-1..=1).map(move |ex| (ex, ey))) {
-                        m = m.min(cut(xi + dx + ex, yi + dy + ey));
-                    }
-                    open = open.max(m);
-                }
-                let zc = |dx: i64, dy: i64| z[(yi + dy) as usize * w + (xi + dx) as usize];
-                let trough = [(1, 0), (0, 1), (1, 1), (1, -1)]
-                    .iter()
-                    .any(|&(dx, dy)| zc(dx, dy).min(zc(-dx, -dy)) > zc(0, 0) + 0.5);
-                if trough && c - open > 0.5f32.max(0.5 * c) {
-                    out.push((x, y));
-                }
-            }
-        }
-        out
     }
 
     /// Uncut cells standing above a cut on both sides of one axis (both neighbours cut over
