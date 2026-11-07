@@ -59,7 +59,6 @@ const STRAIGHT_M: f64 = 60.0;
 const STRAIGHT_SHARE: f64 = 0.05;
 const PLANE_RMS_M: f64 = 0.02;
 const PLANE_DEG: f64 = 5.0;
-const WALL_DEG: f64 = 40.0;
 /// A cell changed by more than this counts as changed (walls, facets).
 pub(crate) const CHANGED_M: f32 = 0.01;
 /// Bank water standing this far above the dry cell it drains into (a figure, I5).
@@ -271,10 +270,10 @@ pub(crate) fn horn_deg(z: &[f32], w: usize, x: usize, y: usize, spacing_m: f64) 
     gx.hypot(gy).atan().to_degrees()
 }
 
-/// A changed cell's slope (Horn, degrees) fails `walls` against its raw slope (shared with
-/// the channels stage, which shrinks cuts until none fails).
-pub(crate) fn is_wall(slope: f64, raw_slope: f64) -> bool {
-    slope > WALL_DEG.max(raw_slope) + 0.01
+/// A changed cell's slope (Horn, degrees) fails `walls` against its raw slope and the level's
+/// angle (B8; shared with breach, channels and erosion).
+pub(crate) fn is_wall(slope: f64, raw_slope: f64, wall_deg: f64) -> bool {
+    slope > wall_deg.max(raw_slope) + 0.01
 }
 
 pub(crate) fn p99_m(hist: &[u64]) -> f64 {
@@ -842,7 +841,7 @@ pub(crate) fn check_tile(
                 horn_deg(&z, win.w, lx, ly, s.spacing_m),
                 horn_deg(&raw, win.w, lx, ly, s.spacing_m),
             );
-            if is_wall(fs, rs) {
+            if is_wall(fs, rs, s.params.wall_deg) {
                 t.fail("walls", x, y);
             }
             let block = |v: &[f32]| -> Vec<f32> {

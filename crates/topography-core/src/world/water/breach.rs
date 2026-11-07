@@ -7,7 +7,7 @@
 //! channel cap for every river, R9; the channels' raw − 2 m clamp keeps breach plus channel
 //! within it; and only depressions a river flows into). Raw faces at least `NO_CUT_DEG` steep
 //! beside the path are not cut, each cut's taper is wide enough for sides under TAPER_DEG, and a
-//! gorge that would still leave a changed cell steeper than max(40°, raw) (the `walls` check)
+//! gorge that would still leave a changed cell steeper than max(wall_deg, raw) (the `walls` check)
 //! is refused. Otherwise the depression keeps its water. Gorges lie within
 //! `Params::breach_radius` cells of their spill, so every tiling decides alike.
 
@@ -105,14 +105,16 @@ pub(crate) struct Gorge {
 
 /// The gorge draining `c`, or why not: `Fill` when it would leave the radius, cut deeper than
 /// the cap or remove more than the depression holds; `Walls` when a changed cell would end
-/// steeper than max(40°, raw). `zw` is the raw ground over `win`, which must hold `c.inside`
-/// grown by `c.radius + 2` (clipped to the world) for every tiling to agree.
+/// steeper than max(wall_deg, raw) (the level's angle, B8). `zw` is the raw ground over `win`,
+/// which must hold `c.inside` grown by `c.radius + 2` (clipped to the world) for every tiling
+/// to agree.
 pub(crate) fn gorge(
     world: World,
     win: Rect,
     zw: &[f32],
     c: &Candidate,
     spacing_m: f64,
+    wall_deg: f64,
 ) -> std::result::Result<Gorge, Refused> {
     use Refused::Fill;
     let (ix, iy) = world.xy(c.inside);
@@ -212,7 +214,9 @@ pub(crate) fn gorge(
         if d <= 0.0 {
             continue;
         }
-        let radius = (c.half as f32 + 1.0).max(2.0 * d / tan);
+        // Radius in cells: the parabola's edge slope 2·d / R metres per metre stays under the
+        // taper angle (Plan A wrote 2·d / tan in cells, right only at 1 m).
+        let radius = (c.half as f32 + 1.0).max(2.0 * d / (tan * spacing_m as f32));
         let h = radius.ceil() as i64;
         let (px, py) = world.xy(p);
         for dy in -h..=h {
@@ -256,7 +260,7 @@ pub(crate) fn gorge(
         return Err(Fill);
     }
     // Walls: with this gorge cut, no cell changed by more than CHANGED_M (only cut cells
-    // changed; their 8-rings are not) may end steeper than max(40°, raw).
+    // changed; their 8-rings are not) may end steeper than max(wall_deg, raw).
     let block = |x: u64, y: u64, cut: bool| -> [f32; 9] {
         std::array::from_fn(|i| {
             let cell = world.index(x + (i % 3) as u64 - 1, y + (i / 3) as u64 - 1);
@@ -273,6 +277,7 @@ pub(crate) fn gorge(
             && is_wall(
                 horn_deg(&block(x, y, true), 3, 1, 1, spacing_m),
                 horn_deg(&block(x, y, false), 3, 1, 1, spacing_m),
+                wall_deg,
             )
     });
     if wall {
@@ -336,7 +341,7 @@ pub(crate) fn breach(
                 if !reach_rect.contains(x, y) {
                     continue;
                 }
-                let g = match gorge(world, win, &zw, c, s.spacing_m) {
+                let g = match gorge(world, win, &zw, c, s.spacing_m, s.params.wall_deg) {
                     Ok(g) => g,
                     Err(Refused::Walls(depth)) => {
                         if core.contains(x, y) {
@@ -455,7 +460,7 @@ mod tests {
         (world, z)
     }
 
-    /// Changed cells steeper than max(40°, raw) (the `walls` check) after cutting `g`.
+    /// Changed cells steeper than max(40°, raw) at 1 m (the `walls` check) after cutting `g`.
     fn gorge_walls(world: World, z: &[f32], g: &Gorge) -> usize {
         let mut cut = z.to_vec();
         for &(k, v) in &g.cut {
@@ -468,11 +473,54 @@ mod tests {
                 let k = y * w + x;
                 n += usize::from(
                     z[k] - cut[k] > CHANGED_M
-                        && is_wall(horn_deg(&cut, w, x, y, 1.0), horn_deg(z, w, x, y, 1.0)),
+                        && is_wall(
+                            horn_deg(&cut, w, x, y, 1.0),
+                            horn_deg(z, w, x, y, 1.0),
+                            40.0,
+                        ),
                 );
             }
         }
         n
+    }
+
+    /// The dammed valley at 32 m with heights × 10 (a 10 m dam): its gorge's cells lie within
+    /// 2 cells of the graded axis (radius max(half + 1 = 2, 2·d / (tan 35° · 32 m)) ≤ 2 for
+    /// d ≤ 20 m), not within 57 as with the radius in metres (preflight F20).
+    #[test]
+    fn coarse_gorges_stay_within_two_cells_of_their_axis() {
+        let world = World { w: 64, h: 64 };
+        let mut s = setup(world, 64, 1e-6);
+        s.spacing_m = 32.0;
+        s.params = crate::world::water::params(&s.table, 32.0, Some(1e-6));
+        let z: Vec<f32> = crate::world::water::testing::dammed(world)
+            .iter()
+            .map(|v| v * 10.0)
+            .collect();
+        let m = model(&s, &Layer::memory(world, z.clone()), None, "m", None).expect("model");
+        let geo = Geometry::new(s.table.m3s_per_km2);
+        let g = candidates(&s, &m, &geo)
+            .iter()
+            .find_map(|c| {
+                gorge(
+                    world,
+                    Rect::whole(world),
+                    &z,
+                    c,
+                    s.spacing_m,
+                    s.params.wall_deg,
+                )
+                .ok()
+            })
+            .expect("the dam is breached at 32 m");
+        for &(cell, _) in &g.cut {
+            let (x, y) = world.xy(cell);
+            let near = g.axis.iter().any(|&a| {
+                let (ax, ay) = world.xy(a);
+                ax.abs_diff(x).max(ay.abs_diff(y)) <= 2
+            });
+            assert!(near, "cell ({x}, {y}) cut far from the axis");
+        }
     }
 
     fn the_candidate(world: World, z: &[f32], cap: f32) -> (Candidate, Rect) {
@@ -492,7 +540,7 @@ mod tests {
     fn a_narrow_dam_is_cut_as_a_graded_gorge() {
         let (world, z) = dammed(1.0);
         let (c, all) = the_candidate(world, &z, 2.0);
-        let g = gorge(world, all, &z, &c, 1.0).expect("breached");
+        let g = gorge(world, all, &z, &c, 1.0, 40.0).expect("breached");
         assert!(g.depth > 0.9 && g.depth <= 2.0, "depth {}", g.depth);
         assert!(
             g.length_m >= f64::from(GORGE_RATIO * g.depth),
@@ -527,21 +575,21 @@ mod tests {
             "outlet at the dam: {ix} {ox}"
         );
         assert_eq!(
-            gorge(world, all, &z, &c, 1.0).err(),
+            gorge(world, all, &z, &c, 1.0, 40.0).err(),
             Some(Refused::Fill),
             "a 2.55 m cut, 2 m cap"
         );
         let mut wide = c;
         wide.cap = 3.0;
         assert!(
-            matches!(gorge(world, all, &z, &wide, 1.0), Err(Refused::Walls(d)) if d > 2.5),
+            matches!(gorge(world, all, &z, &wide, 1.0, 40.0), Err(Refused::Walls(d)) if d > 2.5),
             "under a 3 m cap the cap no longer refuses it (the one-cell dam's gorge would leave walls)"
         );
         let (world, z) = dammed(1.0);
         let (mut c, all) = the_candidate(world, &z, 2.0);
         c.vfill_mm = 1;
         assert_eq!(
-            gorge(world, all, &z, &c, 1.0).err(),
+            gorge(world, all, &z, &c, 1.0, 40.0).err(),
             Some(Refused::Fill),
             "the cut would remove more than it drains"
         );
@@ -597,7 +645,7 @@ mod tests {
     fn a_deep_gorge_is_tapered_wide_enough_to_leave_no_wall() {
         let (world, z) = mound(1.8, 8.0, 0.25, false);
         let (c, all) = the_candidate(world, &z, 2.0);
-        let g = gorge(world, all, &z, &c, 1.0).expect("breached");
+        let g = gorge(world, all, &z, &c, 1.0, 40.0).expect("breached");
         assert!(g.depth > 1.0 && g.depth <= c.cap, "depth {}", g.depth);
         let most = g
             .cut
@@ -637,7 +685,7 @@ mod tests {
     fn steep_raw_beside_the_path_is_not_cut() {
         let (world, z) = mound(1.0, 8.0, 0.2, true);
         let (c, all) = the_candidate(world, &z, 2.0);
-        let g = gorge(world, all, &z, &c, 1.0).expect("breached");
+        let g = gorge(world, all, &z, &c, 1.0, 40.0).expect("breached");
         assert_eq!(gorge_walls(world, &z, &g), 0);
         let w = world.w as usize;
         let steep = |k: u64| {
@@ -666,7 +714,7 @@ mod tests {
         let (world, z) = dammed_at(100, 40.0, 1.8, 1.0);
         let (c, all) = the_candidate(world, &z, 2.0);
         assert!(
-            matches!(gorge(world, all, &z, &c, 1.0), Err(Refused::Walls(d)) if d > 1.5 && d <= 2.0),
+            matches!(gorge(world, all, &z, &c, 1.0, 40.0), Err(Refused::Walls(d)) if d > 1.5 && d <= 2.0),
             "refused for walls"
         );
         let mut s = setup(world, 128, 1e-5);
@@ -834,7 +882,14 @@ mod tests {
         eprintln!("cut cells {cut}");
         // Off-axis cuts: wall cells beside each gorge's graded path.
         for c in candidates(&s, &m, &geo) {
-            if let Ok(g) = gorge(world, Rect::whole(world), &z, &c, s.spacing_m) {
+            if let Ok(g) = gorge(
+                world,
+                Rect::whole(world),
+                &z,
+                &c,
+                s.spacing_m,
+                s.params.wall_deg,
+            ) {
                 let off = g
                     .cut
                     .iter()

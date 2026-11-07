@@ -71,12 +71,17 @@ pub(crate) struct Params {
     pub breach_radius: u64,
     /// Carve channels (1 m only).
     pub channels: bool,
+    /// Steepest changed cell: max(wall_deg, raw) (B8).
+    pub wall_deg: f64,
+    /// Coarse levels only (B2).
+    pub erosion: Option<table::Erosion>,
 }
 
 impl Params {
-    /// The `change_max` check's bound: this level's breach cap + 0.5 m.
+    /// The `change_max` check's bound: the deepest cut this level may make + 0.5 m (B4):
+    /// erosion's floor is the breached ground less its cap, so the two caps add.
     pub fn change_max_m(&self) -> f32 {
-        self.breach_cap_m + 0.5
+        self.breach_cap_m + self.erosion.map_or(0.0, |e| e.cap_m) + 0.5
     }
 }
 
@@ -87,6 +92,8 @@ pub(crate) fn params(table: &table::Table, spacing_m: f64, river_km2: Option<f64
         breach_cap_m: level.breach_cap_m,
         breach_radius: BREACH_RADIUS,
         channels: spacing_m < 2.0,
+        wall_deg: level.wall_deg,
+        erosion: level.erosion,
     }
 }
 
@@ -95,7 +102,7 @@ pub struct Options {
     pub work: PathBuf,
     pub tile: u64,
     pub threads: usize,
-    /// Water table TOML; the built-in configs/hydrology/water-v2.toml when absent.
+    /// Water table TOML; the built-in configs/hydrology/water-v3.toml when absent.
     pub water: Option<PathBuf>,
     /// River start (km² at mean rain); by spacing when absent.
     pub river_km2: Option<f64>,
@@ -233,7 +240,7 @@ pub(crate) fn setup(
             io_context(format!("read {}", p.display()), fs::read_to_string(p))?,
             p.display().to_string(),
         ),
-        None => (table::DEFAULT.to_string(), "built-in water-v2.toml".into()),
+        None => (table::DEFAULT.to_string(), "built-in water-v3.toml".into()),
     };
     let rain = rain::Rain::read(grid, &manifest)?;
     // Large inputs by size and modification time; the small moisture field by digest.
@@ -332,7 +339,7 @@ impl Tags {
         stage_tag(
             "b",
             &json!({"after": m1, "cap": p.breach_cap_m, "radius": p.breach_radius,
-                    "channels": p.channels, "m3s_per_km2": m3s_per_km2,
+                    "channels": p.channels, "wall_deg": p.wall_deg, "m3s_per_km2": m3s_per_km2,
                     "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true}),
         )
     }
@@ -1044,6 +1051,7 @@ mod tests {
             (|q: &mut Params| q.breach_cap_m = 3.0) as fn(&mut Params),
             |q| q.breach_radius = 9,
             |q| q.channels = false,
+            |q| q.wall_deg = 35.0,
         ] {
             assert_eq!(
                 changed(tags(&with(f), true, 1.0, &pools, "g", "b")),
@@ -1118,6 +1126,24 @@ mod tests {
     }
 
     #[test]
+    fn params_carry_the_level_angle_erosion_and_change_bound() {
+        let t = table::Table::parse(table::DEFAULT).unwrap();
+        let p1 = params(&t, 1.0, None);
+        assert_eq!(
+            (p1.wall_deg, p1.erosion, p1.change_max_m()),
+            (40.0, None, 2.5)
+        );
+        let p32 = params(&t, 32.0, None);
+        assert_eq!(p32.wall_deg, 35.0);
+        assert_eq!(
+            p32.change_max_m(),
+            50.5,
+            "breach 20 + erosion 30 + 0.5 (B4: erosion may deepen a gorge)"
+        );
+        assert_eq!(params(&t, 4.0, None).change_max_m(), 15.5);
+    }
+
+    #[test]
     fn params_follow_the_spacing() {
         let t = table::Table::parse(table::DEFAULT).expect("table");
         let p = |s, r| params(&t, s, r);
@@ -1127,7 +1153,9 @@ mod tests {
                 river_km2: 10.0,
                 breach_cap_m: 20.0,
                 breach_radius: BREACH_RADIUS,
-                channels: false
+                channels: false,
+                wall_deg: 35.0,
+                erosion: t.level(32.0).erosion,
             }
         );
         assert_eq!(
@@ -1136,7 +1164,9 @@ mod tests {
                 river_km2: 0.5,
                 breach_cap_m: 5.0,
                 breach_radius: BREACH_RADIUS,
-                channels: false
+                channels: false,
+                wall_deg: 35.0,
+                erosion: t.level(4.0).erosion,
             }
         );
         assert_eq!(
@@ -1145,15 +1175,12 @@ mod tests {
                 river_km2: 0.05,
                 breach_cap_m: 2.0,
                 breach_radius: BREACH_RADIUS,
-                channels: true
+                channels: true,
+                wall_deg: 40.0,
+                erosion: None,
             }
         );
         assert_eq!(p(1.0, Some(0.2)).river_km2, 0.2);
-        assert_eq!(
-            p(4.0, None).change_max_m(),
-            5.5,
-            "each level's own breach cap + 0.5 m"
-        );
     }
 
     /// A `size`² grid directory of the raw surface at (east, north) with the layout's classes

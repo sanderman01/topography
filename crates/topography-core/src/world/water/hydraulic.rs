@@ -4,7 +4,7 @@
 use super::CHANNEL_CAP_M;
 
 pub(crate) struct Geometry {
-    /// m³/s per km² at mean rain: a game setting (`m3s_per_km2` in water-v2.toml, R5), tuned
+    /// m³/s per km² at mean rain: a game setting (`m3s_per_km2` in water-v3.toml, R5), tuned
     /// so the largest river is about 30 m wide.
     pub m3s_per_km2: f64,
 }

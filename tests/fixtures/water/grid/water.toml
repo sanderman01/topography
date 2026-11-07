@@ -1,36 +1,59 @@
 # Test table for the synthetic 64² fixture (lake_min_m2 = 4), written by
-# testing::grid_dir; not the production config (configs/hydrology/water-v2.toml).
-# Lake-to-catchment ratio r ≈ P/E per terrain class (legend topography terrain-v3), read by
-# `topography world water` (hydrology v3). A depression stands where its lake area equals
-# Σ r over its catchment's cells (with upstream overflow); when no level below its spill
-# does, it fills and overflows. A catchment of one class with r >= 1 always fills to its
-# spill; r > 1 matters only as extra supply into mixed catchments. r = 0.1: arid, mostly
-# closed. r = 0: dry (playas, interdune hollows). Lake supply ignores the moisture field,
-# which drives only Q (a known simplification). Judgment values, 2026-11-05. Classes
-# missing here take class 0.
-schema_version = 2
+# testing::grid_dir; not the production config (configs/hydrology/water-v3.toml).
+# Hydrology v3 water table (legend topography terrain-v3), read by `topography world water`
+# and Python (`topography_training.water.table`). Per class: the lake-to-catchment ratio
+# r ≈ P/E (a depression stands where its lake area equals Σ r over its catchment's cells,
+# with upstream overflow; r >= 1 fills to the spill, r = 0 stays dry) and `hot_dry` (an
+# inland basin below 0 m far from the sea may keep a lake below sea level, owner ruling
+# 2026-11-06). Lake supply ignores the moisture field, which drives only Q. Classes missing
+# here take class 0. Judgment values 2026-11-05 (r) and 2026-11-07 (hot_dry, levels).
+schema_version = 3
 kind = "water_table"
 legend = "topography terrain-v3"
-# Game settings. Standing water is a labelled lake from this area (smaller: an unlabelled
-# pond), as well as 0.3 m deep.
+# Game settings: standing water is a labelled lake from this area (smaller: a pond), as
+# well as 0.3 m deep; Q (km² at mean rain) to m³/s for channel sizes.
 lake_min_m2 = 4.0
-# River-width setting, not a real discharge (about 20–50× real runoff): converts Q (km² at
-# mean rain) to the m³/s of the channel width and depth, so the largest river (about
-# 177 km²) is about 30 m wide; the model's literal rain would give 0.657.
 m3s_per_km2 = 0.56
+# A basin below 0 m keeps a lake below sea level only in a hot_dry class at least this far
+# from open sea (ruling B13); elsewhere the coastal water table holds it at 0 m or more.
+below_sea_coast_km = 5.0
 
-# Per level (grid spacing in m): river start (km² at mean rain, v2's values) and the deepest
-# breach cut (at 1 m the channel cap). `change_max` allows the breach cap + 0.5 m. The 4 m and
-# 32 m values serve Plan A's gate-1 windows only; Plan B revisits them.
+# Per level (grid spacing in m): river start (km² at mean rain), deepest breach cut, the
+# steepest changed cell (walls, breach refusal, erosion wall rounds: max(wall_deg, raw)).
 [levels.1]
 river_km2 = 0.05
 breach_cap_m = 2.0
+wall_deg = 40.0
+
 [levels.4]
 river_km2 = 0.5
 breach_cap_m = 5.0
+wall_deg = 35.0
+# Erosion (rulings B2-B7): `routings` model runs, each followed by one implicit stream-power
+# step (F = k_dt·A^m / L, A in m², n = 1) and one lowering-only diffusion step (alpha per
+# routing); cuts tapered to wall_deg. Caps are below the breached ground. Interior cells
+# (real GLO-30 piece interiors, glaciers) take interior_k × k_dt, no diffusion, and their cap.
+[levels.4.erosion]
+routings = 2
+k_dt = 8.75e-5
+m = 0.5
+diffusion = 0.05
+cap_m = 10.0
+interior_k = 0.05
+interior_cap_m = 3.0
+
 [levels.32]
 river_km2 = 10.0
 breach_cap_m = 20.0
+wall_deg = 35.0
+[levels.32.erosion]
+routings = 5
+k_dt = 7e-4
+m = 0.5
+diffusion = 0.05
+cap_m = 30.0
+interior_k = 0.05
+interior_cap_m = 3.0
 
 [classes.0]  # unlabelled
 r = 1.0
@@ -38,6 +61,7 @@ r = 1.0
 r = 0.02
 [classes.2]  # gorges and slot-like canyons
 r = 0.1
+hot_dry = true
 [classes.3]  # fjords and glacial troughs
 r = 3.0
 [classes.4]  # volcanic calderas and craters
@@ -48,8 +72,10 @@ r = 2.0
 r = 3.0
 [classes.7]  # badlands, mesas and eroded gullies (arid: dry hollows)
 r = 0.0
+hot_dry = true
 [classes.8]  # star and mountain dunes (interdune hollows stay dry)
 r = 0.0
+hot_dry = true
 [classes.9]  # braided river basins and floodplains
 r = 2.0
 [classes.10]  # glaciers and ice fields
@@ -60,15 +86,18 @@ r = 0.5
 r = 1.5
 [classes.13]  # layered plateau canyons (2)
 r = 0.05
+hot_dry = true
 [classes.14]  # cone and tower karst (1, drains underground)
 r = 0.02
 [classes.15]  # drowned tower karst (5, drains underground)
 r = 0.02
 [classes.16]  # crest-train dunes (8)
 r = 0.0
+hot_dry = true
 [classes.17]  # cinder cones and lava fields (11, porous)
 r = 0.03
 [classes.18]  # plain and rolling ground (0)
 r = 1.0
 [classes.19]  # Grand Canyon (2)
 r = 0.05
+hot_dry = true

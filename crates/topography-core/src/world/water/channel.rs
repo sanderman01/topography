@@ -36,7 +36,7 @@ pub(crate) const BACKWATER: u64 = 16;
 /// Section radii are clamped here (cells) so every section reaching a tile's area lies in
 /// its window; real rivers stay far below (30 m wide at most, R5).
 const MAX_RADIUS: f64 = (HALO - BACKWATER) as f64;
-/// Wall rounds: a cut that leaves a changed cell steeper than max(40°, raw) is halved, at
+/// Wall rounds: a cut that leaves a changed cell steeper than max(wall_deg, raw) is halved, at
 /// most this many Jacobi rounds; each round reaches 2 cells further, so the area carries a
 /// margin of 2 per round (+ 1 for the slope stencil) and every tiling agrees.
 pub(crate) const WALL_ROUNDS: u64 = 16;
@@ -408,7 +408,7 @@ pub(crate) fn channels(
                     keep[a] = true;
                 }
             }
-            // Walls: no changed cell may end steeper than max(40°, raw) (the `walls` check).
+            // Walls: no changed cell may end steeper than max(wall_deg, raw) (the `walls` check).
             // The cut of every lowered cell in the 3 × 3 of such a cell is halved, Jacobi, at
             // most WALL_ROUNDS rounds.
             let in_area = |a: usize| {
@@ -444,6 +444,7 @@ pub(crate) fn channels(
                             && is_wall(
                                 horn_deg(carved, area.w, lx, ly, s.spacing_m),
                                 horn_deg(&ra, area.w, lx, ly, s.spacing_m),
+                                s.params.wall_deg,
                             )
                     })
                     .collect()
@@ -1437,6 +1438,7 @@ mod tests {
                     && is_wall(
                         horn_deg(&carved, w, x, y, 1.0),
                         horn_deg(&raw, w, x, y, 1.0),
+                        40.0,
                     )
                 {
                     walls += 1;
@@ -1455,7 +1457,11 @@ mod tests {
                 let k = y * w + x;
                 n += usize::from(
                     (carved[k] - raw[k]).abs() > CHANGED_M
-                        && is_wall(horn_deg(carved, w, x, y, 1.0), horn_deg(raw, w, x, y, 1.0)),
+                        && is_wall(
+                            horn_deg(carved, w, x, y, 1.0),
+                            horn_deg(raw, w, x, y, 1.0),
+                            40.0,
+                        ),
                 );
             }
         }

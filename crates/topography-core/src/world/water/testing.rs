@@ -125,7 +125,7 @@ pub(crate) fn grid_dir(dir: &std::path::Path, world: World) -> std::path::PathBu
     assert_ne!(table, DEFAULT, "the table's lake minimum moved");
     let table = format!(
         "# Test table for the synthetic 64² fixture (lake_min_m2 = 4), written by\n\
-         # testing::grid_dir; not the production config (configs/hydrology/water-v2.toml).\n{table}"
+         # testing::grid_dir; not the production config (configs/hydrology/water-v3.toml).\n{table}"
     );
     fs::write(grid.join("water.toml"), table).expect("water.toml");
     grid

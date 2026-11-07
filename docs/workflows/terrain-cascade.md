@@ -1098,10 +1098,11 @@ the river threshold.
 
 ### Settings, resuming and cost
 
-`configs/hydrology/water-v2.toml` (built in; `--water` replaces it) gives each class's
-lake-to-catchment ratio `r`, the game setting `lake_min_m2` (smaller standing water is an
-unlabelled pond), the river-width factor `m3s_per_km2` and per level the river start and
-breach cap.
+`configs/hydrology/water-v3.toml` (built in; `--water` replaces it) gives each class's
+lake-to-catchment ratio `r` and `hot_dry` flag, the game setting `lake_min_m2` (smaller
+standing water is an unlabelled pond), the river-width factor `m3s_per_km2`,
+`below_sea_coast_km`, and per level the river start, breach cap, wall angle (`wall_deg`) and,
+at 4 m and 32 m, the erosion settings.
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
 memory cap (`MemoryMax=10G` for 16,384² windows and the world). The work directory takes
