@@ -4,6 +4,30 @@ Status: design approved in chat 2026-11-05. Revised after the hydrology expert's
 (`scratch/hydrology-v3-spec-review.md`). Awaiting owner review.
 Diagnosis behind it: `scratch/hydrology-v3-expert-diagnosis.md`.
 
+## Plan A departures
+
+Plan A (the 1 m water model, shipped at gate 2 on 2026-11-06) differs from this spec here. The
+[workflow doc](../../workflows/terrain-cascade.md#hydrology-v3-1-m) has the details.
+
+- **No relaxation.** The GPU bank relaxation (1 m stage, "Where it runs") is dropped. Carving
+  alone passed `walls` and `facets` and looked the same in hillshades. It is kept in git at
+  `d0c0055` for Plan B. Breach sides are tapered in Rust instead: no off-path cut on raw slopes
+  of 39° or more, and a gorge that would leave a wall is refused, so the depression stays
+  filled.
+- **Straightness and pairs are figures.** By owner ruling on 2026-11-06, straight and parallel
+  rivers made by the pre-hydrology terrain are fine. `straight_runs`, `straight_share` and
+  `parallel_rivers` are reported but never fail a run.
+- **One thalweg (`thalweg_beside`).** The lower cell beside a river fails only where it, or a
+  cell within 2 cells, carries a channel (m3 Q at the river threshold) that is not this river's
+  own. Dry lower ground on a valley floor passes, and another body's written water is no second
+  channel. The spec asked for the lowest raw ground. The cost: a river perched above a dry
+  valley floor passes.
+- **Export contract checks.** Added as hard checks: `wet_not_above_ground`,
+  `wet_without_surface`, `surface_without_body`, `lake_level_json` and `wet_unknown_body`.
+  Flowing water over an uncut bed runs 0.005 m deep. Still water at ground level is dry shore.
+- **Settle.** After channels, written water is lifted to the final (m3) routing. Labelled lakes
+  keep their label's level and extent, and the m3 level gap is a figure.
+
 ## Why
 
 The finished fujix 1 m world (`data/worlds/fujix-55-l4v2`) shows these defects:

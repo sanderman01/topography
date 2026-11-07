@@ -930,7 +930,9 @@ need bank shaping.
 
 `$P` and `CAP` as at the top of this page. The driver runs the whole chain, resumes when run
 again with the same arguments, and pins a copy of `target/release/topography` in the run
-directory (delete that `bin` directory, and with it every cache, to use a new build):
+directory. A new build starts again from scratch: delete that `bin` directory and the driver
+wipes every cache. To keep the stages whose code did not change, see
+[Rerunning from a stage](#rerunning-from-a-stage).
 
 ```sh
 PYTHONPATH=training/src "${CAP[@]}" $P -m topography_training.water.run world \
@@ -976,13 +978,21 @@ so a rerun resumes and a changed input is refused:
 | `b` breach | `breached.f32` |
 | `m2` model on the breached ground | `m2-level.f32`, `m2-node.u32`, `m2-discharge.f32`, `m2-flow.u8` |
 | `l` labels (lakes, rivers, river pools) | `body.u32`, `bodies.json` |
-| `c` channels | `carved.f32` |
-| `m3` model on the carved ground, `s` settle | `m3-<tag>-*.{f32,u32,u8}`, `water-surface.f32`, `water-body.u32` |
-| figures | `stages.json` (breaches, channels, nodes, leaves, lakes, ponds, area and depth histograms) |
+| `c` channels | `carved.f32`, `water-surface.f32`, `water-body.u32` |
+| `m3` model on the carved ground | `m3-<tag>-*.{f32,u32,u8}` |
+| `s` settle | rewrites `water-surface.f32` and `water-body.u32` in place; per-tile changes in `s-<tag>/` |
+| figures | `stages.json` (stage tags, breaches, channels, nodes, leaves, lakes, ponds, area and depth histograms) |
 
 `world water-finish` checks the carved ground with the m3 model and publishes `--out`. The m3
 tag is keyed on the run's settings and the sha256 of the carved and breached grounds (the only
-rasters m3 reads), so a channels rerun that changes surfaces and labels only reuses m3.
+rasters m3 reads), so a channels rerun that changes surfaces and labels only reuses m3. The
+settle tag follows m3's and the channels' tags. `water-finish` recomputes every tag and refuses
+a `stages.json` that does not match.
+
+Settle caches each tile's changes before it rewrites the channels' rasters, so a kill between
+the two writes resumes cleanly. Settle never runs on surfaces that another settle has already
+rewritten. A channels run removes earlier `s-*` directories, and `world water` refuses to
+settle again until the channels rerun.
 
 ### Outputs
 
@@ -1028,8 +1038,9 @@ final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-1
 | `wet_without_surface` | a labelled cell has no surface |
 | `surface_without_body` | a cell has a surface but no label |
 | `lake_level_json` | a lake or sea cell's surface differs from its `bodies.json` `level_m` (as f32) |
+| `wet_unknown_body` | a labelled cell's body is not a sea, lake or river of `bodies.json` (id 1, the sea, always counts) |
 
-The last four are the heightmap export's water contract (`export/water.rs`), so a world that
+The last five are the heightmap export's water contract (`export/water.rs`), so a world that
 passes `water-finish` is not refused by the export. Rivers over a bed left uncut (steep raw
 reaches, rim floors, pond spill cells) run 0.005 m deep: half the checks' 1 cm tolerance, so
 f32 rounding cannot carry such water past a lake exit's or a dam step's 1 cm (at 0.01 m it did,
@@ -1083,23 +1094,78 @@ unlabelled pond), the river-width factor `m3s_per_km2` and per level the river s
 breach cap.
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
-memory cap (`MemoryMax=10G` for 16,384² windows, 12G for the world). The work directory takes
+memory cap (`MemoryMax=10G` for 16,384² windows and the world). The work directory takes
 about 49 bytes per cell.
 
-Measured at gate 1 (2026-11-06, fujix-55-l4v2 at the canyon, real rain; 16k rows from gate 1
-fix round 2):
+Measured at gates 1 and 2 (2026-11-06, fujix-55-l4v2, real rain; the 2048² and tile-8192
+rows from gate 1, the 16,384² tile-2048 row from gate 2 fix round 3):
 
 | Run | Time | Peak RAM (Rust) | Disk | Notes |
 | --- | --- | --- | --- | --- |
 | 2048² window, `--tile 512 --threads 4` | 10 s | 0.33 GB | 0.3 GB | driver peak 0.5 GB |
-| 16,384² window, `--tile 2048 --threads 4` | 11 min | 2.3 GB | 18 GB (13 GB work) | 243,257 leaves, 74 lakes, 790 rivers; fails only straight_runs 4,719 and straight_share 0.068; 506 m2 pond cells lost |
-| 16,384² window, `--tile 8192 --threads 1` | 37 min | 5.3 GB | 18 GB | byte-identical outputs to the 2048 tiling; same checks |
-| world 65,536², `--tile 2048 --threads 4` | about 3-5 h (estimate) | about 4-6 GB (estimate) | about 210 GB work | 16× the 16k window; I/O no longer fits the page cache |
+| 16,384² window at the canyon, `--tile 2048 --threads 4` | 11 min (+41 s finish) | 3.0 GB | 18 GB (13 GB work) | 74 lakes, 790 rivers; every check 0 |
+| 16,384² window, `--tile 8192 --threads 1` | 37 min | 5.3 GB | 18 GB | byte-identical outputs to the 2048 tiling; same checks (gate 1) |
+| world 65,536², `--tile 2048 --threads 4`, fresh | 4.9 h (17,568 s) | 4.1 GB | 196 GB work | first gate-2 run, before the review's per-strip reads (driver 11.5 GB) |
+| world, rerun from the breach (m1 kept) | 4.5 h (16,177 s) | 4.0 GB | | gate 2 rerun 1; driver 6.9 GB |
+| world, rerun from the channels (m1, b, m2, l and m3 kept) | 65 min (3,905 s) | 4.4 GB | | gate 2 rerun 3 under `MemoryMax=10G`; driver 7.9 GB |
 
-The world estimate scales the 16k run by its cell count. Tile passes dominate time; the global
-graph (about 70 MB serialized at 16k, so about 1.1 GB for the world) scales with the leaves
-left after contraction, which removes only about 1 % of depressions at 1 m. Each model run
-reads the ground about seven times (passes A, B, L, C, D, E, F).
+Tile passes dominate time. The global graph (about 70 MB serialized at 16k, so about 1.1 GB
+for the world) scales with the leaves left after contraction, which removes only about 1 % of
+depressions at 1 m. Each model run reads the ground about seven times (passes A, B, L, C, D, E,
+F).
+
+### Rerunning from a stage
+
+A new build normally starts a fresh run (delete `bin`). After a code fix, the stages before
+the first changed one can be kept. This saves hours on the world: gate 2's three world reruns
+kept m1, then m1 to m3 (see `scratch/hydrology-v3/gate2/fix*/rerun-plan.md`). It is a manual
+procedure.
+
+**Warning: keep only stages whose code did not change.** Tags digest each stage's inputs and
+settings: the tags of the stages it reads, the river pools and the grounds' contents. They do
+not see code. Changed code, including a judgment constant that is not in a tag (such as
+`LAKE_DEPTH_M`, `GORGE_RATIO`, `CHANGED_M` or `DRY_MIN_KM2`), leaves the tag as it was, and a
+kept stage then silently holds the old code's output. Go by
+`git diff <old>..<new> -- crates/topography-core/src/world/water/`:
+
+| Changed | First stage to rerun |
+| --- | --- |
+| the model (`pipeline`, `balance`, `hierarchy`, `flow`, `receivers`, `flats`, `watershed`, `contract`, `nodes`, `rain`, `table`) or shared code (`geom`, `layers`, `store`, `mod.rs` constants) | m1: start fresh |
+| `breach`, `hydraulic` (widths), or in `checks` the `CHANGED_M`, `horn_deg` or `is_wall` that breach uses | b |
+| `bodies` | l |
+| `channel` (channels or settle), or in `checks` the `SILL_M` that channels use | c |
+| any other part of `checks` | none: rerun `water-finish` |
+
+Settle rewrites the channels' rasters, so rerunning settle or m3 means rerunning from the
+channels too. `world water` refuses to settle surfaces that are already settled.
+
+Steps, with the run stopped (`pgrep -af '[t]opography_training.water.run'` shows nothing);
+`$W` is the run directory and `$H` is `$W/hydrology` for a world or `$W` for a window:
+
+1. Build, then `D=$(sha256sum target/release/topography | cut -d' ' -f1)`.
+2. Swap the pin: delete `$H/bin/topography-*` and copy the new binary to
+   `$H/bin/topography-${D:0:12}`.
+3. Set the new digest in the driver's `$W/progress.json` (`.binary = $D`). Keep only the steps
+   before `water`: a world keeps `raw`, a window keeps none. Set the same digest in the Rust stamp
+   `$H/work/stamp.json` (`.code = $D`). Use `jq` to a temporary file, then `mv`.
+4. In `$H/work`, delete the first stage to rerun and every later stage. Always delete
+   `stages.json`:
+
+   | Stage | Delete |
+   | --- | --- |
+   | b | `b-<tag>/`, `breached.f32` |
+   | m2 | `m2-<tag>/`, `m2-{level,discharge}.f32`, `m2-node.u32`, `m2-flow.u8` |
+   | l | `l-<tag>/`, `body.u32`, `bodies.json` |
+   | c | `c-<tag>/`, `carved.f32`, `water-surface.f32`, `water-body.u32`, `s-<tag>/` |
+   | m3 | `m3-<tag>/`, `m3-<tag>-*` (only when the model changed; m3 is keyed on the carved ground's content) |
+
+5. Delete the published outputs: a world's `hydrology/1m`, `hydrology/review` and
+   `manifest-failed.json`, or a window's `out/` and `review/`.
+6. Relaunch the same driver command. The log should show the kept stages loading from cache
+   (passes done in well under a second) and no `removing …/work` line.
+
+For a checks-only change, do steps 1 to 3, keep `water` in `progress.json`, and drop `finish`
+and the steps after it. Then do step 5 and relaunch.
 
 ## Export
 
