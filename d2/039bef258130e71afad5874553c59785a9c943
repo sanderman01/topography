@@ -1,0 +1,22 @@
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_c6024e758bfb35 1204,1220
+  s_8c1b40ea9c1e0d::t_d04658fc93b5a0 2864-2872,2874-2888,2890-2894
+  s_8c1b40ea9c1e0d::t_c12722449a39a1 2873,2889
+  s_8c1b40ea9c1e0d::t_a82abff6984bb0 1202-1203,1205-1209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d2039bef258130e71afad5874553c59785a9c943",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
