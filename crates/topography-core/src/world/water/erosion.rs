@@ -929,6 +929,7 @@ pub(crate) struct Step {
     pub fig: Figures,
     pub stream_s: f64,
     pub taper_s: f64,
+    pub diffuse_s: f64,
 }
 
 /// One routing on the model's routing `r` (its `ka` ignored; `ka` given here): stream power,
@@ -952,7 +953,8 @@ pub(crate) fn step(
     snap("sp", z)?;
     let near = footprint(r, &before, z, wall_deg, SHAPE_MIN_M, 0.0);
     let wide = footprint(r, &before, z, wall_deg, SHAPE_MIN_M, 3.0);
-    let diffusing = footprint(r, &before, z, wall_deg, DIFFUSE_MIN_M, 0.0); // The taper does not read ka: its buffer is reused for the lowering.
+    let diffusing = footprint(r, &before, z, wall_deg, DIFFUSE_MIN_M, 0.0);
+    // The taper does not read ka: its buffer is reused for the lowering.
     let mut lower = ka;
     let taper_start = std::time::Instant::now();
     let t = taper(r, z, &before, raw, wall_deg, &mut lower);
@@ -967,7 +969,9 @@ pub(crate) fn step(
     fig.walls_left = t.walls_left;
     fig.narrow_found = t.narrow_found;
     fig.narrow_left = t.narrow_left;
+    let diffuse_start = std::time::Instant::now();
     (fig.diffused_cells, fig.diffusion_max_m) = diffuse(r, z, raw, alpha, &diffusing, wall_deg);
+    let diffuse_s = diffuse_start.elapsed().as_secs_f64();
     drop(diffusing);
     snap("df", z)?;
     // B6 figure: full-K land outside the river cuts' footprint should not move.
@@ -998,6 +1002,7 @@ pub(crate) fn step(
         fig,
         stream_s,
         taper_s,
+        diffuse_s,
     })
 }
 
@@ -1152,14 +1157,14 @@ pub(crate) fn erode(
                 &mut snap,
             )?;
             drop(rawv);
-            let (mut fig, stream_s, taper_s) = (st.fig, st.stream_s, st.taper_s);
+            let (mut fig, stream_s, taper_s, diffuse_s) = (st.fig, st.stream_s, st.taper_s, st.diffuse_s);
             let left = fig.walls_left;
             let bz = breached.to_vec()?;
             fig.new_pits = new_pits(world, &z, &bz, &held, &sea);
             out.write(whole, &z)?;
             eprintln!(
                 "erosion: routing {}/{} lowered {} cells (max {:.2} m), {} sills, {} new pits, \
-                 {} walls left; passes {:.0} s (stream power {:.0} s, taper {:.0} s){}",
+                 {} walls left; passes {:.0} s (stream power {:.0} s, taper {:.0} s, diffusion {:.0} s){}",
                 k + 1,
                 e.routings,
                 fig.lowered_cells,
@@ -1170,6 +1175,7 @@ pub(crate) fn erode(
                 started.elapsed().as_secs_f64(),
                 stream_s,
                 taper_s,
+                diffuse_s,
                 super::peak()
             );
             Ok(fig.to_blob())
