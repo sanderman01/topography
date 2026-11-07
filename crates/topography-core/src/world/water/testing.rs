@@ -147,3 +147,39 @@ pub(crate) fn grid_dir(dir: &std::path::Path, world: World) -> std::path::PathBu
     fs::write(grid.join("water.toml"), table).expect("water.toml");
     grid
 }
+
+/// A coarse grid (`spacing_m`, 64² or larger): `dammed(world)` scaled ×10 in height, with a
+/// 6 m seam dam across the valley at x = 44 (blend), interior provenance west of x = 30 and
+/// blend east of it, classes and a 2 × 2 moisture field.
+pub(crate) fn coarse_grid_dir(
+    dir: &std::path::Path,
+    world: World,
+    spacing_m: f64,
+) -> std::path::PathBuf {
+    use std::fs;
+    let grid = grid_dir(dir, world);
+    let mut z: Vec<f32> = dammed(world).iter().map(|v| v * 10.0).collect();
+    for y in 0..=20u64 {
+        let i = (y * world.w + 44) as usize;
+        z[i] = z[i].max(z[i - 1] + 6.0);
+    }
+    fs::write(
+        grid.join("elevation.f32"),
+        z.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(),
+    )
+    .expect("elevation");
+    let prov: Vec<u8> = (0..world.w * world.h)
+        .map(|i| if i % world.w < 30 { super::INTERIOR } else { 2 })
+        .collect();
+    fs::write(grid.join("provenance.u8"), prov).expect("provenance");
+    let path = grid.join("grid.json");
+    let mut m: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&fs::read(&path).expect("grid.json")).expect("json");
+    let h = world.h as f64 * spacing_m;
+    m.insert("spacing_m".into(), serde_json::json!(spacing_m));
+    m.insert("origin".into(), serde_json::json!([0.0, h]));
+    m["moisture"]["spacing_m"] = serde_json::json!(world.w.max(world.h) as f64 * spacing_m / 2.0);
+    m["moisture"]["nw_m"] = serde_json::json!([0.0, h]);
+    fs::write(&path, serde_json::to_vec(&m).expect("json")).expect("grid.json");
+    grid
+}

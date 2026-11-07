@@ -79,7 +79,11 @@ pub(crate) struct CheckLayers {
     pub node_written: Layer<u32>,
     /// The m2 level layer, for `m2_pond_cells_lost`.
     pub level_written: Layer<f32>,
+    /// Breach cuts only: read by the interior change budget (a later Plan B task).
+    #[allow(dead_code)]
     pub breached: Layer<f32>,
+    /// The ground the channels cut into (eroded at coarse levels; B23).
+    pub pre_channel: Layer<f32>,
 }
 
 /// Lakes by id: level, full, outlet [inside, outside], cells needed (closed).
@@ -321,7 +325,7 @@ pub(crate) fn check_tile(
         l.discharge.read(win)?,
     );
     let fw = l.flow_written.read(win)?;
-    let (n2, bz) = (l.node_written.read(win)?, l.breached.read(win)?);
+    let (n2, bz) = (l.node_written.read(win)?, l.pre_channel.read(win)?);
     let l2 = l.level_written.read(win)?;
     // Provenance over the window, indexed like `raw` and `z` (preflight F4).
     let flags = s.flags(win)?;
@@ -1637,6 +1641,7 @@ mod tests {
                 node_written: Layer::memory(w, self.n2.clone()),
                 level_written: Layer::memory(w, self.l2.clone()),
                 breached: Layer::memory(w, self.bz.clone()),
+                pre_channel: Layer::memory(w, self.bz.clone()),
             }
         }
         fn report(&self) -> Value {

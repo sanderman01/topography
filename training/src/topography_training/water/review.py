@@ -561,6 +561,36 @@ def crops(src: Path, dest: Path, spots=SPOTS, areas=AREAS, dam: tuple[int, int] 
     return out
 
 
+def window_pair(run: Path, dest: Path) -> Path:
+    """Raw hillshade beside the result's (work/carved.f32), water tinted on the right: a quick
+    look at what a window or level run changed."""
+    from PIL import Image
+
+    g = _json(run / "grid" / "grid.json")
+    w, h = g["size"]
+    cell = float(g.get("spacing_m", 1.0))
+    k = max(1, math.ceil(max(w, h) / 1024))
+
+    def load(path: Path) -> np.ndarray:
+        return np.fromfile(path, "<f4").reshape(h, w)[::k, ::k]
+
+    raw, res = load(run / "grid" / "elevation.f32"), load(run / "work" / "carved.f32")
+    wet = np.isfinite(load(run / "work" / "water-surface.f32"))
+
+    def shade(z: np.ndarray) -> np.ndarray:
+        gy, gx = np.gradient(z.astype(np.float64), cell * k)
+        i = np.clip((1 - gx + gy) / np.sqrt(3 * (1 + gx**2 + gy**2)), 0, 1)  # light from the NW
+        return (i * 255).astype(np.uint8)
+
+    left = np.repeat(shade(raw)[..., None], 3, axis=2)
+    right = np.repeat(shade(res)[..., None], 3, axis=2)
+    right[wet] = (right[wet] * 0.4 + np.array([30, 90, 200]) * 0.6).astype(np.uint8)
+    gap = np.full((left.shape[0], GAP_PX, 3), 255, np.uint8)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.concatenate([left, gap, right], axis=1)).save(dest)
+    return dest
+
+
 # The coarse guide.
 
 

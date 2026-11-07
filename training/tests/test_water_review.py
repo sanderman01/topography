@@ -167,5 +167,24 @@ class RowsTest(unittest.TestCase):
                                               a[r0 : r0 + h : k, c0 : c0 + w : k])
 
 
+class WindowPairTest(unittest.TestCase):
+    def test_raw_and_result_side_by_side(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            (run / "grid").mkdir()
+            (run / "work").mkdir()
+            n = 64
+            (run / "grid" / "grid.json").write_text(json.dumps({"size": [n, n], "spacing_m": 32.0}))
+            y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+            (100 - x).astype("<f4").tofile(run / "grid" / "elevation.f32")
+            (100 - x - (abs(y - 32) < 2) * 5).astype("<f4").tofile(run / "work" / "carved.f32")
+            np.where(abs(y - 32) < 1, 96.0, np.nan).astype("<f4").tofile(run / "work" / "water-surface.f32")
+            out = review.window_pair(run, run / "pair.png")
+            from PIL import Image
+
+            im = Image.open(out)
+            self.assertEqual(im.size, (2 * n + review.GAP_PX, n))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -986,16 +986,17 @@ so a rerun resumes and a changed input is refused:
 | --- | --- |
 | `m1` model on raw | tile caches `m1-<tag>/` |
 | `b` breach | `breached.f32` |
-| `m2` model on the breached ground | `m2-level.f32`, `m2-node.u32`, `m2-discharge.f32`, `m2-flow.u8` |
+| `e` erosion (32 m and 4 m only): per routing k, a model run and stream power, diffusion, taper and wall rounds | `e<k>.f32`, `e<k>-*.{f32,u32,u8}`, `e-<tag>/` |
+| `m2` model on the pre-channel ground (the last `e<k>.f32`, else `breached.f32`) | `m2-level.f32`, `m2-node.u32`, `m2-discharge.f32`, `m2-flow.u8` |
 | `l` labels (lakes, rivers, river pools) | `body.u32`, `bodies.json` |
 | `c` channels | `carved.f32`, `water-surface.f32`, `water-body.u32` |
 | `m3` model on the carved ground | `m3-<tag>-*.{f32,u32,u8}` |
 | `s` settle | rewrites `water-surface.f32` and `water-body.u32` in place; per-tile changes in `s-<tag>/` |
-| figures | `stages.json` (stage tags, breaches, channels, nodes, leaves, lakes, ponds, area and depth histograms) |
+| figures | `stages.json` (stage tags, breaches, erosion summed over routings with `per_routing`, channels, nodes, leaves, lakes, ponds, area and depth histograms) |
 
 `world water-finish` checks the carved ground with the m3 model and publishes `--out`. The m3
-tag is keyed on the run's settings and the sha256 of the carved and breached grounds (the only
-rasters m3 reads), so a channels rerun that changes surfaces and labels only reuses m3. The
+tag is keyed on the run's settings and the sha256 of the carved and pre-channel grounds (the
+only rasters m3 reads), so a channels rerun that changes surfaces and labels only reuses m3. The
 settle tag follows m3's and the channels' tags. `water-finish` recomputes every tag and refuses
 a `stages.json` that does not match.
 
@@ -1143,6 +1144,7 @@ kept stage then silently holds the old code's output. Go by
 | --- | --- |
 | the model (`pipeline`, `balance`, `hierarchy`, `flow`, `receivers`, `flats`, `watershed`, `contract`, `nodes`, `rain`, `table`) or shared code (`geom`, `layers`, `store`, `mod.rs` constants) | m1: start fresh |
 | `breach`, `hydraulic` (widths), or in `checks` the `CHANGED_M`, `horn_deg` or `is_wall` that breach uses | b |
+| `erosion` | e |
 | `bodies` | l |
 | `channel` (channels or settle), or in `checks` the `SILL_M` that channels use | c |
 | any other part of `checks` | none: rerun `water-finish` |
@@ -1165,6 +1167,7 @@ Steps, with the run stopped (`pgrep -af '[t]opography_training.water.run'` shows
    | Stage | Delete |
    | --- | --- |
    | b | `b-<tag>/`, `breached.f32` |
+   | e | `e-<tag>/`, `e<k>.f32`, `e<k>-*` |
    | m2 | `m2-<tag>/`, `m2-{level,discharge}.f32`, `m2-node.u32`, `m2-flow.u8` |
    | l | `l-<tag>/`, `body.u32`, `bodies.json` |
    | c | `c-<tag>/`, `carved.f32`, `water-surface.f32`, `water-body.u32`, `s-<tag>/` |

@@ -10,8 +10,6 @@ mod breach;
 mod channel;
 mod checks;
 mod contract;
-// Wired into the run in the next commit (Task 6).
-#[allow(dead_code)]
 mod erosion;
 mod flats;
 mod flow;
@@ -58,11 +56,9 @@ pub(crate) const MAIN_RIVER_KM2: f64 = 1.0;
 /// Export ids are 16-bit (fewer than 65,535 water bodies); a run must stay well under that
 /// (judgment value, review C2).
 pub(crate) const BODY_BUDGET: usize = 50_000;
-/// Provenance bits (collage provenance32.u8; ruling B10): kind in bits 0–2. Kind and steep
-/// are read by later Plan B tasks (erosion, checks).
-#[allow(dead_code)]
+/// Provenance bits (collage provenance32.u8; ruling B10): kind in bits 0–2 (erosion's K);
+/// steep is read by a later Plan B task (checks).
 pub(crate) const KIND_MASK: u8 = 7;
-#[allow(dead_code)]
 pub(crate) const INTERIOR: u8 = 1;
 /// An inland basin here may keep a lake below 0 m (hot-dry, far from the sea; B13).
 pub(crate) const BELOW_SEA_OK: u8 = 64;
@@ -356,6 +352,8 @@ fn stage_tag(name: &str, inputs: &Value) -> String {
 struct Tags {
     m1: String,
     b: String,
+    /// Coarse levels only (B23).
+    e: Option<String>,
     m2: String,
     l: String,
     c: String,
@@ -380,9 +378,21 @@ impl Tags {
                     "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true}),
         )
     }
-    /// m2 reads the breached ground (b).
-    fn m2(b: &str) -> String {
-        stage_tag("m2", &json!({"after": b}))
+    /// e reads the breached ground, the provenance and the classes (b's tag, B23).
+    fn e(b: &str, e: &table::Erosion, wall_deg: f64) -> String {
+        stage_tag(
+            "e",
+            &json!({"after": b, "routings": e.routings, "k_dt": e.k_dt, "m": e.m,
+                    "diffusion": e.diffusion, "cap_m": e.cap_m, "interior_k": e.interior_k,
+                    "interior_cap_m": e.interior_cap_m, "wall_deg": wall_deg,
+                    "taper_min_cells": erosion::TAPER_MIN_CELLS, "wall_rounds": erosion::WALL_ROUNDS,
+                    "shape_min_m": erosion::SHAPE_MIN_M, "glacier_frozen": true, "sea_base_0": true,
+                    "wall_removal": true}),
+        )
+    }
+    /// m2 reads the ground before channels: the eroded ground (e) or the breached one (b).
+    fn m2(pre: &str) -> String {
+        stage_tag("m2", &json!({"after": pre}))
     }
     /// l reads m2 and the river pools found on it.
     fn l(m2: &str, pools: &BTreeMap<u64, u64>) -> String {
@@ -418,7 +428,7 @@ impl Tags {
             &json!({"after": m3, "channels": c, "lakes_at_label": true}),
         )
     }
-    /// Every tag, from the settings, the pools on m2 and the carved and breached grounds'
+    /// Every tag, from the settings, the pools on m2 and the carved and pre-channel grounds'
     /// sha256 (what `finish` recomputes; `run` builds them stage by stage alike).
     fn all(
         p: &Params,
@@ -426,18 +436,20 @@ impl Tags {
         m3s_per_km2: f64,
         pools: &BTreeMap<u64, u64>,
         carved: &str,
-        breached: &str,
+        pre: &str,
     ) -> Self {
         let m1 = Self::m1(p, contract);
         let b = Self::b(&m1, p, m3s_per_km2);
-        let m2 = Self::m2(&b);
+        let e = p.erosion.map(|e| Self::e(&b, &e, p.wall_deg));
+        let m2 = Self::m2(e.as_deref().unwrap_or(&b));
         let l = Self::l(&m2, pools);
         let c = Self::c(&l, m3s_per_km2);
-        let m3 = Self::m3(&m1, carved, breached);
+        let m3 = Self::m3(&m1, carved, pre);
         let s = Self::s(&m3, &c);
         Self {
             m1,
             b,
+            e,
             m2,
             l,
             c,
@@ -445,8 +457,12 @@ impl Tags {
             s,
         }
     }
+    /// As `stages.json` lists them: e only at coarse levels.
     fn list(&self) -> Value {
-        json!([self.m1, self.b, self.m2, self.l, self.c, self.m3, self.s])
+        let mut v = vec![&self.m1, &self.b];
+        v.extend(&self.e);
+        v.extend([&self.m2, &self.l, &self.c, &self.m3, &self.s]);
+        json!(v)
     }
 }
 
@@ -457,6 +473,14 @@ fn sha256(path: &Path) -> Result<String> {
 /// The final routing's tag on `ground` (see `Tags::m3`).
 fn final_tag(m1_tag: &str, ground: &Path, breached: &Path) -> Result<String> {
     Ok(Tags::m3(m1_tag, &sha256(ground)?, &sha256(breached)?))
+}
+
+/// The ground the channels cut into (B23): the last erosion routing, else the breached ground.
+fn pre_channel(work: &store::Work, p: &Params) -> PathBuf {
+    match p.erosion {
+        Some(e) => work.path(&format!("e{}.f32", e.routings - 1)),
+        None => work.path("breached.f32"),
+    }
 }
 
 /// Settle tag directories other than `keep`. Settle rewrites the channels' surfaces and
@@ -510,9 +534,21 @@ pub fn run(o: &Options) -> Result<String> {
     let breached = layers::Layer::open_or_create(s.world, &work.path("breached.f32"), 0.0)?;
     let breaches = breach::breach(&s, &m1, &raw, &breached, &geo, wk, &b_tag)?;
     drop(m1);
-    let m2_tag = Tags::m2(&b_tag);
+    // Coarse levels erode the breached ground (B23); m2 and the channels read the result.
+    let (pre_tag, pre, erosion_json) = match p.erosion {
+        Some(e) => {
+            let e_tag = Tags::e(&b_tag, &e, p.wall_deg);
+            let (path, total, per) = erosion::erode(&s, &breached, &raw, &work, &e_tag, &e)?;
+            let mut j = total.json();
+            j["routings"] = json!(e.routings);
+            j["per_routing"] = json!(per.iter().map(|f| f.json()).collect::<Vec<_>>());
+            (Some(e_tag), layers::Layer::open(s.world, &path)?, j)
+        }
+        None => (None, breached.clone(), Value::Null),
+    };
+    let m2_tag = Tags::m2(pre_tag.as_deref().unwrap_or(&b_tag));
     let rasters = pipeline::Rasters::files(s.world, &work.path(""), "m2")?;
-    let m2 = pipeline::model(&s, &breached, wk, &m2_tag, Some(&rasters))?;
+    let m2 = pipeline::model(&s, &pre, wk, &m2_tag, Some(&rasters))?;
     let body = layers::Layer::open_or_create(s.world, &work.path("body.u32"), 0)?;
     let pools = bodies::pools(&s, &m2, &geo);
     let l_tag = Tags::l(&m2_tag, &pools);
@@ -541,7 +577,7 @@ pub fn run(o: &Options) -> Result<String> {
     }
     let out = channel::Layers::files(s.world, &work.path(""))?;
     let channels = channel::channels(
-        &s, &m2.water, &raw, &breached, &rasters, &body, &out, &geo, wk, &c_tag,
+        &s, &m2.water, &raw, &pre, &rasters, &body, &out, &geo, wk, &c_tag,
     )?;
     let n = |kind: &str| {
         bodies["bodies"]
@@ -569,16 +605,15 @@ pub fn run(o: &Options) -> Result<String> {
         // Lake-balance supply (cells × r, r up to 3) that overflowed to the sea or off the map.
         "to_sea_r_cells": m2.water.bal.to_sea as f64 / table::MILLI as f64,
     });
+    if !erosion_json.is_null() {
+        stages["erosion"] = erosion_json;
+    }
     drop(m2);
     // The routing on the carved ground (m3: `finish` checks this ground on the same one) and
     // the written water settled on it (review: drainage_rises). m3 keeps m2's receivers where
     // they are not higher (ties keep them), so the routing stays on the carved rivers.
     let carved = layers::Layer::open(s.world, &work.path("carved.f32"))?;
-    let m3_tag = final_tag(
-        &m1_tag,
-        &work.path("carved.f32"),
-        &work.path("breached.f32"),
-    )?;
+    let m3_tag = final_tag(&m1_tag, &work.path("carved.f32"), &pre_channel(&work, p))?;
     let s_tag = Tags::s(&m3_tag, &c_tag);
     if !work.path(&format!("{s_tag}/settled.bin")).exists() {
         let old = other_settles(&work, &s_tag)?;
@@ -604,7 +639,7 @@ pub fn run(o: &Options) -> Result<String> {
         .collect();
     let settled = work.cached(&format!("{s_tag}/settled"), || {
         let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
-        pipeline::model_on(&s, &carved, Some(&breached), wk, &m3_tag, Some(&finals))?;
+        pipeline::model_on(&s, &carved, Some(&pre), wk, &m3_tag, Some(&finals))?;
         channel::settle(&s, &finals, &carved, &out, &lakes, wk, &s_tag)
     })?;
     let lift_cell = (settled.3 != u64::MAX).then(|| s.world.xy(settled.3));
@@ -618,7 +653,10 @@ pub fn run(o: &Options) -> Result<String> {
             settled.0, settled.1, settled.2, settled.4
         );
     }
-    stages["tags"] = json!([m1_tag, b_tag, m2_tag, l_tag, c_tag, m3_tag, s_tag]);
+    let mut tags = vec![m1_tag, b_tag];
+    tags.extend(pre_tag);
+    tags.extend([m2_tag, l_tag, c_tag, m3_tag, s_tag]);
+    stages["tags"] = json!(tags);
     io_context(
         "write stages.json",
         fs::write(
@@ -678,27 +716,39 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let geo = hydraulic::Geometry::new(s.table.m3s_per_km2);
     let m1_tag = Tags::m1(&s.params, s.contract);
     let b_tag = Tags::b(&m1_tag, &s.params, geo.m3s_per_km2);
-    let m2_tag = Tags::m2(&b_tag);
+    let e_tag = s
+        .params
+        .erosion
+        .map(|e| Tags::e(&b_tag, &e, s.params.wall_deg));
+    let m2_tag = Tags::m2(e_tag.as_deref().unwrap_or(&b_tag));
     // Checked before m2 is read, so a stale m2 is refused rather than recomputed.
-    let first = [&m1_tag, &b_tag, &m2_tag];
+    let mut first = vec![&m1_tag, &b_tag];
+    first.extend(&e_tag);
+    first.push(&m2_tag);
     ensure(
-        (0..3).all(|i| stages["tags"][i] == first[i].as_str()),
+        first
+            .iter()
+            .enumerate()
+            .all(|(i, t)| stages["tags"][i] == t.as_str()),
         stale,
     )?;
     let rasters = pipeline::Rasters::open(s.world, &work.path(""), "m2")?;
+    // Breach cuts only (the interior budget), and the ground the channels cut into (B23).
     let breached = layers::Layer::open(s.world, &work.path("breached.f32"))?;
+    let pre_path = pre_channel(&work, &s.params);
+    let pre = layers::Layer::open(s.world, &pre_path)?;
     // The second run's nodes (cached): the lakes as written.
-    let m2 = pipeline::model(&s, &breached, Some(&work), &m2_tag, None)?;
+    let m2 = pipeline::model(&s, &pre, Some(&work), &m2_tag, None)?;
     let pools = bodies::pools(&s, &m2, &geo);
     let carved = work.path("carved.f32");
-    let (carved_sha, breached_sha) = (sha256(&carved)?, sha256(&work.path("breached.f32"))?);
+    let (carved_sha, pre_sha) = (sha256(&carved)?, sha256(&pre_path)?);
     let tags = Tags::all(
         &s.params,
         s.contract,
         geo.m3s_per_km2,
         &pools,
         &carved_sha,
-        &breached_sha,
+        &pre_sha,
     );
     ensure(stages["tags"] == tags.list(), stale)?;
     ensure(
@@ -784,13 +834,13 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let m3_tag = if same(&o.ground, &carved) {
         tags.m3.clone()
     } else {
-        Tags::m3(&m1_tag, &sha256(&o.ground)?, &breached_sha)
+        Tags::m3(&m1_tag, &sha256(&o.ground)?, &pre_sha)
     };
-    // Receivers kept from the breached ground where still valid (scale diagnosis 3).
+    // Receivers kept from the pre-channel ground where still valid (scale diagnosis 3).
     let m3 = pipeline::model_on(
         &s,
         &ground,
-        Some(&breached),
+        Some(&pre),
         Some(&work),
         &m3_tag,
         Some(&pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?),
@@ -810,7 +860,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         flow_written: rasters.flow.clone(),
         node_written: rasters.node.clone(),
         level_written: rasters.level.clone(),
-        breached: breached.clone(),
+        breached,
+        pre_channel: pre,
     };
     let spots: Vec<checks::Spot> = o
         .spots
@@ -1102,6 +1153,21 @@ mod tests {
         );
         assert_eq!(changed(tags(&p, true, 1.0, &pools, "G", "b")), ["m3", "s"]);
         assert_eq!(changed(tags(&p, true, 1.0, &pools, "g", "B")), ["m3", "s"]);
+        assert!(base.e.is_none(), "1 m has no erosion stage");
+
+        // 32 m: e sits between b and m2; k_dt reaches e, m2 and every later tag but m3 (which
+        // reads the eroded ground by content).
+        let p32 = params(&table::Table::parse(table::DEFAULT).unwrap(), 32.0, None);
+        let b32 = tags(&p32, true, 1.0, &pools, "g", "b");
+        assert_eq!(b32.list().as_array().unwrap().len(), 8);
+        let mut q = p32;
+        q.erosion.as_mut().unwrap().k_dt *= 2.0;
+        let t = tags(&q, true, 1.0, &pools, "g", "b");
+        let names = ["m1", "b", "e", "m2", "l", "c", "m3", "s"];
+        let (a, z) = (b32.list(), t.list());
+        let moved: Vec<_> = (0..8).filter(|&i| a[i] != z[i]).map(|i| names[i]).collect();
+        assert_eq!(moved, ["e", "m2", "l", "c", "s"]);
+        assert_eq!(a[2].as_str(), b32.e.as_deref());
     }
 
     /// `finish` refuses a stages.json older than the stages; rerunning the channels clears
@@ -1218,6 +1284,88 @@ mod tests {
             }
         );
         assert_eq!(p(1.0, Some(0.2)).river_km2, 0.2);
+    }
+
+    #[test]
+    fn coarse_runs_erode_grade_the_seam_dam_and_spare_interiors() {
+        let dir = tempfile::tempdir().expect("temp");
+        let world = geom::World { w: 64, h: 64 };
+        let grid = testing::coarse_grid_dir(dir.path(), world, 32.0);
+        let water = Some(grid.join("water.toml"));
+        let o = Options {
+            grid: grid.clone(),
+            work: dir.path().join("work"),
+            tile: 32,
+            threads: 2,
+            water: water.clone(),
+            river_km2: Some(0.05),
+        };
+        run(&o).expect("run");
+        let stages: Value =
+            serde_json::from_slice(&fs::read(o.work.join("stages.json")).unwrap()).unwrap();
+        let e = &stages["erosion"];
+        assert_eq!(e["routings"], json!(5));
+        assert!(e["lowered_cells"].as_u64().unwrap() > 0);
+        assert!(
+            e["sills_lowered"].as_u64().unwrap() >= 1,
+            "the seam dam's lake drains through its sill"
+        );
+        assert_eq!(
+            e["erosion_new_pits"],
+            json!(0),
+            "no pit made by the erosion code (B33)"
+        );
+        let open = |p: &Path| {
+            layers::Layer::<f32>::open(world, p)
+                .unwrap()
+                .to_vec()
+                .unwrap()
+        };
+        let raw = open(&grid.join("elevation.f32"));
+        let eroded = open(&o.work.join("e4.f32"));
+        let breached = open(&o.work.join("breached.f32"));
+        for i in 0..raw.len() {
+            assert!(
+                eroded[i] <= breached[i] + 1e-6 && breached[i] <= raw[i] + 1e-6,
+                "cell {i} rose"
+            );
+            if (i as u64) % 64 < 30 && breached[i] == raw[i] {
+                assert!(raw[i] - eroded[i] <= 3.0 + 1e-4, "interior cap 3 m at {i}");
+            }
+        }
+        assert!(
+            raw[20 * 64 + 44] - eroded[20 * 64 + 44] > 1.0
+                || stages["breach"]["breaches"].as_u64().unwrap() > 0,
+            "the dam is cut by erosion or breached"
+        );
+        // A second run resumes from the cache with the same answer.
+        assert!(run(&o).is_ok());
+        // finish accepts the coarse work directory (its tag list includes e; preflight F5).
+        let f = finish(&FinishOptions {
+            grid: grid.clone(),
+            work: o.work.clone(),
+            ground: o.work.join("carved.f32"),
+            out: dir.path().join("out"),
+            tile: 32,
+            threads: 2,
+            water: water.clone(),
+            river_km2: Some(0.05),
+            spots: Vec::new(),
+        })
+        .expect("finish on a coarse run");
+        assert!(f.out.join("report.json").exists());
+        // 1 m runs have no erosion stage.
+        let one = testing::grid_dir(&dir.path().join("one"), world);
+        let o1 = Options {
+            grid: one.clone(),
+            work: dir.path().join("w1"),
+            water: Some(one.join("water.toml")),
+            ..o
+        };
+        run(&o1).expect("1 m run");
+        let s1: Value =
+            serde_json::from_slice(&fs::read(o1.work.join("stages.json")).unwrap()).unwrap();
+        assert!(s1["erosion"].is_null());
     }
 
     /// A `size`² grid directory of the raw surface at (east, north) with the layout's classes
