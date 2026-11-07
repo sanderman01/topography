@@ -143,6 +143,8 @@ pub(crate) struct Figures {
     /// Cells lowered by at least SHAPE_MIN_M by the whole routing (R4; `lowered_cells`
     /// counts stream power's).
     pub lowered_1cm: u64,
+    /// Sills stream power cut by more than CHANGED_M (before the wall rounds).
+    pub sills_cut: u64,
 }
 
 impl Figures {
@@ -169,6 +171,7 @@ impl Figures {
                 u64::from(self.hillslope_wide_p99_m.to_bits()),
                 u64::from(self.hillslope_wide_max_m.to_bits()),
                 self.lowered_1cm,
+                self.sills_cut,
             ],
             self.max_lowering_m,
         )
@@ -196,6 +199,7 @@ impl Figures {
             hillslope_wide_p99_m: f32::from_bits(g(17) as u32),
             hillslope_wide_max_m: f32::from_bits(g(18) as u32),
             lowered_1cm: g(19),
+            sills_cut: g(20),
             max_lowering_m: max,
         }
     }
@@ -221,6 +225,7 @@ impl Figures {
         self.hillslope_wide_p99_m = self.hillslope_wide_p99_m.max(o.hillslope_wide_p99_m);
         self.hillslope_wide_max_m = self.hillslope_wide_max_m.max(o.hillslope_wide_max_m);
         self.lowered_1cm += o.lowered_1cm;
+        self.sills_cut += o.sills_cut;
     }
     pub fn json(&self) -> Value {
         json!({
@@ -231,7 +236,7 @@ impl Figures {
             "walls_left": self.walls_left, "erosion_new_pits": self.new_pits,
             "hillslope_lowering_p99_m": self.hillslope_p99_m, "hillslope_lowering_max_m": self.hillslope_max_m,
             "wall_cuts_removed": self.wall_cuts_removed, "wall_rounds": self.wall_rounds,
-            "sills_reverted": self.sills_reverted,
+            "sills_cut": self.sills_cut, "sills_reverted": self.sills_reverted,
             "narrow_found": self.narrow_found, "narrow_left": self.narrow_left,
             "diffusion_max_m": self.diffusion_max_m,
             "hillslope_lowering_wide_p99_m": self.hillslope_wide_p99_m,
@@ -864,6 +869,7 @@ pub(crate) fn taper(
         }
         touched = Some(raised);
     }
+    fig.sills_cut = cut_sills.len() as u64;
     fig.sills_reverted = cut_sills
         .into_iter()
         .filter(|&c| before[c] - z[c] <= CHANGED_M)
@@ -965,6 +971,7 @@ pub(crate) fn step(
     fig.wall_cells_restored = t.wall_cells_restored;
     fig.wall_cuts_removed = t.wall_cuts_removed;
     fig.wall_rounds = t.wall_rounds;
+    fig.sills_cut = t.sills_cut;
     fig.sills_reverted = t.sills_reverted;
     fig.walls_left = t.walls_left;
     fig.narrow_found = t.narrow_found;

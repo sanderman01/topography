@@ -1395,6 +1395,13 @@ mod tests {
             e["sills_lowered"].as_u64().unwrap() >= 1,
             "the seam dam's lake drains through its sill"
         );
+        let per_cut: u64 = e["per_routing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["sills_cut"].as_u64().unwrap())
+            .sum();
+        assert_eq!(e["sills_cut"].as_u64(), Some(per_cut), "summed per routing");
         assert_eq!(
             e["erosion_new_pits"],
             json!(0),
