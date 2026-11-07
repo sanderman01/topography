@@ -1,0 +1,26 @@
+training/tests/test_collage_provenance.py
+  s_8c1b40ea9c1e0d::t_bb6f1513d50732 1-74
+training/src/topography_training/diffusion/collage.py
+  s_8c1b40ea9c1e0d::t_70afef53d7a787 4
+  s_8c1b40ea9c1e0d::t_96b2d8c6d760b4 208-210,212-213,216-217,225-226,231-232
+  s_8c1b40ea9c1e0d::t_162616403bb392 751
+  s_8c1b40ea9c1e0d::t_39ad725c0ec781 1105-1173,1175-1181
+  s_8c1b40ea9c1e0d::t_ca854b89296eb1 651-750,752-756
+  s_8c1b40ea9c1e0d::t_906526e4041b2c 1085-1087,1091,1094
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7e92c2bacae88b6dba6fb1ff7ab0b065e1baf4c",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
