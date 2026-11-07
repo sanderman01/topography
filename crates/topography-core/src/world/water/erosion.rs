@@ -32,6 +32,9 @@ pub(crate) const SHAPE_MIN_M: f32 = 0.01;
 /// Wall rounds after the taper that halve this routing's lowering in the 3 × 3 of a wall;
 /// later rounds remove it.
 pub(crate) const WALL_ROUNDS: usize = 16;
+/// At most this many removal rounds after them (as Plan A's channel `RESTORE_ROUNDS`); walls
+/// still left are counted in `walls_left`.
+pub(crate) const REMOVE_ROUNDS: usize = 128;
 /// The narrowest taper (cells): a disc of radius 2.5 lowers a 5-cell-wide cut, wide enough
 /// that even an isolated disc passes `handoff_narrow` (preflight F1).
 pub(crate) const TAPER_MIN_CELLS: f64 = 2.5;
@@ -48,6 +51,19 @@ impl Bits {
     }
     pub fn set(&mut self, i: usize) {
         self.0[i >> 6] |= 1 << (i & 63);
+    }
+    /// The set bits, ascending.
+    pub fn ones(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().enumerate().flat_map(|(k, &word)| {
+            let mut v = word;
+            std::iter::from_fn(move || {
+                (v != 0).then(|| {
+                    let b = v.trailing_zeros() as usize;
+                    v &= v - 1;
+                    k * 64 + b
+                })
+            })
+        })
     }
 }
 
@@ -96,6 +112,7 @@ pub(crate) struct Figures {
     pub order_ties: u64,
     pub diffused_cells: u64,
     pub tapered_cells: u64,
+    /// Cells whose cut the first WALL_ROUNDS rounds halved (or reset when under 1 cm).
     pub wall_cells_restored: u64,
     pub walls_left: u64,
     /// Strict local minima of the eroded ground that were none in the breached ground (B33).
@@ -103,6 +120,12 @@ pub(crate) struct Figures {
     /// Lowering of full-K cells outside the cut footprint (B6), cm-binned p99 and max.
     pub hillslope_p99_m: f32,
     pub hillslope_max_m: f32,
+    /// Cells whose cut the removal rounds (after WALL_ROUNDS) reset to the routing's start.
+    pub wall_cuts_removed: u64,
+    /// Wall rounds used (the most over routings).
+    pub wall_rounds: u64,
+    /// Sills cut by stream power whose cut the wall rounds undid (that lake stays this routing).
+    pub sills_reverted: u64,
 }
 
 impl Figures {
@@ -120,6 +143,9 @@ impl Figures {
                 self.new_pits,
                 u64::from(self.hillslope_p99_m.to_bits()),
                 u64::from(self.hillslope_max_m.to_bits()),
+                self.wall_cuts_removed,
+                self.wall_rounds,
+                self.sills_reverted,
             ],
             self.max_lowering_m,
         )
@@ -138,6 +164,9 @@ impl Figures {
             new_pits: g(8),
             hillslope_p99_m: f32::from_bits(g(9) as u32),
             hillslope_max_m: f32::from_bits(g(10) as u32),
+            wall_cuts_removed: g(11),
+            wall_rounds: g(12),
+            sills_reverted: g(13),
             max_lowering_m: max,
         }
     }
@@ -154,6 +183,9 @@ impl Figures {
         self.new_pits = o.new_pits; // the last routing's ground is what m2 reads
         self.hillslope_p99_m = self.hillslope_p99_m.max(o.hillslope_p99_m);
         self.hillslope_max_m = self.hillslope_max_m.max(o.hillslope_max_m);
+        self.wall_cuts_removed += o.wall_cuts_removed;
+        self.wall_rounds = self.wall_rounds.max(o.wall_rounds);
+        self.sills_reverted += o.sills_reverted;
     }
     pub fn json(&self) -> Value {
         json!({
@@ -163,6 +195,8 @@ impl Figures {
             "tapered_cells": self.tapered_cells, "wall_cells_restored": self.wall_cells_restored,
             "walls_left": self.walls_left, "erosion_new_pits": self.new_pits,
             "hillslope_lowering_p99_m": self.hillslope_p99_m, "hillslope_lowering_max_m": self.hillslope_max_m,
+            "wall_cuts_removed": self.wall_cuts_removed, "wall_rounds": self.wall_rounds,
+            "sills_reverted": self.sills_reverted,
         })
     }
 }
@@ -391,8 +425,9 @@ pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u6
 /// halving this step's lowering (removing it under 1 cm, and after WALL_ROUNDS rounds
 /// outright, as Plan A's channel restore) in the 3 × 3 of every changed cell steeper than
 /// max(wall, raw), and then grading beds (a changed cell below where it drains is lifted to
-/// it, never above `before`; B33, Plan A 16b), until nothing changes.
-/// Returns (cells tapered, cells restored, walls left on the final ground).
+/// it, never above `before`; B33, Plan A 16b), until nothing changes or REMOVE_ROUNDS more
+/// rounds are spent.
+/// Returns the taper and wall figures (walls left counted on the final ground).
 pub(crate) fn taper(
     r: &Routing,
     z: &mut [f32],
@@ -400,7 +435,7 @@ pub(crate) fn taper(
     raw: &[f32],
     wall_deg: f64,
     lower: &mut [f32],
-) -> (u64, u64, u64) {
+) -> Figures {
     let (w, h) = (r.world.w as usize, r.world.h as usize);
     let tan = wall_deg.to_radians().tan();
     lower.fill(0.0);
@@ -430,8 +465,9 @@ pub(crate) fn taper(
             }
         }
     }
-    let mut tapered = 0;
-    for j in 0..z.len() {
+    let n = z.len();
+    let mut fig = Figures::default();
+    for j in 0..n {
         if lower[j] <= 0.0 {
             continue;
         }
@@ -440,27 +476,42 @@ pub(crate) fn taper(
             .max(water_bound(r, j));
         if v < z[j] {
             z[j] = v;
-            tapered += 1;
+            fig.tapered_cells += 1;
         }
     }
     // Every cell this step lowered, however little: on raw slopes at the wall angle a
-    // sub-centimetre cut below an earlier routing's cut makes a wall too.
-    let changed: Vec<usize> = (0..z.len()).filter(|&j| z[j] < before[j]).collect();
-    // Wall rounds (as Plan A's channel restore): cells near this step's cuts only.
+    // sub-centimetre cut below an earlier routing's cut makes a wall too. Bits: 1 bit a cell.
+    let mut changed = Bits::new(n);
+    for j in 0..n {
+        if z[j] < before[j] {
+            changed.set(j);
+        }
+    }
+    let cut_sills: Vec<usize> = r
+        .sills
+        .iter()
+        .map(|s| s.cell as usize)
+        .filter(|&c| before[c] - z[c] > CHANGED_M)
+        .collect();
     let inner = |j: usize| {
         let (x, y) = (j % w, j / w);
         x > 0 && y > 0 && x + 1 < w && y + 1 < h
     };
-    let find_walls = |z: &[f32]| {
-        let mut walls = Vec::new();
-        for &c in &changed {
-            let (cx, cy) = ((c % w) as i64, (c / w) as i64);
-            for (dy, dx) in OFFSETS.iter().copied().chain([(0, 0)]) {
-                let (x, y) = (cx + dx, cy + dy);
-                if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
-                    continue;
-                }
-                let j = y as usize * w + x as usize;
+    let around = |c: usize| {
+        let (cx, cy) = ((c % w) as i64, (c / w) as i64);
+        OFFSETS
+            .iter()
+            .copied()
+            .chain([(0, 0)])
+            .map(move |(dy, dx)| (cx + dx, cy + dy))
+            .filter(move |&(x, y)| x >= 0 && y >= 0 && x < w as i64 && y < h as i64)
+            .map(move |(x, y)| y as usize * w + x as usize)
+    };
+    // Walls in the 3 × 3 of `cells` (a wall elsewhere is as the routing found it).
+    let find_walls = |z: &[f32], cells: &mut dyn Iterator<Item = usize>| {
+        let mut walls: Vec<u32> = Vec::new();
+        for c in cells {
+            for j in around(c) {
                 if inner(j)
                     && raw[j] - z[j] > CHANGED_M
                     && is_wall(
@@ -469,7 +520,7 @@ pub(crate) fn taper(
                         wall_deg,
                     )
                 {
-                    walls.push(j);
+                    walls.push(j as u32);
                 }
             }
         }
@@ -477,16 +528,19 @@ pub(crate) fn taper(
         walls.dedup();
         walls
     };
-    let mut restored = 0;
-    // Every round raises cells toward `before` (wall-free by induction), so this ends.
-    for round in 0.. {
-        let walls = find_walls(z);
+    // Cells raised in the last round: a new wall lies in their 3 × 3 (round 0: every cut).
+    let mut touched: Option<Bits> = None;
+    for round in 0..WALL_ROUNDS + REMOVE_ROUNDS {
+        let walls = match &touched {
+            None => find_walls(z, &mut changed.ones()),
+            Some(t) => find_walls(z, &mut t.ones()),
+        };
+        let (mut raised, mut any) = (Bits::new(n), false);
         // Bed grade (to its fixed point inside the round): no changed cell below where it
         // drains (a sill to its down cell).
-        let mut graded = false;
         loop {
             let mut moved = false;
-            for &c in &changed {
+            for c in changed.ones() {
                 let Some(t) = target(r, c) else {
                     continue;
                 };
@@ -496,50 +550,60 @@ pub(crate) fn taper(
                 let v = before[c].min(z[c].max(z[t]));
                 if v > z[c] {
                     z[c] = v;
+                    raised.set(c);
+                    any = true;
                     moved = true;
                 }
             }
             if !moved {
                 break;
             }
-            graded = true;
         }
-        if walls.is_empty() && !graded {
+        if walls.is_empty() && !any {
             break;
         }
-        let mut fix: Vec<usize> = Vec::new();
-        for &j in &walls {
-            let (cx, cy) = ((j % w) as i64, (j / w) as i64);
-            for (dy, dx) in OFFSETS.iter().copied().chain([(0, 0)]) {
-                let (x, y) = (cx + dx, cy + dy);
-                if x >= 0 && y >= 0 && x < w as i64 && y < h as i64 {
-                    fix.push(y as usize * w + x as usize);
-                }
-            }
-        }
+        let mut fix: Vec<u32> = walls
+            .iter()
+            .flat_map(|&j| around(j as usize).map(|c| c as u32))
+            .collect();
         fix.sort_unstable();
         fix.dedup();
-        let mut halved = 0;
         for j in fix {
-            let d = before[j] - z[j];
+            let ju = j as usize;
+            let d = before[ju] - z[ju];
             // Halved for WALL_ROUNDS rounds (outright under 1 cm), then removed (as Plan A's
             // channel restore rounds).
             if d > CHANGED_M && round < WALL_ROUNDS {
-                z[j] = before[j] - d / 2.0;
-                halved += 1;
+                z[ju] = before[ju] - d / 2.0;
+                fig.wall_cells_restored += 1;
             } else if d > 0.0 {
-                z[j] = before[j];
-                halved += 1;
+                z[ju] = before[ju];
+                if round < WALL_ROUNDS {
+                    fig.wall_cells_restored += 1;
+                } else {
+                    fig.wall_cuts_removed += 1;
+                }
+            } else {
+                continue;
             }
+            raised.set(ju);
+            any = true;
         }
-        restored += halved;
-        // Walls this routing did not cut cannot be removed: further rounds change nothing.
-        if halved == 0 && !graded {
+        fig.wall_rounds = round as u64 + 1;
+        // Nothing raised: walls this routing did not cut stay (counted below), cells only
+        // rise, so further rounds change nothing.
+        if !any {
             break;
         }
+        touched = Some(raised);
     }
-    // Counted on the final ground (after the last bed grade).
-    (tapered, restored, find_walls(z).len() as u64)
+    fig.sills_reverted = cut_sills
+        .into_iter()
+        .filter(|&c| before[c] - z[c] <= CHANGED_M)
+        .count() as u64;
+    // Counted on the final ground (after the last bed grade), over every cut.
+    fig.walls_left = find_walls(z, &mut changed.ones()).len() as u64;
+    fig
 }
 
 /// Strict local minima (8 neighbours) of `z` that are none in `breached`, off water and sea
@@ -743,12 +807,15 @@ pub(crate) fn erode(
             };
             let mut lower = ka;
             let rawv = raw.to_vec()?;
-            let (t, restored, left) =
-                taper(&r, &mut z, &before, &rawv, s.params.wall_deg, &mut lower);
+            let t = taper(&r, &mut z, &before, &rawv, s.params.wall_deg, &mut lower);
             drop((rawv, lower));
-            fig.tapered_cells = t;
-            fig.wall_cells_restored = restored;
-            fig.walls_left = left;
+            fig.tapered_cells = t.tapered_cells;
+            fig.wall_cells_restored = t.wall_cells_restored;
+            fig.wall_cuts_removed = t.wall_cuts_removed;
+            fig.wall_rounds = t.wall_rounds;
+            fig.sills_reverted = t.sills_reverted;
+            fig.walls_left = t.walls_left;
+            let left = t.walls_left;
             // B6 figure: full-K land outside the river cuts' footprint should not move.
             let mut hist = vec![0u64; super::checks::BINS];
             let mut hmax = 0f32;
@@ -1046,7 +1113,8 @@ mod tests {
         };
         r.spacing_m = 4.0;
         let mut lower = vec![0.0f32; w * h];
-        let (tapered, _, left) = taper(&r, &mut z, &before, &before, 35.0, &mut lower);
+        let t = taper(&r, &mut z, &before, &before, 35.0, &mut lower);
+        let (tapered, left) = (t.tapered_cells, t.walls_left);
         assert!(tapered >= 8);
         assert!(
             z[10 * w + 11] < 99.0 && z[10 * w + 9] < 99.0,
@@ -1313,7 +1381,13 @@ mod tests {
         };
         assert!(wall_at(&z, 4, 3), "the setup makes a wall");
         let mut lower = vec![0.0f32; w * h];
-        let (_, _, left) = taper(&r, &mut z, &before, &raw, 35.0, &mut lower);
+        let t = taper(&r, &mut z, &before, &raw, 35.0, &mut lower);
+        assert_eq!(
+            t.wall_cells_restored, 1,
+            "the 9 mm cut is reset within the halving rounds"
+        );
+        assert_eq!((t.wall_cuts_removed, t.wall_rounds), (0, 1));
+        let left = t.walls_left;
         for y in 1..h - 1 {
             for x in 1..w - 1 {
                 assert!(
@@ -1323,5 +1397,15 @@ mod tests {
             }
         }
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn bits_list_their_ones_in_order() {
+        let mut b = Bits::new(200);
+        for i in [0, 63, 64, 130, 199] {
+            b.set(i);
+        }
+        assert_eq!(b.ones().collect::<Vec<_>>(), [0, 63, 64, 130, 199]);
+        assert_eq!(Bits::new(70).ones().count(), 0);
     }
 }
