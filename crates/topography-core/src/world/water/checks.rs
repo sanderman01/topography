@@ -1200,13 +1200,27 @@ pub(crate) fn check_tile(
                         out
                     };
                     // Ruling Q5: the river's own path within TRIBUTARY_M and the outflow of
-                    // the lake it feeds (its exit walk, and paths joining it) are the same water.
+                    // the lake it feeds (its exit walk, and paths joining it) are the same water;
+                    // so is another channel reaching the sea when this river does (two mouths).
+                    // The standing water a path enters (a lake or the sea): on it, or beside
+                    // its last cell when that drains nowhere (a drainage end at the shore).
+                    let standing = |c: usize| lake_cell(c) || (surf[c].is_finite() && body[c] == 1);
+                    let enters = |p: &[usize]| -> Option<u32> {
+                        p.iter()
+                            .copied()
+                            .find(|&c| standing(c))
+                            .or_else(|| {
+                                let last = *p.last()?;
+                                down(last)
+                                    .is_none()
+                                    .then(|| around(last).find(|&n| standing(n)))
+                                    .flatten()
+                            })
+                            .map(|c| body[c])
+                    };
                     let path = walk(j);
-                    let fed = path
-                        .iter()
-                        .copied()
-                        .find(|&c| lake_cell(c))
-                        .map(|c| body[c]);
+                    let entered = enters(&path);
+                    let fed = entered.filter(|&b| b != 1);
                     let outflow: Vec<usize> = fed
                         .and_then(|l| exits.iter().find(|e| e.lake == Some(l)))
                         .and_then(|e| {
@@ -1222,6 +1236,8 @@ pub(crate) fn check_tile(
                             || (wet && body[c] > 1 && joins(j, body[c]))
                             || (flow[c] & 16 != 0 && id.is_some_and(|b| joins(c, b)))
                             || (!outflow.is_empty() && walk(c).iter().any(|v| outflow.contains(v)))
+                            // Both reach the sea within TRIBUTARY_M: two mouths, not beside.
+                            || (entered == Some(1) && enters(&walk(c)) == Some(1))
                     };
                     // Written water of another body, the sea included (ruling Q5), is not a
                     // second channel; an unwritten m3 channel is.
@@ -2892,11 +2908,52 @@ mod tests {
         assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
     }
 
+    /// Task 9 (E9872 N10928): two rivers reaching the sea 3 cells apart down a steep coast;
+    /// the other's last cell is a dry drainage end at 0 m beside the sea. Both are mouths.
+    #[test]
+    fn two_river_mouths_on_one_coast_are_not_beside() {
+        let sea = |x: u64, y: u64| x + y > 51;
+        // A 2 m coastal cliff above a slope of 2 m a cell.
+        let mut c = Case::new(40, 40, |x, y| {
+            if sea(x, y) {
+                -2.0
+            } else {
+                2.0 + 2.0 * (51 - x - y) as f32
+            }
+        });
+        for y in 0..40 {
+            for x in 0..40 {
+                if sea(x, y) {
+                    let k = c.k(x, y);
+                    (c.surf[k], c.body[k], c.node[k], c.level[k]) = (0.0, 1, 1, 0.0);
+                }
+            }
+        }
+        c.levels.insert(1, 0.0);
+        // River 5 along row 24 to the cliff; river 6 along row 25, its last cell (25, 25)
+        // dry at 0 m with no receiver, beside the sea.
+        let a: Vec<(u64, u64)> = (5..=28).map(|x| (x, 24)).collect();
+        c.river(&a, 2.0, 5);
+        let b: Vec<(u64, u64)> = (5..=25).map(|x| (x, 25)).collect();
+        c.river(&b, 6.0, 6);
+        let end = c.k(25, 25);
+        (c.flow[end], c.q[end], c.z[end], c.raw[end]) = (0, 6.0, 0.0, 0.0);
+        c.m3_only();
+        let t = c.tile();
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+    }
+
     /// Ruling Q5 (E27088 N40720): a river falling south into a small lake whose outflow
     /// leaves to the north-west beside the river's lower reach, unlabelled. Water leaving the
     /// lake this river feeds is the same water, not a second thalweg.
     #[test]
     fn a_lakes_own_outflow_beside_its_inlet_river_is_no_second_thalweg() {
+        lake_inlet(false);
+        // Task 9 (E10704 N12848): the river ends in a dry drainage end beside the lake.
+        lake_inlet(true);
+    }
+
+    fn lake_inlet(ends_beside: bool) {
         let level = 10.0;
         let mut c = Case::new(40, 40, |_, y| 10.0 + 2.0 * (20.0 - y as f32).max(0.0));
         for y in 20..22 {
@@ -2907,8 +2964,14 @@ mod tests {
             }
         }
         // The river: south along x = 20 into the lake at (20, 20).
-        let path: Vec<(u64, u64)> = (5..=20).map(|y| (20, y)).collect();
+        let last = if ends_beside { 19 } else { 20 };
+        let path: Vec<(u64, u64)> = (5..=last).map(|y| (20, y)).collect();
         c.river(&path, 2.0, 5);
+        if ends_beside {
+            // (20, 19): dry, no receiver, beside the lake.
+            let k = c.k(20, 19);
+            (c.flow[k], c.q[k]) = (0, 2.0);
+        }
         // The lake's outflow: from (20, 20) out at (19, 19), then north-west, low and dry.
         let out: Vec<(u64, u64)> = (0..12).map(|i| (19 - i, 19 - i)).collect();
         for (i, &(x, y)) in out.iter().enumerate() {
