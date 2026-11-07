@@ -1,0 +1,54 @@
+crates/topography-core/src/world/hydrology/fine.rs
+  s_774c09797904fe::t_f3e656793ff65f 1121-1126,1133
+  s_774c09797904fe::t_d2b648e50ab69f 1585-1587
+  s_774c09797904fe::t_8c583e874f2e3e 1610,1620,1642,2405-2457,2461,2463-2467,2476-2513,2516-2517,2519-2531
+  s_774c09797904fe::t_abced84b19659f 2471-2472,2475
+  s_774c09797904fe::t_da806715823e2d 529-530,532-596
+  s_774c09797904fe::t_8b83a9d05cb4f7 2518
+  s_774c09797904fe::t_dcd96c25116a99 2514-2515
+  s_774c09797904fe::t_002506026b641e 2458-2460,2462,2468-2470,2473-2474
+  s_774c09797904fe::t_d58e2542062e78 531
+  s_774c09797904fe::t_928336d785223c 1111,1113-1116
+  s_774c09797904fe::t_df1fa10936d7a8 1647-1648
+  s_774c09797904fe::t_bc1df38f66b5d5 1165-1170
+  s_774c09797904fe::t_0fb98d9e50af87 1112
+  s_774c09797904fe::t_49270a8af0c549 1487-1489,1531-1584,1588-1608,1617,1625
+  s_774c09797904fe::t_6c47097b125301 1272-1318,1320-1323,1325-1327,1330-1336,1341-1363,1365-1379,1382,1384-1393,1397-1404
+  s_774c09797904fe::t_68223593a8f080 1609
+  s_774c09797904fe::t_522e158c868747 1611-1616
+  s_774c09797904fe::t_9e6154dcdcd8e8 1618-1619
+  s_774c09797904fe::t_92a26b0f58a830 1621-1624
+  s_774c09797904fe::t_0093b0200e6e76 1626-1628,1639-1641
+  s_774c09797904fe::t_04b082a2c18082 1643-1646
+  s_f4af426de42d9d::t_277d049fd52e93 1629-1638
+crates/topography-core/src/world/hydrology/mod.rs
+  s_774c09797904fe::t_fe28b1eaeb401d 1122
+  s_774c09797904fe::t_31b7c92adc5629 1119-1121,1123-1126
+docs/workflows/terrain-cascade.md
+  s_774c09797904fe::t_11c5ee82f1fc2d 746-753,755
+  s_774c09797904fe::t_b3309c7f579790 754
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82c69e5682863890a5886f63c9adf24e5d2df8bc",
+  "prompts": {},
+  "sessions": {
+    "s_774c09797904fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db136362-a5cc-4efa-8192-13bacc041efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    },
+    "s_f4af426de42d9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a9f97322280594a28",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
