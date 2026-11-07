@@ -71,8 +71,13 @@ DAM_M, DAM_PX = 256, 1024
 ARROW_KM2 = 2e-5
 STRAIGHT_RUNS, RUN_M = 20, 256
 FAILURE_M, FAILURE_CROPS = 128, 10
-# Exit crops in cells, so a 32 m sheet spans 1,024 m and a 4 m sheet 128 m.
-EXIT_CELLS, EXIT_PX, SHEET_COLS, SHEET_ROWS = 32, 256, 6, 8
+# Exit crops span at least EXIT_M and EXIT_CELLS: 128 m at 1 m and 4 m, 1,024 m at 32 m.
+EXIT_M, EXIT_CELLS, EXIT_PX, SHEET_COLS, SHEET_ROWS = 128, 32, 256, 6, 8
+
+
+def exit_cells(spacing_m: float) -> int:
+    """Cells along a lake-exit crop's side at this spacing."""
+    return max(EXIT_CELLS, int(round(EXIT_M / spacing_m)))
 GUIDE_MIN_M, GUIDE_MAX_M, GUIDE_PX = 256, 4096, 768
 OVERVIEW_PX = 2048
 # The cut panel saturates at this lowering or raising; a square-root ramp shows 5-20 cm cuts.
@@ -456,7 +461,7 @@ def _lake_sheets(L: Layers, dest: Path) -> list[Path]:
 
     lakes = sorted((b for b in L.bodies if b["kind"] == "lake" and _is_open(b) and b.get("exit_cell") is not None),
                    key=lambda b: (-b.get("area_km2", 0.0), b["id"]))
-    cells = EXIT_CELLS
+    cells = exit_cells(L.spacing)
     exit_m = cells * L.spacing
     scale = max(1, int(round(EXIT_PX / cells)))
     side, cap = cells * scale, 14

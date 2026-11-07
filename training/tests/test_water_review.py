@@ -206,6 +206,11 @@ class CropsTest(unittest.TestCase):
             self.assertEqual([p.name for p in paths], ["lake-7-over_5m.png"])
 
 
+class ExitCropTest(unittest.TestCase):
+    def test_exit_crops_span_128_m_or_32_cells(self):
+        self.assertEqual([review.exit_cells(s) * s for s in (1.0, 4.0, 32.0)], [128.0, 128.0, 1024.0])
+
+
 class RowsTest(unittest.TestCase):
     def test_rows_match_array_slicing_at_any_stride(self):
         a = np.arange(37 * 29, dtype="<u4").reshape(37, 29)
