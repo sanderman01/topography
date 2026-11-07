@@ -89,16 +89,11 @@ impl Setup {
             None => Ok(vec![0; r.cells()]),
         }
     }
-    /// Per core cell: (ground below 0 m, and also without bit 64) as 0/1 counts, summed per
-    /// drainage end like the supply (B13).
-    pub fn below_sea(&self, core: Rect, ground: &[f32]) -> Result<Vec<(u64, u64)>> {
-        let flags = self.flags(core)?;
-        Ok((0..core.cells())
-            .map(|k| {
-                let low = u64::from(ground[k] < 0.0);
-                (low, low * u64::from(flags[k] & BELOW_SEA_OK == 0))
-            })
-            .collect())
+    /// One cell's below-zero counts from its ground and provenance: (below 0 m, and also
+    /// without bit 64), summed per drainage end like the supply (B13).
+    pub fn below_sea(z: f32, flags: u8) -> Below0 {
+        let low = u64::from(z < 0.0);
+        (low, low * u64::from(flags & BELOW_SEA_OK == 0))
     }
     /// River start in km² as f32, compared with `discharge` everywhere.
     pub fn river_km2(&self) -> f32 {
@@ -758,9 +753,16 @@ pub(crate) fn model_on(
                 let (win, zw, dir) = read(core)?;
                 let zc = crop(win, &zw, core);
                 let supply = s.supply(core)?;
-                let below0 = s.below_sea(core, &zc)?;
+                let flags = s.flags(core)?;
                 let d = drain_with(world, win, &zw, core, dir);
-                let g = tile_graph_with(world, core, &zc, &d, |k| supply[k], |k| below0[k]);
+                let g = tile_graph_with(
+                    world,
+                    core,
+                    &zc,
+                    &d,
+                    |k| supply[k],
+                    |k| Setup::below_sea(zc[k], flags[k]),
+                );
                 Ok(if s.contract {
                     contract(g)
                 } else {
@@ -1518,34 +1520,59 @@ mod tests {
     fn a_basin_below_sea_level_stands_at_sea_level_unless_hot_dry_and_far() {
         use crate::world::water::BELOW_SEA_OK;
         let world = World { w: 64, h: 64 };
+        // A stepped wall, as at coarse spacings: the cone rises to just below 0 m, the rim to
+        // at least 4 m, so no held cell lies near 0 m.
         let z = crate::world::water::testing::sub_zero_bowl(world);
-        // The only node reaching 5 m below sea level is the bowl (the lagoon's floor is -2 m).
-        let bowl_with = |flags: Vec<u8>| -> Option<Node> {
+        let pit = 46 * 64 + 16;
+        let sub_zero = (0..64 * 64)
+            .filter(|&i| {
+                let (x, y) = ((i % 64) as f32, (i / 64) as f32);
+                (x - 16.0).hypot(y - 46.0) < 6.0
+            })
+            .count() as u64;
+        // The bowl's node (the only one reaching 5 m below sea level; the lagoon's floor is
+        // −2 m) and the level raster at its pit.
+        let bowl_with = |flags: Vec<u8>| -> (Option<Node>, f32) {
             let mut s = setup(world, 64, 1e-6);
             s.provenance = Some(Classes::new(Layer::memory(world, flags), 1, world).unwrap());
-            let m = model(&s, &Layer::memory(world, z.clone()), None, "m", None).expect("model");
-            m.water.nodes.0.iter().find(|n| n.low < -5.0).copied()
+            let r = Rasters::memory(world);
+            let m =
+                model(&s, &Layer::memory(world, z.clone()), None, "m", Some(&r)).expect("model");
+            let level = r.level.to_vec().unwrap();
+            // Wet cells stand above their ground; ground at or above 0 m is dry shore.
+            for (k, (&lv, &g)) in level.iter().zip(&z).enumerate() {
+                let near = ((k % 64) as f32 - 16.0).hypot((k / 64) as f32 - 46.0) < 8.0;
+                assert!(
+                    !near || lv.is_nan() || g < lv,
+                    "cell {k}: level {lv}, ground {g}"
+                );
+            }
+            let node = m.water.nodes.0.iter().find(|n| n.low < -5.0).copied();
+            (node, level[pit])
         };
-        let humid = bowl_with(vec![0; 64 * 64]).expect("the floored bowl is a node");
-        assert!(
-            humid.level >= 0.0,
-            "near the coast or not hot-dry: at least sea level, got {}",
-            humid.level
+        let (humid, at_pit) = bowl_with(vec![0; 64 * 64]);
+        let humid = humid.expect("the floored bowl is a node");
+        assert_eq!(
+            (humid.level, at_pit, humid.cells, humid.full),
+            (0.0, 0.0, sub_zero, false),
+            "near the coast or not hot-dry: at sea level over its sub-zero cells, not full"
         );
+        assert!(humid.lake);
         // r = 0 and every cell flagged: the bowl holds no water, so it is no node (a playa).
-        let arid = bowl_with(vec![BELOW_SEA_OK; 64 * 64]);
+        let (arid, at_pit) = bowl_with(vec![BELOW_SEA_OK; 64 * 64]);
         assert!(
-            arid.is_none_or(|n| n.level < 0.0),
-            "a hot-dry basin far from the sea keeps its r = 0 balance, got {arid:?}"
+            arid.is_none() && at_pit.is_nan(),
+            "a hot-dry basin far from the sea keeps its r = 0 balance, got {arid:?}, {at_pit}"
         );
         // A mixed basin (review I4): one sub-zero cell without the flag floors the whole basin.
         let mut mixed = vec![BELOW_SEA_OK; 64 * 64];
         mixed[46 * 64 + 18] = 0;
-        let m = bowl_with(mixed).expect("the floored bowl is a node");
-        assert!(
-            m.level >= 0.0,
-            "one coastal cell floors the basin, got {}",
-            m.level
+        let (m, at_pit) = bowl_with(mixed);
+        let m = m.expect("the floored bowl is a node");
+        assert_eq!(
+            (m.level, at_pit, m.cells),
+            (0.0, 0.0, sub_zero),
+            "one coastal cell floors the basin"
         );
     }
 

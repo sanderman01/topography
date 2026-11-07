@@ -109,6 +109,8 @@ pub(crate) struct Balance {
     pub level: Vec<f32>,
     /// Closed wet nodes: how many cells their level covers.
     pub need: Vec<u64>,
+    /// Nodes whose level the coastal water table sets (B13): how many cells it covers.
+    pub floor: Vec<u64>,
     /// Supply that reached the sea or left the map.
     pub to_sea: u64,
     /// Overflow poured into a leaf from outside it: (leaf, the outlet cell it entered by,
@@ -184,9 +186,9 @@ impl Fsm<'_> {
 }
 
 /// The coastal water table (B13, review I4): a depression holding a sub-zero cell that may
-/// not keep a lake below sea level stands at least at its lowest ground at or above 0 m: one
-/// cell more than its sub-zero cells (all of which are its lowest). Never adds water: a
-/// node whose k reaches its capacity stands at its spill and passes nothing on.
+/// not keep a lake below sea level needs at least one cell more than its sub-zero cells (all
+/// of which are its lowest). Where this exceeds its balance, `solve` sets its level to
+/// min(0 m, spill) without adding water (controller ruling, Task 4 review I1/I2).
 pub(crate) fn coastal_floor(k_balance: u64, sub_zero: u64, bad: u64) -> u64 {
     if bad > 0 {
         k_balance.max(sub_zero + 1)
@@ -292,6 +294,7 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
     }
     let mut level = vec![f32::NAN; nd];
     let mut need = vec![0u64; nd];
+    let mut floor = vec![0u64; nd];
     for d in 0..nd {
         if node[d] != d as u32 {
             continue;
@@ -302,9 +305,16 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
         }
         let kids = kids_of(d, &n);
         let more = f.own[d].div_ceil(MILLI);
-        // At most every held cell: a floor above the spill stands at it and spills nothing.
-        let k = coastal_floor(kids + more, below0[d].0, below0[d].1).min(n[d]);
-        if more == 0 && k == kids {
+        let k = kids + more;
+        if coastal_floor(k, below0[d].0, below0[d].1) > k {
+            // The floor governs: level min(0 m, spill) over the cells below it (with the
+            // spill at or above 0 m, exactly the sub-zero ones). Not full: nothing spills.
+            (level[d], floor[d]) = if h.spill[d] >= 0.0 {
+                (0.0, below0[d].0)
+            } else {
+                (h.spill[d], n[d])
+            };
+        } else if more == 0 {
             level[d] = h.spill[h.children[d][0] as usize];
         } else {
             need[d] = k;
@@ -327,6 +337,7 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
         node,
         level,
         need,
+        floor,
         to_sea: f.to_sea,
         pours,
     })
@@ -358,12 +369,15 @@ impl Balance {
         )
     }
 
-    /// Cells a node's water covers: all held cells when full, the needed cells when closed,
+    /// Cells a node's water covers: all held cells when full, the floor's cells when the
+    /// coastal water table sets its level, the needed cells when closed,
     /// both children's when it stands exactly at their merge saddle.
     pub fn area_cells(&self, h: &Hierarchy, d: u32) -> u64 {
         let d = d as usize;
         if self.full[d] {
             self.n[d]
+        } else if self.floor[d] > 0 {
+            self.floor[d]
         } else if self.need[d] > 0 {
             self.need[d]
         } else if !h.is_leaf(d as u32) {
@@ -392,13 +406,14 @@ impl Blob for Balance {
         self.node.put(e);
         self.level.put(e);
         self.need.put(e);
+        self.floor.put(e);
         self.to_sea.put(e);
         self.pours.put(e);
     }
     fn get(d: &mut Dec) -> Result<Self> {
         let (sea, n, vfill_mm, bbox, full) = Blob::get(d)?;
-        let (own, node, level, need, to_sea) = Blob::get(d)?;
-        let pours = Blob::get(d)?;
+        let (own, node, level, need, floor) = Blob::get(d)?;
+        let (to_sea, pours) = Blob::get(d)?;
         Ok(Self {
             sea,
             n,
@@ -409,6 +424,7 @@ impl Blob for Balance {
             node,
             level,
             need,
+            floor,
             to_sea,
             pours,
         })
@@ -459,8 +475,9 @@ mod tests {
     }
 
     /// Leaves 0 and 1 merge at −1 m (all their cells sub-zero) under meta 2, spilling at 3 m;
-    /// with no supply the floor makes meta 2 the node, covering one cell more than the six
-    /// sub-zero ones (at most every held cell); hot-dry and far, it stays dry.
+    /// with no supply the floor makes meta 2 the node, standing at 0 m over its six sub-zero
+    /// cells; a top spilling below 0 m stands at its spill over every held cell; a balance
+    /// above the floor keeps its own level; hot-dry and far, it stays dry.
     #[test]
     fn the_coastal_floor_rises_to_the_depression_that_crosses_sea_level() {
         let (mut h, mut c) = handmade([0, 0], 3.0);
@@ -468,11 +485,25 @@ mod tests {
         h.below0 = vec![(4, 4), (2, 1)];
         let b = solve(&h, &c, true).expect("solve");
         assert_eq!(b.node, vec![2, 2, 2]);
-        assert_eq!(b.need[2], 7);
+        assert_eq!((b.level[2], b.need[2], b.floor[2]), (0.0, 0, 6));
+        assert_eq!(b.area_cells(&h, 2), 6);
         assert_eq!(b.full, vec![false; 3]);
         assert_eq!(b.to_sea, 0, "no water is added");
+        // Every held cell sub-zero and the spill at 3 m: still 0 m, never a cell below it.
         c.cells[2] = 1;
-        assert_eq!(solve(&h, &c, true).expect("solve").need[2], 6);
+        let b = solve(&h, &c, true).expect("solve");
+        assert_eq!((b.level[2], b.floor[2]), (0.0, 6));
+        // A fragment's top spilling at −0.5 m (not sea there): the floor stands at the spill.
+        h.spill[2] = -0.5;
+        let b = solve(&h, &c, false).expect("solve");
+        assert_eq!((b.level[2], b.floor[2]), (-0.5, 6));
+        // Enough supply for 8 cells, above the floor of 7: the balance sets the level.
+        h.spill[2] = 3.0;
+        c.cells[2] = 4;
+        h.supply = vec![8_000, 0];
+        let b = solve(&h, &c, true).expect("solve");
+        assert_eq!((b.need[2], b.floor[2]), (8, 0));
+        h.supply = vec![0, 0];
         h.below0 = vec![(4, 0), (2, 0)];
         assert_eq!(solve(&h, &c, true).expect("solve").node, vec![NONE; 3]);
     }
