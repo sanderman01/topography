@@ -45,7 +45,7 @@ Copied verbatim from the spec; every task's requirements include them.
 Owner rulings (binding, from the gate history):
 
 - Straight and parallel rivers made by the pre-hydrology terrain are fine: `straight_runs`, `straight_share` and `parallel_rivers` stay figures.
-- Inland lakes below sea level are fine only far from the coast in hot dry areas; elsewhere they are a defect (lake 22 at −17.8 m in `fujix-55-l4v3-water` is the known case; 13 such lakes at gate 2).
+- Inland lakes below sea level are fine only far from the coast in hot dry areas; elsewhere they are a defect (lake 635 at −17.8 m in `fujix-55-l4v3-water` is the known case; 13 labelled lakes below −0.01 m at gate 2).
 - The owner wants one water model, not hacks.
 - Keep expensive intermediates (raw diffusion outputs) so downstream fixes never need a GPU rerun.
 - Shipped terrain stays under about 10 GB; storage and long runs are pain points.
@@ -73,26 +73,26 @@ The spec and Plan A leave these open; Plan B implements the ruling given. The ow
 | B4 | Lowering caps and the coarse change budget | Erosion caps per cell, relative to the breached ground (so breach gorges are excepted): 32 m 30 m, 4 m 10 m on full-K cells; 3 m on interior cells at both levels (the spec's change-budget max). `change_max` at a coarse level is breach cap + erosion cap + 0.5 m (50.5 m at 32 m, 15.5 m at 4 m), since erosion may deepen a gorge (review C3). At levels with erosion, Plan A's all-cell `change_p99` is a figure: the spec's coarse budget is `interior_p99`/`interior_max` (v2's same stream power lowered half the 32 m cells, river cells by a median 2 m). | A cap stops a sill from grading → a seam lake stays; visible in `seam_lakes`. |
 | B5 | Breach caps at 32 m and 4 m (R9 left 20 m / 5 m provisional) | Confirmed: 20 m at 32 m, 5 m at 4 m. A gorge is refused when a changed cell exceeds the level's wall angle (B8). Fix found while planning: `breach.rs` computes the taper radius as `2·d / tan` **cells**, right only at 1 m; Task 2 divides by the spacing (at 32 m a 20 m cut gave a 57-cell disc instead of 1.8). | Deeper coarse dams stay filled lakes; erosion still grades their sills over the routings. |
 | B6 | Hillslope diffusion | Explicit Jacobi, 4-neighbour, α = D·dt/dx² = 0.05 per routing, **lowering only** (convex cells move down, concave cells are not filled; the spec never raises ground and leaves deposition out of scope), and **only within R_taper + 1 cells of a cell the same routing's stream power lowered by ≥ 1 cm** (review I3): ridges, painted calderas and blend-zone relief away from river cuts keep their shape. Figures `hillslope_lowering_p99_m`/`_max_m` over full-K cells outside that footprint (expected about 0), read in Task 9. | Valley sides stay a little V-shaped; L3/L4 repaint the detail. |
-| B7 | Shape of an erosion cut | After each routing's stream power and diffusion, every cell lowered by d ≥ 1 cm is re-expressed as Plan A's gorge taper: a disc lowered by d·(1 − (r/R)²), R = max(1.5 cells, 2·d / (tan(wall_deg)·spacing)); the result is the deepest lowering over all discs, never below the floor, never under water or sea. Then up to 16 wall rounds halve the lowering of any changed cell still steeper than max(wall_deg, raw) + 0.01°, alternating with a bed-grade pass (B33). This gives cuts ≥ 3 cells wide with sides under the wall angle. | More cells beside rivers are lowered (wider valleys, by design); a few walls left after 16 rounds fail `walls` loudly. |
+| B7 | Shape of an erosion cut | After each routing's stream power and diffusion, every cell lowered by d ≥ 1 cm is re-expressed as Plan A's gorge taper: a disc lowered by d·(1 − (r/R)²), R = max(2.5 cells, 2·d / (tan(wall_deg)·spacing)) (preflight F1: an isolated disc of R ≥ 2.5 passes `handoff_narrow`); the result is the deepest lowering over all discs, never below the floor, never under water or sea. Then up to 16 wall rounds halve the lowering of any changed cell still steeper than max(wall_deg, raw) + 0.01°, alternating with a bed-grade pass (B33). This gives cuts ≥ 5 cells wide with sides under the wall angle. | More cells beside rivers are lowered (wider valleys, by design); a few walls left after 16 rounds fail `walls` loudly. |
 | B8 | Wall angle per level | `wall_deg` per level in the table: 1 m 40° (Plan A), 4 m and 32 m 35° (the hand-off's "no cut steeper than 35°"). `walls`, the breach refusal and the erosion wall rounds use max(wall_deg, raw slope) + 0.01°. | More coarse gorges refused (filled lakes instead). |
-| B9 | Hand-off checks | Hard at both coarse levels (the spec names 4 m; L3 copies 32 m ground the same way): `handoff_narrow` counts cells where the cut Δ = raw − final exceeds its 3 × 3 grey opening by more than **max(0.5 m, 0.5 × Δ)** (review C2): a one-cell slot (opening ≈ 0) fails at any depth over 0.5 m, every B7 disc (R ≥ 1.5 > √2 cells) and every flat-bedded gorge passes. The absolute excess is a figure (`handoff_excess_max_m`). Steepness is `walls` at 35° (B8). | A narrow cut that L3 would have smoothed fails; fix the taper, not the check. |
+| B9 | Hand-off checks | Hard at both coarse levels (the spec names 4 m; L3 copies 32 m ground the same way): `handoff_narrow` counts cells where the cut Δ = raw − final exceeds its 3 × 3 grey opening by more than **max(0.5 m, 0.5 × Δ)** (review C2): a one-cell slot (opening ≈ 0) fails at any depth over 0.5 m, every B7 disc (R ≥ 2.5 cells, also an isolated one: opening 0.68·d, excess 0.32·d) and every flat-bedded gorge passes. The absolute excess is a figure (`handoff_excess_max_m`). Steepness is `walls` at 35° (B8). | A narrow cut that L3 would have smoothed fails; fix the taper, not the check. |
 | B10 | Provenance for the existing collage: rebuild or derive? | Derive by **replay**: `collage.surface()` recomputes the surface steps in memory from the layout and release. Accepted when the layout sha256 matches `collage.json`, `region32` reproduces exactly, `class32` agrees on ≥ 99.9 % of cells (the dither), and the replayed `l2` matches the stored one with p99 \|Δ\| ≤ 0.5 m and max ≤ 5 m outside painted cells (review I6: provenance needs weights, coverage and regions, not centimetre heights; the build was `git_dirty` at c0a9233 and seven commits touched the code since). The steep flag and the painted test use the **stored** `l2` (painted: \|stored l2 − replayed blend\| > 0.5 m). Written as the sidecar `provenance32.u8` + `provenance32.json` beside the collage (additive). Kinds (bits 0–2): 0 sea outside every region, 1 interior (dominant region weight share ≥ 0.99, one piece reaching the cell with weight ≥ 0.99, ≥ 1 km from any other kind), 2 blend, 3 painted, 4 fill. Flags: bit 6 (64) below-sea basin allowed, bit 7 (128) steep source (stored-l2 Horn slope ≥ 30°; a figure tag since B14 changed). | Refused only on a layout or region mismatch: then a rebuilt collage is a new world, an owner decision (owner question 2). |
 | B11 | Provenance at 4 m and 1 m | The 32 m layer, nearest. At 4 m it sets K like at 32 m (L3 is conditioned on it); at 1 m only its flags are read (spec: no provenance scaling at 1 m). 1 m grids get it cropped and upsampled to 4 m cells, like the classes. | — |
 | B12 | Does the 32 m regeneration change the moisture field? | No. `topography world rain` computes it from the raw 32 m ground with v2's code and sea rule (ground < 0 m 8-connected to the edge), before any erosion. Task 1 proves it byte-identical to `fujix-55-chain/hydrology/32m/moisture.f32` and `mean_land_mm_h` equal; 4 m and 1 m reuse it. | If not identical, rain moves slightly; recorded and accepted (no GPU impact). |
-| B13 | Inland lakes below sea level (owner ruling) | One model rule per depression, the coastal water table (review I4): if any sub-zero cell of a depression lacks bit 64, its level is floored at min(spill, the lowest ground at or above 0 m among its cells): the k-th lowest cell with k ≥ its sub-zero cell count + 1, or it fills and spills. No supply is added, so no water flows on downstream. Bit 64 = a hot-dry class (`hot_dry = true`: canyons 2, 13, 19, badlands 7, dunes 8, 16) and ≥ 5 km from open sea at 32 m. Two integer counts per drainage end (sub-zero cells, sub-zero cells without bit 64) are summed like the supply, so the rule is exact at any tiling. Hard check `lake_below_sea` uses the same predicate: a labelled lake with level < −0.01 m with any cell lacking bit 64. Ground is never raised. | Near-coast lakes a bit larger than their r-balance; a real arid near-coast salt pan would fill. |
-| B14 | `dam_drops_any` as a hard check (R31) | New hard check `dam_drops` at every level, a **knickpoint** rule (review C1): on a labelled lake's 50 m exit walk, a drop D of the shown surface between adjacent cells fails when **D > 1.5 m and D > 3 × the mean fall per cell over the next 100 m of the walk** (step-then-gentle is a dam; a steady steep cascade passes, at any spacing). Raw is ignored; there is no steep-source exemption (bit 128 hid two of the three known dams: the 32 m collage is ≥ 30° beside them). Pond exits stay in the figure `dam_drops_any`. Task 7 proves it on Plan A's raw windows: it must fire at E25645, E25307, E20071 and E43966; its other firings are listed with crops and calibrate the factor 3. | A sheer real waterfall right at an outlet fails: owner question 3 with crops, before gate 4; never a code exemption. |
-| B15 | Coarse guide as a hard check (R17) | In the level runner and the 1 m driver, fine against the next coarser v3 level. Hard (review I5) only for coarse lakes of **≥ 0.05 km²** (32 m: 49 cells; 4 m: 3,125 cells) **deeper than the finer level's breach cap + 1 m** (6 m from 32 m to 4 m, 3 m from 4 m to 1 m) and **≥ 1 km from a window or square edge** (inner edges only): level difference over 5 m, gone, or doubled (two fine lakes each over 25 % of its area). Every other coarse lake and the river share are figures (`lakes_small`, `lakes_shallow`, `lakes_near_edge`). A hard failure withholds `manifest.json` and exits 1. | A small or shallow coarse lake that the finer level breaches passes unseen (the finer level decides, per spec). |
+| B13 | Inland lakes below sea level (owner ruling) | One model rule per depression, the coastal water table (review I4): if any sub-zero cell of a depression lacks bit 64, its level is floored at min(spill, the lowest ground at or above 0 m among its cells): the k-th lowest cell with k ≥ its sub-zero cell count + 1, or it fills and spills. No supply is added, so no water flows on downstream. Bit 64 = a hot-dry class (`hot_dry = true`: canyons 2, 13, 19, badlands 7, dunes 8, 16) and ≥ 5 km from open sea at 32 m. Two integer counts per drainage end (sub-zero cells, sub-zero cells without bit 64) are summed over a node's own leaves and children only, never through overflow (preflight F19), so the rule is exact at any tiling; the floor also applies in `balance.rs`' zero-supply branch (r = 0 sets the level directly). Hard check `lake_below_sea` uses the same predicate: a labelled lake with level < −0.01 m with any cell lacking bit 64. Ground is never raised. | Near-coast lakes a bit larger than their r-balance; a real arid near-coast salt pan would fill. |
+| B14 | `dam_drops_any` as a hard check (R31) | New hard check `dam_drops` at every level, a **knickpoint** rule (review C1): on a labelled lake's 50 m exit walk, a drop D of the shown surface between adjacent cells fails when **D > 1.5 m and D > 3 × the mean fall per cell over the next 100 m of the walk** (step-then-gentle is a dam; a steady steep cascade passes, at any spacing). Raw is ignored; there is no steep-source exemption (bit 128 hid two of the three known dams: the 32 m collage is ≥ 30° beside them). Pond exits stay in the figure `dam_drops_any`. Plan A's `dam_steps` (1.5 m between adjacent cells unless raw has the step) stays hard at every level too; Tasks 9 and 15 read it (preflight F33). Task 7 proves it on Plan A's raw windows: it must fire at E25645, E25307, E20071 and E43966; its other firings are listed with crops and calibrate the factor 3. | A sheer real waterfall right at an outlet fails: owner question 3 with crops, before gate 4; never a code exemption. |
+| B15 | Coarse guide as a hard check (R17) | In the level runner and the 1 m driver, fine against the next coarser v3 level. Hard (review I5) only for coarse lakes of **≥ 0.05 km²** (32 m: 49 cells; 4 m: 3,125 cells) **deeper than the finer level's breach cap + 1 m** (6 m from 32 m to 4 m, 3 m from 4 m to 1 m) and **≥ 1 km from a window or square edge** (inner edges only): level difference over 5 m, gone, or doubled (two fine lakes each over 25 % of its area). Every other coarse lake and the river share are figures (`lakes_small`, `lakes_shallow`, `lakes_near_edge`). A hard failure withholds `manifest.json` and exits 1. | A small or shallow coarse lake that the finer level breaches passes unseen (the finer level decides, per spec). Not implemented (preflight F32, accepted): excluding coarse lakes whose catchment crosses an inner edge; if gate 4 fails on such a lake (window-limited Q), add that exclusion with a test and rerun the squares' 1 m water (CPU minutes). |
 | B16 | Lakes without an outlet trickle (gate-2 park) | A full labelled lake always starts a river at its outflow cell, labelled down its m2 path to the next water, the sea or the map edge, whatever its Q; channel size from its Q. At most one river per full lake (638 lakes at gate 2; 50,000 budget). | A few hair-thin rivers on tiny catchments. |
 | B17 | What is reused from Plan A and what is regenerated? | Reused unchanged: `fujix-collage-55` (plus the provenance sidecar), L3 `cascade-l3-run-5` (+ experts), L4 `cascade-l4-run-8` (+ experts), seeds, guidance 2 on class 19, the water model code. Regenerated: 32 m water, L3 raw, 4 m water, L4 raw, 1 m water, game layers, export. `fujix-55-l4v3-water` and its export stay the shipped fallback and are only read (Task 13's reproduction window, Task 7's controls). `fujix-55-chain` is only read. Task 14 deletes v2 before gates 3–5; that is safe because the Plan A world and export remain the fallback and git keeps v2 (review M6). | — |
 | B18 | New directories | `data/worlds/fujix-55-chain-v3` (32 m, L3, 4 m); `data/worlds/fujix-55-l4v3b-{dams,canyon,e43966}` and `…-water` (L4 squares); `data/worlds/fujix-55-l4v3b-raw` (full L4); `data/worlds/fujix-55-l4v3b` (1 m water world); `data/exports/fujix-55-l4v3b`. Probe and calibration runs under `scratch/hydrology-v3b/`. | — |
-| B19 | L4 test strip extent | Four squares via `cascade_l4 --km --centre` (x east, y south from the north-west corner; y = 65,536 − N; `--km` must be a power of two): **dams** 8 km at (22858, 38086), covering E20071–E25645 and N24400–N30501 with at least 0.95 km margin; **canyon** 4 km at (27169, 20990); **E43966** (v2's staircase scarp) 4 km at (43966, 43903); **alpine** 4 km at the gate-3 4 m world's densest cluster of labelled lakes in classes 3, 6 and 10 (review I8; chosen in Task 17 Step 1). The full L4 run does not reuse them. Q in a square is window-limited (no inflow, spec "no injection"), so the canyon trunk is probably not a main river there and the doubled-river test is exercised only at gate 5 (review M5). | About 2–3 GPU hours spent twice. |
+| B19 | L4 test strip extent | Four squares via `cascade_l4 --km --centre` (x east, y south from the north-west corner; y = 65,536 − N; `--km` must be a power of two): **dams** 8 km at (22858, 38086), covering E20071–E25645 and N24400–N30501 with at least 0.95 km margin; **canyon** 4 km at (27169, 20990); **E43966** (v2's staircase scarp) 4 km at (43966, 43903); **alpine** 4 km at the gate-3 4 m world's densest cluster of labelled lakes in classes 3, 6 and 10 (review I8; chosen in Task 17 Step 0). The full L4 run does not reuse them. Q in a square is window-limited (no inflow, spec "no injection"), so the canyon trunk is probably not a main river there and the doubled-river test is exercised only at gate 5 (review M5). | About 2–3 GPU hours spent twice. |
 | B20 | L4 and band hydrology | `cascade_l4` only diffuses: it writes `elevation-raw.f32`, `snow-ice.u8`, `vegetation.u8` and a `world_raw` manifest; `water.run world` makes the water world. `--hydrology-only`, `--seam-audit`, `--drop-raw` and the per-band Rust calls go. | — |
 | B21 | Disk budget per stage | Bytes per cell from Plan A. chain-v3: about 12 GB plus the 4 m work directory about 15 GB (54 B/cell × 268 M) plus erosion routings about 6 GB; L4 squares: about 6 GB with their water; full L4 raw: about 26 GB (6 B/cell); 1 m water: work about 232 GB plus published about 55 GB; game layers and export: about 5 GB. **Total about 380 GB.** `df` showed 651 GB free on `/home` while planning; the brief says about 300 GB. Each heavy step checks free space before it starts; if the 1 m water run lacks room, ask the owner (owner question 1). | A run stops on its disk check; nothing is deleted without the owner. |
 | B22 | `water-v1.toml` users outside fujix | Deleted with v2. The L1 128 m `drain` used only by authored and region layouts (not collages) keeps one share for every class: lakes 0.01, dry basins 0.01, dry classes = r ≤ 0.05 in `water-v3.toml`. `cascade_chain --lake-share/--tarn-share` go. | A future Fujion regeneration gets different L1 lakes. |
 | B23 | Stage order at coarse levels | m1 (raw) → b (breach) → e (routings × [model on current ground, stream power, diffusion, taper, wall rounds]; routing 0 is the model on the breached ground) → m2 (model on the eroded ground) → l → c (no cut at coarse spacings) → m3 → s. The ground before channels (`pre_channel`) is `eroded.f32` with erosion, else `breached.f32`. 1 m has no `e` stage. | — |
 | B24 | Water table file | New `configs/hydrology/water-v3.toml` (`schema_version = 3`): v2's r, `lake_min_m2`, `m3s_per_km2`, plus `hot_dry` per class, `below_sea_coast_km`, per level `wall_deg` and an optional `[levels.N.erosion]` table. `water-v2.toml` and `water-v1.toml` are deleted (git keeps them; the Plan A world records the v2 table's sha256). | — |
 | B25 | Calibration figure | `seam_lakes`: labelled lakes whose outlet saddle cell is blend, painted or fill; listed with cells. | — |
-| B26 | Comb-cut channel pits (gate-2 park, E41058 N56173) | Reproduced in a 1 m window on Plan A's raw surface; new hard check `carve_pits` (a cell the breach or the channels lowered that ends dry and strictly below all 8 neighbours' D); fixed in `channel.rs` (or `breach.rs`) before gate 4. | — |
+| B26 | Comb-cut channel pits (gate-2 park, E41058 N56173) | Reproduced in a 1 m window on Plan A's raw surface; new hard check `carve_pits` (a cell lowered from raw by more than `CHANGED_M`, dry in the written water, inside an m3 node and in no m2 node: a pond only the cutting made; Task 13's definition, which also catches flat-bottomed pits; preflight F15); fixed in `channel.rs` (or `breach.rs`) before gate 4. | — |
 | B27 | Bank steps (104 k over 0.5 m at gate 2, raw) | A figure. The GPU relaxation (git `d0c0055`) is restored only if the owner flags banks at gate 4 or the squares' `bank_steps_over_0_5m` density exceeds Plan A's 24 per km². | Box-ish banks stay where the raw had them. |
 | B28 | v2 coarse-guide mismatches (lip rims, coastal ponds, 66 gone, 26 over 5 m) | v2 artefacts. Plan B compares v3 against v3, so they need no task. | — |
 | B29 | Exactness of the erosion pass | One global, single-threaded pass in a fixed order: deterministic and independent of the model runs' tiling (which stay bit-exact, Plan A). Plan A's 1 mm overlap rule does not apply (no tiled stencil). | — |
@@ -113,12 +113,13 @@ Rust, `crates/topography-core/src/world/water/`:
 | `erosion.rs` | New: stream power, diffusion, taper, wall rounds, `Bits`, the stage wrapper `erode` |
 | `table.rs` | `water-v3.toml`: `hot_dry`, `below_sea_coast_km`, `wall_deg`, `Erosion` |
 | `mod.rs` | `rain` (`world rain`), provenance in `setup`, `Params.wall_deg/erosion`, the `e` stage, `pre_channel` |
-| `pipeline.rs` | `Setup.provenance`, the coastal water table in `supply` |
+| `pipeline.rs` | `Setup.provenance`, `flags`, `below_sea` |
+| `watershed.rs`, `hierarchy.rs`, `balance.rs` | The coastal water table: per-end below-zero counts, their sums over a node's own leaves and children, `coastal_floor` (B13) |
 | `breach.rs` | Taper radius in cells (B5), wall angle per level |
 | `channel.rs` | Wall angle per level; the comb-cut fix (Task 13) |
 | `bodies.rs` | Outlet trickle (B16) |
 | `checks.rs` | `lake_below_sea`, `dam_drops`, `interior_p99`, `interior_max`, `handoff_narrow`, `carve_pits`, `seam_lakes`, wall angle per level, `change_max` per level |
-| `testing.rs` | Coarse synthetic grid with a provenance layer and a seam dam |
+| `testing.rs` | Coarse synthetic grid (a tempdir) with a provenance layer and a seam dam |
 
 Other files:
 
@@ -129,9 +130,8 @@ Other files:
 | `crates/topography-core/src/world/mod.rs` | `pub mod hydrology;` removed |
 | `crates/topography-core/src/export/description.rs` | `world::water::grid` import |
 | `crates/topography-cli/src/main.rs` | `world rain`; `world hydrology` and `world hydrology-seam` removed |
-| `scripts/check.sh` | v2 lines out; coarse fixture and `world rain` lines in |
+| `scripts/check.sh` | v2 lines out; `world rain` lines in; `moisture.f32` in the published-file list |
 | `scripts/hydrology_grid.py`, `scripts/README.md` | Deleted / its section removed |
-| `tests/fixtures/water/coarse/` | New coarse fixture (written by a test) |
 | `training/src/topography_training/water/table.py` | New: the table for Python |
 | `training/src/topography_training/water/run.py` | `write_grid`, `run_level`, `level` mode, provenance in grids, squares |
 | `training/src/topography_training/water/review.py` | Coarse guide: minimum lake size, coarse river start |
@@ -162,7 +162,7 @@ defect). Report blocking problems first, then non-blocking ones, each with file:
 world coordinates. Do not edit files.
 ```
 
-Fix every blocking finding (each fix its own commit), rerun the task's tests and record the verdict in `.superpowers/sdd/2026-11-07-hydrology-v3-b/progress.md` (never committed).
+Fix every blocking finding (each fix its own commit), rerun the task's tests and record the verdict in `.superpowers/sdd/2026-11-07-hydrology-v3-b-coarse-and-regeneration/progress.md` (never committed).
 
 ### Heavy runs
 
@@ -220,7 +220,7 @@ Spec "Removed": reusable parts move to the new module. Ruling B12: the 32 m rege
 - Consumes: v2 `moisture::{precipitation, Stats, PARAMS, NEUTRAL_MOISTURE}`, `grid::{shape, Stage, read_window, read_bodies}`.
 - Produces:
   - `crate::world::water::grid` (`pub(crate)`), same items as v2's.
-  - `crate::world::water::moisture` (`pub(crate)`): `open_sea(ground: &[f32], w: usize, h: usize) -> Vec<bool>`; `Stats::new(rain: &Rain, fine_w: usize, land: impl Fn(usize) -> bool, windless: bool) -> Stats`; `precipitation`, `PARAMS`, `NEUTRAL_MOISTURE` as before, now `pub(crate)`.
+  - `crate::world::water::moisture` (`pub(crate)`): `open_sea(ground: &[f32], w: usize, h: usize) -> Vec<bool>`; `Stats::new(rain: &Rain, fine_w: usize, fine_h: usize, land: impl Fn(usize) -> bool, windless: bool) -> Stats`; `precipitation`, `PARAMS`, `NEUTRAL_MOISTURE` as before, now `pub(crate)`.
   - `pub struct RainOptions { pub grid: PathBuf, pub wind_deg: Option<f64> }` and `pub fn rain(o: &RainOptions) -> Result<String>` in `world::water`: writes `<grid>/moisture.f32` and adds `moisture`, `discharge.mean_land_mm_h` and `precipitation` to `<grid>/grid.json`; refuses a grid.json that already has `moisture`.
   - CLI: `topography world rain --grid <dir> [--wind-deg D]`.
 
@@ -239,6 +239,8 @@ pub(crate) mod moisture;
 ```
 
 and replace `crate::world::hydrology::grid::shape` (line 119) and `crate::world::hydrology::grid::Stage` (line 734) with `grid::shape` and `grid::Stage`.
+
+In the moved `world/water/grid.rs`, change every `pub(super)` to `pub(crate)` (v2 still uses `Input`, `read` and `for_each_input_row` from its own module until Task 14; preflight F3).
 
 In `world/hydrology/mod.rs`, replace `pub(crate) mod grid;` with `pub(crate) use crate::world::water::grid;` and `mod moisture;` with `use crate::world::water::moisture;`. In `coarse.rs` and `band.rs`, `use super::grid::{self, Grid};` becomes `use crate::world::water::grid::{self, Grid};`. In `export/description.rs:7`, `use crate::world::hydrology::grid;` becomes `use crate::world::water::grid;`.
 
@@ -657,6 +659,8 @@ hot_dry = true
 git rm configs/hydrology/water-v2.toml
 ```
 
+and update the doc comments that name it to `water-v3.toml` (`mod.rs:96`, `table.rs:1`, `hydraulic.rs:7`; `rg -n 'water-v2' crates` must then print nothing; preflight F26).
+
 - [ ] **Step 2: Write the failing Rust test**
 
 Replace `the_built_in_table_parses_with_r_in_thousandths` in `table.rs` with:
@@ -839,7 +843,7 @@ pub(crate) fn is_wall(slope: f64, raw_slope: f64, wall_deg: f64) -> bool {
 }
 ```
 
-Every caller passes `s.params.wall_deg` (`checks.rs:845`, `breach.rs:273`, `channel.rs:444,1437`; the breach test at `breach.rs:471` passes `40.0`; `channel.rs:1458` in tests passes `40.0`).
+`gorge` has no `Setup`, so it gains a parameter `wall_deg: f64` after `spacing_m` (its callers in `breach` and its tests pass `s.params.wall_deg`; preflight A15). Every caller passes `s.params.wall_deg` (`checks.rs:845`, `breach.rs:273` through that parameter, `channel.rs:444,1437`; the breach test at `breach.rs:471` passes `40.0`; `channel.rs:1458` in tests passes `40.0`).
 
 `breach.rs` taper radius (B5), at line 215:
 
@@ -852,13 +856,30 @@ Every caller passes `s.params.wall_deg` (`checks.rs:845`, `breach.rs:273`, `chan
 Add to `breach.rs` tests:
 
 ```rust
+    /// The dammed valley at 32 m with heights × 10 (a 10 m dam): its gorge's cells lie within
+    /// 2 cells of the graded axis (radius max(half + 1 = 2, 2·d / (tan 35° · 32 m)) ≤ 2 for
+    /// d ≤ 20 m), not within 57 as with the radius in metres (preflight F20).
     #[test]
-    fn the_taper_radius_is_in_cells_at_coarse_spacings() {
-        // A 20 m cut at 32 m: 2·20 / (tan 35° · 32) = 1.79 cells, not 57.
-        let tan = TAPER_DEG.to_radians().tan();
-        let r = |d: f32, spacing: f32| 2.0f32.max(2.0 * d / (tan * spacing));
-        assert!((r(20.0, 32.0) - 2.0).abs() < 1e-6, "half + 1 = 2 wins at 32 m");
-        assert!((r(20.0, 1.0) - 57.13).abs() < 0.05, "the 1 m disc is unchanged");
+    fn coarse_gorges_stay_within_two_cells_of_their_axis() {
+        let world = World { w: 64, h: 64 };
+        let mut s = testing::setup(world, 64, 1e-6);
+        s.spacing_m = 32.0;
+        s.params = params(&s.table, 32.0, Some(1e-6));
+        let z: Vec<f32> = testing::dammed(world).iter().map(|v| v * 10.0).collect();
+        let m = model(&s, &Layer::memory(world, z.clone()), None, "m", None).expect("model");
+        let geo = Geometry::new(s.table.m3s_per_km2);
+        let g = candidates(&s, &m, &geo)
+            .iter()
+            .find_map(|c| gorge(world, Rect::whole(world), &z, c, s.spacing_m, s.params.wall_deg).ok())
+            .expect("the dam is breached at 32 m");
+        for &(cell, _) in &g.cut {
+            let (x, y) = world.xy(cell);
+            let near = g.axis.iter().any(|&a| {
+                let (ax, ay) = world.xy(a);
+                ax.abs_diff(x).max(ay.abs_diff(y)) <= 2
+            });
+            assert!(near, "cell ({x}, {y}) cut far from the axis");
+        }
     }
 ```
 
@@ -1379,7 +1400,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 Ruling B13; owner ruling on below-sea lakes.
 
 **Files:**
-- Modify: `crates/topography-core/src/world/water/pipeline.rs:31-44,73-82,706` (`Setup.provenance`, `supply` with ground)
+- Modify: `crates/topography-core/src/world/water/pipeline.rs:31-44,706` (`Setup.provenance`, `flags`, `below_sea`)
+- Modify: `crates/topography-core/src/world/water/watershed.rs` (`tile_graph` sums `below0`; `TileGraph.below0` and its `Blob`), `hierarchy.rs` and `balance.rs` (sums over a node's own leaves and children; `coastal_floor`)
 - Modify: `crates/topography-core/src/world/water/mod.rs` (`setup` reads `provenance.u8`; stamp)
 - Modify: `crates/topography-core/src/world/water/checks.rs` (`lake_below_sea`)
 - Modify: `crates/topography-core/src/world/water/testing.rs` (`setup` gets `provenance: None`; a sub-zero bowl helper)
@@ -1388,7 +1410,7 @@ Ruling B13; owner ruling on below-sea lakes.
 - Produces:
   - `pipeline::Setup.provenance: Option<Classes>` (u8 per provenance cell, `provenance_cell_m` in grid.json; absent → every cell 0: full K, no flags).
   - `pub(crate) const BELOW_SEA_OK: u8 = 64; pub(crate) const STEEP: u8 = 128; pub(crate) const KIND_MASK: u8 = 7; pub(crate) const INTERIOR: u8 = 1;` in `mod.rs`.
-  - `Setup::below_sea(&self, core: Rect, ground: &[f32]) -> Result<Vec<(u64, u64)>>`: per core cell (1 if ground < 0 m, 1 if also without bit 64), summed per drainage end beside the supply (`TileGraph.below0: BTreeMap<Next, (u64, u64)>`) and up the hierarchy as Fill-Spill-Merge carries the supply (integer sums, exact at any tiling, R4).
+  - `Setup::below_sea(&self, core: Rect, ground: &[f32]) -> Result<Vec<(u64, u64)>>`: per core cell (1 if ground < 0 m, 1 if also without bit 64), summed per drainage end beside the supply (`TileGraph.below0: BTreeMap<Next, (u64, u64)>`) and up the hierarchy over each node's own leaves and children, never through overflow (integer sums, exact at any tiling, R4; preflight F19).
   - `balance::coastal_floor(k_balance: u64, sub_zero: u64, bad: u64) -> u64`: the closed lake's cell count k after the coastal water table (B13).
   - `Setup::flags(&self, r: Rect) -> Result<Vec<u8>>` (provenance over a window; zeros without a layer).
   - Hard check `lake_below_sea`.
@@ -1436,20 +1458,20 @@ In `pipeline.rs` tests (or `balance.rs` tests where Plan A's arid-basin test liv
 
 (`Node` from `nodes.rs`. With r = 0 and the flag set the bowl holds no water, so its node's level is its low.)
 
-And in `checks.rs` tests, beside the other per-detector tests (Plan A's `Fixture` in `checks.rs` ~line 1600 builds `CheckLayers` from vectors):
+And in `checks.rs` tests, beside the other per-detector tests (Plan A's fixture is `Case` in `checks.rs` ~lines 1460–1606: fields `z` (ground), `bz` (breached), `raw`, built on `testing::setup` at 1 m, run by `tile()`; give it a `flags: Vec<u8>` fed to `Setup.provenance`, preflight F23):
 
 ```rust
     #[test]
     fn lake_below_sea_fails_without_the_flag() {
-        let mut f = Fixture::lake_at(-3.0); // a labelled lake at -3 m
-        let t = f.check();
+        let mut f = Case::lake_at(-3.0); // a labelled lake at -3 m
+        let t = f.tile();
         assert!(t.fails.get("lake_below_sea").copied().unwrap_or(0) > 0);
         f.flags = vec![crate::world::water::BELOW_SEA_OK; f.cells()];
-        assert_eq!(f.check().fails.get("lake_below_sea").copied().unwrap_or(0), 0);
+        assert_eq!(f.tile().fails.get("lake_below_sea").copied().unwrap_or(0), 0);
     }
 ```
 
-If Plan A's check fixture has no `lake_at` constructor, add one in the test module: a 16² window with a bowl whose cells under −3 m carry a lake body (id 2) at level −3 m in `bodies`, the rest dry; and a `flags: Vec<u8>` field that `check()` passes to `check_tile` through `Setup.provenance`.
+`Case` has no `lake_at` constructor; add one in the test module: a 16² window with a bowl whose cells under −3 m carry a lake body (id 2) at level −3 m in `bodies`, the rest dry; and the `flags` field that `tile()` passes to `check_tile` through `Setup.provenance`.
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -1533,7 +1555,7 @@ At line 706, beside the supply:
                 let below0 = s.below_sea(core, &zc)?;
 ```
 
-`watershed::tile_graph` takes `below0: impl Fn(usize) -> (u64, u64)` and sums it into `TileGraph.below0` exactly as it sums `supply(k)` into `sup` (line 188), with the `Blob` impl extended the same way. Wherever the hierarchy and `balance.rs` sum a node's supply from its leaves, children and `foreign_supply`, sum `below0` alongside (a `(u64, u64)` added component-wise). Then, where `balance.rs` turns a closed node's supply into its cell count (R20, k = ⌈supply / 1000⌉):
+`watershed::tile_graph` takes `below0: impl Fn(usize) -> (u64, u64)` and sums it into `TileGraph.below0` exactly as it sums `supply(k)` into `sup` (line 188), with the `Blob` impl extended the same way. Where the hierarchy builds a node from its leaves and children, sum `below0` over them (a `(u64, u64)` added component-wise; the tile-crossing pieces arrive like `foreign_supply`). Never add a basin's `below0` to the node its overflow pours into: the floor is about the node's own cells (preflight F19). Then, where `balance.rs` turns a closed node's supply into its cell count (R20, k = ⌈supply / 1000⌉):
 
 ```rust
 /// The coastal water table (B13, review I4): a depression holding a sub-zero cell that may
@@ -1545,7 +1567,7 @@ pub(crate) fn coastal_floor(k_balance: u64, sub_zero: u64, bad: u64) -> u64 {
 }
 ```
 
-and use `k = coastal_floor(k, below0.0, below0.1)`. Because the floor raises only a node's own level and adds no supply, nothing overflows downstream. Unit test in `balance.rs`:
+and use `k = coastal_floor(k, below0.0, below0.1)`. Apply it also in the zero-supply branch (`own.div_ceil(MILLI) == 0`, r = 0), which today sets the level to the node's low directly: with `bad > 0` that branch takes the k-th lowest cell with k = `coastal_floor(0, …)` instead (the humid bowl test of Step 1 needs this through the dune class's r = 0). Because the floor raises only a node's own level and adds no supply, nothing overflows downstream. Unit test in `balance.rs`:
 
 ```rust
     #[test]
@@ -1558,17 +1580,17 @@ and use `k = coastal_floor(k, below0.0, below0.1)`. Because the floor raises onl
 
 Every other `Setup { … }` literal (tests, `testing::setup`) adds `provenance: None`.
 
-`checks.rs`, in `check_tile` beside `lake_not_flat` (read `let flags = s.flags(core)?;` once with the classes):
+`checks.rs`, in `check_tile`: read the provenance once over the window, `let flags = s.flags(win)?;` (window-indexed like `raw` and `z`; Task 7 reuses this binding, preflight F4), and beside `lake_not_flat`:
 
 ```rust
         // B13: a labelled lake below sea level only where every one of its cells allows it
         // (the floor's predicate: its cells are all sub-zero).
-        if is_labelled_lake(body[j]) && surf[j] < -SILL_M && flags[k] & BELOW_SEA_OK == 0 {
+        if is_labelled_lake(body[j]) && surf[j] < -SILL_M && flags[j] & BELOW_SEA_OK == 0 {
             t.fail("lake_below_sea", x, y);
         }
 ```
 
-(`is_labelled_lake`, `j` (window index) and `k` (core index) are the names the surrounding loop uses for lake cells; use the existing lake test there.) Add `"lake_below_sea"` to the `fails` list in `report`.
+(`is_labelled_lake` and `j` (window index) are the names the surrounding loop uses for lake cells; use the existing lake test there.) Add `"lake_below_sea"` to the `fails` list in `report`.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1637,7 +1659,7 @@ Spec "Erosion"; rulings B1–B4, B6, B7, B29. Pure passes on whole-grid slices; 
   - `pub(crate) fn footprint(r: &Routing, before: &[f32], z: &[f32], wall_deg: f64) -> Bits` (B6).
   - `pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u64`.
   - `pub(crate) fn taper(r: &Routing, z: &mut [f32], before: &[f32], raw: &[f32], wall_deg: f64, lower: &mut [f32]) -> (u64, u64, u64)` (tapered cells, cells restored by wall rounds, walls left).
-  - Constants `SHAPE_MIN_M = 0.01`, `WALL_ROUNDS = 16`, `TAPER_MIN_CELLS = 1.5`.
+  - Constants `SHAPE_MIN_M = 0.01`, `WALL_ROUNDS = 16`, `TAPER_MIN_CELLS = 2.5`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1735,9 +1757,10 @@ mod tests {
     fn the_floor_caps_lowering() {
         let before = [40.0, 40.0, 40.0, 40.0, 10.0, 10.0, 10.0, 0.0f32];
         let mut s = Strip::new(&before);
-        s.floor = before.iter().map(|v| v - 3.0).collect();
+        // Unfloored, the lip falls to 38.06 m in one step; a 1 m floor stops it at 39 m.
+        s.floor = before.iter().map(|v| v - 1.0).collect();
         let f = s.erode();
-        assert!(s.z[3] >= 37.0 - 1e-4 && f.capped_cells > 0);
+        assert!(s.z[3] >= 39.0 - 1e-4 && f.capped_cells > 0);
     }
 
     #[test]
@@ -1899,8 +1922,9 @@ use serde_json::{Value, json};
 pub(crate) const SHAPE_MIN_M: f32 = 0.01;
 /// Wall rounds after the taper: each halves this routing's lowering in the 3 × 3 of a wall.
 pub(crate) const WALL_ROUNDS: usize = 16;
-/// The narrowest taper (cells): a disc of radius 1.5 lowers a 3-cell-wide cut.
-pub(crate) const TAPER_MIN_CELLS: f64 = 1.5;
+/// The narrowest taper (cells): a disc of radius 2.5 lowers a 5-cell-wide cut, wide enough
+/// that even an isolated disc passes `handoff_narrow` (preflight F1).
+pub(crate) const TAPER_MIN_CELLS: f64 = 2.5;
 
 /// A bit per cell.
 pub(crate) struct Bits(Vec<u64>);
@@ -2081,27 +2105,28 @@ pub(crate) fn stream_power(r: &Routing, z: &mut [f32]) -> Figures {
         }
         Some(t)
     };
-    let mut order: Vec<u64> = (0..z.len())
-        .filter(|&c| erodible(c))
-        .map(|c| (u64::from(orderable(z[c])) << 32) | c as u64)
-        .collect();
-    order.sort_unstable();
+    // u32 indices sorted by (ground, index): 4 B a cell (preflight F11).
+    let mut order: Vec<u32> = (0..z.len() as u32).filter(|&c| erodible(c as usize)).collect();
+    order.sort_unstable_by_key(|&c| (orderable(z[c as usize]), c));
     let mut level: Vec<f32> = r.nodes.0.iter().map(|n| n.level).collect();
     let mut done = Bits::new(z.len());
     let mut fig = Figures::default();
     let mut stack: Vec<usize> = Vec::new();
-    for key in order {
-        let c0 = (key & 0xffff_ffff) as usize;
+    let mut on_stack = Bits::new(z.len()); // preflight F30: no linear `contains`
+    for c0 in order {
+        let c0 = c0 as usize;
         if done.get(c0) {
             continue;
         }
         stack.push(c0);
+        on_stack.set(c0);
         while let Some(&c) = stack.last() {
             if let Some(t) = needs(c).filter(|&t| erodible(t) && !done.get(t)) {
                 // A tie (receiver not lower) or a lake whose sill is not done: that first.
-                if stack.len() <= z.len() && !stack.contains(&t) {
+                if !on_stack.get(t) {
                     fig.order_ties += 1;
                     stack.push(t);
+                    on_stack.set(t);
                     continue;
                 }
             }
@@ -2214,7 +2239,7 @@ pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u6
     n
 }
 
-/// Each cut (before − z ≥ SHAPE_MIN_M) as a parabolic disc d·(1 − (ρ/R)²), R = max(1.5 cells,
+/// Each cut (before − z ≥ SHAPE_MIN_M) as a parabolic disc d·(1 − (ρ/R)²), R = max(2.5 cells,
 /// 2·d / (tan(wall)·spacing)); the deepest lowering over all discs, not under water or sea,
 /// never below the floor. Then up to WALL_ROUNDS rounds, each halving this step's lowering in
 /// the 3 × 3 of every changed cell steeper than max(wall, raw) and then grading beds (a
@@ -2378,6 +2403,7 @@ Rulings B2–B4, B23. Coarse levels only; 1 m runs are unchanged.
 - Modify: `crates/topography-core/src/world/water/mod.rs` (`Tags::e`, `Tags::m2` after `e`, `pre_channel`, `run` and `finish` use it; `stages.json` `erosion`)
 - Modify: `crates/topography-core/src/world/water/checks.rs` (`CheckLayers` gets `pre_channel`; `breached` keeps the breach-only ground)
 - Modify: `crates/topography-core/src/world/water/testing.rs` (`coarse_grid_dir`)
+- Modify: `training/src/topography_training/water/review.py` (`window_pair`, used by Tasks 6, 9 and 13; preflight F6), `training/tests/test_water_review.py` (smoke test)
 
 **Interfaces:**
 - Consumes: Task 5's passes; `pipeline::{model, Rasters}`; `Setup::flags`, `Setup.classes`.
@@ -2385,6 +2411,7 @@ Rulings B2–B4, B23. Coarse levels only; 1 m runs are unchanged.
   - `erosion::erode(s: &Setup, breached: &Layer<f32>, raw: &Layer<f32>, work: &Work, tag: &str, e: &Erosion) -> Result<(PathBuf, Figures, Vec<Figures>)>`: routings into `work/e<k>.f32`; returns the last one's path, the summed figures and each routing's.
   - `fn pre_channel(work: &store::Work, p: &Params) -> PathBuf` in `mod.rs`: `e<routings−1>.f32` with erosion, else `breached.f32`.
   - `stages.json` key `erosion` (figures summed over routings, `per_routing`, `routings`).
+  - `review.window_pair(run: Path, dest: Path) -> Path`: hillshades of `run/grid/elevation.f32` (raw) and `run/work/carved.f32` side by side, water (finite `run/work/water-surface.f32`) tinted blue on the right, at most 1,024 px a side each; returns `dest`.
   - `testing::coarse_grid_dir(dir: &Path, world: World, spacing_m: f64) -> PathBuf`: a coarse grid with classes, moisture, a provenance layer (interior west of x = 30, blend east of it) and a 6 m seam dam across a valley on the blend side.
 
 - [ ] **Step 1: Write the failing test**
@@ -2459,6 +2486,14 @@ In `mod.rs` tests:
                 "the dam is cut by erosion or breached");
         // A second run resumes from the cache with the same answer.
         assert!(run(&o).is_ok());
+        // finish accepts the coarse work directory (its tag list includes e; preflight F5).
+        let f = finish(&FinishOptions {
+            grid: grid.clone(), work: o.work.clone(), ground: o.work.join("carved.f32"),
+            out: dir.path().join("out"), tile: 32, threads: 2, water: water.clone(),
+            river_km2: Some(0.05), spots: Vec::new(),
+        })
+        .expect("finish on a coarse run");
+        assert!(f.out.join("report.json").exists());
         // 1 m runs have no erosion stage.
         let one = testing::grid_dir(&dir.path().join("one"), world);
         let o1 = Options { grid: one.clone(), work: dir.path().join("w1"), water: Some(one.join("water.toml")), ..o };
@@ -2537,20 +2572,26 @@ pub(crate) fn erode(
                 Some(c) => c.read(whole)?,
                 None => vec![0; n],
             };
-            let interior_at = |c: usize| flags[c] & KIND_MASK == INTERIOR || classes[c] == GLACIER;
+            // Interior bits, then the u8 rasters go (preflight F11: memory).
+            let mut interior = Bits::new(n);
+            for c in 0..n {
+                if flags[c] & KIND_MASK == INTERIOR || classes[c] == GLACIER {
+                    interior.set(c);
+                }
+            }
+            drop((flags, classes));
             // Floor: the breached ground less the cap (B4); breach cuts are not counted.
             let bz = breached.to_vec()?;
             let floor: Vec<f32> = (0..n)
-                .map(|c| bz[c] - if interior_at(c) { e.interior_cap_m } else { e.cap_m })
+                .map(|c| bz[c] - if interior.get(c) { e.interior_cap_m } else { e.cap_m })
                 .collect();
             drop(bz);
             let node = rasters.node.to_vec()?;
             let flow = rasters.flow.to_vec()?;
-            let (mut held, mut sea, mut interior) = (Bits::new(n), Bits::new(n), Bits::new(n));
+            let (mut held, mut sea) = (Bits::new(n), Bits::new(n));
             for c in 0..n {
                 if node[c] >= 2 { held.set(c); }
                 if node[c] == 1 { sea.set(c); }
-                if interior_at(c) { interior.set(c); }
             }
             let (w, h) = (world.w as usize, world.h as usize);
             let mut shore: Vec<(u32, u32)> = (0..n)
@@ -2599,7 +2640,6 @@ pub(crate) fn erode(
             let mut fig = stream_power(&r, &mut z);
             let near = footprint(&r, &before, &z, s.params.wall_deg);
             fig.diffused_cells = diffuse(&r, &mut z, e.diffusion, &near);
-            drop(r);
             let rawv = raw.to_vec()?;
             let mut lower = ka; // reused as the taper's buffer
             let r = Routing {
@@ -2640,7 +2680,7 @@ pub(crate) fn erode(
 }
 ```
 
-Notes for the implementer: `Layer` is `Clone` (it is cloned in `finish`); `Work::cached` writes the blob only after the closure returns, so a kill mid-routing reruns that routing from `e<k−1>.f32`, which is complete. `taper` does not read `ka` (it is passed empty the second time). Keep the stage's memory to: z, before, floor, ka/lower (4 B each), flow (1 B), three bit sets and the shore list: about 17 B per cell (4.6 GB at 16,384²), plus `rawv` (4 B) during the taper. Task 9 measures it.
+Notes for the implementer: `Layer` is `Clone` (it is cloned in `finish`); `Work::cached` writes the blob only after the closure returns, so a kill mid-routing reruns that routing from `e<k−1>.f32`, which is complete. `taper` does not read `ka` (it is passed empty the second time). Memory (preflight F11, review M2 applied here): `flags` and `classes` go once the interior bits exist, the node raster once the held/sea bits and shore list exist, and `stream_power` sorts `u32` indices (4 B), not `u64` keys. What stays: z, before, floor, ka/lower (16 B), flow (1 B), the sort indices (4 B, during stream power), bit sets (about 0.5 B): about 21.5 B per cell, about 5.8 GB at 16,384², plus the routing's `Model` (its node table, a few hundred MB) and `rawv` (4 B) during the taper instead of the sort indices. Expected peak 6–6.5 GB; Task 9 measures it against B1's 7 GB.
 
 In `mod.rs`:
 
@@ -2659,6 +2699,8 @@ In `mod.rs`:
 ```
 
 `Tags::m2(b)` becomes `Tags::m2(pre)` where `pre` is the `e` tag with erosion, else the `b` tag. The provenance file's identity is already in the work stamp (Task 4), so a changed layer refuses the work directory.
+
+The tag list carries the optional stage (preflight F5): `struct Tags` gains `e: Option<String>`; `Tags::all(p, contract, m3s, pools, g, b)` builds `e` from `p.erosion` and `p.wall_deg` exactly as `run` does and chains m2 after it; `list()` returns `[m1, b, e (only when present), m2, l, c, m3, s]`. `finish` recomputes the same: `let e_tag = s.params.erosion.map(|e| Tags::e(&b_tag, &e, s.params.wall_deg));`, `let m2_tag = Tags::m2(e_tag.as_deref().unwrap_or(&b_tag));`, and its early check compares the first stages `[m1, b, e?, m2]` (3 or 4 entries) with `stages["tags"]`. Plan A's tag test (`each_stage_tag_follows_what_the_stage_reads`) keeps its 1 m expectations (no `e`) and gains a 32 m case where changing `k_dt` changes e, m2 and every later tag but not m1 or b.
 
 ```rust
 /// The ground the channels cut into (B23): the last erosion routing, else the breached ground.
@@ -2702,6 +2744,65 @@ In `checks.rs`, add `pub pre_channel: Layer<f32>` to `CheckLayers`, and read `l.
 Run: `"${CAP6[@]}" cargo test --locked --offline -p topography-core --quiet world::water`
 Expected: PASS, including Plan A's tag test with the `e` stage absent at 1 m. Remove the `#[allow(dead_code)]` added in Task 5.
 
+- [ ] **Step 4b: `review.window_pair` (preflight F6)**
+
+Test first, in `test_water_review.py`:
+
+```python
+class WindowPairTest(unittest.TestCase):
+    def test_raw_and_result_side_by_side(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            (run / "grid").mkdir()
+            (run / "work").mkdir()
+            n = 64
+            (run / "grid" / "grid.json").write_text(json.dumps({"size": [n, n], "spacing_m": 32.0}))
+            y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+            (100 - x).astype("<f4").tofile(run / "grid" / "elevation.f32")
+            (100 - x - (abs(y - 32) < 2) * 5).astype("<f4").tofile(run / "work" / "carved.f32")
+            np.where(abs(y - 32) < 1, 96.0, np.nan).astype("<f4").tofile(run / "work" / "water-surface.f32")
+            out = review.window_pair(run, run / "pair.png")
+            from PIL import Image
+
+            im = Image.open(out)
+            self.assertEqual(im.size, (2 * n + review.GAP_PX, n))
+```
+
+Then in `review.py`:
+
+```python
+def window_pair(run: Path, dest: Path) -> Path:
+    """Raw hillshade beside the result's (work/carved.f32), water tinted on the right: a quick
+    look at what a window or level run changed."""
+    from PIL import Image
+
+    g = _json(run / "grid" / "grid.json")
+    w, h = g["size"]
+    cell = float(g.get("spacing_m", 1.0))
+    k = max(1, math.ceil(max(w, h) / 1024))
+
+    def load(path: Path) -> np.ndarray:
+        return np.fromfile(path, "<f4").reshape(h, w)[::k, ::k]
+
+    raw, res = load(run / "grid" / "elevation.f32"), load(run / "work" / "carved.f32")
+    wet = np.isfinite(load(run / "work" / "water-surface.f32"))
+
+    def shade(z: np.ndarray) -> np.ndarray:
+        gy, gx = np.gradient(z.astype(np.float64), cell * k)
+        i = np.clip((1 - gx + gy) / np.sqrt(3 * (1 + gx**2 + gy**2)), 0, 1)  # light from the NW
+        return (i * 255).astype(np.uint8)
+
+    left = np.repeat(shade(raw)[..., None], 3, axis=2)
+    right = np.repeat(shade(res)[..., None], 3, axis=2)
+    right[wet] = (right[wet] * 0.4 + np.array([30, 90, 200]) * 0.6).astype(np.uint8)
+    gap = np.full((left.shape[0], GAP_PX, 3), 255, np.uint8)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.concatenate([left, gap, right], axis=1)).save(dest)
+    return dest
+```
+
+Run: `PYTHONPATH=training/src $P -m unittest training/tests/test_water_review.py` — Expected: PASS.
+
 - [ ] **Step 5: Real-terrain probe: a 32 m window at the dam spot** (seconds; announce only)
 
 ```bash
@@ -2736,7 +2837,7 @@ Expected: erosion lowers cells and drains at least one sill; `walls_left` 0. Che
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/topography-core/src/world/water
+git add crates/topography-core/src/world/water training/src/topography_training/water/review.py training/tests/test_water_review.py
 git commit -m "feat(water): erosion stage at coarse levels between breach and the second model run
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -2766,82 +2867,99 @@ Spec "Checks" (change budget, hand-off); rulings B9, B14, B25; R31 made hard.
 
 - [ ] **Step 1: Write the failing tests**
 
-In `checks.rs` tests, using Plan A's check fixture (`Fixture` around line 1600; give it a `flags: Vec<u8>` field fed to `Setup.provenance`, and a `params` field so a test can set `erosion`):
+In `checks.rs` tests, extend Plan A's fixture `Case` (lines ~1460–1606; preflight F23): besides Task 4's `flags`, add `pre_channel: Vec<f32>` (fed to `CheckLayers.pre_channel`; `bz` stays the breach-only ground) and a spacing/params override for `coarse()`:
 
 ```rust
     #[test]
     fn interior_budget_counts_interior_cells_outside_breaches_only() {
-        let mut f = Fixture::flat(32, 100.0);
+        let mut f = Case::flat(32, 100.0);
         f.coarse(); // spacing 32 m, params from levels.32 (erosion on)
         f.flags = vec![crate::world::water::INTERIOR; f.cells()];
-        f.ground[f.at(10, 10)] = 96.0; // an interior cell lowered 4 m by erosion
-        let t = f.check();
+        f.z[f.at(10, 10)] = 96.0; // an interior cell lowered 4 m by erosion
+        let t = f.tile();
         assert_eq!(t.fails.get("interior_max").copied().unwrap_or(0), 1);
         // The same cut inside a breach (breached ground lower than raw there) is the breach's.
-        f.breached[f.at(10, 10)] = 96.0;
-        assert_eq!(f.check().fails.get("interior_max").copied().unwrap_or(0), 0);
+        f.bz[f.at(10, 10)] = 96.0;
+        assert_eq!(f.tile().fails.get("interior_max").copied().unwrap_or(0), 0);
     }
 
     #[test]
     fn a_one_cell_trench_fails_handoff_narrow_and_a_tapered_cut_passes() {
-        let mut f = Fixture::flat(32, 100.0);
+        let mut f = Case::flat(32, 100.0);
         f.coarse();
         for y in 4..28 {
             let i = f.at(16, y);
-            f.ground[i] = 98.0; // a 2 m slot, one cell wide
+            f.z[i] = 98.0; // a 2 m slot, one cell wide
         }
-        assert!(f.check().fails.get("handoff_narrow").copied().unwrap_or(0) > 0, "a one-cell slot");
+        assert!(f.tile().fails.get("handoff_narrow").copied().unwrap_or(0) > 0, "a one-cell slot");
         // A V of profile 0, 1, 2, 1, 0: the opening is 1, the excess 1 m = 0.5 × the 2 m cut: passes.
         for y in 4..28 {
             for (dx, d) in [(-1i64, 1.0f32), (1, 1.0)] {
                 let i = f.at((16 + dx) as usize, y);
-                f.ground[i] = 100.0 - d;
+                f.z[i] = 100.0 - d;
             }
         }
-        assert_eq!(f.check().fails.get("handoff_narrow").copied().unwrap_or(0), 0, "a V three cells wide");
-        // A trench of B7 discs (R = 1.5 cells, 6 m deep): d·(1 − (ρ/R)²) across, passes.
-        let mut g = Fixture::flat(32, 100.0);
-        g.coarse();
-        for y in 4..28 {
-            for dx in -1i64..=1 {
-                let rho = dx.abs() as f32;
-                let i = g.at((16 + dx) as usize, y);
-                g.ground[i] = 100.0 - 6.0 * (1.0 - (rho / 1.5).powi(2));
+        assert_eq!(f.tile().fails.get("handoff_narrow").copied().unwrap_or(0), 0, "a V three cells wide");
+        // Discs as B7 makes them (R = 2.5 cells): ground lowered by the deepest of several
+        // parabolic discs d·(1 − (ρ/2.5)²) centred on `cuts` (x, y, d).
+        let discs = |cuts: &[(i64, i64, f32)]| {
+            let mut g = Case::flat(32, 100.0);
+            g.coarse();
+            for y in 0..32i64 {
+                for x in 0..32i64 {
+                    let low = cuts
+                        .iter()
+                        .map(|&(cx, cy, d)| {
+                            let rho = (((x - cx).pow(2) + (y - cy).pow(2)) as f32).sqrt();
+                            if rho < 2.5 { d * (1.0 - (rho / 2.5).powi(2)) } else { 0.0 }
+                        })
+                        .fold(0.0f32, f32::max);
+                    let i = g.at(x as usize, y as usize);
+                    g.z[i] = 100.0 - low;
+                }
             }
-        }
-        assert_eq!(g.check().fails.get("handoff_narrow").copied().unwrap_or(0), 0, "the erosion taper passes");
+            g
+        };
+        // A trench of discs along a row, 6 m deep.
+        let trench: Vec<(i64, i64, f32)> = (4..28).map(|x| (x, 16, 6.0)).collect();
+        assert_eq!(discs(&trench).tile().fails.get("handoff_narrow").copied().unwrap_or(0), 0, "a tapered trench");
+        // An isolated 2 m disc (preflight F1): opening 1.36 m at its centre, excess 0.64 <= 1.0.
+        assert_eq!(discs(&[(16, 16, 2.0)]).tile().fails.get("handoff_narrow").copied().unwrap_or(0), 0, "one disc");
+        // Task 5's seam-step lip: 1.94 m at the lip, 0.13 and 0.003 m on the cells beside it.
+        let lip = [(15, 16, 0.13), (16, 16, 1.94), (17, 16, 0.003)];
+        assert_eq!(discs(&lip).tile().fails.get("handoff_narrow").copied().unwrap_or(0), 0, "a graded seam lip");
     }
 
     #[test]
     fn dam_drops_fail_on_a_step_then_gentle_and_pass_a_steady_cascade() {
         // Shown surface along a labelled lake's exit walk (1 m cells), level 10 m.
         let dam: Vec<f32> = std::iter::once(7.0).chain((1..150).map(|i| 7.0 - 0.01 * i as f32)).collect();
-        let f = Fixture::lake_with_exit_walk(10.0, &dam); // 3 m step, then 1 cm per cell
-        assert!(f.check().fails.get("dam_drops").copied().unwrap_or(0) > 0, "a dam");
+        let f = Case::lake_with_exit_walk(10.0, &dam); // 3 m step, then 1 cm per cell
+        assert!(f.tile().fails.get("dam_drops").copied().unwrap_or(0) > 0, "a dam");
         let cascade: Vec<f32> = (0..150).map(|i| 8.0 - 2.0 * i as f32).collect();
-        let g = Fixture::lake_with_exit_walk(10.0, &cascade); // 2 m every cell
-        assert_eq!(g.check().fails.get("dam_drops").copied().unwrap_or(0), 0, "a steady cascade");
-        let mut p = Fixture::lake_with_exit_walk(10.0, &dam);
+        let g = Case::lake_with_exit_walk(10.0, &cascade); // 2 m every cell
+        assert_eq!(g.tile().fails.get("dam_drops").copied().unwrap_or(0), 0, "a steady cascade");
+        let mut p = Case::lake_with_exit_walk(10.0, &dam);
         p.unlabel_lake(); // the same step below a pond: a figure only
-        assert_eq!(p.check().fails.get("dam_drops").copied().unwrap_or(0), 0);
-        assert!(!p.check().drops_any.is_empty());
+        assert_eq!(p.tile().fails.get("dam_drops").copied().unwrap_or(0), 0);
+        assert!(!p.tile().drops_any.is_empty());
     }
 
     #[test]
     fn erosion_new_pits_counts_pits_the_coarse_cutting_made() {
-        let mut f = Fixture::flat(32, 100.0);
+        let mut f = Case::flat(32, 100.0);
         f.coarse();
         let i = f.at(10, 10);
         f.pre_channel[i] = 99.0;
-        f.ground[i] = 99.0;
-        assert_eq!(f.check().fails.get("erosion_new_pits").copied().unwrap_or(0), 1);
-        f.breached[i] = 99.0; // already a pit after the breach: not erosion's
+        f.z[i] = 99.0;
+        assert_eq!(f.tile().fails.get("erosion_new_pits").copied().unwrap_or(0), 1);
+        f.bz[i] = 99.0; // already a pit after the breach: not erosion's
         f.raw[i] = 99.0;
-        assert_eq!(f.check().fails.get("erosion_new_pits").copied().unwrap_or(0), 0);
+        assert_eq!(f.tile().fails.get("erosion_new_pits").copied().unwrap_or(0), 0);
     }
 ```
 
-Fixture helpers to add (test-only): `flat(n, z)` (raw, ground, breached, pre_channel all `z`; dry; no bodies), `coarse()` (spacing 32 m and `params(&table, 32.0, None)`), `at(x, y)`, `cells()`, `lake_with_exit_walk(level, shown: &[f32])` (Plan A's dam-steps fixture behind the `t.drops_any` asserts at lines 2061–2131, generalised: a labelled lake at `level` whose exit walk runs east along one row with the given shown surface, written as ground with raw equal to it so `dam_steps` stays quiet) and `unlabel_lake()` (the node stays, its body id becomes 0).
+`Case` helpers to add (test-only): `flat(n, z)` (raw, `z`, `bz`, `pre_channel` all `z`; dry; no bodies; a wrapper over `Case::new`), `coarse()` (spacing 32 m and `params(&table, 32.0, None)`), `at(x, y)`, `cells()`, `lake_with_exit_walk(level, shown: &[f32])` (Plan A's dam-steps fixture behind the `t.drops_any` asserts at lines 2061–2131, generalised: a labelled lake at `level` whose exit walk runs east along one row with the given shown surface, written as ground with raw equal to it so `dam_steps` stays quiet) and `unlabel_lake()` (the node stays, its body id becomes 0).
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -2853,7 +2971,7 @@ Expected: FAIL (unknown checks count 0).
 In `check_tile`, read once per tile:
 
 ```rust
-    let flags = s.flags(win)?;
+    // `flags` is Task 4's window-wide binding (preflight F4); add only:
     let bo = l.breached.read(win)?; // breach-only ground (work/breached.f32)
     let coarse = s.params.erosion.is_some();
 ```
@@ -2866,7 +2984,8 @@ Interior budget, in the per-core-cell loop (where `delta` = |raw − ground| is 
                 t.interior_cells += 1;
                 t.hist_interior[((delta * 100.0) as usize).min(BINS - 1)] += 1;
                 t.max_interior = t.max_interior.max(delta);
-                if delta > INTERIOR_MAX_M {
+                // CHANGED_M of slack: the floor `bz − 3` rounds in f32 (preflight F22).
+                if delta > INTERIOR_MAX_M + CHANGED_M {
                     t.fail("interior_max", x, y);
                 }
             }
@@ -3167,7 +3286,7 @@ Spec "Solver: chosen by benchmark in the plan"; rulings B1, B2, B25. No new code
 **Files:**
 - Modify (only if the calibration moves a value): `configs/hydrology/water-v3.toml` (`[levels.32.erosion]`)
 - Output (not committed): `scratch/hydrology-v3b/t9/`
-- Record: `.superpowers/sdd/2026-11-07-hydrology-v3-b/progress.md`
+- Record: `.superpowers/sdd/2026-11-07-hydrology-v3-b-coarse-and-regeneration/progress.md`
 
 **Interfaces:**
 - Consumes: Tasks 1–8 (`world rain`, `world water` with the `e` stage, the checks).
@@ -3217,7 +3336,7 @@ for v in off k0 k3.5e-4 k7e-4 k1.4e-3; do
   "${CAP6[@]}" $B world water-finish --grid $R/grid --work $R/work --ground $R/work/carved.f32 --out $R/out \
       --tile 2048 --threads 4 --water $T/water-$v.toml >> $R/log 2>&1
   echo "$v: $(jq -c '{passed, failures, seam: .figures.seam_lakes.count, ip99: .figures.interior_change_p99_m,
-        imax: .figures.interior_change_max_m, dams: .checks.dam_drops, below_sea: .checks.lake_below_sea,
+        imax: .figures.interior_change_max_m, dams: .checks.dam_drops, steps: .checks.dam_steps, below_sea: .checks.lake_below_sea,
         lakes: .figures.lakes, rivers: .figures.rivers}' $R/out/report.json)"
   jq -c '.erosion | {hillslope_lowering_p99_m, hillslope_lowering_max_m, erosion_new_pits}' $R/work/stages.json
   grep -E 'erosion: routing|Maximum resident' $R/log | tail -n 6
@@ -3252,7 +3371,7 @@ Put the calibration table (variant × seam lakes, interior p99/max, `dam_drops`,
 
 - [ ] **Step 5: HEAVY — warn the owner, then the 16,384² timing run**
 
-Tell the owner: one CPU run of the water model with erosion on a 16,384² 4 m grid (268 M cells; the v2 chain's 4 m ground as a timing stand-in, read only), 4 threads under `MemoryMax=10G`. Expected: 2 erosion routings with a model run each, plus the usual model runs: 40–90 min (uncertain: the erosion passes are unmeasured at this size; a model run is about 6–8 min here from Plan A's 1 m rate); peak RAM 5–7 GB (erosion arrays about 17 B per cell); about 25 GB of scratch disk. Close memory-heavy applications. Wait for the go.
+Tell the owner: one CPU run of the water model with erosion on a 16,384² 4 m grid (268 M cells; the v2 chain's 4 m ground as a timing stand-in, read only), 4 threads under `MemoryMax=10G`. Expected: 2 erosion routings with a model run each, plus the usual model runs: 40–90 min (uncertain: the erosion passes are unmeasured at this size; a model run is about 6–8 min here from Plan A's 1 m rate); peak RAM 6–6.5 GB (erosion arrays about 21.5 B per cell after the slimming in Task 6, plus the routing's model); about 25 GB of scratch disk. Close memory-heavy applications. Wait for the go.
 
 ```bash
 X=$T/x16k; mkdir -p $X
@@ -3373,8 +3492,9 @@ def main(work: Path, k: int) -> int:
 
     z, floor, ka = rd("z.f32", "<f4"), rd("floor.f32", "<f4"), rd("ka.f32", "<f4")
     down, base = rd("down.u32", "<u4"), rd("base.f32", "<f4")
-    substeps = int(max(1, np.ceil(float(ka.max()) / 32.0 * 4)))
-    out = step(z, floor, ka, down, base, float((work / "spacing").read_text()), substeps)
+    spacing = float((work / "spacing").read_text())
+    substeps = int(max(1, np.ceil(float(ka.max()) / spacing * 4)))  # dt·F <= 1/4 per substep
+    out = step(z, floor, ka, down, base, spacing, substeps)
     tmp = work / f"e{k}-gpu.f32.tmp"
     out.astype("<f4").tofile(tmp)
     tmp.replace(work / f"e{k}-gpu.f32")
@@ -3386,9 +3506,19 @@ if __name__ == "__main__":
     sys.exit(main(Path(sys.argv[1]), int(sys.argv[2])))
 ```
 
-On the Rust side, in `erode`, when `std::env::var("TOPOGRAPHY_EROSION").as_deref() == Ok("gpu")`: after building `Routing`, if `e<k>-gpu.f32` is missing, write the five inputs (the `down` of each cell as `stream_power` resolves it, ka divided by the step length factor `dist_cells` so the GPU uses `spacing_m` only, and `spacing`), and return `Err(AcquisitionError::Invalid("erosion: gpu inputs for routing {k}"))` with process exit code 3 mapped in the CLI; else read `e<k>-gpu.f32` into `z` instead of calling `stream_power`, then continue with `diffuse` and `taper`. `run_level` (Task 10) loops: run `world water`; on exit 3, run `python -m topography_training.water.erosion_gpu <work> <k>` and rerun `world water`.
+On the Rust side, in `erode`, when `std::env::var("TOPOGRAPHY_EROSION").as_deref() == Ok("gpu")`: after building `Routing`, if `e<k>-gpu.f32` is missing, write the five inputs (the `down` of each cell as `stream_power` resolves it, ka divided by the step length factor `dist_cells` so the GPU uses `spacing_m` only, and `spacing`), and return `Err(AcquisitionError::Invalid("erosion: gpu inputs for routing {k}"))` with process exit code 3 mapped in the CLI; else read `e<k>-gpu.f32` into `z` instead of calling `stream_power`, then continue with `diffuse` and `taper`. Task 10 does not exist yet when 9b runs (preflight F12), so 9b's timing uses a shell loop:
 
-- [ ] **Step 3:** Run the test (`PYTHONPATH=training/src $P -m unittest training/tests/test_water_erosion_gpu.py`), repeat Task 9 Steps 5–6 with `TOPOGRAPHY_EROSION=gpu`, and keep the GPU path only if it meets the B1 rule's (a)–(d); commit (`feat(water): explicit GPU stream power for large coarse grids`), expert review.
+```bash
+until TOPOGRAPHY_EROSION=gpu target/release/topography world water --grid $X/grid --work $X/work --tile 2048 --threads 4; do
+  [ $? -eq 3 ] || break
+  K=$(ls $X/work/e*-in-z.f32 | sed 's/.*e\([0-9]*\)-in-z.f32/\1/' | sort -n | tail -n 1)
+  PYTHONPATH=training/src $P -m topography_training.water.erosion_gpu $X/work $K
+done
+```
+
+and Task 10 adds the same exit-3 loop to `run_level` only if 9b was kept.
+
+- [ ] **Step 3:** Run the test (`PYTHONPATH=training/src $P -m unittest training/tests/test_water_erosion_gpu.py`), repeat Task 9 Steps 5–6 with `TOPOGRAPHY_EROSION=gpu`, and keep the GPU path only if it meets the B1 rule's (a)–(c); commit (`feat(water): explicit GPU stream power for large coarse grids`), expert review.
 
 ---
 ## Task 10: The level runner, provenance in every grid and the hard coarse guide
@@ -3406,7 +3536,7 @@ Rulings B11, B15, B30; spec "Coarse guide", "An auto-generated contact sheet of 
 **Interfaces:**
 - Consumes: `world rain` (Task 1), the provenance sidecar (Task 3), the checks (Task 7).
 - Produces:
-  - `grids.write_grid(path, h, spacing_m, origin, classes=None, offset_m=None, core_rows=None, classes_cell_m=None, wind_from_deg=None, provenance=None, provenance_cell_m=None, elevation_link: Path | None = None) -> Path` (as v2's, plus provenance; `elevation_link` symlinks a large ground instead of copying `h`, which may then be None).
+  - `grids.write_grid(path, h, spacing_m, origin, classes=None, offset_m=None, core_rows=None, classes_cell_m=None, wind_from_deg=None, provenance=None, provenance_cell_m=None, elevation_link: Path | None = None, size: tuple[int, int] | None = None) -> Path` (as v2's, plus provenance; `elevation_link` symlinks a large ground instead of copying `h`, which may then be None, with `size` (w, h) given; preflight F35).
   - `grids.add_moisture(grid: Path, coarse_out: Path) -> None`: copies `moisture.f32` and the `moisture` and `discharge.mean_land_mm_h` entries from a coarser level's published output.
   - `grids.provenance_window(prov32: np.ndarray, x0_m: float, y0_m: float, n: int, cell_m: float) -> np.ndarray`: nearest 32 m provenance on an n² grid of `cell_m` cells whose NW corner is (x0_m, y0_m) metres from the map's NW corner (y south).
   - `run.run_level(run: Path, tile: int = 2048, threads: int = 4, coarse: Path | None = None, river_km2: float | None = None) -> int` — `run/grid` must exist; runs `world rain` when grid.json lacks `moisture`, then `world water` and `world water-finish` into `run/work` and `run/out`, then the review (crops, lake-exit sheets) into `run/review` and the coarse guide against `coarse` (a coarser level's `out`); writes `run/level.json` `{"passed", "failures", "report", "coarse_guide", "review"}`; returns 0 passed, 1 failed (report or guide), raises `Refused` (exit 2) otherwise.
@@ -3492,7 +3622,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-In `test_water_review.py`, the existing coarse-guide tests use 16-cell coarse lakes at 4 m without a coarse `elevation.f32`: write one (100 m everywhere, 90 m under their lakes) in `write()` when `discharge` is given, and pass `min_km2=0, min_depth_m=0, edge_m=0` in `case()` and in `test_a_window_is_compared_at_its_offset`. Then add (replace the earlier draft's minimum-size test with these):
+In `test_water_review.py`, the existing coarse-guide tests use 16-cell coarse lakes at 4 m without a coarse `elevation.f32`: write one (100 m everywhere, 90 m under their lakes) in `write()` when `discharge` is given, and pass `min_km2=0, min_depth_m=0, edge_m=0` in `case()`, in `test_a_window_is_compared_at_its_offset` and in `test_a_mismatch_gets_a_figure` (line 143), whose `window_run` helper also writes a coarse `elevation.f32` (100 m everywhere, 90 m under its lakes; preflight F8). Then add (replace the earlier draft's minimum-size test with these):
 
 ```python
     def test_only_large_deep_lakes_away_from_edges_can_fail(self):
@@ -3539,7 +3669,7 @@ In `test_water_review.py`, the existing coarse-guide tests use 16-cell coarse la
         self.assertEqual((g["hard_failures"], g["lakes_near_edge"]), (0, 1))
 ```
 
-In `test_water_run.py`, change `test_a_failing_review_never_withholds_the_manifest`: the crops failing still never withhold; a coarse guide that **fails to run** now withholds (B15):
+In `test_water_run.py`, `fake_world` (preflight F7: moved here from Task 12, since `build_world_grid` now needs them) also writes the chain's `manifest.json` (`{"size": [n // 4, n // 4]}`) and `provenance.u8` (`(n // 32)²` bytes of 2, blend); and change `test_a_failing_review_never_withholds_the_manifest`: the crops failing still never withhold; a coarse guide that **fails to run** now withholds (B15):
 
 ```python
             report = json.loads((out / "hydrology" / "1m" / "report.json").read_text())
@@ -3801,7 +3931,7 @@ def _write_if_bytes_differ(path: Path, a: np.ndarray) -> None:
         tmp.replace(path)
 ```
 
-(`_origin(m, n, 1.0)` reads the square's own `world-input/world.json`, whose origin `cascade_l4` already offsets by the square.) `build_window_grid` adds the provenance the same way (`grids.provenance_window` over the window at its spacing, `provenance_cell_m` = the window's spacing; read `provenance.u8` from the chain world, or from the source world when it is the chain) and, for `--level 4` on a v3 chain (`l3-raw.f32` present), reads the raw L3 surface instead of `elevation.f32`:
+(`_origin(m, n, 1.0)` reads the square's own `world-input/world.json`, whose origin `cascade_l4` already offsets by the square.) `build_window_grid` adds the provenance the same way (`grids.provenance_window` over the window at its spacing, `provenance_cell_m` = the window's spacing; read `provenance.u8` from the chain world, or from the source world when it is the chain). A window whose chain has no `provenance.u8` (every window on `fujix-55-l4v2`, whose chain is v2's) gets none and prints `note: no provenance.u8 in <chain>; the window runs without flags (all below-sea basins floored)`; worlds keep refusing (preflight F9) and, for `--level 4` on a v3 chain (`l3-raw.f32` present), reads the raw L3 surface instead of `elevation.f32`:
 
 ```python
     elif level == 4:
@@ -3848,7 +3978,7 @@ Spec "Coarse stages", "Hand-off", staging 3; rulings B11, B12, B17, B22.
   - `l3-raw.f32` (kept, d5dc446);
   - `hydrology/run-4m/…` and `hydrology/4m` → `run-4m/out`;
   - world layers as today (`elevation.f32` = the 4 m level's final ground, `water-surface.f32`, `water-body.u32`, `bodies.json`, `water.u8`, `moisture.f32`, `classes.u8`, `biome.u8`, `snow-ice.u8`, `vegetation.u8`, `description.*`) plus `provenance.u8` (32 m, the L3 square's cells);
-  - `manifest.json` with `"water": {"model": "hydrology v3", "32m": {...level.json}, "4m": {...}}` and `"provenance": {"file": "provenance.u8", "cell_m": 32.0}`; when either level fails, `manifest-failed.json` and exit 1 (a failed 32 m level stops before L3).
+  - `manifest.json` with `"water": {"model": "hydrology v3", "32m": {...level.json}, "4m": {...}}` and `"provenance": {"file": "provenance.u8", "cell_m": 32.0}`; when the 4 m level fails, `manifest-failed.json` and exit 1; a failed 32 m level exits 1 before L3 and writes no manifest (preflight F34).
 - Removed: `Source.water`, `hydrology.Water` uses, `--lake-share`, `--tarn-share`.
 - New flag (B32): `--no-l3-river-clamp` drops the 32 m rivers from the L3 clamp (lakes and sea stay); default keeps today's clamp until Task 15's A/B decides; recorded in `progress.json` params and the manifest.
 
@@ -4006,7 +4136,7 @@ A 2 km L3 square at the dam spot with no band diffused (`--l3-bands 0:0`: L3 kee
 O=scratch/hydrology-v3b/t11-chain; rm -rf $O
 "${CAP12[@]}" "${PY[@]}" -m topography_training.diffusion.cascade_chain --collage data/worlds/fujix-collage-55 \
     --l3-run data/models/cascade-l3-run-5 --l3-km 2 --l3-centre 22858,38086 --l3-bands 0:0 --out $O 2>&1 | tail -n 15
-jq '{passed: .["32m"].passed}' $O/hydrology/run-32m/level.json
+jq '{passed, failures}' $O/hydrology/run-32m/level.json
 jq '{passed, failures, coarse_guide: (.coarse_guide | {hard_failures, lakes_compared, lakes_small})}' $O/hydrology/run-4m/level.json
 ls $O/manifest*.json $O/provenance.u8 $O/hydrology/32m/ $O/hydrology/4m/ $O/hydrology/run-4m/review/lake-exits | head -40
 ```
@@ -4058,9 +4188,15 @@ from topography_training.diffusion import cascade_l4
 
 class RawWorldTest(unittest.TestCase):
     def test_band_hydrology_flags_are_gone(self):
+        import contextlib
+        import io
+
         for flag in ("--hydrology-only", "--seam-audit", "--drop-raw", "--restart"):
-            with self.assertRaises(SystemExit):
-                cascade_l4.main(["--out", "x", flag])
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as e:
+                cascade_l4.main(["--run", "r", "--world", "w", "--out", "x", flag])
+            self.assertEqual(e.exception.code, 2)
+            self.assertIn("unrecognized arguments", err.getvalue(), flag)
 
     def test_the_raw_manifest_names_its_layers_and_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4085,6 +4221,30 @@ if __name__ == "__main__":
 Run: `PYTHONPATH=training/src $P -m unittest training/tests/test_cascade_l4_raw.py` — Expected: FAIL (flags still accepted; no `raw_manifest`).
 
 - [ ] **Step 2: Implement**
+
+The B32 flag (preflight F31):
+
+```python
+    p.add_argument("--keep-river-residual", action="store_true",
+                   help="keep the diffused residual under 4 m rivers (zeroed under lakes and sea only; B32 A/B)")
+```
+
+with, in `_setup`, the 4 m body raster and the lake/sea ids read once (`c.body4 = read4("water-body.u32", "<u4")`, `c.lake_sea_ids = np.array([b["id"] for b in bodies if b["kind"] in ("sea", "lake")])` from the 4 m world's `bodies.json`), and in the band loop, next to `water`:
+
+```python
+        if args.keep_river_residual:
+            lakes_sea = cascade.refine_mask(np.isin(_rows_4m(c.body4, r0, r1, -m, c4 + m), c.lake_sea_ids), 4,
+                                            WATER_SIGMA_M, keep_thin=True)[crop]
+```
+
+and, replacing the existing `land = …` line inside `if not deep:`:
+
+```python
+            # L4 learned land only: residual zeroed under water (B32: rivers optional).
+            land = 1.0 - np.clip(smooth((lakes_sea if args.keep_river_residual else water).astype(np.float32), 2.0), 0, 1)
+```
+
+Add `"keep_river_residual"` to the manifest via `params`.
 
 Delete the functions and flags listed under "Removed". `_layers` keeps `elevation-raw.f32`, `snow-ice.u8` and `vegetation.u8` only (`c.raw`, `c.snow_out`, `c.veg_out`); `DISK_BYTES = 6` (`# raw surface 4 B, snow and vegetation 1 B each`). In the band loop delete `hydro_until`, the pin block and `failed`. Add:
 
@@ -4136,7 +4296,7 @@ def _finish(c: SimpleNamespace, extra: dict) -> None:
 
 (`params.window_4m` is what `water.run.build_world_grid` reads for a square; `_setup` already computes `col4, row4`.) The one caller at the end of `_main` becomes `_finish(c, extra)` after the band loop, with `extra` holding `peak_vram_gb`, `deep_sea_bands`, `windows` as today; `_drop` keeps only the overlap clean-up. `main`'s "already complete" message drops the `--hydrology-only` hint. `_setup` still reads the 4 m grid's origin and offset from `world["hydrology"]["4m"]/grid.json` (the v3 chain keeps that path).
 
-In `test_water_run.py`, `fake_world` gets a `square` option: the chain manifest says `size` [2n/4…] and the L4 manifest carries `"params": {"window_4m": [col4, row4]}`, plus a chain `provenance.u8` (32 m); add a test that `build_world_grid` writes cropped `classes.u8` and `provenance.u8` of `(n/4)²` bytes for a square and links them for a whole world. Also give the whole-world fixture a chain `manifest.json` (`{"size": [n // 4, n // 4]}`) and `provenance.u8` (`(n // 32)²` bytes).
+In `test_water_run.py`, `fake_world` gets a `square` option: the chain manifest says `size` [2n/4…] and the L4 manifest carries `"params": {"window_4m": [col4, row4]}`, plus a chain `provenance.u8` (32 m); add a test that `build_world_grid` writes cropped `classes.u8` and `provenance.u8` of `(n/4)²` bytes for a square and links them for a whole world. (The whole-world chain manifest and provenance came in Task 10.)
 
 - [ ] **Step 3: Run the tests**
 
@@ -4151,7 +4311,7 @@ Task 11's chain did not diffuse L3; it is still a valid 4 m world for an L4 test
 O=scratch/hydrology-v3b/t11-chain; L=scratch/hydrology-v3b/t12-l4; W=scratch/hydrology-v3b/t12-l4-water
 rm -rf $L $W
 "${CAP12[@]}" "${PY[@]}" -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
-    --class-runs data/models/cascade-l4-run-8-experts --world $O --out $L --km 1 --centre 22858,38086 2>&1 | tail -n 5
+    --class-runs data/models/cascade-l4-run-8-experts --world $O --out $L --km 1 --centre 22858,38086 --band-m 256 2>&1 | tail -n 5
 jq '{kind, size, window: .params.window_4m}' $L/manifest.json
 "${CAP6[@]}" "${PY[@]}" -m topography_training.water.run world --source $L --out $W --tile 512 --threads 4 | tail -n 3
 jq '{passed: .water.passed, failures: .water.failures}' $W/manifest*.json
@@ -4161,16 +4321,16 @@ Expected: a `world_raw` manifest, then a water world whose manifest names its ch
 
 - [ ] **Step 4b: Kill and resume (review I7)** (GPU a few minutes; announce only)
 
-The 35–41 h run must resume to the same bytes. Run the 1 km square again into a new directory, kill it after its first band, rerun, and compare the raw surface with Step 4's uninterrupted run; then do the same for the water world:
+The 35–41 h run must resume to the same bytes. Steps 4 and 4b both use `--band-m 256` (four bands on the 1 km square, preflight F13), so the kill after band 1 lands mid-diffusion and the two runs are like for like. Run the 1 km square again into a new directory, kill it after its first band, rerun, and compare the raw surface with Step 4's uninterrupted run; then do the same for the water world:
 
 ```bash
 L2=scratch/hydrology-v3b/t12-l4-resume; rm -rf $L2
 ( "${CAP12[@]}" "${PY[@]}" -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
-    --class-runs data/models/cascade-l4-run-8-experts --world $O --out $L2 --km 1 --centre 22858,38086 > $L2.log 2>&1 ) &
-until grep -q '^band 1/' $L2.log 2>/dev/null; do sleep 5; done
+    --class-runs data/models/cascade-l4-run-8-experts --world $O --out $L2 --km 1 --centre 22858,38086 --band-m 256 > $L2.log 2>&1 ) &
+until grep -q '^band 1/4 ' $L2.log 2>/dev/null; do sleep 5; done
 kill $(pgrep -f '[c]ascade_l4 .*t12-l4-resume' | head -n 1); sleep 5
 "${CAP12[@]}" "${PY[@]}" -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
-    --class-runs data/models/cascade-l4-run-8-experts --world $O --out $L2 --km 1 --centre 22858,38086 | tail -n 2
+    --class-runs data/models/cascade-l4-run-8-experts --world $O --out $L2 --km 1 --centre 22858,38086 --band-m 256 | tail -n 2
 cmp $L/elevation-raw.f32 $L2/elevation-raw.f32 && echo "raw identical after resume"
 W2=scratch/hydrology-v3b/t12-l4-water-resume; rm -rf $W2
 ( "${CAP6[@]}" "${PY[@]}" -m topography_training.water.run world --source $L --out $W2 --tile 512 --threads 4 > $W2.log 2>&1 ) &
@@ -4362,7 +4522,7 @@ for v in off k0 k4.4e-5 k8.75e-5 k1.75e-4; do
   "${CAP10[@]}" $B world water --grid $G --work $R/work --tile 2048 --threads 4 --water $T/water4-$v.toml > $R/log 2>&1
   "${CAP10[@]}" $B world water-finish --grid $G --work $R/work --ground $R/work/carved.f32 --out $R/out \
       --tile 2048 --threads 4 --water $T/water4-$v.toml >> $R/log 2>&1
-  echo "$v: $(jq -c '{passed, failures, seam: .figures.seam_lakes.count, dams: .checks.dam_drops,
+  echo "$v: $(jq -c '{passed, failures, seam: .figures.seam_lakes.count, dams: .checks.dam_drops, steps: .checks.dam_steps,
         narrow: .checks.handoff_narrow, ip99: .figures.interior_change_p99_m}' $R/out/report.json)"
 done
 ```
@@ -4659,17 +4819,19 @@ Show the owner the eleven spot crops (`$W/hydrology/review/spots/`) and the over
 | Staging 3, 4, 5 | 16, 17, 18 |
 | Every stage keeps its raw output and is resumable; long-job rules | 6 (routings cached), 10 (`run_level` resumes), 11, 12, Heavy runs protocol, 16–18 |
 | Expert review of each task's diff with real-terrain output | every task's last step |
-| Parked items: comb-cut pits, coarse-guide mismatches, lakes without outflow, bank steps, lake 22 | 13 (B26), B28, 8 (B16), B27 and 17 Step 3, 4 and 18 Step 5 (B13) |
+| Parked items: comb-cut pits, coarse-guide mismatches, lakes without outflow, bank steps, lake 635 | 13 (B26), B28, 8 (B16), B27 and 17 Step 3, 4 and 18 Step 5 (B13) |
 
-**Review items** (`.superpowers/sdd/2026-11-07-hydrology-v3-b/plan-review.md`): C1 → B14, Task 7 (rule, tests, Step 4b controls), Task 9/15 readouts; C2 → B9, Task 7 (criterion, V and disc-trench tests); C3 → B4, Task 2 (`change_max_m`), Task 7 (`change_p99` figure); I1 → B32, Tasks 11, 12, 15 Step 3b, 17 Step 1; I2 → B33, Task 5 (bed grade, test), Task 6 (`new_pits`), Task 7 (`erosion_new_pits`); I3 → B6, Task 5 (`footprint`), Task 6 (figures), Task 9 readout; I4 → B13, Task 4 (per-basin floor, mixed-basin test); I5 → B15, Task 10 (size, depth, edge rules and tests); I6 → B10, Task 3 (agreement tolerances, stored-l2 flags); I7 → Task 12 Step 4b; I8 → B19, Task 17 Step 0. M1–M9 → B34 (none declined).
+**Review items** (`.superpowers/sdd/2026-11-07-hydrology-v3-b-coarse-and-regeneration/plan-review.md`): C1 → B14, Task 7 (rule, tests, Step 4b controls), Task 9/15 readouts; C2 → B9, Task 7 (criterion, V and disc-trench tests); C3 → B4, Task 2 (`change_max_m`), Task 7 (`change_p99` figure); I1 → B32, Tasks 11, 12, 15 Step 3b, 17 Step 1; I2 → B33, Task 5 (bed grade, test), Task 6 (`new_pits`), Task 7 (`erosion_new_pits`); I3 → B6, Task 5 (`footprint`), Task 6 (figures), Task 9 readout; I4 → B13, Task 4 (per-basin floor, mixed-basin test); I5 → B15, Task 10 (size, depth, edge rules and tests); I6 → B10, Task 3 (agreement tolerances, stored-l2 flags); I7 → Task 12 Step 4b; I8 → B19, Task 17 Step 0. M1–M9 → B34 (none declined).
+
+**Pre-flight scan** (`.superpowers/sdd/2026-11-07-hydrology-v3-b-coarse-and-regeneration/preflight-scan.md`, F1–F35, all applied as proposed): F1 `TAPER_MIN_CELLS` 2.5 (B7, B9; Task 7 isolated-disc and seam-lip tests); F2 Task 5 floor test; F3 `grid.rs` visibility (Task 1); F4 one window-wide `flags` (Tasks 4, 7); F5 optional `e` in `Tags` and `finish` (Task 6 test runs `finish`); F6 `review.window_pair` (Task 6 Step 4b); F7 `fake_world` in Task 10; F8 `test_a_mismatch_gets_a_figure`; F9 windows without provenance; F10 no `drop(r)`; F11 wrapper slimming and `u32` sort in Tasks 5–6, estimates in Task 9 and here; F12 9b's shell loop; F13 `--band-m 256` (Task 12); F14 jq; F15 B26; F16 9b (a)–(c), substeps by spacing; F17 known risks; F18 file tables; F19 per-node sums and the zero-supply branch; F20 `gorge` test at 32 m; F21 flag test; F22 `interior_max` slack; F23 `Case`; F24 workspace path; F25 no coarse fixture dir; F26 `water-v2` comments; F27 `Stats::new`; F28 lake 635; F29 Step 0; F30 `on_stack`; F31 `--keep-river-residual` code; F32 noted in B15; F33 `dam_steps` stays hard, read in Tasks 9 and 15; F34, F35 interfaces.
 
 **Placeholder scan:** every code step carries code. Two steps cannot carry their final code by nature and say so: Task 13's fix (a diagnosis task, with the reproduction, the hard check, the test and the two candidate fixes stated) and Task 9b (a contingency whose Rust side is described by its file protocol).
 
 **Type and name consistency:** `Erosion`, `Level` (with `wall_deg`, `erosion`), `Params.wall_deg/erosion`, `is_wall(slope, raw, wall_deg)` (Task 2) are used verbatim in Tasks 5–7. `Setup.provenance`, `Setup::flags`, `Setup::below_sea(core, ground)`, `balance::coastal_floor`, `BELOW_SEA_OK`, `STEEP`, `KIND_MASK`, `INTERIOR` (Task 4) are used in Tasks 6 and 7. `Bits`, `Sill`, `Routing`, `Figures` (with `new_pits`, `hillslope_*`), `receiver`, `stream_power`, `footprint`, `diffuse(r, z, alpha, near)`, `taper`, `new_pits`, `erode` (Tasks 5–6) match. `pre_channel`, `CheckLayers.pre_channel` and `.breached` (Task 6) are what Task 7 reads. `grids.write_grid/add_moisture/provenance_window`, `run.run_level`, `level.json` keys (Task 10) are what Tasks 11, 12, 15 and 16 read. The provenance bits (Task 3 Python, Task 4 Rust) are the same values (1 interior, 2–4 blend/painted/fill, 64, 128).
 
 **Known risks to watch:**
-- The 4 m erosion's memory (about 17–21 B per cell plus the 8 B sort keys) is measured in Task 9; if it fails the rule, Task 9b's GPU path adds plumbing.
-- `order_ties` > 0 would mean R12's strict dry receivers do not hold on eroded coarse ground; Task 9 Step 6 checks it.
+- The 4 m erosion stage holds about 21.5 B per cell (about 5.8 GB at 16,384², plus the routing's model; expected peak 6–6.5 GB against B1's 7 GB). Task 9 measures it; a memory failure is fixed by slimming the wrapper further, never by Task 9b (B1), which only answers a time failure.
+- `order_ties` is a figure: ties and lake-sill chains are processed receiver-first by design (M3); only the time they cost shows, in B1(a).
 - The coarse guide's 5 m rule between 32 m and 4 m depends on L3 keeping lake rims; Task 15 measures it on real L3 before the long run.
 - `dam_drops`' knickpoint factor 3 is calibrated on Task 7's controls; a sheer natural waterfall right at an outlet still fails and goes to the owner before gate 4 (owner question 3), never to a code exemption.
 - The per-basin coastal floor (B13) adds two integer sums to the hierarchy's supply plumbing; Task 4's tiled-exactness tests must cover them.
