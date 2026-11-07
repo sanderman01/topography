@@ -1199,9 +1199,14 @@ pub(crate) fn check_tile(
                         }
                         out
                     };
-                    // Ruling Q5: the outflow of the lake this river feeds (within TRIBUTARY_M)
-                    // is the same water: its exit walk, and paths joining it, are own.
-                    let fed = walk(j).into_iter().find(|&c| lake_cell(c)).map(|c| body[c]);
+                    // Ruling Q5: the river's own path within TRIBUTARY_M and the outflow of
+                    // the lake it feeds (its exit walk, and paths joining it) are the same water.
+                    let path = walk(j);
+                    let fed = path
+                        .iter()
+                        .copied()
+                        .find(|&c| lake_cell(c))
+                        .map(|c| body[c]);
                     let outflow: Vec<usize> = fed
                         .and_then(|l| exits.iter().find(|e| e.lake == Some(l)))
                         .and_then(|e| {
@@ -1212,7 +1217,7 @@ pub(crate) fn check_tile(
                         .unwrap_or_default();
                     let own_cell = |c: usize| {
                         let wet = surf[c].is_finite();
-                        c == j
+                        path.contains(&c)
                             || (wet && id == Some(body[c]))
                             || (wet && body[c] > 1 && joins(j, body[c]))
                             || (flow[c] & 16 != 0 && id.is_some_and(|b| joins(c, b)))
@@ -2851,6 +2856,37 @@ mod tests {
         (c.surf[last], c.body[last]) = (c.z[last], 1);
         c.q[last] = 2.0;
         c.q[mouth] = 2.0;
+        c.m3_only();
+        let t = c.tile();
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+    }
+
+    /// Task 9 (E9840 N11024, E10704 N12848): the river's own unlabelled continuation (a dry
+    /// drainage end at 0 m carrying its Q before the sea) is no second thalweg either.
+    #[test]
+    fn a_rivers_own_unlabelled_end_is_no_second_thalweg() {
+        let sea = |x: u64, y: u64| x + y > 51;
+        let mut c = Case::new(40, 40, |x, y| {
+            if sea(x, y) {
+                -2.0
+            } else {
+                2.0 * (51 - x - y) as f32
+            }
+        });
+        for y in 0..40 {
+            for x in 0..40 {
+                if sea(x, y) {
+                    let k = c.k(x, y);
+                    (c.surf[k], c.body[k], c.node[k], c.level[k]) = (0.0, 1, 1, 0.0);
+                }
+            }
+        }
+        c.levels.insert(1, 0.0);
+        // Written down to (25, 25); (26, 25) at 0 m is dry, unlabelled, a drainage end.
+        let path: Vec<(u64, u64)> = (5..=26).map(|x| (x, 25)).collect();
+        c.river(&path, 2.0, 5);
+        let end = c.k(26, 25);
+        (c.flow[end], c.q[end], c.z[end], c.raw[end]) = (0, 2.0, 0.0, 0.0);
         c.m3_only();
         let t = c.tile();
         assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
