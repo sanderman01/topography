@@ -362,7 +362,8 @@ command resumes after the last finished band, or at the 4 m hydrology, exactly a
 uninterrupted run would end, even after a kill in the middle of a band's write:
 `l3-raw.f32`, `l2.npz`, `progress.json` (written atomically) and each band's bottom halo
 rows (`overlap-N.f32`, which the next band cross-fades with) hold that state until the
-manifest is written. Windows whose coarse ground is all below −50 m are not
+manifest is written. `l3-raw.f32` (the raw L3 surface before the 4 m hydrology, 1 GB at
+64 km) is kept after that, so the 4 m hydrology can be run again without diffusing again. Windows whose coarse ground is all below −50 m are not
 diffused: L3 learned land only and its output is the coarse ground there anyway (a coastal
 8 km square: 115 of 225 windows skipped, half the time, deep sea identical and land within
 3 mm of a run without the skip). `--guidance-classes 19` limits `--guidance` to windows

@@ -790,9 +790,9 @@ def main(argv=None) -> int:
         "runs": _runs(args, ("l1", "l2", "l3")), "collage": _collage_path(args),
         "class_runs": _class_runs(args),
         "layers": digests}, indent=1))
-    # Only now the run cannot be resumed any more.
-    for name in ("l3-raw.f32", "l2.npz"):
-        (args.out / name).unlink(missing_ok=True)
+    # Only now the run cannot be resumed any more. The raw L3 surface stays: the 4 m
+    # hydrology can be run again on it without diffusing again.
+    (args.out / "l2.npz").unlink(missing_ok=True)
     cascade.drop_overlaps(args.out, 1 << 30)
     print(f"wrote {args.out}", flush=True)
     return 0
