@@ -382,14 +382,18 @@ pub(crate) fn p99_m(hist: &[u64]) -> f64 {
 
 /// Region cells (`cell_m` square) at least BLEND_FAR_M from a region border (a cell with an
 /// 8-neighbour of another region, sea outside every region included), as 1, else 0. Chamfer
-/// distance (1, √2): within 8 % of Euclidean, enough for a figure. Borders beyond the grid
-/// are not seen.
+/// distance (1, √2): within 8 % of Euclidean, enough for a figure. The grid edge counts as
+/// a border (a window's or the world's edge: what lies beyond is unseen).
 pub(crate) fn far_from_borders(regions: &[u8], world: World, cell_m: f64) -> Vec<u8> {
     let (w, h) = (world.w as usize, world.h as usize);
     let border = |x: usize, y: usize| {
         let r = regions[y * w + x];
-        (y.saturating_sub(1)..(y + 2).min(h))
-            .any(|ny| (x.saturating_sub(1)..(x + 2).min(w)).any(|nx| regions[ny * w + nx] != r))
+        x == 0
+            || y == 0
+            || x + 1 == w
+            || y + 1 == h
+            || (y.saturating_sub(1)..(y + 2).min(h))
+                .any(|ny| (x.saturating_sub(1)..(x + 2).min(w)).any(|nx| regions[ny * w + nx] != r))
     };
     let mut d: Vec<f64> = (0..w * h)
         .map(|i| {
@@ -3159,6 +3163,15 @@ mod tests {
         // A 1 m run has no coarse budget.
         f.spacing = 1.0;
         assert_eq!(f.report()["checks"]["interior_p99"], 0);
+    }
+
+    #[test]
+    fn the_grid_edge_is_a_region_border() {
+        // One region over 9 × 9 cells of 500 m: only the centre is 2 km from the edge.
+        let world = World { w: 9, h: 9 };
+        let far = far_from_borders(&[3; 81], world, 500.0);
+        assert_eq!(far.iter().filter(|&&v| v == 1).count(), 1);
+        assert_eq!(far[4 * 9 + 4], 1);
     }
 
     #[test]
