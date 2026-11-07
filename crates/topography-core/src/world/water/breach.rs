@@ -6,7 +6,7 @@
 //! loses more than its centre), and its deepest cut stays within the level's breach cap (at 1 m the 2 m
 //! channel cap for every river, R9; the channels' raw − 2 m clamp keeps breach plus channel
 //! within it; and only depressions a river flows into). Raw faces at least `NO_CUT_DEG` steep
-//! beside the path are not cut, each cut's taper is wide enough for sides under TAPER_DEG, and a
+//! beside the path are not cut (at levels without erosion), each cut's taper is wide enough for sides under TAPER_DEG, and a
 //! gorge that would still leave a changed cell steeper than max(wall_deg, raw) (the `walls` check)
 //! is refused. Otherwise the depression keeps its water. Gorges lie within
 //! `Params::breach_radius` cells of their spill, so every tiling decides alike.
@@ -219,7 +219,7 @@ pub(crate) fn gorge(
     // max(half + 1, taper_min, 2·d / (tan TAPER_DEG · spacing)) cells lowered by that cut tapered parabolically
     // to nothing at its edge, never below the grade at that cell (no new pits), so the gorge is at
     // least 3 cells wide, has no square walls and cuts no wall more than its centre. Path cells
-    // are always cut; steep raw faces beside them are not.
+    // are always cut; steep raw faces beside them are not (but at erosion levels).
     let mut new: HashMap<u64, f32> = HashMap::new();
     let tan = TAPER_DEG.to_radians().tan();
     for (i, &p) in path.iter().enumerate().take(e + 1) {
@@ -255,7 +255,9 @@ pub(crate) fn gorge(
                 // the centre, so no disc drops a cell below the gorge's grade (review I1).
                 let floor = match on_path.get(&cell) {
                     Some(&j) => line(k, j),
-                    None if steep(cell) => continue,
+                    // At erosion levels (taper_min set) the disc cuts steep raw too: sparing
+                    // it leaves a slot L3 would copy (B9).
+                    None if c.taper_min == 0.0 && steep(cell) => continue,
                     None => (f64::from(line(k, i)) + k * f64::from(r) * spacing_m) as f32,
                 };
                 let ground = z(cell);
@@ -840,6 +842,35 @@ mod tests {
             steep(k) && !cut.contains_key(&k) && r.iter().any(|(&a, &ra)| dist(world, a, k) < ra)
         });
         assert!(spared, "no steep cell inside a disc");
+    }
+
+    /// At erosion levels steep raw beside the path is cut like the rest of the disc (Task 9):
+    /// sparing it left the path a one-cell slot in 32 m canyons (`handoff_narrow`).
+    #[test]
+    fn at_erosion_levels_steep_raw_beside_the_path_is_cut() {
+        // A 3 m mound across a V valley with 50° sides (as GLO-30 canyons at 32 m).
+        let (world, z) = mound(3.0, 8.0, 1.2, false);
+        let (mut c, all) = the_candidate(world, &z, 4.0);
+        c.taper_min = erosion::TAPER_MIN_CELLS as f32;
+        // The full disc may remove more than the pond holds: then it fills (no slot either).
+        let Ok(g) = gorge(world, all, &z, &c, 1.0, 40.0) else {
+            return;
+        };
+        let (w, h) = (world.w as usize, world.h as usize);
+        let mut after = z.clone();
+        for &(k, v) in &g.cut {
+            after[k as usize] = v;
+        }
+        let slots: Vec<_> = g
+            .cut
+            .iter()
+            .map(|&(k, _)| world.xy(k))
+            .filter(|&(x, y)| x >= 2 && y >= 2 && (x as usize) + 2 < w && (y as usize) + 2 < h)
+            .filter(|&(x, y)| {
+                crate::world::water::checks::narrow_at(&z, &after, w, h, x as usize, y as usize).1
+            })
+            .collect();
+        assert_eq!(slots, [], "handoff_narrow on the gorge");
     }
 
     #[test]
