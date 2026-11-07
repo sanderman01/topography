@@ -694,6 +694,8 @@ const NO_EXIT: u64 = u64::MAX;
 /// Settle's figures: cells raised, of them wetted, the largest lift (m), its world cell
 /// (u64::MAX for none) and body.
 pub(crate) type Settled = (u64, u64, f32, u64, u32);
+/// A tile's settle figures and its changed cells (core index, surface, body).
+pub(crate) type SettledTile = (Settled, Vec<(u64, f32, u32)>);
 
 /// The larger lift of two; ties keep the smaller cell (exact under any tile order).
 fn more_lift(a: Settled, b: Settled) -> Settled {
@@ -843,58 +845,70 @@ pub(crate) fn settle(
     }
     // 2: every cell's whole-path maximum; raise where it lies above the cell.
     let none: Settled = (0, 0, 0.0, u64::MAX, 0);
+    let settle_tile = |core: Rect| -> Result<SettledTile> {
+        let (flow, d0) = read(core)?;
+        let pm = path_max(world, core, &flow, &d0)?;
+        let (sf, b) = (out.surface.read(core)?, out.body.read(core)?);
+        let (mut fig, mut changed) = (none, Vec::new());
+        for k in 0..core.cells() {
+            // Labelled lakes keep their surface and body.
+            if sf[k].is_finite() && lakes.contains(&b[k]) {
+                continue;
+            }
+            let (v, id, exit) = pm[k];
+            let top = match exit {
+                NO_EXIT => (v, id),
+                e => {
+                    let f = full.get(&e).copied().ok_or_else(|| {
+                        crate::acquisition::AcquisitionError::Invalid(format!(
+                            "cell {e} is on no tile ring"
+                        ))
+                    })?;
+                    if f.0 > v { f } else { (v, id) }
+                }
+            };
+            let (was, mut v) = (sf[k], (sf[k], b[k]));
+            // A wet cell keeps its body at its pond's level (d0).
+            if was.is_finite() {
+                v.0 = d0[k].0;
+            }
+            // Only labelled water wets a cell (a pond or dry source has no body).
+            if top.0 > d0[k].0 && top.1 >= 1 {
+                v = top;
+            }
+            if v.0 != was && !(v.0.is_nan() && was.is_nan()) {
+                let lift = v.0 - if was.is_finite() { was } else { d0[k].0 };
+                let (x, y) = core.world_xy(k);
+                let cell = (1, u64::from(!was.is_finite()), lift, world.index(x, y), v.1);
+                fig = more_lift(fig, cell);
+                changed.push((k as u64, v.0, v.1));
+            }
+        }
+        Ok((fig, changed))
+    };
     let parts: Vec<Settled> =
         for_tiles(&tiles, s.threads, &format!("{tag} settle 2"), |i, core| {
             let name = format!("{tag}/s2/{i:05}");
+            let changes = format!("{name}-changes");
             if let Some(wk) = work {
                 if wk.is_done(&name) {
-                    return wk.cached(&format!("{name}-figures"), || Ok(none));
+                    let done: SettledTile = wk.cached(&changes, || Ok((none, Vec::new())))?;
+                    return Ok(done.0);
                 }
             }
-            let (flow, d0) = read(core)?;
-            let pm = path_max(world, core, &flow, &d0)?;
-            let (mut sf, mut b) = (out.surface.read(core)?, out.body.read(core)?);
-            let mut fig = none;
-            for k in 0..core.cells() {
-                // Labelled lakes keep their surface and body.
-                if sf[k].is_finite() && lakes.contains(&b[k]) {
-                    continue;
+            // Settle rewrites the channels' rasters in place: its changes are cached before
+            // either raster is written, so a kill between the two writes resumes by rewriting
+            // both from the cache, never from half-settled rasters.
+            let (fig, changed) = cached(work, &changes, || settle_tile(core))?;
+            if !changed.is_empty() {
+                let (mut sf, mut b) = (out.surface.read(core)?, out.body.read(core)?);
+                for &(k, v, id) in &changed {
+                    (sf[k as usize], b[k as usize]) = (v, id);
                 }
-                let (v, id, exit) = pm[k];
-                let top = match exit {
-                    NO_EXIT => (v, id),
-                    e => {
-                        let f = full.get(&e).copied().ok_or_else(|| {
-                            crate::acquisition::AcquisitionError::Invalid(format!(
-                                "cell {e} is on no tile ring"
-                            ))
-                        })?;
-                        if f.0 > v { f } else { (v, id) }
-                    }
-                };
-                let (was, mut v) = (sf[k], (sf[k], b[k]));
-                // A wet cell keeps its body at its pond's level (d0).
-                if was.is_finite() {
-                    v.0 = d0[k].0;
-                }
-                // Only labelled water wets a cell (a pond or dry source has no body).
-                if top.0 > d0[k].0 && top.1 >= 1 {
-                    v = top;
-                }
-                if v.0 != was && !(v.0.is_nan() && was.is_nan()) {
-                    let lift = v.0 - if was.is_finite() { was } else { d0[k].0 };
-                    let (x, y) = core.world_xy(k);
-                    let cell = (1, u64::from(!was.is_finite()), lift, world.index(x, y), v.1);
-                    fig = more_lift(fig, cell);
-                    (sf[k], b[k]) = v;
-                }
-            }
-            if fig.0 > 0 {
                 out.surface.write(core, &sf)?;
                 out.body.write(core, &b)?;
             }
             if let Some(wk) = work {
-                wk.cached(&format!("{name}-figures"), || Ok(fig))?;
                 wk.mark_done(&name)?;
             }
             Ok(fig)
@@ -1540,6 +1554,46 @@ mod tests {
         assert_eq!(fig4.0, fig.0);
         let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
         assert_eq!((bits(&sf4), b4), (bits(&sf), b), "tiles of 4 alike");
+    }
+
+    /// Settle rewrites the channels' rasters in place: a kill after a tile's surface write
+    /// but before its body write (the settled cells' bodies lost) resumes to the same rasters.
+    #[test]
+    fn settle_resumes_after_a_kill_between_its_writes() {
+        let world = World { w: 12, h: 3 };
+        let dir = tempfile::tempdir().expect("temp");
+        let work = Work::open(dir.path(), &json!({})).expect("work");
+        let s = setup(world, 4, 1e-5);
+        let z: Vec<f32> = (0..36).map(|i| 10.0 - 0.1 * (i % 12) as f32).collect();
+        let r3 = Rasters::memory(world);
+        let flow: Vec<u8> = (0..36)
+            .map(|i| if i / 12 == 1 && i % 12 < 11 { 4 } else { 32 })
+            .collect();
+        r3.flow.write(Rect::whole(world), &flow).unwrap();
+        let out = Layers::memory(world);
+        let (mut sf, mut b) = (vec![f32::NAN; 36], vec![0u32; 36]);
+        (sf[12 + 8], b[12 + 8]) = (10.0, 7);
+        out.surface.write(Rect::whole(world), &sf).unwrap();
+        out.body.write(Rect::whole(world), &b).unwrap();
+        let ground = Layer::memory(world, z);
+        let go = || settle(&s, &r3, &ground, &out, &HashSet::new(), Some(&work), "s");
+        let fig = go().expect("settle");
+        let (sf, b) = (out.surface.to_vec().unwrap(), out.body.to_vec().unwrap());
+        // The kill: settled surfaces written, their bodies not, no done markers.
+        let mut cut = b.clone();
+        for k in 0..36 {
+            if sf[k].is_finite() && k != 12 + 8 {
+                cut[k] = 0;
+            }
+        }
+        out.body.write(Rect::whole(world), &cut).unwrap();
+        for i in 0..s.tiles().len() {
+            let _ = std::fs::remove_file(work.path(&format!("s/s2/{i:05}.done")));
+        }
+        assert_eq!(go().expect("resume"), fig);
+        assert_eq!(out.body.to_vec().unwrap(), b);
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&out.surface.to_vec().unwrap()), bits(&sf));
     }
 
     /// A bank pocket wet at its river's surface (9.2 m) inside an m3 pond at 9.6 m that spills
