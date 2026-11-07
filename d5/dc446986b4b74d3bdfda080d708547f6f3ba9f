@@ -1,0 +1,21 @@
+training/src/topography_training/diffusion/cascade_chain.py
+  s_774c09797904fe::t_3e3fd63aeedfe5 793-795
+docs/workflows/terrain-cascade.md
+  s_774c09797904fe::t_b5b298593f5cad 365-366
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5dc446986b4b74d3bdfda080d708547f6f3ba9f",
+  "prompts": {},
+  "sessions": {
+    "s_774c09797904fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db136362-a5cc-4efa-8192-13bacc041efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
