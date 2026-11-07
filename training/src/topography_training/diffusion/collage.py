@@ -1,6 +1,7 @@
 """Layouts as a collage of real GLO-30 regions (docs/plans/fujix-v1.md).
 
 python -m topography_training.diffusion.collage <layout.toml> --release <context release.json> --out <new-dir>
+python -m topography_training.diffusion.collage provenance <collage-dir>  # sidecar of an existing build
 
 Each region's ground comes from pieces of real regions, cut out, rotated, scaled and
 remapped in height, then blended across region borders with a Laplacian pyramid; classes
@@ -204,10 +205,16 @@ def fill_smooth(a: np.ndarray, known: np.ndarray) -> np.ndarray:
     return np.where(known, a, est).astype(np.float32)
 
 
+PIECE_MIN_W = 0.01  # a piece reaches a cell from this weight
+
+
 def region_surface(r: Region, srcs: dict[str, Source], x: np.ndarray, y: np.ndarray, noise: np.ndarray):
-    """Heights (filled smoothly past the pieces), classes dithered by piece weight, and covered cells."""
+    """Heights (filled smoothly past the pieces), classes dithered by piece weight, covered
+    cells, the largest single piece weight and how many pieces reach each cell."""
     num = np.zeros(x.shape, np.float32)
     den = np.zeros(x.shape, np.float32)
+    wmax = np.zeros(x.shape, np.float32)
+    npieces = np.zeros(x.shape, np.uint8)
     # The region's own class wherever no piece reaches.
     classes, weights = [np.full(x.shape, r.class_id, np.uint8)], [np.full(x.shape, 1e-4, np.float32)]
     for p in r.pieces:
@@ -215,11 +222,14 @@ def region_surface(r: Region, srcs: dict[str, Source], x: np.ndarray, y: np.ndar
         h, c, w = place(p, src, x, y)
         num += w * h
         den += w
+        wmax = np.maximum(wmax, w)
+        npieces += (w >= PIECE_MIN_W).astype(np.uint8)
         # The source's own class becomes the region's (or the piece's); glacier, alpine and plain cells stay.
         classes.append(np.where(c == src.class_id, p.class_id or r.class_id, c).astype(np.uint8))
         weights.append(w)
     covered = den > 1e-3
-    return fill_smooth(num / np.maximum(den, 1e-6), covered), dither(classes, weights, noise), covered
+    return (fill_smooth(num / np.maximum(den, 1e-6), covered), dither(classes, weights, noise), covered,
+            wmax, npieces)
 
 
 def island_sd(sds: list[np.ndarray]) -> np.ndarray:
@@ -638,6 +648,112 @@ def region_map(h: np.ndarray, sds: list[np.ndarray], land_w: list[np.ndarray]) -
     return out
 
 
+SEA_P, INTERIOR, BLEND, PAINTED, FILL = 0, 1, 2, 3, 4  # provenance kinds (bits 0-2)
+KIND_MASK = 7
+BELOW_SEA_OK = 64  # an inland basin may keep a lake below 0 m (hot-dry, far from the sea)
+STEEP = 128  # the stored collage is at least STEEP_DEG steep (a figure tag on dam_drops, B14)
+INTERIOR_SHARE = 0.99  # dominant region's weight share and its piece's weight for an interior
+INTERIOR_MARGIN_M = 1000.0  # the pyramid's coarsest band mixes this far past any blend
+PAINTED_M = 0.5  # authored changes after the blend (dips, calderas, edge limit, sinking)
+STEEP_DEG = 30.0
+REPLAY_P99_M = 0.5  # provenance needs weights and regions, not centimetre heights (B10)
+REPLAY_MAX_M = 5.0
+REPLAY_CLASS_AGREEMENT = 0.999
+
+
+@dataclass
+class Surface:
+    """The collage's 32 m surface and what made it (one entry per region in the lists)."""
+
+    h32: np.ndarray
+    blended: np.ndarray  # the pyramid blend before sinking, edge limit, dips and calderas
+    cls32: np.ndarray
+    region32: np.ndarray
+    forest32: np.ndarray
+    ice: np.ndarray
+    dips: dict
+    pre: np.ndarray
+    cal: object
+    sds: list
+    land_w: list
+    covered: list
+    wmax: list
+    npieces: list
+
+
+def surface(spec: dict, regions: list[Region], srcs: dict[str, Source]) -> Surface:
+    """Every surface step of a build, in memory (no files)."""
+    n = int(spec["extent_m"] / CELL_M)
+    x, y = grid(n)
+    sds, surfaces, classes, covered, wmax, npieces = [], [], [], [], [], []
+    piece_noise = blue_noise(n, seed=PIECE_NOISE_SEED)  # independent of the region dither below
+    dx, dy = warp_field(n)  # one warp for every outline, so borders stay shared
+    for r in regions:
+        sds.append(warp(description.polygon_sd(r.outline, n, CELL_M), dx, dy))
+        h, cl, cov, wm, npc = region_surface(r, srcs, x, y, piece_noise)
+        surfaces.append(h)
+        classes.append(cl)
+        covered.append(cov)
+        wmax.append(wm)
+        npieces.append(npc)
+    isd = island_sd(sds)
+    land_w = [weight(sd, r.border_m) for sd, r in zip(sds, regions)]
+    sea = ocean(isd, spec)
+    blended = blend(surfaces + [sea], land_w + [weight(-isd, OCEAN_BORDER_M)])
+    h32 = sink_outside(blended, isd, sea)
+    h32 = np.minimum(h32, edge_limit(n, spec))
+    h32, dips = dip_passes(h32, spec)
+    pre = h32.astype(np.float64)
+    h32, ice, cal = calderas(h32, spec, x, y)
+    total = np.maximum(np.sum(land_w, axis=0), 1e-6)
+    forest32 = np.where(h32 >= 0, sum(w * r.forest for w, r in zip(land_w, regions)) / total, 0).astype(np.float32)
+    forest32[ice] = 0
+    cls32 = dither(classes, land_w, blue_noise(n, seed=REGION_NOISE_SEED))
+    cls32[ice] = GLACIER_CLASS
+    region32 = region_map(h32, sds, land_w)
+    return Surface(h32, blended, cls32, region32, forest32, ice, dips, pre, cal, sds, land_w, covered,
+                   wmax, npieces)
+
+
+def slope_deg(h: np.ndarray, cell_m: float) -> np.ndarray:
+    """Horn's slope in degrees, edges padded."""
+    p = np.pad(h.astype(np.float64), 1, mode="edge")
+    a, b, cc = p[:-2, :-2], p[:-2, 1:-1], p[:-2, 2:]
+    d, f = p[1:-1, :-2], p[1:-1, 2:]
+    g, hh, i = p[2:, :-2], p[2:, 1:-1], p[2:, 2:]
+    gx = ((cc + 2 * f + i) - (a + 2 * d + g)) / (8 * cell_m)
+    gy = ((g + 2 * hh + i) - (a + 2 * b + cc)) / (8 * cell_m)
+    return np.degrees(np.arctan(np.hypot(gx, gy)))
+
+
+def provenance(s: Surface, hot_dry: list[int], coast_km: float, l2: np.ndarray | None = None) -> np.ndarray:
+    """Kind per 32 m cell (bits 0-2) with the below-sea and steep-source flags (ruling B10).
+    Heights (painted test, steep flag, sea) come from the stored surface `l2` when given."""
+    from scipy import ndimage
+
+    h = s.h32 if l2 is None else l2
+    lw = np.stack(s.land_w)
+    k = lw.argmax(axis=0)[None]
+    share = np.take_along_axis(lw, k, 0)[0] / np.maximum(lw.sum(axis=0), 1e-6)
+
+    def pick(a):
+        return np.take_along_axis(np.stack(a), k, 0)[0]
+
+    out = np.full(h.shape, BLEND, np.uint8)
+    out[(share >= INTERIOR_SHARE) & (pick(s.wmax) >= INTERIOR_SHARE) & (pick(s.npieces) == 1)] = INTERIOR
+    out[~pick(s.covered)] = FILL
+    margin = int(round(INTERIOR_MARGIN_M / CELL_M))
+    near = ndimage.binary_dilation(out != INTERIOR, np.ones((3, 3), bool), iterations=margin)
+    out[(out == INTERIOR) & near] = BLEND
+    out[np.abs(h - s.blended) > PAINTED_M] = PAINTED
+    out[s.region32 == 0] = SEA_P
+    sea = cascade.open_sea(h)
+    far = (ndimage.distance_transform_edt(~sea) * CELL_M >= coast_km * 1000.0) if sea.any() else ~sea
+    out[np.isin(s.cls32, hot_dry) & far & ~sea] |= BELOW_SEA_OK
+    out[slope_deg(h, CELL_M) >= STEEP_DEG] |= STEEP
+    return out
+
+
 @dataclass
 class Drainage:
     """Priority-flood drainage of the land's bounding box: every cell drains to the open sea."""
@@ -966,38 +1082,16 @@ def build(layout_path: Path, release: Path, out: Path) -> int:
 
 
 def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source], out: Path) -> np.ndarray:
-    n = int(spec["extent_m"] / CELL_M)
-    x, y = grid(n)
-    sds, surfaces, classes, covered = [], [], [], []
-    piece_noise = blue_noise(n, seed=PIECE_NOISE_SEED)  # independent of the region dither below
-    dx, dy = warp_field(n)  # one warp for every outline, so borders stay shared
-    for r in regions:
-        sds.append(warp(description.polygon_sd(r.outline, n, CELL_M), dx, dy))
-        h, c, cov = region_surface(r, srcs, x, y, piece_noise)
-        surfaces.append(h)
-        classes.append(c)
-        covered.append(cov)
-    isd = island_sd(sds)
-    land_w = [weight(sd, r.border_m) for sd, r in zip(sds, regions)]
-    sea = ocean(isd, spec)
-    h32 = sink_outside(blend(surfaces + [sea], land_w + [weight(-isd, OCEAN_BORDER_M)]), isd, sea)
-    h32 = np.minimum(h32, edge_limit(n, spec))
-    h32, dips = dip_passes(h32, spec)
-    pre = h32.astype(np.float64)
-    h32, ice, cal = calderas(h32, spec, x, y)
-    total = np.maximum(np.sum(land_w, axis=0), 1e-6)
-    forest32 = np.where(h32 >= 0, sum(w * r.forest for w, r in zip(land_w, regions)) / total, 0).astype(np.float32)
-    forest32[ice] = 0
-    cls32 = dither(classes, land_w, blue_noise(n, seed=REGION_NOISE_SEED))
-    cls32[ice] = GLACIER_CLASS
-    region32 = region_map(h32, sds, land_w)
-    write_l0(out, text, spec, h32, cls32, forest32)
+    s = surface(spec, regions, srcs)
+    h32, cls32, region32 = s.h32, s.cls32, s.region32
+    write_l0(out, text, spec, h32, cls32, s.forest32)
     cls32.tofile(out / "class32.u8")
     region32.tofile(out / "region32.u8")
     np.savez_compressed(out / "arrays.npz", l1=cascade.block_mean(h32, int(L0_CELL_M / CELL_M)), l2=h32)
+    _write_provenance_files(out, s, h32, replay={"built": True})
     l0 = layout.load(out)
     layout.overview(l0, out / "overview.png")
-    text_r, warnings = report(spec, regions, h32, sds, land_w, covered, region32, ice, dips, pre, cal)
+    text_r, warnings = report(spec, regions, h32, s.sds, s.land_w, s.covered, region32, s.ice, s.dips, s.pre, s.cal)
     (out / "report.txt").write_text(text_r)
     print(text_r, end="")
     text_b, bands, _ = layout.reach(h32, CELL_M, spec)
@@ -1008,7 +1102,83 @@ def _build(spec: dict, text: str, regions: list[Region], srcs: dict[str, Source]
     return h32
 
 
+def replay(collage: Path) -> tuple[Surface, dict]:
+    """The collage's surface recomputed from its layout and release, and how well it agrees with
+    the stored build (B10)."""
+    meta = json.loads((collage / "collage.json").read_text())
+    layout_path = Path(meta["layout"])
+    text = layout_path.read_text()
+    if hashlib.sha256(text.encode()).hexdigest() != meta["layout_sha256"]:
+        raise SystemExit(f"error: {layout_path} changed since {collage} was built; cannot replay")
+    spec = tomllib.loads(text)
+    regions = parse(spec)
+    srcs = sources(Path(meta["release"]), {p.source for r in regions for p in r.pieces})
+    s = surface(spec, regions, srcs)
+    l2 = np.load(collage / "arrays.npz")["l2"]
+    region = np.fromfile(collage / "region32.u8", np.uint8).reshape(l2.shape)
+    cls = np.fromfile(collage / "class32.u8", np.uint8).reshape(l2.shape)
+    d = np.abs(s.h32.astype(np.float64) - l2)
+    painted = np.abs(l2 - s.blended) > PAINTED_M
+    return s, {"region_equal": bool((region == s.region32).all()),
+               "class_agreement": float((cls == s.cls32).mean()),
+               "l2_p99_m": float(np.percentile(d, 99)),
+               "l2_max_outside_painted_m": float(d[~painted].max(initial=0.0))}
+
+
+def _write_provenance_files(out: Path, s: Surface, l2: np.ndarray, replay: dict) -> Path:
+    from PIL import Image
+
+    from ..water import table
+
+    prov = provenance(s, table.hot_dry_classes(), table.below_sea_coast_km(), l2)
+    path = out / "provenance32.u8"
+    prov.tofile(path)
+    kind = prov & KIND_MASK
+    land = l2 >= 0
+    shares = {name: round(float((kind[land] == v).mean()), 4)
+              for name, v in (("interior", INTERIOR), ("blend", BLEND), ("painted", PAINTED), ("fill", FILL))}
+    (out / "provenance32.json").write_text(json.dumps({
+        "kind": "collage_provenance", "file": path.name, "size": list(prov.shape), "cell_m": CELL_M,
+        "kinds": {"0": "sea outside every region", "1": "piece interior", "2": "blend zone",
+                  "3": "painted feature", "4": "exemplar fill"},
+        "bits": {"64": "below-sea basin may keep its lake (hot-dry, far from open sea)",
+                 "128": f"steep source (Horn slope >= {STEEP_DEG} deg)"},
+        "l2_sha256": hashlib.sha256(np.ascontiguousarray(l2, "<f4").tobytes()).hexdigest(),
+        "replay": replay,
+        "thresholds": {"interior_share": INTERIOR_SHARE, "interior_margin_m": INTERIOR_MARGIN_M,
+                       "painted_m": PAINTED_M, "steep_deg": STEEP_DEG,
+                       "coast_km": table.below_sea_coast_km(), "hot_dry": table.hot_dry_classes()},
+        "shares_of_land": shares}, indent=1))
+    colours = np.array([[40, 70, 140], [70, 160, 70], [230, 200, 60], [220, 80, 60], [160, 100, 200],
+                        [0, 0, 0], [0, 0, 0], [0, 0, 0]], np.uint8)
+    rgb = colours[kind]
+    rgb[(prov & STEEP) > 0] //= 2
+    Image.fromarray(rgb).save(out / "provenance32.png")
+    return path
+
+
+def write_provenance(collage: Path) -> Path:
+    """The provenance sidecar of an existing collage (ruling B10): replayed, checked, additive."""
+    if (collage / "provenance32.u8").exists():
+        raise SystemExit(f"error: {collage / 'provenance32.u8'} exists")
+    s, agree = replay(collage)
+    ok = (agree["region_equal"] and agree["class_agreement"] >= REPLAY_CLASS_AGREEMENT
+          and agree["l2_p99_m"] <= REPLAY_P99_M and agree["l2_max_outside_painted_m"] <= REPLAY_MAX_M)
+    if not ok:
+        raise SystemExit(f"error: the replay does not reproduce {collage} ({agree}); "
+                         "a rebuilt collage is a new world (owner question 2)")
+    l2 = np.load(collage / "arrays.npz")["l2"]
+    return _write_provenance_files(collage, s, l2, agree)
+
+
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["provenance"]:
+        p = argparse.ArgumentParser(description="write a collage's provenance sidecar (replayed)")
+        p.add_argument("collage", type=Path)
+        a = p.parse_args(argv[1:])
+        print(write_provenance(a.collage))
+        return 0
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("layout", type=Path, help="layout v2 TOML")
     p.add_argument("--release", type=Path, required=True, help="context release.json")
