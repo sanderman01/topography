@@ -194,13 +194,12 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
     col, row = min(max(col, 0), n - size), min(max(row, 0), n - size)
     chain = Path(m["source_world"]) if level == 1 else src
     classes_src = chain / "classes.u8"
-    # The window's NW corner in metres from the chain's (an L4 square sits inside it).
-    sq_x = sq_y = 0.0
+    # Where the source sits in the chain, in 4 m cells (an L4 square is a part of it).
+    col4 = row4 = 0
     n4 = n // 4 if level == 1 else n if level == 4 else n * 8  # the chain's 4 m cells
     if level == 1:
         n4 = _json(chain / "manifest.json")["size"][0] if (chain / "manifest.json").exists() else n4
         col4, row4 = (m.get("params") or {}).get("window_4m") or [(n4 - n // 4) // 2] * 2
-        sq_x, sq_y = col4 * 4.0, row4 * 4.0
     prov_src = chain / "provenance.u8"
     if not prov_src.exists():
         print(f"note: no provenance.u8 in {chain}; the window runs without flags "
@@ -223,7 +222,7 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
     (dest / "grid.json").unlink(missing_ok=True)
     if level == 1:
         field = _read_window(src / RAW, "<f4", n, row, col, size, size)
-        classes = _read_window(classes_src, np.uint8, n // 4, row // 4, col // 4, size // 4, size // 4)
+        classes = _read_window(classes_src, np.uint8, n4, row4 + row // 4, col4 + col // 4, size // 4, size // 4)
     elif level == 4:
         # A v3 chain keeps the raw L3 surface; v2's ground is its elevation.
         ground = src / "l3-raw.f32" if (src / "l3-raw.f32").exists() else src / "elevation.f32"
@@ -239,8 +238,8 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
     layers = [("elevation.f32", field, "<f4"), ("classes.u8", classes, np.uint8)]
     if prov_src.exists():
         p32 = np.fromfile(prov_src, np.uint8).reshape(n4 // 8, n4 // 8)
-        layers.append(("provenance.u8", grids.provenance_window(p32, sq_x + col * spacing, sq_y + row * spacing,
-                                                                 size, spacing), np.uint8))
+        layers.append(("provenance.u8", grids.provenance_window(p32, col4 * 4.0 + col * spacing,
+                                                                 row4 * 4.0 + row * spacing, size, spacing), np.uint8))
     else:
         (dest / "provenance.u8").unlink(missing_ok=True)
     # Collage regions for the blend-zone figures at the erosion levels (read at provenance_cell_m).
@@ -530,6 +529,8 @@ def _review(src: Path, fine: Path, coarse: Path | None, dest: Path, hard: bool =
             if dest.exists():
                 shutil.rmtree(dest)
             dest.mkdir(parents=True)
+            if coarse is not None and hard and not (coarse / "water-body.u32").exists():
+                raise FileNotFoundError(f"no water-body.u32 in {coarse}")
             if coarse is not None and (coarse / "water-body.u32").exists():
                 guide = review.coarse_guide(src, coarse, fine_dir=fine)
                 cascade.save_json(dest / "coarse-guide.json", guide)
@@ -618,7 +619,8 @@ def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, o
     code = _water(progress, binary, grid, work, out / "out", tile, threads)
     m = _json(src / "manifest.json")
     coarse = Path(m["source_world"]) / "hydrology" / "4m" if level == 1 and m.get("source_world") else None
-    progress.mark("review", **_review(out, out / "out", coarse, out / "review"))
+    # A test window's guide is a figure: its exit code is the water's own.
+    progress.mark("review", **_review(out, out / "out", coarse, out / "review", hard=False))
     print(f"done: {out / 'out'} ({'passed' if code == 0 else 'FAILED'})", flush=True)
     return code
 
@@ -640,8 +642,13 @@ def run_level(run: Path, tile: int = 2048, threads: int = 4, coarse: Path | None
             raise Refused("world rain failed")
     progress.key(digest, tile, grid, work)
     code = _water(progress, binary, grid, work, run / "out", tile, threads, river_km2)
-    if not (step := progress.done("review")):
-        step = _review(run, run / "out", coarse, run / "review", hard=coarse is not None)
+    # The guide's verdict depends on the coarse level too: redo the review when it changes.
+    report_c = coarse / "report.json" if coarse is not None else None
+    against = {"coarse": str(coarse.resolve()) if coarse is not None else None,
+               "coarse_report_sha256": hydrology.sha256(report_c) if report_c and report_c.exists() else None}
+    step = progress.done("review")
+    if not step or {k: step.get(k) for k in against} != against:
+        step = _review(run, run / "out", coarse, run / "review", hard=coarse is not None) | against
         progress.mark("review", **step)
     report = _json(run / "out" / "report.json")
     guide_failed = bool(step.get("guide_failed"))

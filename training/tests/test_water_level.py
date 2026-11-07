@@ -60,6 +60,22 @@ class LevelTest(unittest.TestCase):
             if level["coarse_guide"]["hard_failures"]:
                 self.assertIn("coarse_guide", level["failures"])
 
+    def test_a_missing_coarse_level_fails_and_a_new_coarse_redoes_the_review(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            run = Path(tmp) / "run-32m"
+            coarse_grid(run)
+            empty = Path(tmp) / "empty"
+            empty.mkdir()
+            self.assertEqual(W.run_level(run, tile=32, threads=2, coarse=empty, river_km2=0.05), 1)
+            level = json.loads((run / "level.json").read_text())
+            self.assertIn("coarse_guide", level["failures"])
+            self.assertIn("water-body.u32", level["coarse_guide"]["error"])
+            # Without --coarse the cached failing review is not reused (M2).
+            W.run_level(run, tile=32, threads=2, river_km2=0.05)
+            level = json.loads((run / "level.json").read_text())
+            self.assertIsNone(level["coarse_guide"])
+            self.assertNotIn("coarse_guide", level["failures"])
+
     def test_provenance_window_is_nearest(self):
         p = np.arange(16, dtype=np.uint8).reshape(4, 4)
         w = grids.provenance_window(p, 32.0, 64.0, 16, 4.0)  # 64 m square at (32, 64) m, 4 m cells
