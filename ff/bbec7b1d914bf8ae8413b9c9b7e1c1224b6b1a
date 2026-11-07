@@ -1,0 +1,60 @@
+training/tests/test_water_table.py
+  s_8c1b40ea9c1e0d::t_acea807bd250b4 1-20
+training/src/topography_training/water/table.py
+  s_8c1b40ea9c1e0d::t_6af467fbfdbbfc 1-47
+crates/topography-core/src/world/water/channel.rs
+  s_8c1b40ea9c1e0d::t_229064dcb0f4a9 39,411
+  s_8c1b40ea9c1e0d::t_1572752f4822d5 447,1441,1460-1462,1464
+  s_8c1b40ea9c1e0d::t_7fe1b53cdad649 1463
+crates/topography-core/src/world/water/table.rs
+  s_8c1b40ea9c1e0d::t_00d778fa32255f 176,196,202-205,207-208,210-211,213-228,231-233
+  s_8c1b40ea9c1e0d::t_17c877598f6aba 85-86,96-99,109,125-131,133-151,156,158-159,162,172,174-175
+  s_8c1b40ea9c1e0d::t_3210d6925ff9fc 1-3,10,18-19,32,37-51,57-59,62-63,68,73,75
+  s_8c1b40ea9c1e0d::t_8b72b74b8a01aa 66-67,74,173
+  s_8c1b40ea9c1e0d::t_6dafb5e4b7057c 239-240,243,260,264,274,282,284-286
+  s_8c1b40ea9c1e0d::t_f7c3520c957255 177,229
+crates/topography-core/src/world/water/breach.rs
+  s_8c1b40ea9c1e0d::t_8e9a9392b084ff 487-525
+  s_8c1b40ea9c1e0d::t_45494865ea95e8 10,263,344,463,885-890,892
+  s_8c1b40ea9c1e0d::t_1f6cd2abd60251 476-478,480
+  s_8c1b40ea9c1e0d::t_65baa764ba3ce0 543,578,585,592,648,688,717
+  s_8c1b40ea9c1e0d::t_60e42f1e495eea 217-219
+  s_8c1b40ea9c1e0d::t_931e519fc20d22 280
+  s_8c1b40ea9c1e0d::t_1dd495f51e2316 108-110,117
+  s_8c1b40ea9c1e0d::t_c96143d2d784ab 479,891
+tests/fixtures/water/grid/water.toml
+  s_8c1b40ea9c1e0d::t_3918ffaf01ebb3 2-10,13-14,17-19,21-22,26-27,31-44,48-56,64,75,78,89,96,103
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_ad97af7849319b 1101-1105
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_c8c95f61d64e83 74-77,81-82,84,95-96,105,243,342
+  s_8c1b40ea9c1e0d::t_5689c83ce72e85 1156-1158,1167-1169,1178-1180
+  s_8c1b40ea9c1e0d::t_3a910aad750e1b 1054
+  s_8c1b40ea9c1e0d::t_57ebc1d40135f3 1129-1145
+  s_8c1b40ea9c1e0d::t_6b415d5a53b945 1128
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_52225c000b4016 273-274
+  s_8c1b40ea9c1e0d::t_f88df149360e60 275-276,844
+configs/hydrology/water-v3.toml
+  s_8c1b40ea9c1e0d::t_88a03bc06a0a6c 1-101
+crates/topography-core/src/world/water/hydraulic.rs
+  s_8c1b40ea9c1e0d::t_d0ccb50af358c4 7
+crates/topography-core/src/world/water/testing.rs
+  s_8c1b40ea9c1e0d::t_4a74b8543c08e9 128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ffbbec7b1d914bf8ae8413b9c9b7e1c1224b6b1a",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
