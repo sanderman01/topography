@@ -431,7 +431,10 @@ impl Tags {
     }
     /// l reads m2 and the river pools found on it.
     fn l(m2: &str, pools: &BTreeMap<u64, u64>) -> String {
-        stage_tag("l", &json!({"after": m2, "pools": pools, "trickle": true}))
+        stage_tag(
+            "l",
+            &json!({"after": m2, "pools": pools, "trickle": "through_ponds"}),
+        )
     }
     /// c reads the raw and breached grounds, m2 and the labels (l, after m2 and b).
     fn c(l: &str, m3s_per_km2: f64) -> String {
@@ -861,7 +864,10 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             lake: lake_of.get(&n.key).copied(),
         });
     }
-    // The full lakes whose outflows `label` marked (B16), for m3's flow below.
+    // The outflow rivers `label` marked (B16, recomputed for the figures).
+    let (m2_trickles, m2_capped) =
+        bodies::trickles(&s, &m2.water.nodes, |o| m2.water.nodes.at(o).lake, &rasters)?;
+    // The full lakes, for m3's flow below.
     let full_lakes = nodes::Nodes(
         m2.water
             .nodes
@@ -891,10 +897,14 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         Some(&pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?),
     )?;
     let ponds = m3.water.nodes.0.iter().filter(|n| !n.lake).count();
+    let m3_lake: Vec<bool> = m3.water.nodes.0.iter().map(|n| n.lake).collect();
     drop(m3);
     let finals = pipeline::Rasters::open(s.world, &work.path(""), &m3_tag)?;
     // The same outflow rivers on m3's routing, so label agreement compares like with like.
-    bodies::mark_trickles(s.world, &full_lakes, &finals)?;
+    let (m3_trickles, m3_capped) =
+        bodies::trickles(&s, &full_lakes, |o| m3_lake[o as usize], &finals)?;
+    bodies::mark_trickles(&m3_trickles, &finals)?;
+    drop(full_lakes);
     let layers = checks::CheckLayers {
         raw,
         ground,
@@ -945,6 +955,12 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     figures.insert("rivers".into(), json!(n_rivers));
     figures.insert("river_km".into(), json!(sum("river", "length_km")));
     figures.insert("sea_km2".into(), json!(sum("sea", "area_km2")));
+    // B16 outflow rivers: cells marked, and trickles that reached the length cap.
+    figures.insert(
+        "trickles".into(),
+        json!({"cells": m2_trickles.len(), "capped": m2_capped,
+               "m3_cells": m3_trickles.len(), "m3_capped": m3_capped}),
+    );
     let extra = checks::CheckExtra {
         // The model refuses flow cycles (an error ends `finish`), so none reach the checks.
         cycles: 0,

@@ -175,6 +175,57 @@ impl<T: Cell> Layer<T> {
     pub fn to_vec(&self) -> Result<Vec<T>> {
         self.read(Rect::whole(self.world()))
     }
+    /// Single-cell access through one open handle, for long serial walks.
+    pub fn cells(&self, write: bool) -> Result<Cells<T>> {
+        Ok(match self {
+            Layer::Memory { values, .. } => Cells::Memory(values.clone()),
+            Layer::File { path, .. } => Cells::File(
+                io_context(
+                    format!("open {}", path.display()),
+                    fs::OpenOptions::new().read(true).write(write).open(path),
+                )?,
+                path.clone(),
+            ),
+        })
+    }
+}
+
+/// One layer's cells by world index (`Layer::cells`).
+pub(crate) enum Cells<T: Cell> {
+    Memory(Arc<RwLock<Vec<T>>>),
+    File(fs::File, PathBuf),
+}
+
+impl<T: Cell> Cells<T> {
+    pub fn get(&self, c: u64) -> Result<T> {
+        match self {
+            Cells::Memory(v) => Ok(v.read().expect("layer lock")[c as usize]),
+            Cells::File(f, path) => {
+                let mut b = vec![0u8; T::B];
+                io_context(
+                    format!("read {}", path.display()),
+                    f.read_exact_at(&mut b, c * T::B as u64),
+                )?;
+                Ok(T::get(&b))
+            }
+        }
+    }
+    pub fn set(&self, c: u64, value: T) -> Result<()> {
+        match self {
+            Cells::Memory(v) => {
+                v.write().expect("layer lock")[c as usize] = value;
+                Ok(())
+            }
+            Cells::File(f, path) => {
+                let mut b = Vec::with_capacity(T::B);
+                value.put(&mut b);
+                io_context(
+                    format!("write {}", path.display()),
+                    f.write_all_at(&b, c * T::B as u64),
+                )
+            }
+        }
+    }
 }
 
 /// Classes on a coarser grid: `k` grid cells per class cell side.

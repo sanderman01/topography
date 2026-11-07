@@ -200,62 +200,67 @@ pub(crate) fn pools(s: &Setup, m: &Model, geo: &Geometry) -> BTreeMap<u64, u64> 
         .collect()
 }
 
-/// Cells per lake a trickle may run (it ends at the first river, water or edge).
-const TRICKLE_MAX: usize = 4096;
+/// The longest trickle (4,096 cells at 32 m); flow is acyclic, so it is only a safety cap.
+const TRICKLE_MAX_M: f64 = 131_072.0;
 
-/// The outflow paths of full labelled lakes that are not rivers yet (B16): from the outside
-/// spill cell along the receivers to the first node, sea or thalweg cell, or the map edge.
-pub(crate) fn trickles(world: World, nodes: &Nodes, r: &Rasters) -> Result<Vec<u64>> {
-    let one = |c: u64| {
-        let (x, y) = world.xy(c);
-        Rect {
-            x0: x,
-            y0: y,
-            w: 1,
-            h: 1,
-        }
-    };
-    let mut out = Vec::new();
-    for n in nodes.0.iter().filter(|n| n.full && n.lake) {
+/// The outflow paths of the full labelled lakes in `from` that are not rivers yet (B16): from
+/// the outside spill cell along the receivers to the first sea, lake (`is_lake` of the node
+/// raster's ordinal) or model thalweg cell, a closed pond's pit or the map edge, through full
+/// ponds. Marked trickle cells carry less than the river start's discharge and are walked
+/// through, so the result is the same before and after `mark_trickles`. Returns the sorted
+/// cells and how many trickles reached `TRICKLE_MAX_M`.
+pub(crate) fn trickles(
+    s: &Setup,
+    from: &Nodes,
+    is_lake: impl Fn(u32) -> bool,
+    r: &Rasters,
+) -> Result<(Vec<u64>, u64)> {
+    let world = s.world;
+    let (flow, node, q) = (
+        r.flow.cells(false)?,
+        r.node.cells(false)?,
+        r.discharge.cells(false)?,
+    );
+    let max = (TRICKLE_MAX_M / s.spacing_m).ceil() as usize;
+    let (mut out, mut capped) = (Vec::new(), 0u64);
+    for n in from.0.iter().filter(|n| n.full && n.lake) {
         let mut c = n.outlet[1];
-        for _ in 0..TRICKLE_MAX {
-            let f = r.flow.read(one(c))?[0];
-            if f & 16 != 0 || r.node.read(one(c))?[0] >= 1 {
+        let mut ended = false;
+        for _ in 0..max {
+            let (f, nd) = (flow.get(c)?, node.get(c)?);
+            let thalweg = f & 16 != 0 && q.get(c)? >= s.river_km2();
+            if thalweg || nd == 1 || (nd >= 2 && is_lake(nd - 2)) {
+                ended = true;
                 break;
             }
-            // A cell draining off the map has no receiver; like any thalweg it stays unmarked.
+            // A cell draining off the map (or a pond's pit) has no receiver; like any thalweg
+            // it stays unmarked.
             let d = f & 15;
             let (x, y) = world.xy(c);
             let Some((nx, ny)) = (d != 0)
                 .then(|| world.neighbour(x, y, d as usize - 1))
                 .flatten()
             else {
+                ended = true;
                 break;
             };
             out.push(c);
             c = world.index(nx, ny);
         }
+        capped += u64::from(!ended);
     }
     out.sort_unstable();
     out.dedup();
-    Ok(out)
+    Ok((out, capped))
 }
 
-/// Sets the thalweg bit on every trickle cell of `nodes`' full lakes (idempotent).
-pub(crate) fn mark_trickles(world: World, nodes: &Nodes, r: &Rasters) -> Result<usize> {
-    let cells = trickles(world, nodes, r)?;
-    for &c in &cells {
-        let (x, y) = world.xy(c);
-        let at = Rect {
-            x0: x,
-            y0: y,
-            w: 1,
-            h: 1,
-        };
-        let f = r.flow.read(at)?[0];
-        r.flow.write(at, &[f | 16])?;
+/// Sets the thalweg bit on `cells` (idempotent).
+pub(crate) fn mark_trickles(cells: &[u64], r: &Rasters) -> Result<()> {
+    let flow = r.flow.cells(true)?;
+    for &c in cells {
+        flow.set(c, flow.get(c)? | 16)?;
     }
-    Ok(cells.len())
+    Ok(())
 }
 
 /// Writes `body` (0 none, 1 sea, lake ids, river ids on thalweg cells, and on the cells of the
@@ -275,7 +280,8 @@ pub(crate) fn label(
     let world = s.world;
     let tiles = s.tiles();
     // B16: every full lake's outflow is a river, whatever its discharge.
-    mark_trickles(world, &w.nodes, r)?;
+    let (cells, _) = trickles(s, &w.nodes, |o| w.nodes.at(o).lake, r)?;
+    mark_trickles(&cells, r)?;
     let mut listed: BTreeMap<u32, u64> = BTreeMap::new();
     for (&key, &b) in pools {
         let o = w
@@ -798,6 +804,11 @@ mod tests {
     }
 
     fn scene() -> Scene {
+        scene_with(false)
+    }
+
+    /// The scene, with `pond` a full pond (x 35, y 5-6) on lake C's dry outflow path.
+    fn scene_with(pond: bool) -> Scene {
         let n = (SW * 32) as usize;
         let (mut flow, mut q, mut node) = (vec![0u8; n], vec![0f32; n], vec![0u32; n]);
         // Thalweg path: each cell drains to the next; the last one to `then`; discharge
@@ -870,6 +881,9 @@ mod tests {
             (rect(30..=31, 2..=3), true, true, [(31, 2), (32, 2)], 0.5),
             (rect(2..=3, 25..=26), true, false, [(0, 0), (0, 0)], 1.0),
         ];
+        if pond {
+            list.push((rect(35..=35, 5..=6), false, true, [(35, 6), (35, 7)], 0.0));
+        }
         list.sort_by_key(|l| l.0.iter().map(|&(x, y)| at(x, y)).min());
         let mut nodes = Vec::new();
         for (o, (cells, lake, full, outlet, total)) in list.into_iter().enumerate() {
@@ -1271,11 +1285,13 @@ mod tests {
             .iter()
             .find(|n| n.full && n.lake)
             .expect("a full lake");
-        let cells = trickles(world, &m.water.nodes, &r).expect("trickles");
+        let walk = || trickles(&s, &m.water.nodes, |o| m.water.nodes.at(o).lake, &r);
+        let (cells, capped) = walk().expect("trickles");
         assert!(
             cells.contains(&lake.outlet[1]),
             "the trickle starts at the outflow cell"
         );
+        assert_eq!(capped, 0);
         let body = Layer::filled(world, 0u32);
         let v = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "l").expect("label");
         let rivers = v["bodies"]
@@ -1286,5 +1302,29 @@ mod tests {
             .count();
         assert!(rivers >= 1, "the outflow is a labelled river");
         assert!(body.read(Rect::whole(world)).unwrap()[lake.outlet[1] as usize] > 1);
+        // Marked cells are walked through again: the same trickles after labelling.
+        assert_eq!(walk().expect("trickles").0, cells);
+    }
+
+    /// Lake C's outflow crosses a full pond (x 35, y 5-6) and runs on to the main river.
+    #[test]
+    fn a_lake_outflow_runs_on_through_a_full_pond() {
+        let sc = scene_with(true);
+        let whole = label_scene(&sc, 64, &sc.pools);
+        for tile in [16, 8] {
+            assert_eq!(label_scene(&sc, tile, &sc.pools), whole, "tiles {tile}");
+        }
+        let (body, json) = whole;
+        let id = |x, y| body[at(x, y) as usize];
+        let c_out = id(32, 2);
+        assert_eq!(entry(&json, c_out)["kind"], "river");
+        for y in [4, 5, 6, 7, 9] {
+            assert_eq!(id(35, y), c_out, "(35, {y}) on lake C's outflow");
+        }
+        assert_eq!(
+            entry(&json, c_out)["parent"],
+            id(9, 10),
+            "it joins the main river"
+        );
     }
 }

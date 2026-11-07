@@ -330,6 +330,8 @@ impl Rasters {
             flow: Layer::open(world, &dir.join(format!("{tag}-flow.u8")))?,
         })
     }
+    /// Flow bit 16 of m2 (after `l`) and m3 (after `finish`) also holds the B16 trickles,
+    /// recomputed from these rasters' own discharge, so marking again changes nothing.
     pub fn files(world: World, dir: &Path, tag: &str) -> Result<Self> {
         Ok(Self {
             level: Layer::open_or_create(world, &dir.join(format!("{tag}-level.f32")), f32::NAN)?,
