@@ -179,36 +179,64 @@ fn dist_cells(w: usize, a: usize, b: usize) -> f64 {
     dx.hypot(dy).max(1.0)
 }
 
+fn sill_at(r: &Routing, c: usize) -> Option<usize> {
+    r.sills.binary_search_by_key(&(c as u32), |s| s.cell).ok()
+}
+
+/// Under a node's water or sea, and not a sill: never eroded, tapered or graded.
+fn wet(r: &Routing, c: usize) -> bool {
+    r.sea.get(c) || (r.held.get(c) && sill_at(r, c).is_none())
+}
+
+/// The node of a wet held cell that some cell drains into (from `shore`).
+fn lake_of(r: &Routing, t: usize) -> Option<usize> {
+    if r.sea.get(t) || !r.held.get(t) || sill_at(r, t).is_some() {
+        return None;
+    }
+    r.shore
+        .binary_search_by_key(&(t as u32), |p| p.0)
+        .ok()
+        .map(|i| r.shore[i].1 as usize)
+}
+
+/// Where cell `c` drains this routing: a sill's down cell, else its D8 receiver.
+fn target(r: &Routing, c: usize) -> Option<usize> {
+    if let Some(i) = sill_at(r, c) {
+        return Some(r.sills[i].down as usize);
+    }
+    let (w, h) = (r.world.w as usize, r.world.h as usize);
+    receiver(w, h, c, r.flow[c] & 15)
+}
+
+/// The lowest a cell draining into water may go besides its floor: 0 m into the sea, the
+/// routing's level into a lake (stream power may still lower it to a lowered level).
+fn water_bound(r: &Routing, c: usize) -> f32 {
+    match target(r, c) {
+        Some(t) if r.sea.get(t) => 0.0,
+        Some(t) => lake_of(r, t).map_or(f32::NEG_INFINITY, |o| r.nodes.0[o].level),
+        None => f32::NEG_INFINITY,
+    }
+}
+
 /// Implicit stream power, one step: z ← (z + F·base) / (1 + F), F = k·A^m / L, in ascending
 /// ground order; a cell whose receiver (or, draining into a lake, the lake's sill) is not yet
 /// updated has that chain processed first (review M3), so no base is stale. Never below the
 /// floor or the base, never raised.
 pub(crate) fn stream_power(r: &Routing, z: &mut [f32]) -> Figures {
-    let (w, h) = (r.world.w as usize, r.world.h as usize);
-    let sill_at = |c: usize| r.sills.binary_search_by_key(&(c as u32), |s| s.cell).ok();
-    let erodible = |c: usize| !r.sea.get(c) && (!r.held.get(c) || sill_at(c).is_some());
-    let shore_node = |t: usize| {
-        r.shore
-            .binary_search_by_key(&(t as u32), |p| p.0)
-            .ok()
-            .map(|i| r.shore[i].1 as usize)
-    };
-    // The cell whose new height this cell's base needs: its receiver, or the sill of the lake
-    // it drains into.
+    let erodible = |c: usize| !wet(r, c);
     // Each node's sill cell (first by cell), so a lake's drainers find it without a scan.
     let mut node_sill: Vec<Option<u32>> = vec![None; r.nodes.0.len()];
     for s in r.sills {
         node_sill[s.node as usize].get_or_insert(s.cell);
     }
+    // The cell whose new height this cell's base needs: where it drains, or the sill of the
+    // lake it drains into (also for a sill spilling straight into another lake).
     let needs = |c: usize| -> Option<usize> {
-        if let Some(i) = sill_at(c) {
-            return Some(r.sills[i].down as usize);
+        let t = target(r, c)?;
+        match lake_of(r, t) {
+            Some(o) => node_sill[o].map(|s| s as usize),
+            None => Some(t),
         }
-        let t = receiver(w, h, c, r.flow[c] & 15)?;
-        if r.held.get(t) && sill_at(t).is_none() {
-            return node_sill[shore_node(t)?].map(|s| s as usize);
-        }
-        Some(t)
     };
     // u32 indices sorted by (ground, index): 4 B a cell (preflight F11).
     let mut order: Vec<u32> = (0..z.len() as u32)
@@ -240,26 +268,18 @@ pub(crate) fn stream_power(r: &Routing, z: &mut [f32]) -> Figures {
             stack.pop();
             done.set(c);
             let zc = z[c];
-            let (to, ka, base) = if let Some(i) = sill_at(c) {
-                let s = r.sills[i];
-                (s.down as usize, s.ka, z[s.down as usize])
-            } else {
-                let Some(to) = receiver(w, h, c, r.flow[c] & 15) else {
-                    continue;
-                };
-                let base = if r.held.get(to) && sill_at(to).is_none() {
-                    shore_node(to).map_or(z[to], |o| level[o])
-                } else {
-                    z[to]
-                };
-                (to, r.ka[c], base)
+            let Some(to) = target(r, c) else {
+                continue;
             };
+            let ka = sill_at(r, c).map_or(r.ka[c], |i| r.sills[i].ka);
+            // Into a lake (from a shore cell or a sill): its current level, not its bed.
+            let base = lake_of(r, to).map_or(z[to], |o| level[o]);
             // v2: rivers into the sea grade to 0 m, not to the seabed.
             let base = if r.sea.get(to) { base.max(0.0) } else { base };
             if ka <= 0.0 || zc <= base {
                 continue;
             }
-            let f = f64::from(ka) / (dist_cells(w, c, to) * r.spacing_m);
+            let f = f64::from(ka) / (dist_cells(r.world.w as usize, c, to) * r.spacing_m);
             let mut v = ((f64::from(zc) + f * f64::from(base)) / (1.0 + f)) as f32;
             if v < r.floor[c] {
                 v = r.floor[c];
@@ -271,7 +291,7 @@ pub(crate) fn stream_power(r: &Routing, z: &mut [f32]) -> Figures {
                 fig.max_lowering_m = fig.max_lowering_m.max(zc - v);
             }
             z[c] = v;
-            if let Some(i) = sill_at(c) {
+            if let Some(i) = sill_at(r, c) {
                 let s = r.sills[i];
                 let n = &r.nodes.0[s.node as usize];
                 let lv = v.max(s.other_z).max(n.low).min(n.level);
@@ -318,8 +338,8 @@ pub(crate) fn footprint(r: &Routing, before: &[f32], z: &[f32], wall_deg: f64) -
 
 /// Lowering-only hillslope diffusion, one explicit Jacobi step (alpha = D·dt/dx² <= 0.25),
 /// only on `near` cells (the river cuts' footprint, B6): a convex cell moves toward its 4
-/// neighbours' mean, never below the floor; concave cells, interior, held, sea and edge cells
-/// stay. Returns the cells lowered.
+/// neighbours' mean, never below the floor or its water bound; concave cells, interior, held,
+/// sea and edge cells stay. Returns the cells lowered.
 pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u64 {
     let (w, h) = (r.world.w as usize, r.world.h as usize);
     if alpha <= 0.0 || w < 3 || h < 3 {
@@ -340,7 +360,9 @@ pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u6
             if lap >= 0.0 {
                 continue;
             }
-            let v = (row[x] + alpha * lap).max(r.floor[c]);
+            let v = (row[x] + alpha * lap)
+                .max(r.floor[c])
+                .max(water_bound(r, c));
             if v < z[c] {
                 z[c] = v;
                 n += 1;
@@ -352,11 +374,12 @@ pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> u6
 }
 
 /// Each cut (before − z ≥ SHAPE_MIN_M) as a parabolic disc d·(1 − (ρ/R)²), R = max(2.5 cells,
-/// 2·d / (tan(wall)·spacing)); the deepest lowering over all discs, not under water or sea,
-/// never below the floor. Then up to WALL_ROUNDS rounds, each halving this step's lowering in
-/// the 3 × 3 of every changed cell steeper than max(wall, raw) and then grading beds (a
-/// changed cell below its receiver is lifted to it, never above `before`; B33, Plan A 16b),
-/// until neither changes anything. Returns (cells tapered, cells restored, walls left).
+/// 2·d / (tan(wall)·spacing)); the deepest lowering over all discs, not under water or sea
+/// (a sill counts as dry), never below the floor or the water bound. Then up to WALL_ROUNDS
+/// rounds, each halving this step's lowering in the 3 × 3 of every changed cell steeper than
+/// max(wall, raw) and then grading beds (a changed cell below where it drains is lifted to it,
+/// never above `before`; B33, Plan A 16b), until nothing changes or no wall can be halved.
+/// Returns (cells tapered, cells restored, walls left on the final ground).
 pub(crate) fn taper(
     r: &Routing,
     z: &mut [f32],
@@ -370,7 +393,7 @@ pub(crate) fn taper(
     lower.fill(0.0);
     for c in 0..z.len() {
         let d = before[c] - z[c];
-        if d < SHAPE_MIN_M || r.held.get(c) || r.sea.get(c) {
+        if d < SHAPE_MIN_M || wet(r, c) {
             continue;
         }
         let radius = (2.0 * f64::from(d) / (tan * r.spacing_m)).max(TAPER_MIN_CELLS);
@@ -384,7 +407,7 @@ pub(crate) fn taper(
                     continue;
                 }
                 let j = y as usize * w + x as usize;
-                if r.held.get(j) || r.sea.get(j) {
+                if wet(r, j) {
                     continue;
                 }
                 let lw = (f64::from(d) * (1.0 - (rho / radius).powi(2))) as f32;
@@ -400,7 +423,9 @@ pub(crate) fn taper(
         if lower[j] <= 0.0 {
             continue;
         }
-        let v = (before[j] - lower[j]).max(r.floor[j]);
+        let v = (before[j] - lower[j])
+            .max(r.floor[j])
+            .max(water_bound(r, j));
         if v < z[j] {
             z[j] = v;
             tapered += 1;
@@ -414,10 +439,8 @@ pub(crate) fn taper(
         let (x, y) = (j % w, j / w);
         x > 0 && y > 0 && x + 1 < w && y + 1 < h
     };
-    let mut restored = 0;
-    let mut walls = Vec::new();
-    for round in 0..=WALL_ROUNDS {
-        walls.clear();
+    let find_walls = |z: &[f32]| {
+        let mut walls = Vec::new();
         for &c in &changed {
             let (cx, cy) = ((c % w) as i64, (c / w) as i64);
             for (dy, dx) in OFFSETS.iter().copied().chain([(0, 0)]) {
@@ -440,15 +463,21 @@ pub(crate) fn taper(
         }
         walls.sort_unstable();
         walls.dedup();
-        // Bed grade (to its fixed point inside the round): no changed cell below its receiver.
+        walls
+    };
+    let mut restored = 0;
+    for round in 0..=WALL_ROUNDS {
+        let walls = find_walls(z);
+        // Bed grade (to its fixed point inside the round): no changed cell below where it
+        // drains (a sill to its down cell).
         let mut graded = false;
         loop {
             let mut moved = false;
             for &c in &changed {
-                let Some(t) = receiver(w, h, c, r.flow[c] & 15) else {
+                let Some(t) = target(r, c) else {
                     continue;
                 };
-                if r.held.get(t) || r.sea.get(t) {
+                if wet(r, t) {
                     continue;
                 }
                 let v = before[c].min(z[c].max(z[t]));
@@ -477,14 +506,21 @@ pub(crate) fn taper(
         }
         fix.sort_unstable();
         fix.dedup();
+        let mut halved = 0;
         for j in fix {
             if before[j] - z[j] > CHANGED_M {
                 z[j] = before[j] - (before[j] - z[j]) / 2.0;
-                restored += 1;
+                halved += 1;
             }
         }
+        restored += halved;
+        // Walls this routing did not cut cannot be halved: further rounds change nothing.
+        if halved == 0 {
+            break;
+        }
     }
-    (tapered, restored, walls.len() as u64)
+    // Counted on the final ground (after the last bed grade).
+    (tapered, restored, find_walls(z).len() as u64)
 }
 
 #[cfg(test)]
@@ -761,6 +797,172 @@ mod tests {
                     "({x}, {y}) too steep"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_lake_spilling_into_another_lake_grades_to_its_level_not_its_bed() {
+        // Lake A (cells 1–2, level 30) spills over sill cell 3 straight into lake B (cells 4–5,
+        // level 20, bed 14). A strong sill grades toward B's level 20, never toward B's bed.
+        let before = [45.0, 25.0, 24.0, 30.0, 15.0, 14.0, 22.0, 10.0, 0.0f32];
+        let mut s = Strip::new(&before);
+        for c in [1, 2, 4, 5] {
+            s.held.set(c);
+        }
+        s.nodes = Nodes(vec![
+            Node {
+                key: 2,
+                level: 30.0,
+                low: 24.0,
+                full: true,
+                lake: true,
+                outlet: [2, 3],
+                cells: 2,
+                ..Default::default()
+            },
+            Node {
+                key: 5,
+                level: 20.0,
+                low: 14.0,
+                lake: true,
+                cells: 2,
+                ..Default::default()
+            },
+        ]);
+        s.shore = vec![(1, 0), (4, 1)];
+        s.sills = vec![Sill {
+            cell: 3,
+            down: 4,
+            node: 0,
+            other_z: 24.0,
+            ka: 1000.0,
+        }];
+        let f = s.erode();
+        assert!(
+            s.z[3] >= 20.0 - 1e-4,
+            "the sill stays above B's level, got {}",
+            s.z[3]
+        );
+        assert!(s.z[3] < 25.0, "the sill incises, got {}", s.z[3]);
+        assert_eq!(f.sills_lowered, 1);
+        assert!(
+            s.z[0] >= 24.0 - 1e-4,
+            "A's drainer stays above A's new level"
+        );
+        assert_eq!(&s.z[4..6], &before[4..6], "B's bed does not erode");
+    }
+
+    /// An 11 × 11 flat at 100 m on 4 m cells flowing east, columns 0–`lake_x` held (node 0).
+    fn lake_west(lake_x: usize, level: f32) -> Strip {
+        let (w, h) = (11usize, 11usize);
+        let mut s = Strip::new(&vec![100.0f32; w * h]);
+        s.flow = (0..w * h)
+            .map(|i| if i % w + 1 < w { 4 } else { 0 })
+            .collect();
+        s.ka = vec![0.0; w * h];
+        for i in (0..w * h).filter(|i| i % w <= lake_x) {
+            s.held.set(i);
+        }
+        s.nodes = Nodes(vec![Node {
+            key: 0,
+            level,
+            low: 90.0,
+            lake: true,
+            ..Default::default()
+        }]);
+        s
+    }
+
+    fn routing_11(s: &Strip) -> Routing<'_> {
+        let mut r = s.routing();
+        r.world = World { w: 11, h: 11 };
+        r.spacing_m = 4.0;
+        r
+    }
+
+    #[test]
+    fn a_held_inside_sill_is_tapered_and_graded() {
+        // Lake in columns 0–4 at 100 m over a 95 m bed; its sill is the held inside cell (4, 5)
+        // at 99.8 m, cut 3.8 m by stream power; it drains to the dry (5, 5). Dry ground falls
+        // east 0.5 m a cell, so the cut has somewhere to grade to.
+        let w = 11usize;
+        let mut s = lake_west(4, 100.0);
+        let (sill, down) = (5 * w + 4, 5 * w + 5);
+        s.sills = vec![Sill {
+            cell: sill as u32,
+            down: down as u32,
+            node: 0,
+            other_z: 100.0,
+            ka: 0.0,
+        }];
+        let mut before: Vec<f32> = (0..w * w)
+            .map(|i| match i % w {
+                x if x <= 4 => 95.0,
+                x => 100.0 - 0.5 * (x - 5) as f32,
+            })
+            .collect();
+        before[sill] = 99.8;
+        let mut z = before.clone();
+        z[sill] = 96.0;
+        let mut lower = vec![0.0f32; w * w];
+        taper(&routing_11(&s), &mut z, &before, &before, 35.0, &mut lower);
+        for c in [4 * w + 5, down, 6 * w + 5] {
+            assert!(
+                before[c] - z[c] > 0.5,
+                "the outlet cut is 3 cells wide, cell {c} at {}",
+                z[c]
+            );
+        }
+        assert!(
+            before[sill] - z[sill] > 0.5,
+            "the sill stays cut, got {}",
+            z[sill]
+        );
+        assert!(
+            z[sill] > 96.0,
+            "the sill is lifted to its graded outlet, got {}",
+            z[sill]
+        );
+        assert!(
+            z[sill] >= z[down] - 1e-5,
+            "the sill is graded to its down cell"
+        );
+        assert!(z.iter().zip(&before).all(|(a, b)| a <= b), "nothing rises");
+    }
+
+    #[test]
+    fn a_disc_does_not_cut_a_shore_cell_below_its_lake() {
+        // Lake in columns 0–3 at 99.9 m (bed 98 m); the shore drains west into it, row 5 is a
+        // river flowing east past it on ground falling 0.6 m a cell, cut 2 m at (6, 5): its disc
+        // (R 2.5) reaches (4, 4) and (4, 6), which it would take to 99.6 m.
+        let w = 11usize;
+        let mut s = lake_west(3, 99.9);
+        s.flow = (0..w * w)
+            .map(|i| match (i % w, i / w) {
+                (x, 5) if x + 1 < w => 4,
+                (x, y) if x > 0 && y != 5 => 3,
+                _ => 0,
+            })
+            .collect();
+        s.shore = (0..w).map(|y| ((y * w + 3) as u32, 0)).collect();
+        let before: Vec<f32> = (0..w * w)
+            .map(|i| match i % w {
+                x if x <= 3 => 98.0,
+                x => 100.0 - 0.6 * (x - 4) as f32,
+            })
+            .collect();
+        let mut z = before.clone();
+        z[5 * w + 6] -= 2.0;
+        let mut lower = vec![0.0f32; w * w];
+        taper(&routing_11(&s), &mut z, &before, &before, 35.0, &mut lower);
+        assert!(z[5 * w + 5] < 99.0, "the river's disc lowers its bed");
+        for y in [4, 6] {
+            let c = y * w + 4;
+            assert!(
+                z[c] >= 99.9 - 1e-4,
+                "shore cell (4, {y}) below the lake level: {}",
+                z[c]
+            );
         }
     }
 }
