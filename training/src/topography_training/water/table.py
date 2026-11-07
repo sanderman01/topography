@@ -3,6 +3,7 @@ hot-dry classes, the game settings and per-level thresholds, as the Rust model r
 
 from __future__ import annotations
 
+import copy
 import tomllib
 from functools import lru_cache
 from pathlib import Path
@@ -44,4 +45,4 @@ def level(spacing_m: float) -> dict:
     """The largest level not coarser than `spacing_m` (the finest level below every level)."""
     levels = sorted((float(k), v) for k, v in load()["levels"].items())
     fit = [v for s, v in levels if s <= spacing_m + 1e-9]
-    return dict(fit[-1] if fit else levels[0][1])
+    return copy.deepcopy(fit[-1] if fit else levels[0][1])

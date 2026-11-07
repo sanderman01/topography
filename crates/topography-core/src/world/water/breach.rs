@@ -24,7 +24,7 @@ use super::receivers::receivers;
 use super::store::{Work, for_tiles};
 use crate::acquisition::Result;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Each cut's parabolic taper reaches out to where its edge slope (2·d/R) is this steep.
 pub(crate) const TAPER_DEG: f32 = 35.0;
@@ -201,10 +201,14 @@ pub(crate) fn gorge(
         let j = win.local(x, y).expect("near cells are in the window");
         !world.is_edge(x, y) && horn_deg(zw, win.w, j % win.w, j / win.w, spacing_m) >= NO_CUT_DEG
     };
-    let on_path: HashSet<u64> = path[..=e].iter().copied().collect();
+    let on_path: HashMap<u64, usize> = path[..=e]
+        .iter()
+        .enumerate()
+        .map(|(j, &p)| (p, j))
+        .collect();
     // The section: around each path cell that needs a cut d, a Euclidean disc of radius
-    // max(half + 1, 2·d / tan TAPER_DEG) cells lowered by that cut tapered parabolically to
-    // nothing at its edge, never below the grade at that cell (no new pits), so the gorge is at
+    // max(half + 1, 2·d / (tan TAPER_DEG · spacing)) cells lowered by that cut tapered parabolically
+    // to nothing at its edge, never below the grade at that cell (no new pits), so the gorge is at
     // least 3 cells wide, has no square walls and cuts no wall more than its centre. Path cells
     // are always cut; steep raw faces beside them are not.
     let mut new: HashMap<u64, f32> = HashMap::new();
@@ -236,11 +240,15 @@ pub(crate) fn gorge(
                 if !near(cell) {
                     return Err(Fill);
                 }
-                if !on_path.contains(&cell) && steep(cell) {
-                    continue;
-                }
+                // Floor: a path cell's own grade; a side cell's the grade r cells upstream of
+                // the centre, so no disc drops a cell below the gorge's grade (review I1).
+                let floor = match on_path.get(&cell) {
+                    Some(&j) => line(k, j),
+                    None if steep(cell) => continue,
+                    None => (f64::from(line(k, i)) + k * f64::from(r) * spacing_m) as f32,
+                };
                 let ground = z(cell);
-                let bed = (ground - d * (1.0 - (r / radius).powi(2))).max(line(k, i));
+                let bed = (ground - d * (1.0 - (r / radius).powi(2))).max(floor);
                 if bed < ground {
                     let v = new.entry(cell).or_insert(bed);
                     *v = v.min(bed);
@@ -520,6 +528,86 @@ mod tests {
                 ax.abs_diff(x).max(ay.abs_diff(y)) <= 2
             });
             assert!(near, "cell ({x}, {y}) cut far from the axis");
+        }
+    }
+
+    /// A raw sub-pit just inside the spill, joined by a neck to a deeper basin (review I1, the
+    /// 32 m E25645 head): the inside cell's and the dam's discs must not drop the gorge head
+    /// or any path cell below its own grade, nor a side cell below the grade r cells upstream.
+    #[test]
+    fn coarse_gorges_keep_every_cell_at_or_above_its_grade() {
+        let world = World { w: 64, h: 64 };
+        let mut s = setup(world, 64, 1e-6);
+        s.spacing_m = 32.0;
+        s.params = crate::world::water::params(&s.table, 32.0, Some(1e-6));
+        let mut z: Vec<f32> = crate::world::water::testing::dammed(world)
+            .iter()
+            .map(|v| v * 10.0)
+            .collect();
+        let at = |x: u64, y: u64| (y * world.w + x) as usize;
+        // Deeper main basin upstream, a neck at x = 37 and the sub-pit at x = 38.
+        for y in 0..=20u64 {
+            for x in 26..=36u64 {
+                z[at(x, y)] -= 6.0;
+            }
+        }
+        z[at(37, 10)] = 148.0;
+        z[at(38, 10)] = 146.5;
+        let m = model(&s, &Layer::memory(world, z.clone()), None, "m", None).expect("model");
+        let geo = Geometry::new(s.table.m3s_per_km2);
+        let g = candidates(&s, &m, &geo)
+            .iter()
+            .find_map(|c| {
+                gorge(
+                    world,
+                    Rect::whole(world),
+                    &z,
+                    c,
+                    s.spacing_m,
+                    s.params.wall_deg,
+                )
+                .ok()
+            })
+            .expect("the dam is breached at 32 m");
+        assert_eq!(
+            g.axis[0],
+            at(38, 10) as u64,
+            "the gorge starts at the sub-pit"
+        );
+        // The grade: from the head down to the last axis cell, where it meets the ground.
+        let mut sm = vec![0.0f64];
+        for w in g.axis.windows(2) {
+            let (a, b) = (world.xy(w[0]), world.xy(w[1]));
+            let diag = a.0 != b.0 && a.1 != b.1;
+            sm.push(sm.last().unwrap() + step_len(if diag { 5 } else { 1 }) * 32.0);
+        }
+        let zp = f64::from(z[g.axis[0] as usize]);
+        let k = (zp - f64::from(z[*g.axis.last().unwrap() as usize])) / sm.last().unwrap();
+        let line = |j: usize| (zp - k * sm[j]) as f32;
+        for &(cell, v) in &g.cut {
+            if let Some(j) = g.axis.iter().position(|&a| a == cell) {
+                assert!(
+                    v >= line(j) - 1e-3,
+                    "path cell {j} at {v} below its grade {}",
+                    line(j)
+                );
+            } else {
+                let (x, y) = world.xy(cell);
+                let floor = g
+                    .axis
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &a)| {
+                        let (ax, ay) = world.xy(a);
+                        let r = ((ax.abs_diff(x).pow(2) + ay.abs_diff(y).pow(2)) as f64).sqrt();
+                        (r < 3.0).then(|| line(i) + (k * r * 32.0) as f32)
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                assert!(
+                    v >= floor - 1e-3,
+                    "side cell ({x}, {y}) at {v} below {floor}"
+                );
+            }
         }
     }
 
