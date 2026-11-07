@@ -22,6 +22,8 @@ def fake_world(root: Path, n: int = 256) -> Path:
     chain = root / "chain"
     (chain / "hydrology" / "4m").mkdir(parents=True)
     np.full((n // 4, n // 4), 18, np.uint8).tofile(chain / "classes.u8")
+    np.full((n // 32, n // 32), 2, np.uint8).tofile(chain / "provenance.u8")  # blend
+    (chain / "manifest.json").write_text(json.dumps({"size": [n // 4, n // 4]}))
     moisture = {"file": "moisture.f32", "size": [2, 2], "spacing_m": n / 2, "nw_m": [0.0, float(n)],
                 "scale_mm_h": 4.0, "dtype": "float32"}
     np.array([[1.0, 0.6], [1.4, 0.8]], "<f4").tofile(chain / "hydrology" / "4m" / "moisture.f32")
@@ -93,10 +95,12 @@ class RunTest(unittest.TestCase):
             with mock.patch.object(W.review, "crops", side_effect=RuntimeError("boom")):
                 code = W.run_world(src, out, tile=64, threads=2)
             report = json.loads((out / "hydrology" / "1m" / "report.json").read_text())
-            self.assertEqual(code, 0 if report["passed"] else 1, "the water's own exit code")
-            m = json.loads((out / ("manifest.json" if code == 0 else "manifest-failed.json")).read_text())
+            self.assertEqual(code, 1, "a coarse guide that cannot run fails the world (B15)")
+            m = json.loads((out / "manifest-failed.json").read_text())
             self.assertIn("KeyError", m["water"]["coarse_guide"]["error"])
+            self.assertIn("coarse_guide", m["water"]["failures"])
             self.assertEqual(m["water"]["review"], {"error": "RuntimeError: boom"})
+            del report
             win = root / "win"
             with mock.patch.object(W.review, "crops", side_effect=RuntimeError("boom")):
                 self.assertIn(W.run_window(src, 1, (128.0, 128.0), 128, win, 64, 2), (0, 1))

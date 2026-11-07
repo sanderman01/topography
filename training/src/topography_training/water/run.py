@@ -1,7 +1,9 @@
-"""Hydrology v3 at 1 m: the water model on a world's kept raw surface (or a test window).
+"""Hydrology v3 drivers: the 1 m water on a world's kept raw surface, a test window, or one
+coarse level (32 m or 4 m) from a prepared grid.
 
 python -m topography_training.water.run world --source <l4 world> --out <new world> [--tile 2048] [--threads 4]
 python -m topography_training.water.run window --source <world> --level {1,4,32} --centre E,N --size N --out <dir>
+python -m topography_training.water.run level --run <dir with grid/> [--coarse <coarser out>] [--river-km2 X]
 
 The Rust `topography world water` runs the exact graph passes into the work directory
 (resumable), `world water-finish` checks the carved ground and publishes `hydrology/1m`, and
@@ -26,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from ..diffusion import cascade, hydrology
-from . import review
+from . import grids, review
 
 RAW = "elevation-raw.f32"
 # Disk per cell while running: the work directory (breached, carved, body, m2/m3 rasters,
@@ -91,26 +93,51 @@ def _origin(m: dict, n: int, spacing: float) -> list[float]:
 
 
 def build_world_grid(src: Path, out: Path) -> Path:
-    """The 1 m grid over the whole world: links to the reflinked raw surface, the chain's 4 m
-    classes and the real moisture field."""
+    """The 1 m grid of an L4 world (whole or a square): the reflinked raw surface, the chain's
+    4 m classes and provenance (cropped for a square), the real moisture field."""
     m = _json(src / "manifest.json")
     n = m["size"][0]
     field, entry, mean = _moisture(src, m)
     chain = Path(m["source_world"])
+    n4 = _json(chain / "manifest.json")["size"][0]
+    c4 = n // 4
+    col4, row4 = (m.get("params") or {}).get("window_4m") or [(n4 - c4) // 2] * 2
     classes = chain / "classes.u8"
-    if not classes.exists() or classes.stat().st_size != (n // 4) ** 2:
-        raise Refused(f"{classes} is not the {n // 4}² 4 m class map of {src}")
+    if not classes.exists() or classes.stat().st_size != n4 * n4:
+        raise Refused(f"{classes} is not the {n4}² 4 m class map of {chain}")
+    prov = chain / "provenance.u8"
+    if not prov.exists():
+        raise Refused(f"{chain} has no provenance.u8 (a v3 chain world writes it)")
     grid = out / "hydrology" / "grid"
     grid.mkdir(parents=True, exist_ok=True)
     _symlink(Path("..", "..", RAW), grid / "elevation.f32")
-    _symlink(classes.resolve(), grid / "classes.u8")
+    extra = {}
+    if c4 == n4:
+        _symlink(classes.resolve(), grid / "classes.u8")
+        _symlink(prov.resolve(), grid / "provenance.u8")
+        extra["provenance_cell_m"] = 32.0
+    else:
+        cls = np.fromfile(classes, np.uint8).reshape(n4, n4)[row4 : row4 + c4, col4 : col4 + c4]
+        _write_if_bytes_differ(grid / "classes.u8", np.ascontiguousarray(cls))
+        p32 = np.fromfile(prov, np.uint8).reshape(n4 // 8, n4 // 8)
+        _write_if_bytes_differ(grid / "provenance.u8",
+                               grids.provenance_window(p32, col4 * 4.0, row4 * 4.0, c4, 4.0))
+        extra["provenance_cell_m"] = 4.0
     _symlink(field.resolve(), grid / "moisture.f32")
     _write_if_changed(grid / "grid.json", {
-        "size": [n, n], "spacing_m": 1.0, "origin": _origin(m, n, 1.0), "classes_cell_m": 4.0,
+        "size": [n, n], "spacing_m": 1.0, "origin": _origin(m, n, 1.0), "classes_cell_m": 4.0, **extra,
         "moisture": entry | {"file": "moisture.f32"}, "discharge": {"mean_land_mm_h": mean},
         "inputs": _inputs(classes, field),
     })
     return grid
+
+
+def _write_if_bytes_differ(path: Path, a: np.ndarray) -> None:
+    b = a.tobytes()
+    if not path.exists() or path.is_symlink() or path.read_bytes() != b:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_bytes(b)
+        tmp.replace(path)
 
 
 def _inputs(classes: Path, moisture: Path) -> dict:
@@ -165,15 +192,30 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
     col = int(round((centre[0] - origin[0]) / spacing - size / 2)) // k * k
     row = int(round((origin[1] - centre[1]) / spacing - size / 2)) // k * k
     col, row = min(max(col, 0), n - size), min(max(row, 0), n - size)
-    classes_src = (Path(m["source_world"]) if level == 1 else src) / "classes.u8"
+    chain = Path(m["source_world"]) if level == 1 else src
+    classes_src = chain / "classes.u8"
+    # The window's NW corner in metres from the chain's (an L4 square sits inside it).
+    sq_x = sq_y = 0.0
+    n4 = n // 4 if level == 1 else n if level == 4 else n * 8  # the chain's 4 m cells
+    if level == 1:
+        n4 = _json(chain / "manifest.json")["size"][0] if (chain / "manifest.json").exists() else n4
+        col4, row4 = (m.get("params") or {}).get("window_4m") or [(n4 - n // 4) // 2] * 2
+        sq_x, sq_y = col4 * 4.0, row4 * 4.0
+    prov_src = chain / "provenance.u8"
+    if not prov_src.exists():
+        print(f"note: no provenance.u8 in {chain}; the window runs without flags "
+              "(all below-sea basins floored)", flush=True)
     manifest = {
         "size": [size, size], "spacing_m": spacing, "origin": origin,
         "offset_m": [col * spacing, row * spacing], "classes_cell_m": spacing * k,
+        **({"provenance_cell_m": spacing} if prov_src.exists() else {}),
         "moisture": entry | {"file": "moisture.f32"}, "discharge": {"mean_land_mm_h": mean},
         "window": {"source": str(src.resolve()), "level": level, "centre_m": list(centre)},
         "inputs": _inputs(classes_src, field_m),
     }
     sizes = {"elevation.f32": size * size * 4, "classes.u8": (size // k) ** 2}
+    if prov_src.exists():
+        sizes["provenance.u8"] = size * size
     if ((dest / "grid.json").exists() and _json(dest / "grid.json") == manifest
             and all((dest / f).exists() and (dest / f).stat().st_size == b for f, b in sizes.items())):
         return dest
@@ -183,7 +225,9 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
         field = _read_window(src / RAW, "<f4", n, row, col, size, size)
         classes = _read_window(classes_src, np.uint8, n // 4, row // 4, col // 4, size // 4, size // 4)
     elif level == 4:
-        field = _read_window(src / "elevation.f32", "<f4", n, row, col, size, size)
+        # A v3 chain keeps the raw L3 surface; v2's ground is its elevation.
+        ground = src / "l3-raw.f32" if (src / "l3-raw.f32").exists() else src / "elevation.f32"
+        field = _read_window(ground, "<f4", n, row, col, size, size)
         classes = _read_window(src / "classes.u8", np.uint8, n, row, col, size, size)
     else:
         l2 = np.load(src / "arrays.npz")["l2_raw"]
@@ -192,12 +236,36 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
         field = l2[row : row + size, col : col + size]
         c4 = _read_window(src / "classes.u8", np.uint8, n * 8, row * 8, col * 8, size * 8, size * 8)
         classes = _mode_classes(c4, 8)
-    for name, a, dtype in (("elevation.f32", field, "<f4"), ("classes.u8", classes, np.uint8)):
+    layers = [("elevation.f32", field, "<f4"), ("classes.u8", classes, np.uint8)]
+    if prov_src.exists():
+        p32 = np.fromfile(prov_src, np.uint8).reshape(n4 // 8, n4 // 8)
+        layers.append(("provenance.u8", grids.provenance_window(p32, sq_x + col * spacing, sq_y + row * spacing,
+                                                                 size, spacing), np.uint8))
+    else:
+        (dest / "provenance.u8").unlink(missing_ok=True)
+    # Collage regions for the blend-zone figures at the erosion levels (read at provenance_cell_m).
+    regions = _region32(chain) if level != 1 else None
+    if regions is not None and prov_src.exists():
+        layers.append(("region.u8", grids.provenance_window(regions, col * spacing, row * spacing, size, spacing),
+                       np.uint8))
+    else:
+        (dest / "region.u8").unlink(missing_ok=True)
+    for name, a, dtype in layers:
         np.ascontiguousarray(a, dtype).tofile(dest / (name + ".tmp"))
         (dest / (name + ".tmp")).replace(dest / name)
     _symlink(field_m.resolve(), dest / "moisture.f32")
     _write_if_changed(dest / "grid.json", manifest)
     return dest
+
+
+def _region32(chain: Path) -> np.ndarray | None:
+    """The collage's 32 m region ids (`region32.u8`) beside the chain world or in its collage."""
+    m = _json(chain / "manifest.json") if (chain / "manifest.json").exists() else {}
+    n32 = m.get("size", [0])[0] // 8
+    for d in (chain, Path(m["collage"]) if m.get("collage") else None):
+        if d is not None and (d / "region32.u8").exists() and (d / "region32.u8").stat().st_size == n32 * n32 > 0:
+            return np.fromfile(d / "region32.u8", np.uint8).reshape(n32, n32)
+    return None
 
 
 def _pin(bin_dir: Path) -> tuple[Path, str]:
@@ -316,10 +384,13 @@ class Progress:
         cascade.save_json(self.path, self.state)
 
 
-def _water(progress: Progress, binary: Path, grid: Path, work: Path, out1m: Path, tile: int, threads: int) -> int:
+def _water(progress: Progress, binary: Path, grid: Path, work: Path, out1m: Path, tile: int, threads: int,
+           river_km2: float | None = None) -> int:
     """`world water` then `world water-finish` on the carved ground, each skipped when done.
     Returns finish's 0 (passed) or 1 (checks failed); a failed command raises Refused."""
     flags = ["--grid", str(grid), "--work", str(work), "--tile", str(tile), "--threads", str(threads)]
+    if river_km2 is not None:
+        flags += ["--river-km2", str(river_km2)]
     if not progress.done("water"):
         started = time.time()
         if _rust([str(binary), "world", "water", *flags]) != 0:
@@ -416,6 +487,10 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
     _pictures(out, n)
     # Next to the Rust output, never inside hydrology/1m (its provenance lists its files).
     reviewed = _review(out, out1m, Path(m["source_world"]) / "hydrology" / "4m", out / "hydrology" / "review")
+    # A hard coarse-guide failure (or a guide that cannot run) withholds manifest.json (B15).
+    guide_failed = bool(reviewed.get("guide_failed"))
+    passed = report["passed"] and not guide_failed
+    failures = report["failures"] + (["coarse_guide"] if guide_failed else [])
     manifest = {
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 1.0, "size": [n, n], "class_id": m.get("class_id"),
@@ -425,28 +500,26 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
         "source_world": m["source_world"], "hydrology_source": str(src.resolve()),
         "hydrology_input": {"file": RAW, "sha256": raw_sha256,
                             "rerun": "python -m topography_training.water.run world --source <source> --out <this world>"},
-        "water": {"model": "hydrology v3", "report": "hydrology/1m/report.json", "passed": report["passed"],
-                  "failures": report["failures"], "ground": "carved.f32",
-                  "relaxation": "none: Plan A ships the carved ground",
+        "water": {"passed": passed, "failures": failures, "relaxation": "none",
+                  "model": "hydrology v3", "report": "hydrology/1m/report.json", "ground": "carved.f32",
                   "binary": str(binary.relative_to(out)), "binary_sha256": digest,
                   "tile": tile, "threads": threads,
-                  # Figures in Plan A (R17): recorded, explained at gate 2, never withhold manifest.json.
                   **reviewed},
         "layers": digests,
     }
-    name = "manifest.json" if report["passed"] else "manifest-failed.json"
+    name = "manifest.json" if passed else "manifest-failed.json"
     cascade.save_json(out / name, manifest)
-    (out / ("manifest-failed.json" if report["passed"] else "manifest.json")).unlink(missing_ok=True)
-    print(f"done: {out} ({'passed' if report['passed'] else 'FAILED: ' + ', '.join(report['failures'])})",
-          flush=True)
-    return 0 if report["passed"] else 1
+    (out / ("manifest-failed.json" if passed else "manifest.json")).unlink(missing_ok=True)
+    print(f"done: {out} ({'passed' if passed else 'FAILED: ' + ', '.join(failures)})", flush=True)
+    return 0 if passed else 1
 
 
-def _review(src: Path, fine: Path, coarse: Path | None, dest: Path) -> dict:
+def _review(src: Path, fine: Path, coarse: Path | None, dest: Path, hard: bool = True) -> dict:
     """The review figures after water-finish, made afresh in `dest`: the coarse guide of `fine`
-    against the 4 m hydrology `coarse` (when it has water) with a figure per mismatch, and the
-    crops of `src` (a world or window run). Never raises: figures only, so a failure is logged
-    and recorded as {"error": ...} (R17) and the run goes on. Returns the manifest entries."""
+    against the next coarser level's water `coarse` (when it has water) with a figure per
+    mismatch, and the crops of `src` (a world or window run). Never raises: a failure is logged
+    and recorded as {"error": ...} and the run goes on. `guide_failed` is set on a hard guide
+    failure (B15), or when `hard` and the guide could not run. Returns the manifest entries."""
     import resource
     import traceback
 
@@ -464,9 +537,12 @@ def _review(src: Path, fine: Path, coarse: Path | None, dest: Path) -> dict:
                 entry["coarse_guide"] = {k: guide[k] for k in review.GUIDE_SUMMARY} | {
                     "file": str((dest / "coarse-guide.json").relative_to(src)),
                     "figures": [str(p.relative_to(src)) for p in figures]}
+                entry["guide_failed"] = bool(guide["hard_failures"])
         except Exception as e:
             traceback.print_exc()
             entry["coarse_guide"] = {"error": f"{type(e).__name__}: {e}"}
+            if hard:
+                entry["guide_failed"] = True
         try:
             entry["review"] = [str(p.relative_to(src)) for p in review.crops(src, dest)]
         except Exception as e:
@@ -547,6 +623,36 @@ def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, o
     return code
 
 
+def run_level(run: Path, tile: int = 2048, threads: int = 4, coarse: Path | None = None,
+              river_km2: float | None = None) -> int:
+    """One coarse level in `run` (grid/ built by the caller): rain if the grid has none, the water
+    model with erosion, finish, review and the hard coarse guide against `coarse`."""
+    grid = run / "grid"
+    if not (grid / "grid.json").exists():
+        raise Refused(f"{grid} has no grid.json")
+    progress = Progress(run / "progress.json", grid)
+    m = _json(grid / "grid.json")
+    work = run / "work"
+    _check_disk(run, m["size"][0] * m["size"][1], work)
+    binary, digest = _pin(run / "bin")
+    if "moisture" not in m:
+        if _rust([str(binary), "world", "rain", "--grid", str(grid)]) != 0:
+            raise Refused("world rain failed")
+    progress.key(digest, tile, grid, work)
+    code = _water(progress, binary, grid, work, run / "out", tile, threads, river_km2)
+    if not (step := progress.done("review")):
+        step = _review(run, run / "out", coarse, run / "review", hard=coarse is not None)
+        progress.mark("review", **step)
+    report = _json(run / "out" / "report.json")
+    guide_failed = bool(step.get("guide_failed"))
+    passed = code == 0 and report["passed"] and not guide_failed
+    level = {"passed": passed, "failures": report["failures"] + (["coarse_guide"] if guide_failed else []),
+             "report": "out/report.json", "coarse_guide": step.get("coarse_guide"), "review": step.get("review")}
+    cascade.save_json(run / "level.json", level)
+    print(f"level {run}: {'passed' if passed else 'FAILED: ' + ', '.join(level['failures'])}", flush=True)
+    return 0 if passed else 1
+
+
 def run_world(src: Path, out: Path, tile: int, threads: int) -> int:
     """The whole 1 m world into a new world directory: 0 passed, 1 checks failed, 2 refused."""
     try:
@@ -582,11 +688,23 @@ def main(argv=None) -> int:
     v.add_argument("--out", type=Path, required=True, help="run directory (resumed if it exists)")
     v.add_argument("--tile", type=int, help="cells along a tile side (default: the whole window)")
     v.add_argument("--threads", type=int, default=4)
+    lv = sub.add_parser("level", help="one coarse level (32 m or 4 m) from a prepared grid")
+    lv.add_argument("--run", type=Path, required=True, help="run directory holding grid/")
+    lv.add_argument("--coarse", type=Path, help="the next coarser level's out/ (coarse guide)")
+    lv.add_argument("--tile", type=int, default=2048)
+    lv.add_argument("--threads", type=int, default=4)
+    lv.add_argument("--river-km2", type=float)
     a = p.parse_args(argv)
     started = time.time()
     try:
         if a.mode == "world":
             code = run_world(a.source, a.out, a.tile, a.threads)
+        elif a.mode == "level":
+            try:
+                code = run_level(a.run, a.tile, a.threads, a.coarse, a.river_km2)
+            except Refused as e:
+                print(f"error: {e}", file=sys.stderr, flush=True)
+                code = 2
         else:
             e, n = (float(t) for t in a.centre.split(","))
             code = run_window(a.source, a.level, (e, n), a.size, a.out, a.tile or a.size, a.threads)

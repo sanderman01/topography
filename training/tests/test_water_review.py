@@ -18,6 +18,12 @@ def write(dirpath: Path, n: int, body: np.ndarray, bodies: list, discharge: np.n
     (dirpath / "grid.json").write_text(json.dumps({"size": [n, n], "spacing_m": spacing, **grid}))
     if discharge is not None:
         discharge.astype("<f4").tofile(dirpath / "discharge.f32")
+        # A coarse output: its ground, 100 m and 10 m below the level under its lakes (the guide's depth).
+        ground = np.full(body.shape, 100.0, np.float32)
+        for b in bodies:
+            if b["kind"] == "lake":
+                ground[body == b["id"]] = b["level_m"] - 10.0
+        ground.astype("<f4").tofile(dirpath / "elevation.f32")
 
 
 class CoarseGuideTest(unittest.TestCase):
@@ -36,7 +42,8 @@ class CoarseGuideTest(unittest.TestCase):
         bodies = [{"id": 5, "kind": "lake", "level_m": fine_level}, {"id": 6, "kind": "lake", "level_m": fine_level},
                   {"id": 7, "kind": "river"}]
         write(tmp / "fine", 64, fb, bodies)
-        return review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine")
+        return review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0, min_depth_m=0,
+                                   edge_m=0)
 
     def test_matching_lakes_and_rivers_pass(self):
         g = self.case(101.0)
@@ -61,10 +68,54 @@ class CoarseGuideTest(unittest.TestCase):
         fb[(20 - 16) * 4 : (24 - 16) * 4, (36 - 32) * 4 : (40 - 32) * 4] = 9
         write(tmp / "fine", 64, fb, [{"id": 9, "kind": "lake", "level_m": 52.0}], origin=[0.0, 256.0],
               offset_m=[128.0, 64.0])
-        g = review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine")
+        g = review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0, min_depth_m=0,
+                                edge_m=0)
         self.assertEqual(g["lakes_compared"], 1)
         self.assertEqual(g["level_diff_m"], {"2": 2.0})
         self.assertEqual(g["hard_failures"], 0)
+
+    def test_only_large_deep_lakes_away_from_edges_can_fail(self):
+        tmp = Path(tempfile.mkdtemp())
+        n = 128  # 4 m coarse cells: 512 m; footprint = the whole grid (no inner edge)
+        cb = np.zeros((n, n), np.uint32)
+        cb[10:12, 10:12] = 2  # 64 m²: small
+        cb[40:100, 40:100] = 3  # 0.0576 km², 10 m deep: hard
+        cb[20:80, 105:125] = 4  # 0.0192 km²: small
+        ground = np.full((n, n), 100.0, np.float32)
+        ground[40:100, 40:100] = 90.0
+        bodies = [{"id": i, "kind": "lake", "level_m": 100.0} for i in (2, 3, 4)]
+        write(tmp / "coarse", n, cb, bodies, np.zeros((n, n)), 4.0)
+        ground.astype("<f4").tofile(tmp / "coarse" / "elevation.f32")
+        write(tmp / "fine", n * 4, np.zeros((n * 4, n * 4), np.uint32), [])
+        g = review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0.05, min_depth_m=3.0)
+        self.assertEqual(g["lakes_gone"], [3])
+        self.assertEqual(g["lakes_small"], 2)
+        self.assertEqual(g["hard_failures"], 1)
+        shallow = review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0.05,
+                                      min_depth_m=12.0)
+        self.assertEqual((shallow["hard_failures"], shallow["lakes_shallow"]), (0, 1))
+
+    def test_lakes_near_a_window_edge_are_figures(self):
+        tmp = Path(tempfile.mkdtemp())
+        n = 1024  # 4 m coarse cells: 4,096 m
+        ground = np.full((n, n), 100.0, np.float32)
+
+        def coarse_with(r0, c0):
+            cb = np.zeros((n, n), np.uint32)
+            cb[r0 : r0 + 80, c0 : c0 + 80] = 5  # 0.1 km², 20 m deep
+            g = ground.copy()
+            g[r0 : r0 + 80, c0 : c0 + 80] = 80.0
+            write(tmp / "coarse", n, cb, [{"id": 5, "kind": "lake", "level_m": 100.0}], np.zeros((n, n)), 4.0,
+                  origin=[0.0, 4096.0])
+            g.astype("<f4").tofile(tmp / "coarse" / "elevation.f32")
+            return review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0.05,
+                                       min_depth_m=3.0)
+
+        # A 1 m window over x, y in [0, 3,072) m: its east and south edges are inner, west and north are the world's.
+        write(tmp / "fine", 3072, np.zeros((3072, 3072), np.uint32), [], origin=[0.0, 4096.0], offset_m=[0.0, 0.0])
+        self.assertEqual(coarse_with(300, 10)["hard_failures"], 1, "beside the world's west edge: judged")
+        g = coarse_with(300, 680)  # ends 32 m from the window's inner east edge
+        self.assertEqual((g["hard_failures"], g["lakes_near_edge"]), (0, 1))
 
 
 def window_run(root: Path, n: int = 600) -> Path:
@@ -147,7 +198,8 @@ class CropsTest(unittest.TestCase):
             cb[25:40, 25:45] = 7  # the 1 m lake 2 at 95 m
             write(Path(tmp) / "4m", 150, cb, [{"id": 7, "kind": "lake", "level_m": 80.0}], np.zeros((150, 150)),
                   4.0, origin=[1000.0, 2000.0])
-            guide = review.coarse_guide(run, Path(tmp) / "4m", fine_dir=run / "out")
+            guide = review.coarse_guide(run, Path(tmp) / "4m", fine_dir=run / "out", min_km2=0, min_depth_m=0,
+                                        edge_m=0)
             self.assertEqual(guide["lakes_over_5m"], [7])
             self.assertEqual(guide["mismatches"][0]["box_m"], [1100.0, 1900.0, 1180.0, 1840.0])
             paths = review.guide_figures(run, Path(tmp) / "4m", guide, Path(tmp) / "guide")

@@ -88,7 +88,7 @@ water_out="$("${cli[@]}" world water-finish --grid "$water_grid" --work "$water_
   { printf 'world water-finish failed: %s\n' "$water_out" >&2; exit 1; }
 [[ "$water_out" =~ water\ passed:\ [1-9][0-9]*\ lakes,\ [1-9][0-9]*\ rivers ]] ||
   { printf 'world water-finish did not pass with lakes and rivers: %s\n' "$water_out" >&2; exit 1; }
-for f in elevation.f32 water-surface.f32 water-body.u32 discharge.f32 flow.u8 bodies.json report.json grid.json; do
+for f in elevation.f32 water-surface.f32 water-body.u32 discharge.f32 flow.u8 moisture.f32 bodies.json report.json grid.json; do
   test -s "$water_tmp/out/$f" || { printf 'world water-finish wrote no %s\n' "$f" >&2; exit 1; }
 done
 grep -q '"passed": true' "$water_tmp/out/report.json" ||

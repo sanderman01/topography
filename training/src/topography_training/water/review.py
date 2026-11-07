@@ -1,13 +1,13 @@
 """Review figures for hydrology v3: hillshade crops (raw | result with water tinted and lake
 exits ringed | cut depth), a tinted overview with the crop boxes, lake-exit contact sheets and
-the coarse guide, the 1 m water against the 4 m world's, with a figure per mismatch.
+the coarse guide, a level's water against the next coarser level's, with a figure per mismatch.
 
 Works on a v3 world, a driver window run (grid/ and out/) or a bare water output directory
-(with --raw). Crops outside the processed grid are skipped. The coarse guide is a figure in
-Plan A (ruling R17); a lake more than 5 m off its 4 m level, gone or doubled counts as a hard
-failure in it (spec "Checks").
+(with --raw). Crops outside the processed grid are skipped. In the coarse guide a large, deep
+coarse lake away from inner edges more than 5 m off its coarse level, gone or doubled is a hard
+failure (ruling B15); the drivers withhold the result on one.
 
-python -m topography_training.water.review <world | run dir | out dir> [--dest D] [--raw F] [--coarse 4m dir]
+python -m topography_training.water.review <world | run dir | out dir> [--dest D] [--raw F] [--coarse coarse out dir]
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ BAR_PX = 40
 LEVEL_GROSS_M = 5.0
 DOUBLED_SHARE = 0.25
 RIVER_NEAR_M = 100.0
-RIVER_KM2_4M = 0.5
 
 
 @dataclass(frozen=True)
@@ -622,14 +621,28 @@ def _align(cg: dict, fg: dict, where: str) -> tuple[int, int, int]:
     return k, int(x0), int(y0)
 
 
-def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dict:
-    """The fine water against the coarse (4 m) world's over the fine grid's footprint.
+def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km2: float = 0.05,
+                 min_depth_m: float | None = None, edge_m: float = 1000.0,
+                 coarse_river_km2: float | None = None) -> dict:
+    """The fine water against the next coarser level's over the fine grid's footprint.
     `fine_dir` holds the fine water-body.u32, bodies.json and grid.json (the world itself when
     None). Coarse lakes that the footprint cuts are not compared; coarse river cells within
-    100 m of a footprint edge inside the coarse grid are not counted. `mismatches` lists each
+    100 m of a footprint edge inside the coarse grid are not counted. A compared lake can fail
+    (B15) only when it covers at least `min_km2`, is deeper than `min_depth_m` (level minus its
+    lowest coarse ground; default the fine level's breach cap + 1 m) and lies `edge_m` or more
+    from every inner footprint edge; the others are counted as figures. `mismatches` lists each
     failing lake with its box in metres (E west, N north, E east, N south)."""
+    from . import table as water_table
+
     fine_dir = fine_dir or world
     cg, fg = _json(coarse / "grid.json"), _json(fine_dir / "grid.json")
+    cs_m, fs_m = float(cg.get("spacing_m", 1.0)), float(fg.get("spacing_m", 1.0))
+    if min_depth_m is None:
+        min_depth_m = float(water_table.level(fs_m)["breach_cap_m"]) + 1.0
+    if coarse_river_km2 is None:
+        coarse_river_km2 = float(water_table.level(cs_m)["river_km2"])
+    min_cells = math.ceil(min_km2 * 1e6 / (cs_m * cs_m))
+    edge_cells = int(math.ceil(edge_m / cs_m))
     cw, ch = cg["size"]
     fw, fh = fg["size"]
     cs = float(cg.get("spacing_m", 1.0))
@@ -665,6 +678,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
             b[:] = [min(b[0], y + sl[0].start), min(b[1], sl[1].start),
                     max(b[2], y + sl[0].stop - 1), max(b[3], sl[1].stop - 1)]
     diff, over, gone, doubled, mismatches, cut = {}, [], [], [], [], 0
+    small = shallow = near_edge = 0
     for i, (r0, c0, r1, c1) in sorted(boxes.items()):
         if (inner[0] and r0 == 0) or (inner[1] and c0 == 0) or (inner[2] and r1 == ph - 1) or \
                 (inner[3] and c1 == pw - 1):
@@ -672,23 +686,40 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
             continue
         box_m = [cex + (x0 + c0) * cs, cny - (y0 + r0) * cs, cex + (x0 + c1 + 1) * cs, cny - (y0 + r1 + 1) * cs]
         mask = cb(y0 + r0, y0 + r1 + 1, x0 + c0, x0 + c1 + 1) == i
+        # Only large, deep lakes away from inner edges can fail (B15); the rest are figures.
+        cells = int(mask.sum())
+        lowest = float(_rows(coarse / "elevation.f32", "<f4", cw,
+                             (y0 + r0, x0 + c0, r1 - r0 + 1, c1 - c0 + 1))[mask].min())
+        near = ((inner[0] and r0 < edge_cells) or (inner[1] and c0 < edge_cells)
+                or (inner[2] and r1 >= ph - edge_cells) or (inner[3] and c1 >= pw - edge_cells))
+        hard = True
+        if cells < min_cells:
+            small += 1
+            hard = False
+        elif clevels[i] - lowest <= min_depth_m:
+            shallow += 1
+            hard = False
+        elif near:
+            near_edge += 1
+            hard = False
         fine = fb(r0 * k, (r1 + 1) * k, c0 * k, (c1 + 1) * k)
         inside = np.kron(mask, np.ones((k, k), bool))
         ids, counts = np.unique(fine[inside], return_counts=True)
         lakes = [(int(c), int(j)) for j, c in zip(ids, counts) if _is(f_lake, np.array([j]))[0]]
         found = []
         if not lakes:
-            gone.append(i)
-            found.append(("gone", None))
+            if hard:
+                gone.append(i)
+                found.append(("gone", None))
         else:
             area = int(inside.sum())
             _, best = max(lakes)
-            if sum(1 for c, _ in lakes if c > DOUBLED_SHARE * area) >= 2:
+            if hard and sum(1 for c, _ in lakes if c > DOUBLED_SHARE * area) >= 2:
                 doubled.append(i)
                 found.append(("doubled", flevels[best]))
             d = abs(flevels[best] - clevels[i])
             diff[str(i)] = round(d, 3)
-            if d > LEVEL_GROSS_M:
+            if hard and d > LEVEL_GROSS_M:
                 over.append(i)
                 found.append(("over_5m", flevels[best]))
         for failure, level in found:
@@ -710,12 +741,15 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None) -> dic
     for y in range(0, ph, 1024):
         rows = cb(y0 + y, y0 + min(y + 1024, ph), x0, x0 + pw)
         q = cq(y0 + y, y0 + min(y + 1024, ph), x0, x0 + pw)
-        sel = _is(c_river, rows) & (q >= RIVER_KM2_4M) & keep[y : y + rows.shape[0]]
+        sel = _is(c_river, rows) & (q >= coarse_river_km2) & keep[y : y + rows.shape[0]]
         total += int(sel.sum())
         hits += int((sel & has[y : y + rows.shape[0]]).sum())
     return {
         "lakes_compared": len(boxes) - cut, "lakes_cut_by_window": cut, "level_diff_m": diff,
         "lakes_over_5m": over, "lakes_gone": gone, "lakes_doubled": doubled,
+        "lakes_small": small, "lakes_shallow": shallow, "lakes_near_edge": near_edge,
+        "min_cells": min_cells, "min_depth_m": min_depth_m, "edge_m": edge_m,
+        "coarse_river_km2": coarse_river_km2,
         "coarse_river_cells": total,
         "coarse_river_share_with_fine_river_within_100m": hits / total if total else 1.0,
         "hard_failures": len(over) + len(gone) + len(doubled),
@@ -772,6 +806,7 @@ def guide_figures(src: Path, coarse: Path, guide: dict, dest: Path, raw: Path | 
 
 
 GUIDE_SUMMARY = ("hard_failures", "lakes_compared", "lakes_over_5m", "lakes_gone", "lakes_doubled",
+                 "lakes_small", "lakes_shallow", "lakes_near_edge",
                  "coarse_river_share_with_fine_river_within_100m")
 
 
@@ -780,7 +815,7 @@ def main(argv=None) -> int:
     p.add_argument("path", type=Path, help="v3 world, window run directory or water output directory")
     p.add_argument("--dest", type=Path, help="default: next to the input (see default_dest)")
     p.add_argument("--raw", type=Path, help="the raw surface, when not beside the output")
-    p.add_argument("--coarse", type=Path, help="a 4 m hydrology directory for the coarse guide")
+    p.add_argument("--coarse", type=Path, help="the next coarser level's water output directory for the coarse guide")
     a = p.parse_args(argv)
     dest = a.dest or default_dest(a.path)
     paths = crops(a.path, dest, raw=a.raw)

@@ -20,6 +20,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ..water.grids import write_grid  # noqa: F401
+
 EPSILON_M = 1e-3  # gradient across filled flats so every cell drains
 ROOT = Path(__file__).resolve().parents[4]
 # One water table for Rust and Python.
@@ -262,32 +264,6 @@ def write_table(path: Path, **overrides: float) -> Path:
         lines.append(f"\n[classes.{c}]")
         lines += [f"{k} = {str(v).lower() if isinstance(v, bool) else float(v)}" for k, v in fields.items()]
     path.write_text("\n".join(lines) + "\n")
-    return path
-
-
-def write_grid(path: Path, h: np.ndarray, spacing_m: float, origin: tuple[float, float],
-               classes: np.ndarray | None = None, offset_m: tuple[float, float] | None = None,
-               core_rows: tuple[int, int] | None = None, classes_cell_m: float | None = None,
-               wind_from_deg: float | None = None) -> Path:
-    """A grid directory (replaced if present): `origin` is the world's north-west corner in
-    the layout plane, `offset_m` [east, south] places this grid inside it."""
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True)
-    grid = {"size": [h.shape[1], h.shape[0]], "spacing_m": float(spacing_m),
-            "origin": [float(origin[0]), float(origin[1])]}
-    if offset_m is not None:
-        grid["offset_m"] = [float(offset_m[0]), float(offset_m[1])]
-    if core_rows is not None:
-        grid["core_rows"] = [int(core_rows[0]), int(core_rows[1])]
-    if classes_cell_m is not None:
-        grid["classes_cell_m"] = float(classes_cell_m)
-    if wind_from_deg is not None:
-        grid["wind_from_deg"] = float(wind_from_deg)
-    np.ascontiguousarray(h, dtype="<f4").tofile(path / "elevation.f32")
-    if classes is not None:
-        np.ascontiguousarray(classes, dtype=np.uint8).tofile(path / "classes.u8")
-    (path / "grid.json").write_text(json.dumps(grid, indent=1))
     return path
 
 

@@ -984,10 +984,20 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         &work.path(&format!("{m3_tag}-discharge.f32")),
     )?;
     stage.copy("flow.u8", &work.path(&format!("{m3_tag}-flow.u8")))?;
+    // The rain the finer levels reuse (ruling B12).
+    let moisture = s.rain.entry.get("file").and_then(Value::as_str);
+    if let Some(file) = moisture {
+        stage.copy("moisture.f32", &o.grid.join(file))?;
+    }
     stage.json("bodies.json", &bodies)?;
     stage.json("report.json", &report)?;
     let mut manifest: Map<String, Value> =
         serde_json::from_slice(&read_small(&o.grid.join("grid.json"))?)?;
+    if moisture.is_some()
+        && let Some(Value::Object(m)) = manifest.get_mut("moisture")
+    {
+        m.insert("file".into(), json!("moisture.f32"));
+    }
     manifest.insert("water_model".into(), json!("hydrology v3"));
     manifest.insert(
         "discharge".into(),
