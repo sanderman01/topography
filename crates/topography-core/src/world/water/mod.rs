@@ -431,7 +431,7 @@ impl Tags {
     }
     /// l reads m2 and the river pools found on it.
     fn l(m2: &str, pools: &BTreeMap<u64, u64>) -> String {
-        stage_tag("l", &json!({"after": m2, "pools": pools}))
+        stage_tag("l", &json!({"after": m2, "pools": pools, "trickle": true}))
     }
     /// c reads the raw and breached grounds, m2 and the labels (l, after m2 and b).
     fn c(l: &str, m3s_per_km2: f64) -> String {
@@ -861,6 +861,16 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             lake: lake_of.get(&n.key).copied(),
         });
     }
+    // The full lakes whose outflows `label` marked (B16), for m3's flow below.
+    let full_lakes = nodes::Nodes(
+        m2.water
+            .nodes
+            .0
+            .iter()
+            .filter(|n| n.full && n.lake)
+            .copied()
+            .collect(),
+    );
     drop(m2);
     // The third model run, on the final ground (R27); `run` made it already for the carved
     // ground (same tag).
@@ -883,6 +893,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let ponds = m3.water.nodes.0.iter().filter(|n| !n.lake).count();
     drop(m3);
     let finals = pipeline::Rasters::open(s.world, &work.path(""), &m3_tag)?;
+    // The same outflow rivers on m3's routing, so label agreement compares like with like.
+    bodies::mark_trickles(s.world, &full_lakes, &finals)?;
     let layers = checks::CheckLayers {
         raw,
         ground,

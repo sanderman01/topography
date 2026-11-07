@@ -12,6 +12,7 @@ use super::geom::{OFFSETS, Rect, World};
 use super::hierarchy::NONE;
 use super::hydraulic::Geometry;
 use super::layers::Layer;
+use super::nodes::Nodes;
 use super::pipeline::{Model, Rasters, Setup, Water};
 use super::rain::Q_PER_KM2;
 use super::store::{Work, cached, for_tiles};
@@ -199,6 +200,64 @@ pub(crate) fn pools(s: &Setup, m: &Model, geo: &Geometry) -> BTreeMap<u64, u64> 
         .collect()
 }
 
+/// Cells per lake a trickle may run (it ends at the first river, water or edge).
+const TRICKLE_MAX: usize = 4096;
+
+/// The outflow paths of full labelled lakes that are not rivers yet (B16): from the outside
+/// spill cell along the receivers to the first node, sea or thalweg cell, or the map edge.
+pub(crate) fn trickles(world: World, nodes: &Nodes, r: &Rasters) -> Result<Vec<u64>> {
+    let one = |c: u64| {
+        let (x, y) = world.xy(c);
+        Rect {
+            x0: x,
+            y0: y,
+            w: 1,
+            h: 1,
+        }
+    };
+    let mut out = Vec::new();
+    for n in nodes.0.iter().filter(|n| n.full && n.lake) {
+        let mut c = n.outlet[1];
+        for _ in 0..TRICKLE_MAX {
+            let f = r.flow.read(one(c))?[0];
+            if f & 16 != 0 || r.node.read(one(c))?[0] >= 1 {
+                break;
+            }
+            // A cell draining off the map has no receiver; like any thalweg it stays unmarked.
+            let d = f & 15;
+            let (x, y) = world.xy(c);
+            let Some((nx, ny)) = (d != 0)
+                .then(|| world.neighbour(x, y, d as usize - 1))
+                .flatten()
+            else {
+                break;
+            };
+            out.push(c);
+            c = world.index(nx, ny);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
+}
+
+/// Sets the thalweg bit on every trickle cell of `nodes`' full lakes (idempotent).
+pub(crate) fn mark_trickles(world: World, nodes: &Nodes, r: &Rasters) -> Result<usize> {
+    let cells = trickles(world, nodes, r)?;
+    for &c in &cells {
+        let (x, y) = world.xy(c);
+        let at = Rect {
+            x0: x,
+            y0: y,
+            w: 1,
+            h: 1,
+        };
+        let f = r.flow.read(at)?[0];
+        r.flow.write(at, &[f | 16])?;
+    }
+    Ok(cells.len())
+}
+
 /// Writes `body` (0 none, 1 sea, lake ids, river ids on thalweg cells, and on the cells of the
 /// pools in `pools` (node key → outlet cell, R26) the id of the river leaving them) and
 /// returns the `bodies.json` value. A listed pool whose outlet carries no river stays its own
@@ -215,6 +274,8 @@ pub(crate) fn label(
 ) -> Result<Value> {
     let world = s.world;
     let tiles = s.tiles();
+    // B16: every full lake's outflow is a river, whatever its discharge.
+    mark_trickles(world, &w.nodes, r)?;
     let mut listed: BTreeMap<u32, u64> = BTreeMap::new();
     for (&key, &b) in pools {
         let o = w
@@ -940,8 +1001,10 @@ mod tests {
         // No lake entry for pool P.
         let rows = json["bodies"].as_array().unwrap();
         assert!(rows.iter().all(|b| b["node"] != at(22, 9)));
-        // Lake C's parent: down the dry cells to the main river.
-        assert_eq!(entry(&json, id(30, 2))["parent"], main);
+        // Lake C's outflow is a river (B16) down the dry cells to the main river.
+        let c_out = entry(&json, id(30, 2))["parent"].as_u64().unwrap();
+        assert_eq!(entry(&json, c_out as u32)["kind"], "river");
+        assert_eq!(entry(&json, c_out as u32)["parent"], main);
     }
 
     #[test]
@@ -1186,5 +1249,42 @@ mod tests {
                 "tiles {tile} contraction {contract}"
             );
         }
+    }
+
+    #[test]
+    fn a_full_lake_always_starts_a_river_at_its_outflow() {
+        let world = World { w: 64, h: 64 };
+        let s = setup(world, 64, 1e9); // no river reaches the start
+        let r = Rasters::memory(world);
+        let m = model(
+            &s,
+            &Layer::memory(world, terrain(world)),
+            None,
+            "m",
+            Some(&r),
+        )
+        .expect("model");
+        let lake = m
+            .water
+            .nodes
+            .0
+            .iter()
+            .find(|n| n.full && n.lake)
+            .expect("a full lake");
+        let cells = trickles(world, &m.water.nodes, &r).expect("trickles");
+        assert!(
+            cells.contains(&lake.outlet[1]),
+            "the trickle starts at the outflow cell"
+        );
+        let body = Layer::filled(world, 0u32);
+        let v = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "l").expect("label");
+        let rivers = v["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["kind"] == "river")
+            .count();
+        assert!(rivers >= 1, "the outflow is a labelled river");
+        assert!(body.read(Rect::whole(world)).unwrap()[lake.outlet[1] as usize] > 1);
     }
 }
