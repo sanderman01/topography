@@ -1186,16 +1186,41 @@ pub(crate) fn check_tile(
                 // this river joins, or a thalweg joining this river).
                 if beside {
                     let (px, py) = win.world_xy(p);
+                    // The cells within TRIBUTARY_M down the path from `from` (itself first).
+                    let walk = |from: usize| {
+                        let (mut c, mut walked, mut out) = (from, 0.0, vec![from]);
+                        while let Some(n) = down(c) {
+                            walked += step_len(flow[c] & 15) * s.spacing_m;
+                            if walked > TRIBUTARY_M {
+                                break;
+                            }
+                            out.push(n);
+                            c = n;
+                        }
+                        out
+                    };
+                    // Ruling Q5: the outflow of the lake this river feeds (within TRIBUTARY_M)
+                    // is the same water: its exit walk, and paths joining it, are own.
+                    let fed = walk(j).into_iter().find(|&c| lake_cell(c)).map(|c| body[c]);
+                    let outflow: Vec<usize> = fed
+                        .and_then(|l| exits.iter().find(|e| e.lake == Some(l)))
+                        .and_then(|e| {
+                            let (ox, oy) = world.xy(e.outlet[1]);
+                            at(ox, oy)
+                        })
+                        .map(walk)
+                        .unwrap_or_default();
                     let own_cell = |c: usize| {
                         let wet = surf[c].is_finite();
                         c == j
                             || (wet && id == Some(body[c]))
                             || (wet && body[c] > 1 && joins(j, body[c]))
                             || (flow[c] & 16 != 0 && id.is_some_and(|b| joins(c, b)))
+                            || (!outflow.is_empty() && walk(c).iter().any(|v| outflow.contains(v)))
                     };
-                    // Fix round 2: written water of another body (body > 1; 0 none, 1 sea) is
-                    // not a second channel; an unwritten m3 channel is.
-                    let written = |c: usize| surf[c].is_finite() && body[c] > 1;
+                    // Written water of another body, the sea included (ruling Q5), is not a
+                    // second channel; an unwritten m3 channel is.
+                    let written = |c: usize| surf[c].is_finite() && body[c] >= 1;
                     beside = (-2i64..=2).any(|oy| {
                         (-2i64..=2).any(|ox| {
                             at_i(px as i64 + ox, py as i64 + oy)
@@ -2792,6 +2817,82 @@ mod tests {
         let lower: Vec<(u64, u64)> = (10..120).map(|x| (x, 50)).collect();
         c.route(&lower, 16, 0.06);
         c
+    }
+
+    /// Ruling Q5 (E14960 N53456): a river running down to a diagonal coast; its mouth sea cell
+    /// carries the river's Q. The sea beside its last cells is standing water, not a second
+    /// channel.
+    #[test]
+    fn a_river_into_the_sea_has_no_second_thalweg() {
+        let sea = |x: u64, y: u64| x + y > 50;
+        let mut c = Case::new(40, 40, |x, y| {
+            if sea(x, y) {
+                -2.0
+            } else {
+                1.0 + 0.2 * (50 - x - y) as f32
+            }
+        });
+        for y in 0..40 {
+            for x in 0..40 {
+                if sea(x, y) {
+                    let k = c.k(x, y);
+                    (c.surf[k], c.body[k], c.node[k], c.level[k]) = (0.0, 1, 1, 0.0);
+                }
+            }
+        }
+        c.levels.insert(1, 0.0);
+        let path: Vec<(u64, u64)> = (5..=26).map(|x| (x, 25)).collect();
+        c.river(&path[..path.len() - 1], 2.0, 5);
+        // The river's last cell drains into the sea; the mouth cell carries its Q.
+        let (last, mouth) = (c.k(25, 25), c.k(26, 25));
+        let k24 = c.k(24, 25);
+        c.flow[k24] = Case::byte((24, 25), (25, 25)) | 16;
+        c.q[k24] = 2.0;
+        (c.surf[last], c.body[last]) = (c.z[last], 1);
+        c.q[last] = 2.0;
+        c.q[mouth] = 2.0;
+        c.m3_only();
+        let t = c.tile();
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+    }
+
+    /// Ruling Q5 (E27088 N40720): a river falling south into a small lake whose outflow
+    /// leaves to the north-west beside the river's lower reach, unlabelled. Water leaving the
+    /// lake this river feeds is the same water, not a second thalweg.
+    #[test]
+    fn a_lakes_own_outflow_beside_its_inlet_river_is_no_second_thalweg() {
+        let level = 10.0;
+        let mut c = Case::new(40, 40, |_, y| 10.0 + 2.0 * (20.0 - y as f32).max(0.0));
+        for y in 20..22 {
+            for x in 20..23 {
+                let k = c.k(x, y);
+                (c.z[k], c.raw[k], c.bz[k], c.pre_channel[k]) = (9.0, 9.0, 9.0, 9.0);
+                (c.surf[k], c.body[k], c.node[k], c.flow[k]) = (level, 7, 2, 0);
+            }
+        }
+        // The river: south along x = 20 into the lake at (20, 20).
+        let path: Vec<(u64, u64)> = (5..=20).map(|y| (20, y)).collect();
+        c.river(&path, 2.0, 5);
+        // The lake's outflow: from (20, 20) out at (19, 19), then north-west, low and dry.
+        let out: Vec<(u64, u64)> = (0..12).map(|i| (19 - i, 19 - i)).collect();
+        for (i, &(x, y)) in out.iter().enumerate() {
+            let k = c.k(x, y);
+            let g = 9.5 - 0.1 * i as f32;
+            (c.z[k], c.raw[k], c.bz[k], c.pre_channel[k]) = (g, g, g, g);
+        }
+        c.route(&out, 16, 2.0);
+        let outlet = [c.k(20, 20) as u64, c.k(19, 19) as u64];
+        c.lakes.insert(7, (level, true, outlet, 0));
+        c.levels.insert(7, level);
+        c.exits.push(Exit {
+            key: 1,
+            level,
+            outlet,
+            lake: Some(7),
+        });
+        c.m3_only();
+        let t = c.tile();
+        assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
     }
 
     #[test]
