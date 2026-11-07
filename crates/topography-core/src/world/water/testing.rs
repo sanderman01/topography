@@ -32,6 +32,22 @@ pub(crate) fn terrain(world: World) -> Vec<f32> {
         .collect()
 }
 
+/// `terrain(world)` with the dune bowl at (16, 46) cut 6 m below sea level (a cone of radius
+/// 6) inside a 4 m rim: a closed basin below 0 m for the coastal water table (B13).
+pub(crate) fn sub_zero_bowl(world: World) -> Vec<f32> {
+    let mut z = terrain(world);
+    for (i, v) in z.iter_mut().enumerate() {
+        let (x, y) = ((i as u64 % world.w) as f32, (i as u64 / world.w) as f32);
+        let d = ((x - 16.0).powi(2) + (y - 46.0).powi(2)).sqrt();
+        if d < 6.0 {
+            *v = -6.0 + d;
+        } else if d < 8.0 {
+            *v = v.max(4.0);
+        }
+    }
+    z
+}
+
 /// Dunes (8, r = 0: playas) in the south-west quarter, plain (18, r = 1) elsewhere.
 pub(crate) fn classes(world: World) -> Vec<u8> {
     (0..world.w * world.h)
@@ -62,6 +78,7 @@ pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
         table,
         rain: Rain::uniform(2.0),
         params,
+        provenance: None,
         contract: true,
     }
 }

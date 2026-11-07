@@ -6,7 +6,6 @@
 //! the exact port solve → pass F (write the rasters). A window is the same run with one tile;
 //! water nodes are named by their smallest pit (R28), so nothing depends on the split.
 
-use super::Params;
 use super::balance::{Balance, Counts, TileCounts, count, holding, solve, top_spill};
 use super::contract::{Frag, Tops, contract, min_pits, solve_local, with_spills};
 use super::flats;
@@ -19,7 +18,8 @@ use super::rain::{Q_PER_KM2, Rain};
 use super::receivers::{kept_receivers, receivers};
 use super::store::{Blob, Dec, Enc, Work, cached, for_tiles};
 use super::table::Table;
-use super::watershed::{Drain, TileGraph, drain_with, tile_graph};
+use super::watershed::{Below0, Drain, TileGraph, add_below0, drain_with, tile_graph_with};
+use super::{BELOW_SEA_OK, Params};
 use crate::acquisition::{AcquisitionError, Result, ensure};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -39,6 +39,8 @@ pub(crate) struct Setup {
     pub table: Table,
     pub rain: Rain,
     pub params: Params,
+    /// Collage provenance (kind and flags), nearest; None: every cell 0.
+    pub provenance: Option<Classes>,
     /// Settle depression trees inside tiles (review C3); exact, so off only in its test.
     pub contract: bool,
 }
@@ -79,6 +81,24 @@ impl Setup {
                 .collect(),
             None => vec![u64::from(self.table.r_milli(0)); core.cells()],
         })
+    }
+    /// Provenance over a window (zeros without a layer).
+    pub fn flags(&self, r: Rect) -> Result<Vec<u8>> {
+        match &self.provenance {
+            Some(p) => p.read(r),
+            None => Ok(vec![0; r.cells()]),
+        }
+    }
+    /// Per core cell: (ground below 0 m, and also without bit 64) as 0/1 counts, summed per
+    /// drainage end like the supply (B13).
+    pub fn below_sea(&self, core: Rect, ground: &[f32]) -> Result<Vec<(u64, u64)>> {
+        let flags = self.flags(core)?;
+        Ok((0..core.cells())
+            .map(|k| {
+                let low = u64::from(ground[k] < 0.0);
+                (low, low * u64::from(flags[k] & BELOW_SEA_OK == 0))
+            })
+            .collect())
     }
     /// River start in km² as f32, compared with `discharge` everywhere.
     pub fn river_km2(&self) -> f32 {
@@ -129,20 +149,34 @@ impl Exits {
 /// The r supply of paths that leave their tile, by the ring cell where they stop leaving
 /// tiles (sorted, summed): a settled tree's water from cells outside its tile's own (B1).
 fn foreign_supply(graphs: &[TileGraph], exits: &Exits) -> Result<Vec<(u64, u64)>> {
-    let mut v: Vec<(u64, u64)> = graphs
+    foreign(graphs, exits, |g| &g.supply, |a, b| *a += b)
+}
+
+/// The below-zero counts of paths that leave their tile, like `foreign_supply` (B13).
+fn foreign_below0(graphs: &[TileGraph], exits: &Exits) -> Result<Vec<(u64, Below0)>> {
+    foreign(graphs, exits, |g| &g.below0, add_below0)
+}
+
+fn foreign<T: Copy>(
+    graphs: &[TileGraph],
+    exits: &Exits,
+    of: impl Fn(&TileGraph) -> &BTreeMap<Next, T>,
+    add: impl Fn(&mut T, T),
+) -> Result<Vec<(u64, T)>> {
+    let mut v: Vec<(u64, T)> = graphs
         .iter()
         .flat_map(|g| {
-            g.supply.iter().filter_map(|(&t, &s)| match t {
+            of(g).iter().filter_map(|(&t, &s)| match t {
                 Next::Out(c) => Some(exits.entry(c).map(|e| (e, s))),
                 _ => None,
             })
         })
         .collect::<Result<_>>()?;
     v.sort_unstable_by_key(|e| e.0);
-    let mut out: Vec<(u64, u64)> = Vec::with_capacity(v.len());
+    let mut out: Vec<(u64, T)> = Vec::with_capacity(v.len());
     for (c, s) in v {
         match out.last_mut() {
-            Some(last) if last.0 == c => last.1 += s,
+            Some(last) if last.0 == c => add(&mut last.1, s),
             _ => out.push((c, s)),
         }
     }
@@ -466,6 +500,7 @@ struct Trees<'a> {
     bal: &'a Balance,
     exits: &'a Exits,
     foreign: &'a [(u64, u64)],
+    foreign_below0: &'a [(u64, Below0)],
     min_cells: u64,
 }
 
@@ -548,10 +583,13 @@ impl Trees<'_> {
         pours: &[(u32, u64)],
     ) -> Result<(Local, Nodes)> {
         let mut extra: Vec<(u32, u64)> = Vec::new();
-        let mut supply: BTreeMap<u64, u64> = BTreeMap::new();
+        let mut extra_below0: Vec<(u32, Below0)> = Vec::new();
+        let mut supply: BTreeMap<u64, (u64, Below0)> = BTreeMap::new();
         for l in 0..frag.h.leaves {
             if tops.contains_key(&frag.tree[l]) {
-                *supply.entry(frag.tree[l]).or_insert(0) += frag.h.supply[l];
+                let e = supply.entry(frag.tree[l]).or_default();
+                e.0 += frag.h.supply[l];
+                add_below0(&mut e.1, frag.h.below0[l]);
             }
         }
         for &(cell, pit) in &frag.ring_pit {
@@ -562,16 +600,25 @@ impl Trees<'_> {
             if !tops.contains_key(&key) {
                 continue;
             }
+            let e = supply.entry(key).or_default();
             if let Ok(i) = self.foreign.binary_search_by_key(&cell, |f| f.0) {
                 extra.push((l, self.foreign[i].1));
-                *supply.entry(key).or_insert(0) += self.foreign[i].1;
+                e.0 += self.foreign[i].1;
+            }
+            if let Ok(i) = self.foreign_below0.binary_search_by_key(&cell, |f| f.0) {
+                extra_below0.push((l, self.foreign_below0[i].1));
+                add_below0(&mut e.1, self.foreign_below0[i].1);
             }
         }
         for (&key, &got) in &supply {
-            let want = self.h.supply[self.leaf(key)?];
+            let sl = self.leaf(key)?;
+            let want = (self.h.supply[sl], self.h.below0[sl]);
             ensure(
                 got == want,
-                format!("tree {key} gets supply {got} through its tile, {want} globally"),
+                format!(
+                    "tree {key} gets supply and below-zero counts {got:?} through its tile, \
+                     {want:?} globally"
+                ),
             )?;
         }
         extra.extend_from_slice(pours);
@@ -586,7 +633,13 @@ impl Trees<'_> {
             count(&mut t, h0, z, x, y);
             held.push((h0, z));
         }
-        let mut lbal = solve_local(&frag, &tops, &extra, &Counts::dense(lh.len(), &[t]))?;
+        let mut lbal = solve_local(
+            &frag,
+            &tops,
+            &extra,
+            &extra_below0,
+            &Counts::dense(lh.len(), &[t]),
+        )?;
         let closed: Vec<(u32, f32)> = held
             .iter()
             .filter_map(|&(h0, z)| {
@@ -703,9 +756,11 @@ pub(crate) fn model_on(
         for_tiles(&tiles, s.threads, &format!("{tag} A"), |i, core| {
             let (g, frag) = cached(work, &format!("{tag}/a/{i:05}"), || {
                 let (win, zw, dir) = read(core)?;
+                let zc = crop(win, &zw, core);
                 let supply = s.supply(core)?;
+                let below0 = s.below_sea(core, &zc)?;
                 let d = drain_with(world, win, &zw, core, dir);
-                let g = tile_graph(world, core, &crop(win, &zw, core), &d, |k| supply[k]);
+                let g = tile_graph_with(world, core, &zc, &d, |k| supply[k], |k| below0[k]);
                 Ok(if s.contract {
                     contract(g)
                 } else {
@@ -727,6 +782,7 @@ pub(crate) fn model_on(
     let (h, resolver) = cached(work, &format!("{tag}/g1"), || build(world, s.tile, &graphs))?;
     let exits = Exits::new(&graphs);
     let foreign = foreign_supply(&graphs, &exits)?;
+    let foreign_b0 = foreign_below0(&graphs, &exits)?;
     // Sizes of the in-memory global structures (gate-1 world extrapolation).
     eprintln!(
         "water: {tag} global hierarchy {} nodes, exits {}, foreign {}",
@@ -783,6 +839,7 @@ pub(crate) fn model_on(
         bal: &bal,
         exits: &exits,
         foreign: &foreign,
+        foreign_below0: &foreign_b0,
         min_cells: s.lake_min_cells(),
     };
     let part_l: Vec<PartL> = for_tiles(&tiles, s.threads, &format!("{tag} L"), |i, core| {
@@ -1224,7 +1281,13 @@ mod tests {
         let world = World { w: 64, h: 64 };
         let smooth = terrain(world);
         let terraced: Vec<f32> = smooth.iter().map(|z| (z * 10.0).round() / 10.0).collect();
-        for (name, z) in [("smooth", &smooth), ("terraced", &terraced)] {
+        // A bowl below sea level, floored by the coastal water table (B13).
+        let bowl = crate::world::water::testing::sub_zero_bowl(world);
+        for (name, z) in [
+            ("smooth", &smooth),
+            ("terraced", &terraced),
+            ("bowl", &bowl),
+        ] {
             let whole = run_with(world, z, 64, false);
             for (tile, contract) in [(64, true), (16, false), (16, true), (13, true), (7, true)] {
                 let at = format!("{name}, tile {tile}, contraction {contract}");
@@ -1447,6 +1510,43 @@ mod tests {
             let j = ((k / 64) as i64 + dy) as usize * 64 + ((k % 64) as i64 + dx) as usize;
             assert!(q[j] >= q[k], "discharge falls from {k} to {j}");
         }
+    }
+
+    /// The coastal water table (B13): a closed dune basin below 0 m fills to at least 0 m
+    /// unless its provenance allows a below-sea lake.
+    #[test]
+    fn a_basin_below_sea_level_stands_at_sea_level_unless_hot_dry_and_far() {
+        use crate::world::water::BELOW_SEA_OK;
+        let world = World { w: 64, h: 64 };
+        let z = crate::world::water::testing::sub_zero_bowl(world);
+        // The only node reaching 5 m below sea level is the bowl (the lagoon's floor is -2 m).
+        let bowl_with = |flags: Vec<u8>| -> Option<Node> {
+            let mut s = setup(world, 64, 1e-6);
+            s.provenance = Some(Classes::new(Layer::memory(world, flags), 1, world).unwrap());
+            let m = model(&s, &Layer::memory(world, z.clone()), None, "m", None).expect("model");
+            m.water.nodes.0.iter().find(|n| n.low < -5.0).copied()
+        };
+        let humid = bowl_with(vec![0; 64 * 64]).expect("the floored bowl is a node");
+        assert!(
+            humid.level >= 0.0,
+            "near the coast or not hot-dry: at least sea level, got {}",
+            humid.level
+        );
+        // r = 0 and every cell flagged: the bowl holds no water, so it is no node (a playa).
+        let arid = bowl_with(vec![BELOW_SEA_OK; 64 * 64]);
+        assert!(
+            arid.is_none_or(|n| n.level < 0.0),
+            "a hot-dry basin far from the sea keeps its r = 0 balance, got {arid:?}"
+        );
+        // A mixed basin (review I4): one sub-zero cell without the flag floors the whole basin.
+        let mut mixed = vec![BELOW_SEA_OK; 64 * 64];
+        mixed[46 * 64 + 18] = 0;
+        let m = bowl_with(mixed).expect("the floored bowl is a node");
+        assert!(
+            m.level >= 0.0,
+            "one coastal cell floors the basin, got {}",
+            m.level
+        );
     }
 
     /// Peak resident memory of this process (VmHWM), in MB.

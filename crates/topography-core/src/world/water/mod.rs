@@ -55,6 +55,17 @@ pub(crate) const MAIN_RIVER_KM2: f64 = 1.0;
 /// Export ids are 16-bit (fewer than 65,535 water bodies); a run must stay well under that
 /// (judgment value, review C2).
 pub(crate) const BODY_BUDGET: usize = 50_000;
+/// Provenance bits (collage provenance32.u8; ruling B10): kind in bits 0–2. Kind and steep
+/// are read by later Plan B tasks (erosion, checks).
+#[allow(dead_code)]
+pub(crate) const KIND_MASK: u8 = 7;
+#[allow(dead_code)]
+pub(crate) const INTERIOR: u8 = 1;
+/// An inland basin here may keep a lake below 0 m (hot-dry, far from the sea; B13).
+pub(crate) const BELOW_SEA_OK: u8 = 64;
+/// The collage is at least 30° steep here: a real cliff or cascade (B14).
+#[allow(dead_code)]
+pub(crate) const STEEP: u8 = 128;
 /// Default tile side in cells.
 pub const DEFAULT_TILE: u64 = 4096;
 
@@ -189,8 +200,8 @@ pub fn rain(o: &RainOptions) -> Result<String> {
 }
 
 /// The run's setup from a grid directory (grid.json with a `moisture` entry, elevation.f32,
-/// optional classes.u8 with `classes_cell_m`), the raw ground, and the stamp a work directory
-/// must match to be resumed.
+/// optional classes.u8 with `classes_cell_m` and provenance.u8 with `provenance_cell_m`), the
+/// raw ground, and the stamp a work directory must match to be resumed.
 pub(crate) fn setup(
     grid: &Path,
     tile: u64,
@@ -235,6 +246,27 @@ pub(crate) fn setup(
     } else {
         None
     };
+    // Collage provenance (B10, B13), nearest at its own cell size; absent: every cell 0.
+    let provenance = if grid.join("provenance.u8").exists() {
+        let cell_m = manifest
+            .get("provenance_cell_m")
+            .and_then(Value::as_f64)
+            .unwrap_or(g.spacing_m);
+        let k = cell_m / g.spacing_m;
+        ensure(
+            k >= 1.0 && k.fract() == 0.0,
+            "provenance_cell_m must be a whole multiple of spacing_m",
+        )?;
+        let k = k as u64;
+        let pw = geom::World {
+            w: world.w.div_ceil(k),
+            h: world.h.div_ceil(k),
+        };
+        let layer = layers::Layer::open(pw, &grid.join("provenance.u8"))?;
+        Some(layers::Classes::new(layer, k, world)?)
+    } else {
+        None
+    };
     let (text, source) = match water {
         Some(p) => (
             io_context(format!("read {}", p.display()), fs::read_to_string(p))?,
@@ -257,6 +289,7 @@ pub(crate) fn setup(
         "grid.json": digest(&bytes),
         "elevation.f32": identity("elevation.f32")?,
         "classes.u8": identity("classes.u8")?,
+        "provenance.u8": identity("provenance.u8")?,
         "moisture": {"file": moisture, "sha256": crate::acquisition::hash_file(&grid.join(moisture))?.0},
         "tile": tile,
         "water_table": {"source": source, "sha256": digest(text.as_bytes())},
@@ -276,6 +309,7 @@ pub(crate) fn setup(
         table,
         rain,
         params,
+        provenance,
         contract: true,
     };
     Ok((s, raw, stamp))

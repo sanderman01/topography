@@ -14,7 +14,7 @@ use super::flow::Next;
 use super::geom::UnionFind;
 use super::hierarchy::{Hierarchy, NONE};
 use super::store::{Blob, Dec, Enc};
-use super::watershed::{EDGE_KEY, Edge, Ring, TileGraph};
+use super::watershed::{Below0, EDGE_KEY, Edge, Ring, TileGraph, add_below0};
 use crate::acquisition::{Result, ensure};
 use std::collections::BTreeMap;
 
@@ -138,6 +138,10 @@ pub(crate) fn contract(g: TileGraph) -> (TileGraph, Frag) {
             .iter()
             .map(|p| g.supply.get(&Next::Node(p.0)).copied().unwrap_or(0))
             .collect(),
+        below0: pits
+            .iter()
+            .map(|p| g.below0.get(&Next::Node(p.0)).copied().unwrap_or_default())
+            .collect(),
     };
     let mut uf = UnionFind::new(n);
     // Per union-find root: the depression on top, and whether it may merge no more.
@@ -202,6 +206,10 @@ pub(crate) fn contract(g: TileGraph) -> (TileGraph, Frag) {
     for (&t, &s) in &g.supply {
         *supply.entry(remap(t)).or_insert(0) += s;
     }
+    let mut below0 = BTreeMap::new();
+    for (&t, &b) in &g.below0 {
+        add_below0(below0.entry(remap(t)).or_default(), b);
+    }
     let mut edges: Vec<Edge> = g
         .edges
         .iter()
@@ -256,6 +264,7 @@ pub(crate) fn contract(g: TileGraph) -> (TileGraph, Frag) {
         ring,
         pits: low,
         supply,
+        below0,
         edges,
         cycles: g.cycles,
     };
@@ -293,11 +302,13 @@ pub(crate) fn with_spills(frag: &Frag, tops: &Tops) -> Hierarchy {
 /// (local leaf, water from outside: the global pours into the tree and the r of other tiles'
 /// cells draining in across the ring, B1); other trees are left dry, and water poured
 /// into them is an error. A listed top's overflow is `to_sea`. `counts` holds every cell the
-/// listed trees hold (from every tile) by local holding depression (B2).
+/// listed trees hold (from every tile) by local holding depression (B2). `extra_below0` adds
+/// the below-zero counts of other tiles' cells draining in (never pours: B13).
 pub(crate) fn solve_local(
     frag: &Frag,
     tops: &Tops,
     extra: &[(u32, u64)],
+    extra_below0: &[(u32, Below0)],
     counts: &Counts,
 ) -> Result<Balance> {
     let mut h = with_spills(frag, tops);
@@ -315,10 +326,14 @@ pub(crate) fn solve_local(
     for l in 0..h.leaves {
         if !listed(l) {
             h.supply[l] = 0;
+            h.below0[l] = (0, 0);
         }
     }
     for &(l, w) in extra {
         h.supply[l as usize] += w;
+    }
+    for &(l, b) in extra_below0 {
+        add_below0(&mut h.below0[l as usize], b);
     }
     solve(&h, counts, false)
 }
@@ -564,7 +579,8 @@ pub(crate) mod tests {
                     .sum();
                 extra.push((l as u32, w - f.h.supply[l]));
             }
-            let b = solve_local(f, &tops, &extra, &Counts::dense(f.h.len(), &[t])).expect("pass L");
+            let b = solve_local(f, &tops, &extra, &[], &Counts::dense(f.h.len(), &[t]))
+                .expect("pass L");
             let (kl, ul) = (min_pits(&f.h), pits_under(&f.h, |_| 1));
             for d in 0..f.h.len() {
                 let g = sup(d);
@@ -737,7 +753,7 @@ pub(crate) mod tests {
             sum_mm: vec![1000, 2000, 10_000],
             bbox: vec![[0, 0, 6, 4]; 3],
         };
-        let b = solve_local(&frag, &tops, &[(1, 500)], &counts).expect("balance");
+        let b = solve_local(&frag, &tops, &[(1, 500)], &[], &counts).expect("balance");
         // 12,500 in: A and B hold 1,000 each, the merge 2,000 more, 8,500 leaves.
         assert_eq!(b.own.iter().sum::<u64>() + b.to_sea, 12_500);
         assert!(b.full[2]);
@@ -750,10 +766,11 @@ pub(crate) mod tests {
             sum_mm: vec![0; 3],
             bbox: vec![[u64::MAX, u64::MAX, 0, 0]; 3],
         };
-        assert!(solve_local(&frag, &none, &[(0, 1)], &empty).is_err());
-        let err = solve_local(&frag, &none, &[], &counts).expect_err("cells of an unlisted tree");
+        assert!(solve_local(&frag, &none, &[(0, 1)], &[], &empty).is_err());
+        let err =
+            solve_local(&frag, &none, &[], &[], &counts).expect_err("cells of an unlisted tree");
         assert!(err.to_string().contains("not being solved"));
-        let dry = solve_local(&frag, &none, &[], &empty).expect("balance");
+        let dry = solve_local(&frag, &none, &[], &[], &empty).expect("balance");
         assert_eq!(dry.own.iter().sum::<u64>() + dry.to_sea, 0);
     }
 }

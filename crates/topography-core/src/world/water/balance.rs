@@ -9,6 +9,7 @@ use super::LAKE_DEPTH_M;
 use super::hierarchy::{Hierarchy, NONE};
 use super::store::{Blob, Dec, Enc};
 use super::table::MILLI;
+use super::watershed::add_below0;
 use crate::acquisition::{Result, ensure};
 use std::collections::BTreeMap;
 
@@ -182,11 +183,31 @@ impl Fsm<'_> {
     }
 }
 
+/// The coastal water table (B13, review I4): a depression holding a sub-zero cell that may
+/// not keep a lake below sea level stands at least at its lowest ground at or above 0 m: one
+/// cell more than its sub-zero cells (all of which are its lowest). Never adds water: a
+/// node whose k reaches its capacity stands at its spill and passes nothing on.
+pub(crate) fn coastal_floor(k_balance: u64, sub_zero: u64, bad: u64) -> u64 {
+    if bad > 0 {
+        k_balance.max(sub_zero + 1)
+    } else {
+        k_balance
+    }
+}
+
 /// `sea_at_zero`: top-level trees spilling at or below 0 m are sea (the world's hierarchy);
 /// false for a tile's settled fragment, whose tops are not top-level in the world (Task 8b).
 pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Balance> {
     let nd = h.len();
     let (mut n, mut sum, mut bbox) = (c.cells.clone(), c.sum_mm.clone(), c.bbox.clone());
+    ensure(
+        h.below0.len() == h.leaves,
+        "below-zero counts do not match the leaves",
+    )?;
+    // Below-zero counts over each depression's own leaves and children, never through
+    // overflow (B13, preflight F19).
+    let mut below0 = h.below0.clone();
+    below0.resize(nd, (0, 0));
     // Children come before their parents.
     for d in 0..nd {
         let p = h.parent[d];
@@ -195,8 +216,17 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
             n[p] += n[d];
             sum[p] += sum[d];
             bbox[p] = union(bbox[p], bbox[d]);
+            let b = below0[d];
+            add_below0(&mut below0[p], b);
         }
     }
+    let kids_of = |d: usize, n: &[u64]| -> u64 {
+        if h.is_leaf(d as u32) {
+            0
+        } else {
+            h.children[d].iter().map(|&k| n[k as usize]).sum()
+        }
+    };
     let vfill_mm = (0..nd)
         .map(|d| mm(h.spill[d]) * n[d] as i64 - sum[d])
         .collect();
@@ -241,7 +271,13 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
     }
     let both_full =
         |d: usize| !h.is_leaf(d as u32) && h.children[d].iter().all(|&k| f.full[k as usize]);
-    let wet = |d: usize| !sea[d] && (f.full[d] || f.own[d] > 0 || both_full(d));
+    // The coastal water table makes a depression wet when its floor covers more than its
+    // children (a dry basin too); a floor within one child is that child's.
+    let floored = |d: usize| {
+        let kids = kids_of(d, &n);
+        coastal_floor(kids, below0[d].0, below0[d].1) > kids
+    };
+    let wet = |d: usize| !sea[d] && (f.full[d] || f.own[d] > 0 || both_full(d) || floored(d));
     let mut node = vec![NONE; nd];
     for d in (0..nd).rev() {
         let p = h.parent[d];
@@ -264,14 +300,14 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
             level[d] = h.spill[d];
             continue;
         }
-        let kids = if h.is_leaf(d as u32) {
-            0
+        let kids = kids_of(d, &n);
+        let more = f.own[d].div_ceil(MILLI);
+        // At most every held cell: a floor above the spill stands at it and spills nothing.
+        let k = coastal_floor(kids + more, below0[d].0, below0[d].1).min(n[d]);
+        if more == 0 && k == kids {
+            level[d] = h.spill[h.children[d][0] as usize];
         } else {
-            h.children[d].iter().map(|&k| n[k as usize]).sum()
-        };
-        match f.own[d].div_ceil(MILLI) {
-            0 => level[d] = h.spill[h.children[d][0] as usize],
-            more => need[d] = kids + more,
+            need[d] = k;
         }
     }
     let supplied: u64 = h.supply.iter().sum();
@@ -397,6 +433,7 @@ mod tests {
             geolink: vec![1, 0, NONE],
             ocean_order: vec![2],
             supply: supply.to_vec(),
+            below0: vec![(0, 0); 2],
         };
         let c = Counts {
             cells: vec![3, 2, 4],
@@ -404,6 +441,40 @@ mod tests {
             bbox: vec![[0, 0, 1, 1]; 3],
         };
         (h, c)
+    }
+
+    #[test]
+    fn the_coastal_floor_needs_one_bad_cell_and_never_lowers() {
+        assert_eq!(
+            coastal_floor(3, 10, 0),
+            3,
+            "all sub-zero cells hot-dry and far: balance"
+        );
+        assert_eq!(
+            coastal_floor(3, 10, 1),
+            11,
+            "one cell near the coast floors the basin"
+        );
+        assert_eq!(coastal_floor(40, 10, 5), 40, "a fuller balance stays");
+    }
+
+    /// Leaves 0 and 1 merge at −1 m (all their cells sub-zero) under meta 2, spilling at 3 m;
+    /// with no supply the floor makes meta 2 the node, covering one cell more than the six
+    /// sub-zero ones (at most every held cell); hot-dry and far, it stays dry.
+    #[test]
+    fn the_coastal_floor_rises_to_the_depression_that_crosses_sea_level() {
+        let (mut h, mut c) = handmade([0, 0], 3.0);
+        (h.low, h.spill) = (vec![-4.0, -3.0, -4.0], vec![-1.0, -1.0, 3.0]);
+        h.below0 = vec![(4, 4), (2, 1)];
+        let b = solve(&h, &c, true).expect("solve");
+        assert_eq!(b.node, vec![2, 2, 2]);
+        assert_eq!(b.need[2], 7);
+        assert_eq!(b.full, vec![false; 3]);
+        assert_eq!(b.to_sea, 0, "no water is added");
+        c.cells[2] = 1;
+        assert_eq!(solve(&h, &c, true).expect("solve").need[2], 6);
+        h.below0 = vec![(4, 0), (2, 0)];
+        assert_eq!(solve(&h, &c, true).expect("solve").node, vec![NONE; 3]);
     }
 
     #[test]
@@ -498,6 +569,7 @@ mod tests {
             geolink: vec![1, NONE],
             ocean_order: vec![1, 0],
             supply: vec![5_000, 0],
+            below0: vec![(0, 0); 2],
         };
         let c = Counts {
             cells: vec![2, 4],
@@ -558,6 +630,7 @@ mod tests {
             geolink: vec![1, 0, 0, 2, NONE],
             ocean_order: vec![4],
             supply: vec![1_000, 0, 2_500],
+            below0: vec![(0, 0); 3],
         };
         let c = Counts {
             cells: vec![1, 2, 1, 1, 2],
@@ -614,6 +687,7 @@ mod tests {
             geolink: vec![1, NONE],
             ocean_order: vec![0, 1],
             supply: vec![5_000, 0],
+            below0: vec![(0, 0); 2],
         };
         let c = Counts {
             cells: vec![2, 4],

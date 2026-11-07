@@ -6,7 +6,7 @@ use super::bodies::main_up;
 use super::geom::{OFFSETS, Rect, UnionFind, step_len};
 use super::layers::Layer;
 use super::pipeline::Setup;
-use super::{BODY_BUDGET, MAIN_RIVER_KM2};
+use super::{BELOW_SEA_OK, BODY_BUDGET, MAIN_RIVER_KM2};
 use crate::acquisition::Result;
 use serde_json::{Map, Value, json};
 use std::cell::RefCell;
@@ -323,6 +323,8 @@ pub(crate) fn check_tile(
     let fw = l.flow_written.read(win)?;
     let (n2, bz) = (l.node_written.read(win)?, l.breached.read(win)?);
     let l2 = l.level_written.read(win)?;
+    // Provenance over the window, indexed like `raw` and `z` (preflight F4).
+    let flags = s.flags(win)?;
     let classes = match &s.classes {
         Some(c) => c.read(core)?,
         None => vec![0; core.cells()],
@@ -796,6 +798,11 @@ pub(crate) fn check_tile(
             if surf[j] != lv {
                 t.fail("lake_not_flat", x, y);
             }
+            // B13: a lake below sea level only where every one of its cells allows it (the
+            // floor's predicate: its cells are all sub-zero).
+            if lv < -SILL_M && flags[j] & BELOW_SEA_OK == 0 {
+                t.fail("lake_below_sea", x, y);
+            }
             // A figure (gate 1 ruling): the lake stays at its label, m3 may balance higher.
             if !full && level[j].is_finite() {
                 t.lake_m3_gap = wider_gap(t.lake_m3_gap, Some(((level[j] - lv).abs(), body[j])));
@@ -1163,6 +1170,7 @@ pub(crate) fn report(
         "drainage_stuck",
         "bed_rises",
         "lake_not_flat",
+        "lake_below_sea",
         "lake_leaks",
         "lake_exit_surface",
         "dam_steps",
@@ -1433,6 +1441,7 @@ mod tests {
     use super::*;
     use crate::world::water::MIN_DEPTH_M;
     use crate::world::water::geom::World;
+    use crate::world::water::layers::Classes;
     use crate::world::water::testing::setup;
 
     /// A hand-built finished run on a `w` × `h` world: every layer dry and unrouted (dry basin
@@ -1460,6 +1469,8 @@ mod tests {
         unlisted: BTreeSet<u32>,
         exits: Vec<Exit>,
         spots: Vec<Spot>,
+        /// Provenance per cell (`Setup.provenance`; 0: no flags).
+        flags: Vec<u8>,
     }
 
     impl Case {
@@ -1486,10 +1497,39 @@ mod tests {
                 unlisted: BTreeSet::new(),
                 exits: Vec::new(),
                 spots: Vec::new(),
+                flags: vec![0; n],
             }
+        }
+        /// A 16² window with a bowl whose cells below −3 m hold a closed lake (body 2) at −3 m.
+        fn lake_at(level: f32) -> Self {
+            let mut c = Case::new(16, 16, |x, y| {
+                let d = (x as f32 - 7.5).hypot(y as f32 - 7.5);
+                -6.0 + d
+            });
+            for k in 0..c.cells() {
+                if c.z[k] < level {
+                    (c.surf[k], c.body[k], c.node[k]) = (level, 2, 2);
+                    c.flow[k] = 0;
+                }
+            }
+            c.lakes.insert(2, (level, false, [0, 0], 0));
+            c.levels.insert(2, level);
+            c
+        }
+        fn cells(&self) -> usize {
+            (self.world.w * self.world.h) as usize
         }
         fn k(&self, x: u64, y: u64) -> usize {
             (y * self.world.w + x) as usize
+        }
+        /// The run's setup at tiles of `tile` cells, with the case's provenance.
+        fn setup(&self, tile: u64) -> Setup {
+            let mut s = setup(self.world, tile, 0.05);
+            s.provenance = Some(
+                Classes::new(Layer::memory(self.world, self.flags.clone()), 1, self.world)
+                    .expect("provenance"),
+            );
+            s
         }
         /// bodies.json as the export reads it: every labelled id but `unlisted`.
         fn listed(&self) -> Listed {
@@ -1535,7 +1575,7 @@ mod tests {
         }
         fn tile(&self) -> Tile {
             check_tile(
-                &setup(self.world, 4096, 0.05),
+                &self.setup(4096),
                 &self.layers(),
                 Rect::whole(self.world),
                 &self.lakes,
@@ -1547,7 +1587,7 @@ mod tests {
         }
         /// The report's check counts over tiles of `tile` cells.
         fn checks_at(&self, tile: u64) -> Value {
-            let (s, l) = (setup(self.world, tile, 0.05), self.layers());
+            let (s, l) = (self.setup(tile), self.layers());
             let tiles = s
                 .tiles()
                 .into_iter()
@@ -1896,6 +1936,17 @@ mod tests {
             0,
             "a wetted pond is water"
         );
+    }
+
+    #[test]
+    fn lake_below_sea_fails_without_the_flag() {
+        let mut f = Case::lake_at(-3.0);
+        let t = f.tile();
+        assert!(fails(&t, "lake_below_sea") > 0, "{:?}", t.fails);
+        f.flags = vec![crate::world::water::BELOW_SEA_OK; f.cells()];
+        assert_eq!(fails(&f.tile(), "lake_below_sea"), 0);
+        // The report lists the check even when nothing fails.
+        assert_eq!(f.report()["checks"]["lake_below_sea"], 0);
     }
 
     /// A 3 × 3 lake at level 10 in a 9 × 9 world of ground `rim` around a 9 m floor.

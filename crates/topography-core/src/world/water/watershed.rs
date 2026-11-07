@@ -164,18 +164,41 @@ pub(crate) struct TileGraph {
     pub pits: Vec<(u64, f32)>,
     /// r supply (thousandths of a cell) by end.
     pub supply: BTreeMap<Next, u64>,
+    /// Cells below 0 m, and those of them without bit 64, by end (B13).
+    pub below0: BTreeMap<Next, Below0>,
     /// The lowest edge per pair of ends inside the tile.
     pub edges: Vec<Edge>,
     pub cycles: u64,
 }
 
-/// Pass A's result for one tile; `zc` holds the core's ground, `supply` each core cell's r.
+/// (cells below 0 m, those of them without bit 64): the coastal water table's counts (B13).
+pub(crate) type Below0 = (u64, u64);
+
+pub(crate) fn add_below0(a: &mut Below0, b: Below0) {
+    (a.0, a.1) = (a.0 + b.0, a.1 + b.1);
+}
+
+/// `tile_graph_with` without below-zero counts.
+#[cfg(test)]
 pub(crate) fn tile_graph(
     world: World,
     core: Rect,
     zc: &[f32],
     d: &Drain,
     supply: impl Fn(usize) -> u64,
+) -> TileGraph {
+    tile_graph_with(world, core, zc, d, supply, |_| (0, 0))
+}
+
+/// Pass A's result for one tile; `zc` holds the core's ground, `supply` each core cell's r,
+/// `below0` its below-zero counts.
+pub(crate) fn tile_graph_with(
+    world: World,
+    core: Rect,
+    zc: &[f32],
+    d: &Drain,
+    supply: impl Fn(usize) -> u64,
+    below0: impl Fn(usize) -> Below0,
 ) -> TileGraph {
     let n = core.cells();
     assert_eq!(zc.len(), n, "zc covers the core");
@@ -184,8 +207,13 @@ pub(crate) fn tile_graph(
         "core ground is not finite"
     );
     let mut sup = BTreeMap::new();
+    let mut b0: BTreeMap<Next, Below0> = BTreeMap::new();
     for k in 0..n {
         *sup.entry(d.end[k]).or_insert(0) += supply(k);
+        let b = below0(k);
+        if b != (0, 0) {
+            add_below0(b0.entry(d.end[k]).or_default(), b);
+        }
     }
     let mut best: HashMap<(Next, Next), Edge> = HashMap::new();
     for k in 0..n {
@@ -255,6 +283,7 @@ pub(crate) fn tile_graph(
         ring,
         pits: pits.into_iter().collect(),
         supply: sup,
+        below0: b0,
         edges,
         cycles: d.cycles,
     }
@@ -291,6 +320,7 @@ impl Blob for TileGraph {
         self.ring.put(e);
         self.pits.put(e);
         self.supply.put(e);
+        self.below0.put(e);
         self.edges.put(e);
         self.cycles.put(e);
     }
@@ -299,6 +329,7 @@ impl Blob for TileGraph {
             ring: Blob::get(d)?,
             pits: Blob::get(d)?,
             supply: Blob::get(d)?,
+            below0: Blob::get(d)?,
             edges: Blob::get(d)?,
             cycles: Blob::get(d)?,
         })

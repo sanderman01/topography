@@ -8,7 +8,7 @@
 use super::flow::Next;
 use super::geom::{UnionFind, World, tile_of, tiles};
 use super::store::{Blob, Dec, Enc};
-use super::watershed::{EDGE_KEY, TileGraph, ordered};
+use super::watershed::{Below0, EDGE_KEY, TileGraph, add_below0, ordered};
 use crate::acquisition::{AcquisitionError, Result, ensure};
 
 pub(crate) const NONE: u32 = u32::MAX;
@@ -30,6 +30,9 @@ pub(crate) struct Hierarchy {
     pub geolink: Vec<u32>,
     pub ocean_order: Vec<u32>,
     pub supply: Vec<u64>,
+    /// Below-zero counts by leaf, like `supply` (B13); `balance::solve` sums them over each
+    /// depression's own subtree, never through overflow.
+    pub below0: Vec<Below0>,
 }
 
 impl Hierarchy {
@@ -53,10 +56,12 @@ impl Blob for Hierarchy {
         self.geolink.put(e);
         self.ocean_order.put(e);
         self.supply.put(e);
+        self.below0.put(e);
     }
     fn get(d: &mut Dec) -> Result<Self> {
         let (leaves, leaf_pit, low, spill, parent): (u64, _, _, _, _) = Blob::get(d)?;
         let (children, outlet, geolink, ocean_order, supply) = Blob::get(d)?;
+        let below0 = Blob::get(d)?;
         Ok(Self {
             leaves: leaves as usize,
             leaf_pit,
@@ -68,6 +73,7 @@ impl Blob for Hierarchy {
             geolink,
             ocean_order,
             supply,
+            below0,
         })
     }
 }
@@ -286,6 +292,7 @@ pub(crate) fn build(
 
     let mut low = vec![f32::INFINITY; nl];
     let mut supply = vec![0u64; nl];
+    let mut below0 = vec![(0u64, 0u64); nl];
     for g in graphs {
         for &(p, z) in &g.pits {
             let l = leaf_of(Next::Node(p))? as usize;
@@ -295,6 +302,12 @@ pub(crate) fn build(
             let l = leaf_of(t)?;
             if l != NONE {
                 supply[l as usize] += s;
+            }
+        }
+        for (&t, &b) in &g.below0 {
+            let l = leaf_of(t)?;
+            if l != NONE {
+                add_below0(&mut below0[l as usize], b);
             }
         }
     }
@@ -351,6 +364,7 @@ pub(crate) fn build(
         geolink: vec![NONE; nl],
         ocean_order: Vec::new(),
         supply,
+        below0,
     };
     let spill_out = |h: &mut Hierarchy, d: u32, l: &Link, from_a: bool| {
         let (inside, outside, beyond) = if from_a {
