@@ -1,10 +1,9 @@
-//! World-sized rasters, in memory (tests) or in little-endian files (the world):
+//! World-sized rasters, in memory (tests, small derived masks) or in little-endian files (the world):
 //! windowed reads and positioned writes, so tiles never need the whole raster.
 
 use super::geom::{Rect, World};
 use super::store::partial_path;
 use crate::acquisition::{Result, ensure, io_context};
-#[cfg(test)]
 use std::sync::{Arc, RwLock};
 use std::{
     fs,
@@ -40,7 +39,6 @@ cell!(u64);
 
 #[derive(Clone)]
 pub(crate) enum Layer<T: Cell> {
-    #[cfg(test)]
     Memory {
         world: World,
         values: Arc<RwLock<Vec<T>>>,
@@ -53,7 +51,6 @@ pub(crate) enum Layer<T: Cell> {
 }
 
 impl<T: Cell> Layer<T> {
-    #[cfg(test)]
     pub fn memory(world: World, values: Vec<T>) -> Self {
         assert_eq!(values.len() as u64, world.w * world.h);
         Layer::Memory {
@@ -102,7 +99,6 @@ impl<T: Cell> Layer<T> {
     }
     pub fn world(&self) -> World {
         match self {
-            #[cfg(test)]
             Layer::Memory { world, .. } => *world,
             Layer::File { world, .. } => *world,
         }
@@ -115,7 +111,6 @@ impl<T: Cell> Layer<T> {
         )?;
         let mut out = Vec::with_capacity(r.cells());
         match self {
-            #[cfg(test)]
             Layer::Memory { values, .. } => {
                 let v = values.read().expect("layer lock");
                 for y in r.y0..r.y0 + r.h as u64 {
@@ -148,7 +143,6 @@ impl<T: Cell> Layer<T> {
         )?;
         ensure(values.len() == r.cells(), "raster write size")?;
         match self {
-            #[cfg(test)]
             Layer::Memory { values: v, .. } => {
                 let mut v = v.write().expect("layer lock");
                 for (row, y) in (r.y0..r.y0 + r.h as u64).enumerate() {
