@@ -113,7 +113,8 @@ pub(crate) struct Figures {
     pub order_ties: u64,
     pub diffused_cells: u64,
     pub tapered_cells: u64,
-    /// Cells whose cut the first WALL_ROUNDS rounds halved (or reset when under 1 cm).
+    /// Cells raised by the first WALL_ROUNDS rounds' halved discs, summed over rounds (a cell
+    /// raised in several rounds counts each time).
     pub wall_cells_restored: u64,
     pub walls_left: u64,
     /// Strict local minima of the eroded ground that were none in the breached ground (B33).
@@ -121,7 +122,7 @@ pub(crate) struct Figures {
     /// Lowering of full-K cells outside the cut footprint (B6), cm-binned p99 and max.
     pub hillslope_p99_m: f32,
     pub hillslope_max_m: f32,
-    /// Cells whose cut the removal rounds (after WALL_ROUNDS) reset to the routing's start.
+    /// Cells raised by the removal rounds' dropped discs (after WALL_ROUNDS), summed over rounds.
     pub wall_cuts_removed: u64,
     /// Wall rounds used (the most over routings).
     pub wall_rounds: u64,
@@ -503,14 +504,25 @@ pub(crate) fn taper(
             .max(water_bound(r, j))
             .min(before[j] - depth[j])
     };
-    // The discs that lower cell `j` by more than `over`.
-    let discs_at = |depth: &[f32], j: usize, over: f32, out: &mut Vec<u32>| {
+    // The discs that lower cell `j` by more than `over`, marked in `out`.
+    let discs_at = |depth: &[f32], j: usize, over: f32, out: &mut Bits| {
         for &(dx, dy, rho) in &window {
             if let Some(s) = at(j, dx, dy) {
                 let d = depth[s];
                 if d > 0.0 && disc_at(d, rho, radius(depth, s)) > over {
-                    out.push(s as u32);
+                    out.set(s);
                 }
+            }
+        }
+    };
+    // Marks in `out` the cells disc `c` lowers (its own radius).
+    let footprint = |depth: &[f32], c: usize, out: &mut Bits| {
+        let rc = radius(depth, c);
+        let kc = rc.ceil() as i64;
+        for (dx, dy) in (-kc..=kc).flat_map(|dy| (-kc..=kc).map(move |dx| (dx, dy))) {
+            let rho = ((dx * dx + dy * dy) as f64).sqrt();
+            if let Some(j) = at(c, dx, dy).filter(|_| rho == 0.0 || rho < rc) {
+                out.set(j);
             }
         }
     };
@@ -617,46 +629,30 @@ pub(crate) fn taper(
     };
     // The 5 × 5 of cells in `a` or `b`: where a change can make or end a narrow cut.
     let near5 = |a: &Bits, b: &Bits| {
-        let mut out: Vec<usize> = a
-            .ones()
-            .chain(b.ones())
-            .flat_map(|c| {
-                let (cx, cy) = ((c % w) as i64, (c / w) as i64);
-                (-2..=2)
-                    .flat_map(move |dy| (-2..=2).map(move |dx| (cx + dx, cy + dy)))
-                    .filter(|&(x, y)| x >= 0 && y >= 0 && x < w as i64 && y < h as i64)
-                    .map(|(x, y)| y as usize * w + x as usize)
-            })
-            .collect();
-        out.sort_unstable();
-        out.dedup();
+        let mut out = Bits::new(n);
+        for c in a.ones().chain(b.ones()) {
+            let (cx, cy) = ((c % w) as i64, (c / w) as i64);
+            for y in (cy - 2).max(0)..=(cy + 2).min(h as i64 - 1) {
+                for x in (cx - 2).max(0)..=(cx + 2).min(w as i64 - 1) {
+                    out.set(y as usize * w + x as usize);
+                }
+            }
+        }
         out
     };
-    // The footprints of the discs `hit` rise to what the discs now give (lifts kept); returns
-    // the cells raised.
-    let rerender = |depth: &[f32], z: &mut [f32], hit: &[u32]| {
-        let mut dirty: Vec<u32> = hit
-            .iter()
-            .flat_map(|&c| {
-                window
-                    .iter()
-                    .filter_map(move |&(dx, dy, _)| at(c as usize, dx, dy))
-            })
-            .filter(|&j| !wet(r, j))
-            .map(|j| j as u32)
-            .collect();
-        dirty.sort_unstable();
-        dirty.dedup();
-        dirty.retain(|&j| {
-            let ju = j as usize;
-            let v = clamp(depth, ju, lower_at(depth, ju));
-            let up = v > z[ju];
-            if up {
-                z[ju] = v;
+    // The cells of `dirty` rise to what the discs now give (lifts kept); raised cells are
+    // marked in `raised` and counted.
+    let rerender = |depth: &[f32], z: &mut [f32], dirty: &Bits, raised: &mut Bits| {
+        let mut up = 0u64;
+        for j in dirty.ones().filter(|&j| !wet(r, j)) {
+            let v = clamp(depth, j, lower_at(depth, j));
+            if v > z[j] {
+                z[j] = v;
+                raised.set(j);
+                up += 1;
             }
-            up
-        });
-        dirty
+        }
+        up
     };
     // Cells raised in the last round: a new wall lies in their 3 × 3 (round 0: every cut).
     let mut touched: Option<Bits> = None;
@@ -692,53 +688,50 @@ pub(crate) fn taper(
         // Narrow cuts after the bed grade (it lifts cells too).
         let narrow = match &touched {
             None => find_narrow(z, &mut changed.ones()),
-            Some(t) => find_narrow(z, &mut near5(t, &raised).into_iter()),
+            Some(t) => find_narrow(z, &mut near5(t, &raised).ones()),
         };
         fig.narrow_found += narrow.len() as u64;
         if walls.is_empty() && narrow.is_empty() && !any {
             break;
         }
         // A wall's 3 × 3 and each narrow cell: their discs are halved alike.
-        let mut fix: Vec<u32> = walls
-            .iter()
-            .flat_map(|&j| around(j as usize).map(|c| c as u32))
-            .chain(narrow.iter().copied())
-            .collect();
-        fix.sort_unstable();
-        fix.dedup();
+        let mut fix = Bits::new(n);
+        for j in walls.iter().flat_map(|&j| around(j as usize)) {
+            fix.set(j);
+        }
+        for &j in &narrow {
+            fix.set(j as usize);
+        }
         // The discs to halve (or drop): those lowering a fixed cell by over half its cut,
         // every disc reaching it in the removal rounds.
         let remove = round >= WALL_ROUNDS;
-        let mut hit: Vec<u32> = Vec::new();
-        for &j in &fix {
-            let cut = before[j as usize] - z[j as usize];
+        let mut hit = Bits::new(n);
+        for j in fix.ones() {
+            let cut = before[j] - z[j];
             if cut > 0.0 {
-                discs_at(
-                    depth,
-                    j as usize,
-                    if remove { 0.0 } else { cut / 2.0 },
-                    &mut hit,
-                );
+                discs_at(depth, j, if remove { 0.0 } else { cut / 2.0 }, &mut hit);
             }
         }
-        hit.sort_unstable();
-        hit.dedup();
-        for &c in &hit {
-            let d = &mut depth[c as usize];
+        // Their footprints before they shrink, then the halving.
+        let mut dirty = Bits::new(n);
+        for c in hit.ones() {
+            footprint(depth, c, &mut dirty);
+        }
+        for c in hit.ones() {
+            let d = &mut depth[c];
             *d = if remove || *d / 2.0 < SHAPE_MIN_M {
                 0.0
             } else {
                 *d / 2.0
             };
         }
-        for j in rerender(depth, z, &hit) {
-            raised.set(j as usize);
-            any = true;
-            if remove {
-                fig.wall_cuts_removed += 1;
-            } else {
-                fig.wall_cells_restored += 1;
-            }
+        drop(hit);
+        let up = rerender(depth, z, &dirty, &mut raised);
+        any |= up > 0;
+        if remove {
+            fig.wall_cuts_removed += up;
+        } else {
+            fig.wall_cells_restored += up;
         }
         fig.wall_rounds = round as u64 + 1;
         // Nothing raised: walls this routing did not cut stay (counted below), cells only

@@ -312,8 +312,6 @@ pub(crate) fn horn_deg(z: &[f32], w: usize, x: usize, y: usize, spacing_m: f64) 
     gx.hypot(gy).atan().to_degrees()
 }
 
-/// A changed cell's slope (Horn, degrees) fails `walls` against its raw slope and the level's
-/// angle (B8; shared with breach, channels and erosion).
 /// `handoff_narrow` at (x, y) of a w × h grid, at least one cell inside it (B9, review C2,
 /// ruling R5): the cut (raw − z, 0 outside the grid) against its 3 × 3 grey opening (max over
 /// the 3 × 3 of each one's 3 × 3 min); thr = max(NARROW_M, NARROW_SHARE × cut). It fails when
@@ -363,6 +361,8 @@ pub(crate) fn narrow_at(
     (excess, carved)
 }
 
+/// A changed cell's slope (Horn, degrees) fails `walls` against its raw slope and the level's
+/// angle (B8; shared with breach, channels and erosion).
 pub(crate) fn is_wall(slope: f64, raw_slope: f64, wall_deg: f64) -> bool {
     slope > wall_deg.max(raw_slope) + 0.01
 }

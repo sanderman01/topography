@@ -403,13 +403,14 @@ impl Tags {
     }
     /// b reads the raw ground and m1.
     fn b(m1: &str, p: &Params, m3s_per_km2: f64) -> String {
-        stage_tag(
-            "b",
-            &json!({"after": m1, "cap": p.breach_cap_m, "radius": p.breach_radius,
-                    "channels": p.channels, "wall_deg": p.wall_deg, "m3s_per_km2": m3s_per_km2,
-                    "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true,
-                    "taper_min_cells": if p.erosion.is_some() { erosion::TAPER_MIN_CELLS } else { 0.0 }}),
-        )
+        let mut v = json!({"after": m1, "cap": p.breach_cap_m, "radius": p.breach_radius,
+                "channels": p.channels, "wall_deg": p.wall_deg, "m3s_per_km2": m3s_per_km2,
+                "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true});
+        // Only erosion levels widen the taper; 1 m keeps its tag (and caches).
+        if p.erosion.is_some() {
+            v["taper_min_cells"] = json!(erosion::TAPER_MIN_CELLS);
+        }
+        stage_tag("b", &v)
     }
     /// e reads the breached ground, the provenance and the classes (b's tag, B23).
     fn e(b: &str, e: &table::Erosion, wall_deg: f64) -> String {
