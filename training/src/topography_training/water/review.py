@@ -71,7 +71,8 @@ DAM_M, DAM_PX = 256, 1024
 ARROW_KM2 = 2e-5
 STRAIGHT_RUNS, RUN_M = 20, 256
 FAILURE_M, FAILURE_CROPS = 128, 10
-EXIT_M, EXIT_PX, SHEET_COLS, SHEET_ROWS = 128, 256, 6, 8
+# Exit crops in cells, so a 32 m sheet spans 1,024 m and a 4 m sheet 128 m.
+EXIT_CELLS, EXIT_PX, SHEET_COLS, SHEET_ROWS = 32, 256, 6, 8
 GUIDE_MIN_M, GUIDE_MAX_M, GUIDE_PX = 256, 4096, 768
 OVERVIEW_PX = 2048
 # The cut panel saturates at this lowering or raising; a square-root ramp shows 5-20 cm cuts.
@@ -455,7 +456,8 @@ def _lake_sheets(L: Layers, dest: Path) -> list[Path]:
 
     lakes = sorted((b for b in L.bodies if b["kind"] == "lake" and _is_open(b) and b.get("exit_cell") is not None),
                    key=lambda b: (-b.get("area_km2", 0.0), b["id"]))
-    cells = max(1, int(round(EXIT_M / L.spacing)))
+    cells = EXIT_CELLS
+    exit_m = cells * L.spacing
     scale = max(1, int(round(EXIT_PX / cells)))
     side, cap = cells * scale, 14
     per = SHEET_COLS * SHEET_ROWS
@@ -483,7 +485,7 @@ def _lake_sheets(L: Layers, dest: Path) -> list[Path]:
             e, n = L.en(c, r)
             draw.text((ox + 2, oy + 1), f"lake {b['id']}  {b.get('level_m', 0):.1f} m  E{e} N{n}", fill=(0, 0, 0))
         img, _ = _compose([np.asarray(sheet)], f"lake exits {s + 1}-{s + len(page)} of {len(lakes)}, "
-                          f"{EXIT_M} m each, largest lakes first", scale / L.spacing, WATER_LEGEND[:3])
+                          f"{exit_m:g} m each, largest lakes first", scale / L.spacing, WATER_LEGEND[:3])
         path = dest / f"sheet-{s // per + 1:02d}.png"
         path.parent.mkdir(parents=True, exist_ok=True)
         img.save(path)
