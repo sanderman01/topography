@@ -1,0 +1,26 @@
+crates/topography-core/src/world/water/breach.rs
+  s_8c1b40ea9c1e0d::t_f5caf8f19b7670 9,222
+  s_8c1b40ea9c1e0d::t_008eeeb70fdfa2 851-853
+  s_8c1b40ea9c1e0d::t_c7989af907a4aa 855-858
+  s_8c1b40ea9c1e0d::t_bbfc02acb597bd 847-850,854
+  s_8c1b40ea9c1e0d::t_82d2b14518f95f 859-873
+  s_8c1b40ea9c1e0d::t_28c785869b3f3f 258-259
+  s_8c1b40ea9c1e0d::t_3e5f70cc4b8f84 260
+  s_8c1b40ea9c1e0d::t_534857694282eb 874-875
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0acfddf56356f0b0dd05c5ed442bcbbcd536c790",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
