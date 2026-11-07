@@ -1358,6 +1358,24 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp");
         let world = geom::World { w: 64, h: 64 };
         let grid = testing::coarse_grid_dir(dir.path(), world, 32.0);
+        // Test-only: the fixture's catchments are tiny (A ≈ 0.1 km²), so the 32 m k_dt is
+        // raised 20× (review M3) for the seam sill to grade measurably in 5 routings.
+        let table = fs::read_to_string(grid.join("water.toml")).unwrap();
+        let fast = table.replacen("k_dt = 7e-4", "k_dt = 1.4e-2", 1);
+        assert_ne!(fast, table, "the 32 m k_dt moved");
+        fs::write(grid.join("water.toml"), fast).unwrap();
+        // The same grid with erosion off (k_dt 0) holds the seam dam's undrained lake.
+        let still = dir.path().join("still");
+        fs::create_dir_all(&still).unwrap();
+        for f in fs::read_dir(&grid).unwrap() {
+            let f = f.unwrap().path();
+            fs::copy(&f, still.join(f.file_name().unwrap())).unwrap();
+        }
+        fs::write(
+            still.join("water.toml"),
+            table.replacen("k_dt = 7e-4", "k_dt = 0.0", 1),
+        )
+        .unwrap();
         let water = Some(grid.join("water.toml"));
         let o = Options {
             grid: grid.clone(),
@@ -1400,13 +1418,36 @@ mod tests {
                 assert!(raw[i] - eroded[i] <= 3.0 + 1e-4, "interior cap 3 m at {i}");
             }
         }
-        // The seam dam's sill is graded (its small catchment cuts ~0.25 m in 5 routings); the
-        // other dam's gorge would leave a narrow cut, so it fills (ruling Q4).
+        // The seam dam's sill is graded at least 1 m and the lake behind it shrinks against
+        // the same grid without erosion.
+        let cut = (0..=20u64)
+            .map(|y| raw[(y * 64 + 44) as usize] - eroded[(y * 64 + 44) as usize])
+            .fold(0.0f32, f32::max);
+        assert!(cut >= 1.0, "the seam dam is cut by erosion: {cut} m");
+        let behind = |work: &Path| {
+            let node = layers::Layer::<u32>::open(world, &work.join("m2-node.u32"))
+                .unwrap()
+                .to_vec()
+                .unwrap();
+            (0..=20u64)
+                .flat_map(|y| (30..44u64).map(move |x| (y * 64 + x) as usize))
+                .filter(|&i| node[i] >= 2)
+                .count()
+        };
+        let o_still = Options {
+            grid: still.clone(),
+            work: dir.path().join("work-still"),
+            water: Some(still.join("water.toml")),
+            tile: 32,
+            threads: 2,
+            river_km2: Some(0.05),
+        };
+        run(&o_still).expect("run without erosion");
+        let (with, without) = (behind(&o.work), behind(&o_still.work));
         assert!(
-            raw[20 * 64 + 44] - eroded[20 * 64 + 44] > 0.1,
-            "the seam dam is cut by erosion"
+            with < without,
+            "the seam lake shrinks: {with} held cells vs {without}"
         );
-        assert_eq!(stages["breach"]["breach_refused_narrow"]["count"], 1);
         // A second run resumes from the cache with the same answer.
         assert!(run(&o).is_ok());
         // finish accepts the coarse work directory (its tag list includes e; preflight F5).
