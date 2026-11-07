@@ -1,0 +1,25 @@
+crates/topography-core/src/world/water/channel.rs
+  s_774c09797904fe::t_d45cdf1b438347 848
+  s_774c09797904fe::t_8a134567053402 698
+  s_774c09797904fe::t_91dd1ad9321537 697
+  s_774c09797904fe::t_9f75371451e67e 849-888
+  s_774c09797904fe::t_1143ccf8c496cd 892,899-906
+  s_774c09797904fe::t_4fea27ad3e7293 895-896
+  s_774c09797904fe::t_fade78bc367536 1559-1598
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "154f35059af53801eb19555ba9fd1af02ce96368",
+  "prompts": {},
+  "sessions": {
+    "s_774c09797904fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db136362-a5cc-4efa-8192-13bacc041efa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
