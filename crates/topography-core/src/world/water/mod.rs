@@ -10,6 +10,9 @@ mod breach;
 mod channel;
 mod checks;
 mod contract;
+// Wired into the run in the next commit (Task 6).
+#[allow(dead_code)]
+mod erosion;
 mod flats;
 mod flow;
 mod geom;
