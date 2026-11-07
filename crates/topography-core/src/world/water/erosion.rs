@@ -435,11 +435,14 @@ pub(crate) fn footprint(
 /// neighbours' mean, never below the floor or its water bound, and never so low that it makes
 /// a trough (below the lower cell of both neighbours on any of the 4 axes) or a wall (more
 /// than tan(wall_deg) per metre below a neighbour it was not already below; ruling Q2);
-/// concave cells, interior, held, sea and edge cells stay. Returns the cells lowered and the
-/// deepest lowering.
+/// concave cells, interior, held, sea and edge cells stay. Lowering a cell steepens its
+/// neighbours' (Horn) slope too, so then every diffused cell in the 3 × 3 of a changed cell
+/// steeper than max(wall_deg, `raw`) goes back, until none is. Returns the cells lowered and
+/// the deepest lowering.
 pub(crate) fn diffuse(
     r: &Routing,
     z: &mut [f32],
+    raw: &[f32],
     alpha: f32,
     near: &Bits,
     wall_deg: f64,
@@ -451,7 +454,8 @@ pub(crate) fn diffuse(
     }
     let mut above = z[..w].to_vec();
     let mut row = vec![0f32; w];
-    let (mut n, mut max) = (0, 0f32);
+    // The diffused cells and their ground before, by cell.
+    let mut old: Vec<(u32, f32)> = Vec::new();
     for y in 1..h - 1 {
         row.copy_from_slice(&z[y * w..(y + 1) * w]);
         for x in 1..w - 1 {
@@ -486,14 +490,62 @@ pub(crate) fn diffuse(
                 .max(r.floor[c])
                 .max(water_bound(r, c));
             if v < z[c] {
-                max = max.max(z[c] - v);
+                old.push((c as u32, z[c]));
                 z[c] = v;
-                n += 1;
             }
         }
         std::mem::swap(&mut above, &mut row);
     }
-    (n, max)
+    // Walls in the 3 × 3 of diffused cells: their diffused 3 × 3 goes back (cells only rise).
+    let block = |c: usize| {
+        let (cx, cy) = (c % w, c / w);
+        (cy.saturating_sub(1)..(cy + 2).min(h))
+            .flat_map(move |y| (cx.saturating_sub(1)..(cx + 2).min(w)).map(move |x| y * w + x))
+    };
+    let at = |c: usize| old.binary_search_by_key(&(c as u32), |p| p.0).ok();
+    loop {
+        let mut back: Vec<usize> = Vec::new();
+        for &(c, before) in &old {
+            let c = c as usize;
+            if z[c] >= before {
+                continue;
+            }
+            for j in block(c) {
+                let (x, y) = (j % w, j / w);
+                if x > 0
+                    && y > 0
+                    && x + 1 < w
+                    && y + 1 < h
+                    && raw[j] - z[j] > CHANGED_M
+                    && is_wall(
+                        horn_deg(z, w, x, y, r.spacing_m),
+                        horn_deg(raw, w, x, y, r.spacing_m),
+                        wall_deg,
+                    )
+                {
+                    back.extend(block(j).filter_map(at));
+                }
+            }
+        }
+        if back.is_empty() {
+            break;
+        }
+        let mut raised = false;
+        for i in back {
+            let (c, before) = old[i];
+            if z[c as usize] < before {
+                z[c as usize] = before;
+                raised = true;
+            }
+        }
+        if !raised {
+            break;
+        }
+    }
+    let lowered = old.iter().filter(|&&(c, b)| z[c as usize] < b);
+    lowered.fold((0, 0f32), |(n, m), &(c, b)| {
+        (n + 1, m.max(b - z[c as usize]))
+    })
 }
 
 /// A cut's taper radius in cells (B7): max(2.5 cells, 2·d / (tan(wall)·spacing)); 0 (the cell
@@ -915,7 +967,7 @@ pub(crate) fn step(
     fig.walls_left = t.walls_left;
     fig.narrow_found = t.narrow_found;
     fig.narrow_left = t.narrow_left;
-    (fig.diffused_cells, fig.diffusion_max_m) = diffuse(r, z, alpha, &diffusing, wall_deg);
+    (fig.diffused_cells, fig.diffusion_max_m) = diffuse(r, z, raw, alpha, &diffusing, wall_deg);
     drop(diffusing);
     snap("df", z)?;
     // B6 figure: full-K land outside the river cuts' footprint should not move.
@@ -1321,7 +1373,7 @@ mod tests {
         let mut r = s.routing();
         r.world = World { w: 7, h: 7 };
         let mut out = z.clone();
-        diffuse(&r, &mut out, 0.05, &all(w * h), 35.0);
+        diffuse(&r, &mut out, &z, 0.05, &all(w * h), 35.0);
         for y in 1..h - 1 {
             let c = y * w + 3;
             assert!(
@@ -1339,6 +1391,46 @@ mod tests {
         }
     }
 
+    /// Changed cells (from `raw`) failing `walls` at 35° on 32 m cells, one in from the edge.
+    fn walls_at(z: &[f32], raw: &[f32], w: usize, h: usize) -> Vec<(usize, usize)> {
+        (1..h - 1)
+            .flat_map(|y| (1..w - 1).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                raw[y * w + x] - z[y * w + x] > CHANGED_M
+                    && is_wall(
+                        horn_deg(z, w, x, y, 32.0),
+                        horn_deg(raw, w, x, y, 32.0),
+                        35.0,
+                    )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn diffusion_on_rough_steep_ground_leaves_no_wall() {
+        // A 38° slope (25 m a 32 m cell) with ±8 m hashed bumps: diffusion lowers bumps,
+        // which steepens their neighbours' Horn slope; none may end a wall (ruling Q2).
+        let (w, h) = (25usize, 25usize);
+        let z: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let v = (i as u64)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .rotate_left(17);
+                200.0 + 25.0 * (i % w) as f32 + 16.0 * ((v % 1000) as f32 / 1000.0 - 0.5)
+            })
+            .collect();
+        let s = grid(&z, w, h);
+        let mut r = s.routing();
+        r.world = World {
+            w: w as u64,
+            h: h as u64,
+        };
+        let mut out = z.clone();
+        let (n, _) = diffuse(&r, &mut out, &z, 0.05, &all(w * h), 35.0);
+        assert!(n > 0, "the bumps diffuse");
+        assert_eq!(walls_at(&out, &z, w, h), []);
+    }
+
     #[test]
     fn diffusion_does_not_steepen_a_cliff() {
         // The real 3 × 3 at (295, 1464) of the 32 m collage: a 79° face (ruling Q2).
@@ -1349,7 +1441,7 @@ mod tests {
         let mut r = s.routing();
         r.world = World { w: 3, h: 3 };
         let mut out = z.to_vec();
-        diffuse(&r, &mut out, 0.05, &all(9), 35.0);
+        diffuse(&r, &mut out, &z, 0.05, &all(9), 35.0);
         assert_eq!(out[4], 924.0);
     }
 
@@ -1421,13 +1513,13 @@ mod tests {
         let mut out = z.clone();
         let mut all = Bits::new(25);
         (0..25).for_each(|i| all.set(i));
-        let (n, _) = diffuse(&r, &mut out, 0.05, &all, 35.0);
+        let (n, _) = diffuse(&r, &mut out, &z, 0.05, &all, 35.0);
         assert!(out[12] < 12.0 && n >= 1, "the bump drops");
         assert_eq!(out[13], 9.0, "the pit is not filled");
         assert!(out.iter().zip(&z).all(|(a, b)| a <= b), "nothing rises");
         let mut far = z.clone();
         assert_eq!(
-            diffuse(&r, &mut far, 0.05, &Bits::new(25), 35.0).0,
+            diffuse(&r, &mut far, &z, 0.05, &Bits::new(25), 35.0).0,
             0,
             "no cut nearby: the bump stays (B6)"
         );
