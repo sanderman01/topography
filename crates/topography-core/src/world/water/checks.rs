@@ -1200,28 +1200,30 @@ pub(crate) fn check_tile(
                         out
                     };
                     // Ruling Q5: the river's own path within TRIBUTARY_M and the outflow of
-                    // the lake it feeds (its exit walk, and paths joining it) are the same water;
-                    // so is another channel reaching the sea when this river does (two mouths).
+                    // the lake it feeds (its exit walk, and paths joining it) are the same water.
                     // The standing water a path enters (a lake or the sea): on it, or beside
                     // its last cell when that drains nowhere (a drainage end at the shore).
                     let standing = |c: usize| lake_cell(c) || (surf[c].is_finite() && body[c] == 1);
+                    let shore_end = |c: usize| {
+                        !surf[c].is_finite()
+                            && down(c).is_none()
+                            && around(c).find(|&n| standing(n)).is_some()
+                    };
                     let enters = |p: &[usize]| -> Option<u32> {
                         p.iter()
                             .copied()
                             .find(|&c| standing(c))
                             .or_else(|| {
                                 let last = *p.last()?;
-                                down(last)
-                                    .is_none()
+                                shore_end(last)
                                     .then(|| around(last).find(|&n| standing(n)))
                                     .flatten()
                             })
                             .map(|c| body[c])
                     };
                     let path = walk(j);
-                    let entered = enters(&path);
-                    let fed = entered.filter(|&b| b != 1);
-                    let outflow: Vec<usize> = fed
+                    let fed = enters(&path).filter(|&b| b != 1);
+                    let mut outflow: Vec<usize> = fed
                         .and_then(|l| exits.iter().find(|e| e.lake == Some(l)))
                         .and_then(|e| {
                             let (ox, oy) = world.xy(e.outlet[1]);
@@ -1229,23 +1231,27 @@ pub(crate) fn check_tile(
                         })
                         .map(walk)
                         .unwrap_or_default();
+                    outflow.sort_unstable();
+                    let mut own_path = path.clone();
+                    own_path.sort_unstable();
                     let own_cell = |c: usize| {
                         let wet = surf[c].is_finite();
-                        path.contains(&c)
+                        own_path.binary_search(&c).is_ok()
                             || (wet && id == Some(body[c]))
                             || (wet && body[c] > 1 && joins(j, body[c]))
                             || (flow[c] & 16 != 0 && id.is_some_and(|b| joins(c, b)))
-                            || (!outflow.is_empty() && walk(c).iter().any(|v| outflow.contains(v)))
-                            // Both reach the sea within TRIBUTARY_M: two mouths, not beside.
-                            || (entered == Some(1) && enters(&walk(c)) == Some(1))
+                            || (!outflow.is_empty()
+                                && walk(c).iter().any(|v| outflow.binary_search(v).is_ok()))
                     };
-                    // Written water of another body, the sea included (ruling Q5), is not a
-                    // second channel; an unwritten m3 channel is.
-                    let written = |c: usize| surf[c].is_finite() && body[c] >= 1;
+                    // Written water of another body, the sea included (ruling Q5), and a dry
+                    // drainage end on its shore (the water it delivers into; review I1) are
+                    // not a second channel; an unwritten m3 channel is.
+                    let written = |c: usize| (surf[c].is_finite() && body[c] >= 1) || shore_end(c);
+                    // Cheap tests first (review M5).
                     beside = (-2i64..=2).any(|oy| {
                         (-2i64..=2).any(|ox| {
                             at_i(px as i64 + ox, py as i64 + oy)
-                                .is_some_and(|c| q[c] >= thr && !own_cell(c) && !written(c))
+                                .is_some_and(|c| q[c] >= thr && !written(c) && !own_cell(c))
                         })
                     });
                 }
@@ -2941,6 +2947,37 @@ mod tests {
         c.m3_only();
         let t = c.tile();
         assert_eq!(fails(&t, "thalweg_beside"), 0, "{:?}", t.examples);
+    }
+
+    /// Review I1: a river perched beside a lower unlabelled channel that also reaches the
+    /// sea still fails; only a shore drainage end counts as the water it delivers into.
+    #[test]
+    fn a_perched_river_beside_a_lower_channel_on_a_coast_fails() {
+        let sea = |x: u64, y: u64| x + y > 51;
+        let mut c = Case::new(40, 40, |x, y| {
+            if sea(x, y) {
+                -2.0
+            } else {
+                2.0 + 2.0 * (51 - x - y) as f32
+            }
+        });
+        for y in 0..40 {
+            for x in 0..40 {
+                if sea(x, y) {
+                    let k = c.k(x, y);
+                    (c.surf[k], c.body[k], c.node[k], c.level[k]) = (0.0, 1, 1, 0.0);
+                }
+            }
+        }
+        c.levels.insert(1, 0.0);
+        let a: Vec<(u64, u64)> = (5..=28).map(|x| (x, 24)).collect();
+        c.river(&a, 2.0, 5);
+        // A lower unlabelled channel two rows south, routed all the way into the sea.
+        let b: Vec<(u64, u64)> = (5..=26).map(|x| (x, 26)).collect();
+        c.route(&b, 16, 6.0);
+        c.m3_only();
+        let t = c.tile();
+        assert!(fails(&t, "thalweg_beside") > 0, "{:?}", t.examples);
     }
 
     /// Ruling Q5 (E27088 N40720): a river falling south into a small lake whose outflow
