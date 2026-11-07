@@ -743,7 +743,16 @@ window edge is an outlet only at the world's edge or where the coarse flow leave
   coarse head follows it down (a head whose fine cells are all sea starts at the first coarse
   cell down the river with land). Paths cross dry basin floors, a path ending in a coarse dry basin
   with no fine hollow continues down the routing, and the path is burned below a cap from the
-  coarse surfaces. Its discharge is the coarse one.
+  coarse surfaces. Its discharge is the coarse one. The corridor is the river's coarse cells
+  and one ring around them. A path stuck on its edge (free ground just outside more than
+  0.5 m lower: the finer valley floor lies beyond) would run along coarse cell lines and be
+  burned there into a stair-stepped trench, so the coarse cell of that lower ground joins
+  the corridor (with the order of the cell beside it) and the flood is made again, up to
+  three times. Paths that never touch the edge are laid as before. Beyond the coarse
+  river's 3×3 cells a path has no cap and only keeps descending. A path still stuck after
+  three widenings is kept and counted: `coarse.rivers` reports `corridor_widened` (rivers
+  by times widened), `rivers_widened` and their ids `widened_rivers`, `edge_cells`, `edge_runs_48m` (straight row or
+  column runs of stuck cells of 48 m or more) and `edge_run_max_m` / `edge_run_at_cell`.
 - **Depressions**: tarns at 4 m within `tarn_share`; at 1 m no new lakes and no new dry basins
   (a depression touching a coarse dry basin stays one, glacier depressions stay ice basins).
 - **Tributaries** start at the finer `--river-km2`, with ids above every coarse id.

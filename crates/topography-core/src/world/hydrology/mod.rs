@@ -1116,6 +1116,14 @@ pub fn run(options: &Options) -> Result<Outcome> {
             "paths_ended_before_a_deep_rise": im.hollows.len(),
             "paths_dropped_before_a_deep_rise": im.dropped,
             "unrouted_rivers": im.unrouted,
+            // Corridors widened beside paths stuck on their edge (index: times widened).
+            "corridor_widened": im.widened,
+            "rivers_widened": im.widened[1..].iter().sum::<u64>(),
+            "widened_rivers": im.widened_ids,
+            "edge_cells": im.edge_cells,
+            "edge_runs_48m": im.edge_runs,
+            "edge_run_max_m": im.edge_run_max_m,
+            "edge_run_at_cell": im.edge_run_at,
         });
         path_cap = im.cap.clone();
         given.cap = im.cap;

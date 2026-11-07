@@ -526,6 +526,74 @@ pub(super) struct Imprint {
     pub dropped: u64,
     /// Grid edge cells that become outlets where a coarse river leaves the grid.
     pub outlets: Vec<u32>,
+    /// Coarse rivers by the times their corridor was widened beside a stuck path (0..=max).
+    pub widened: [u64; CORRIDOR_WIDEN_MAX + 1],
+    pub widened_ids: Vec<u32>,
+    /// Path cells left stuck on the corridor's edge after the last widening.
+    pub edge_cells: u64,
+    /// Straight row or column runs of such cells of `EDGE_RUN_M` or more; the longest, where.
+    pub edge_runs: u64,
+    pub edge_run_max_m: f64,
+    pub edge_run_at: [usize; 2],
+}
+
+/// Judgment constant: times a coarse river's corridor is widened beside a stuck path (a
+/// valley floor more than this many coarse cells off the coarse river is only counted).
+pub(super) const CORRIDOR_WIDEN_MAX: usize = 3;
+
+/// Judgment constant: ground outside the corridor this much below a path cell beside it
+/// makes the path stuck on the edge (fine-level noise does not).
+const EDGE_MARGIN_M: f32 = 0.5;
+
+/// Straight runs of stuck path cells at least this long are reported (a visible wall).
+const EDGE_RUN_M: f64 = 48.0;
+
+/// A corridor and its flood (`rivers`): coarse order per coarse cell, receivers and ends.
+struct Flood {
+    corridor: HashSet<u32>,
+    rank: HashMap<usize, u32>,
+    recv: HashMap<u32, u32>,
+    seeds: HashSet<u32>,
+    outlets: Vec<u32>,
+}
+
+/// The cells from `head` along the flood's receivers to its end (as `rivers` walks a path).
+fn trace(fl: &Flood, head: usize) -> Vec<usize> {
+    let mut cells = vec![head];
+    let mut at = head as u32;
+    while let Some(&r) = fl.recv.get(&at).filter(|_| cells.len() <= fl.recv.len()) {
+        if r == u32::MAX || (fl.seeds.contains(&r) && !fl.corridor.contains(&r)) {
+            break;
+        }
+        cells.push(r as usize);
+        at = r;
+    }
+    cells
+}
+
+/// Runs of `stuck` path cells along one row or one column: (cells, first cell).
+fn edge_runs(w: usize, cells: &[usize], stuck: &[bool]) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut k = 0;
+    while k < cells.len() {
+        if !stuck[k] {
+            k += 1;
+            continue;
+        }
+        let along = |same: &dyn Fn(usize, usize) -> bool| {
+            let mut e = k;
+            while e + 1 < cells.len() && stuck[e + 1] && same(cells[e], cells[e + 1]) {
+                e += 1;
+            }
+            e
+        };
+        let row = along(&|a, b| a / w == b / w && (a % w).abs_diff(b % w) == 1);
+        let col = along(&|a, b| a % w == b % w && (a / w).abs_diff(b / w) == 1);
+        let end = row.max(col);
+        runs.push((end - k + 1, cells[k]));
+        k = end + 1;
+    }
+    runs
 }
 
 #[derive(PartialEq)]
@@ -1040,19 +1108,29 @@ pub(super) fn rivers(
         hollows: Vec::new(),
         dropped: 0,
         outlets: Vec::new(),
+        widened: [0; CORRIDOR_WIDEN_MAX + 1],
+        widened_ids: Vec::new(),
+        edge_cells: 0,
+        edge_runs: 0,
+        edge_run_max_m: 0.0,
+        edge_run_at: [0, 0],
     };
     for id in ids {
         let own = &cells_of[&id];
         let parent = c.rivers[&id].parent;
+        // A coarse cell the corridor may hold: not another river or lake, nor a dry basin.
+        let allowed = |p: usize| {
+            let other = c.lake(p).is_some_and(|l| l != parent)
+                || c.river(p).is_some_and(|r| r != id && r != parent);
+            !other && c.dry_basin(p).is_none()
+        };
         let mut cq: HashSet<usize> = HashSet::new();
         for &q in own {
             cq.insert(q);
             // The river or lake it ends in is in reach (a coarse lake cell can be dry ground at
             // the finer level), so the path can run to it.
             for (_, p) in cd.neighbours(q) {
-                let other = c.lake(p).is_some_and(|l| l != parent)
-                    || c.river(p).is_some_and(|r| r != id && r != parent);
-                if !other && c.dry_basin(p).is_none() {
+                if allowed(p) {
                     cq.insert(p);
                 }
             }
@@ -1084,24 +1162,13 @@ pub(super) fn rivers(
                     && Some(body[j]) != left_lake
             })
         };
-        let mut corridor: HashSet<u32> = HashSet::new();
-        for &q in &cq {
-            for i in c.fine_cells(q, w, h) {
-                // Dry basin floors stay open (at 1 m a glacier is a field of ice basins).
-                let open = body[i] == 0 || basins[body[i] as usize - 1].kind == Kind::Dry;
-                if flags[i] & (SEA | FIXED) == 0
-                    && open
-                    && !claimed.contains_key(&(i as u32))
-                    && !shore(i)
-                {
-                    corridor.insert(i as u32);
-                }
-            }
-        }
+        // A fine cell the corridor holds where it holds its coarse cell.
+        let free_cell = |i: usize| {
+            // Dry basin floors stay open (at 1 m a glacier is a field of ice basins).
+            let open = body[i] == 0 || basins[body[i] as usize - 1].kind == Kind::Dry;
+            flags[i] & (SEA | FIXED) == 0 && open && !claimed.contains_key(&(i as u32)) && !shore(i)
+        };
         let my_inflows: Vec<&Inflow> = inflows.iter().filter(|f| f.id == id).collect();
-        for f in &my_inflows {
-            corridor.insert(f.cell);
-        }
         // Flows north into the previous band: its fixed cells of this river are an end.
         let north_end = own.iter().any(|&q| {
             c.centre(q)
@@ -1181,18 +1248,6 @@ pub(super) fn rivers(
                 rank.insert(x, base + k as u32);
             }
         }
-        let corridor_rank: HashMap<usize, u32> = cq
-            .iter()
-            .map(|&q| {
-                let r = rank.get(&q).copied().or_else(|| {
-                    cd.neighbours(q)
-                        .filter_map(|(_, p)| rank.get(&p).copied())
-                        .min()
-                });
-                (q, r.unwrap_or(0))
-            })
-            .collect();
-        let rank_of = |i: usize| corridor_rank.get(&c.cell(w, i)).copied().unwrap_or(0);
         // Where the coarse river leaves the grid, the grid edge within a coarse cell of it is
         // an outlet, starting the flood at that exit's order.
         let mut leave: HashMap<usize, u32> = HashMap::new();
@@ -1214,101 +1269,139 @@ pub(super) fn rivers(
                 }
             }
         }
-        // The flood climbs the river upstream: each branch carries the highest order it has
-        // reached and enters no cell more than one coarse step below it, so a stretch that
-        // leaves the grid and comes back is not routed back to where it left.
-        let mut heap = BinaryHeap::new();
-        let mut recv: HashMap<u32, u32> = HashMap::new();
-        let mut top: HashMap<u32, u32> = HashMap::new();
-        let mut seeds: HashSet<u32> = HashSet::new();
-        // Order of a seed set beside the corridor: the lowest of its corridor neighbours', so
-        // it does not depend on the (random) set iteration order.
-        let mut fresh: HashMap<u32, u32> = HashMap::new();
-        for &i in &corridor {
-            let i = i as usize;
-            let exit = leave
-                .get(&c.cell(w, i))
-                .copied()
-                .filter(|_| dims.is_edge(i));
-            if let Some(r) = exit {
-                if flags[i] & OUTLET == 0 {
-                    out.outlets.push(i as u32);
-                }
-                seeds.insert(i as u32);
-                recv.insert(i as u32, u32::MAX);
-                top.insert(i as u32, r.max(rank_of(i)));
-                heap.push(Item(ground[i], i as u32));
+        // The corridor over coarse cells `cq` and its flood; `added` are cells widened in
+        // beside a stuck path, with the order of the cell they were added from. Writes
+        // nothing to `out`: only the last attempt's flood is kept.
+        let flood = |cq: &HashSet<usize>, added: &HashMap<usize, u32>| -> Flood {
+            let mut corridor: HashSet<u32> = HashSet::new();
+            for &q in cq {
+                corridor.extend(
+                    c.fine_cells(q, w, h)
+                        .filter(|&i| free_cell(i))
+                        .map(|i| i as u32),
+                );
             }
-            for (_, j) in dims.neighbours(i) {
-                let (jj, t) = (j as u32, rank_of(i).saturating_sub(1));
-                if corridor.contains(&jj) {
-                    continue;
-                }
-                if let Some(e) = fresh.get_mut(&jj) {
-                    *e = (*e).min(t);
-                } else if !seeds.contains(&jj) {
-                    if let Some(z) = is_seed(j) {
-                        seeds.insert(jj);
-                        fresh.insert(jj, t);
-                        heap.push(Item(z, jj));
+            for f in &my_inflows {
+                corridor.insert(f.cell);
+            }
+            let corridor_rank: HashMap<usize, u32> = cq
+                .iter()
+                .map(|&q| {
+                    let r = rank.get(&q).or_else(|| added.get(&q)).copied().or_else(|| {
+                        cd.neighbours(q)
+                            .filter_map(|(_, p)| rank.get(&p).copied())
+                            .min()
+                    });
+                    (q, r.unwrap_or(0))
+                })
+                .collect();
+            let rank_of = |i: usize| corridor_rank.get(&c.cell(w, i)).copied().unwrap_or(0);
+            let mut outlets: Vec<u32> = Vec::new();
+            // The flood climbs the river upstream: each branch carries the highest order it
+            // has reached and enters no cell more than one coarse step below it, so a stretch
+            // that leaves the grid and comes back is not routed back to where it left.
+            let mut heap = BinaryHeap::new();
+            let mut recv: HashMap<u32, u32> = HashMap::new();
+            let mut top: HashMap<u32, u32> = HashMap::new();
+            let mut seeds: HashSet<u32> = HashSet::new();
+            // Order of a seed set beside the corridor: the lowest of its corridor neighbours',
+            // so it does not depend on the (random) set iteration order.
+            let mut fresh: HashMap<u32, u32> = HashMap::new();
+            for &i in &corridor {
+                let i = i as usize;
+                let exit = leave
+                    .get(&c.cell(w, i))
+                    .copied()
+                    .filter(|_| dims.is_edge(i));
+                if let Some(r) = exit {
+                    if flags[i] & OUTLET == 0 {
+                        outlets.push(i as u32);
                     }
+                    seeds.insert(i as u32);
+                    recv.insert(i as u32, u32::MAX);
+                    top.insert(i as u32, r.max(rank_of(i)));
+                    heap.push(Item(ground[i], i as u32));
                 }
-            }
-        }
-        top.extend(fresh.drain());
-        // Corridor cells the river's own end cannot reach end at its fixed cells whose flow
-        // comes back into a cell already reached (a stretch dipping south of the seam), and
-        // then (another river's path cuts across) at that river instead: a confluence.
-        for pass in 0..3 {
-            if pass == 1 {
-                for &i in &corridor {
-                    if recv.contains_key(&i) {
+                for (_, j) in dims.neighbours(i) {
+                    let (jj, t) = (j as u32, rank_of(i).saturating_sub(1));
+                    if corridor.contains(&jj) {
                         continue;
                     }
-                    for (_, j) in dims.neighbours(i as usize) {
-                        let ends = flags[j] & FIXED != 0
-                            && fixed_id(j) == id
-                            && back(j).is_some_and(|r| recv.contains_key(&(r as u32)));
-                        let t = rank_of(i as usize).saturating_sub(1);
-                        if let Some(e) = fresh.get_mut(&(j as u32)) {
-                            *e = (*e).min(t);
-                        } else if ends && seeds.insert(j as u32) {
-                            fresh.insert(j as u32, t);
-                            heap.push(Item(ground[j], j as u32));
+                    if let Some(e) = fresh.get_mut(&jj) {
+                        *e = (*e).min(t);
+                    } else if !seeds.contains(&jj) {
+                        if let Some(z) = is_seed(j) {
+                            seeds.insert(jj);
+                            fresh.insert(jj, t);
+                            heap.push(Item(z, jj));
                         }
                     }
                 }
-                top.extend(fresh.drain());
             }
-            if pass == 2 {
-                for &i in &corridor {
-                    if recv.contains_key(&i) {
-                        continue;
+            top.extend(fresh.drain());
+            // Corridor cells the river's own end cannot reach end at its fixed cells whose
+            // flow comes back into a cell already reached (a stretch dipping south of the
+            // seam), and then (another river's path cuts across) at that river instead: a
+            // confluence.
+            for pass in 0..3 {
+                if pass == 1 {
+                    for &i in &corridor {
+                        if recv.contains_key(&i) {
+                            continue;
+                        }
+                        for (_, j) in dims.neighbours(i as usize) {
+                            let ends = flags[j] & FIXED != 0
+                                && fixed_id(j) == id
+                                && back(j).is_some_and(|r| recv.contains_key(&(r as u32)));
+                            let t = rank_of(i as usize).saturating_sub(1);
+                            if let Some(e) = fresh.get_mut(&(j as u32)) {
+                                *e = (*e).min(t);
+                            } else if ends && seeds.insert(j as u32) {
+                                fresh.insert(j as u32, t);
+                                heap.push(Item(ground[j], j as u32));
+                            }
+                        }
                     }
-                    for (_, j) in dims.neighbours(i as usize) {
-                        let t = rank_of(i as usize).saturating_sub(1);
-                        if let Some(e) = fresh.get_mut(&(j as u32)) {
-                            *e = (*e).min(t);
-                        } else if claimed.contains_key(&(j as u32)) && seeds.insert(j as u32) {
-                            fresh.insert(j as u32, t);
-                            heap.push(Item(ground[j], j as u32));
+                    top.extend(fresh.drain());
+                }
+                if pass == 2 {
+                    for &i in &corridor {
+                        if recv.contains_key(&i) {
+                            continue;
+                        }
+                        for (_, j) in dims.neighbours(i as usize) {
+                            let t = rank_of(i as usize).saturating_sub(1);
+                            if let Some(e) = fresh.get_mut(&(j as u32)) {
+                                *e = (*e).min(t);
+                            } else if claimed.contains_key(&(j as u32)) && seeds.insert(j as u32) {
+                                fresh.insert(j as u32, t);
+                                heap.push(Item(ground[j], j as u32));
+                            }
+                        }
+                    }
+                    top.extend(fresh.drain());
+                }
+                while let Some(Item(z, a)) = heap.pop() {
+                    let ra = top[&a];
+                    for (_, j) in dims.neighbours(a as usize) {
+                        let jj = j as u32;
+                        if corridor.contains(&jj) && !recv.contains_key(&jj) && rank_of(j) + 1 >= ra
+                        {
+                            recv.insert(jj, a);
+                            top.insert(jj, ra.max(rank_of(j)));
+                            heap.push(Item(ground[j].max(z), jj));
                         }
                     }
                 }
-                top.extend(fresh.drain());
             }
-            while let Some(Item(z, a)) = heap.pop() {
-                let ra = top[&a];
-                for (_, j) in dims.neighbours(a as usize) {
-                    let jj = j as u32;
-                    if corridor.contains(&jj) && !recv.contains_key(&jj) && rank_of(j) + 1 >= ra {
-                        recv.insert(jj, a);
-                        top.insert(jj, ra.max(rank_of(j)));
-                        heap.push(Item(ground[j].max(z), jj));
-                    }
-                }
+            Flood {
+                corridor,
+                rank: corridor_rank,
+                recv,
+                seeds,
+                outlets,
             }
-        }
+        };
         // Heads: coarse centreline cells without a centreline donor of this river in the
         // window (donors in the previous band count only when it hands the river over).
         let is_head = |q: usize| {
@@ -1391,44 +1484,9 @@ pub(super) fn rivers(
             .collect();
         starts.sort_unstable();
         starts.dedup();
-        let mut stranded: Vec<Vec<usize>> = starts
-            .iter()
-            .filter(|&&q| due(q))
-            .map(|&q| c.fine_cells(q, w, h).collect::<Vec<_>>())
-            .filter(|cells| !cells.iter().any(|&i| recv.contains_key(&(i as u32))))
-            .collect();
-        stranded.extend(
-            my_inflows
-                .iter()
-                .filter(|f| !recv.contains_key(&f.cell))
-                .map(|f| vec![f.cell as usize]),
-        );
-        for sources in stranded {
-            // An earlier way may have run through this head: it is reached now.
-            if sources.iter().any(|&s| recv.contains_key(&(s as u32))) {
-                continue;
-            }
-            route_stranded(
-                dims,
-                ground,
-                flags,
-                body,
-                basins,
-                &sources,
-                |j| claimed.contains_key(&(j as u32)),
-                &back,
-                core_rows[1],
-                north_end.then_some(&|j| fixed_id(j) == id),
-                &mut recv,
-                &mut seeds,
-                &mut corridor,
-                &mut out.outlets,
-            );
-        }
-        // (cell, lake it leaves, entering surface and discharge)
-        type Head = (u32, u32, Option<(f32, f32)>);
-        let mut heads: Vec<Head> = Vec::new();
-        for &q in &starts {
+        // The head a start cell's path leaves from, and the lake it leaves there (0 none):
+        // the reached cell whose way climbs least, then the lowest; beside the lake first.
+        let pick = |ground: &[f32], q: usize, recv: &HashMap<u32, u32>, seeds: &HashSet<u32>| {
             let source = exits
                 .get(&c.abs(q))
                 .and_then(|l| lake_basin.get(l))
@@ -1470,9 +1528,124 @@ pub(super) fn rivers(
                     })
                     .map(|(_, _, i)| i)
             };
-            match lowest(&beside).or_else(|| lowest(&|_| true)) {
-                Some(i) => {
-                    let source = if beside(i) { source } else { 0 };
+            lowest(&beside)
+                .or_else(|| lowest(&|_| true))
+                .map(|i| (i, if beside(i) { source } else { 0 }))
+        };
+        // A path stuck on the corridor's edge: lower free ground just outside it, in a coarse
+        // cell the corridor may hold. Such a cell's coarse cell is added (with the order of
+        // the cell it is added from) and the flood made again, up to `CORRIDOR_WIDEN_MAX`
+        // times; a path still stuck then is only counted.
+        let mut added: HashMap<usize, u32> = HashMap::new();
+        let mut widened = 0usize;
+        let (fl, stuck_paths) = loop {
+            let fl = flood(&cq, &added);
+            let mut traced: Vec<(Vec<usize>, Vec<bool>)> = Vec::new();
+            let mut more: Vec<(usize, u32)> = Vec::new();
+            let mut from: Vec<usize> = starts
+                .iter()
+                .filter_map(|&q| pick(ground, q, &fl.recv, &fl.seeds).map(|(i, _)| i))
+                .collect();
+            from.extend(my_inflows.iter().map(|f| f.cell as usize));
+            for head in from {
+                let cells = trace(&fl, head);
+                let stuck: Vec<bool> = cells
+                    .iter()
+                    .map(|&i| {
+                        let out_low = dims.neighbours(i).take(4).find_map(|(_, j)| {
+                            let p = c.cell(w, j);
+                            (!fl.corridor.contains(&(j as u32))
+                                && free_cell(j)
+                                && allowed(p)
+                                && ground[j] + EDGE_MARGIN_M < ground[i])
+                                .then_some(p)
+                        });
+                        if let Some(p) = out_low {
+                            let r = fl.rank.get(&c.cell(w, i)).copied().unwrap_or(0);
+                            more.push((p, r));
+                        }
+                        out_low.is_some()
+                    })
+                    .collect();
+                traced.push((cells, stuck));
+            }
+            if more.is_empty() || widened == CORRIDOR_WIDEN_MAX {
+                break (fl, traced);
+            }
+            for (p, r) in more {
+                if cq.insert(p) {
+                    added.insert(p, r);
+                } else if let Some(e) = added.get_mut(&p) {
+                    *e = (*e).min(r);
+                }
+            }
+            widened += 1;
+        };
+        out.widened[widened] += 1;
+        if widened > 0 {
+            out.widened_ids.push(id);
+        }
+        for (cells, stuck) in &stuck_paths {
+            out.edge_cells += stuck.iter().filter(|&&s| s).count() as u64;
+            for (n, at) in edge_runs(w, cells, stuck) {
+                let m = n as f64 * spacing_m;
+                if m >= EDGE_RUN_M {
+                    out.edge_runs += 1;
+                }
+                if m > out.edge_run_max_m {
+                    (out.edge_run_max_m, out.edge_run_at) = (m, [at % w, at / w]);
+                }
+            }
+        }
+        let Flood {
+            mut corridor,
+            rank: corridor_rank,
+            mut recv,
+            mut seeds,
+            outlets,
+        } = fl;
+        out.outlets.extend(outlets);
+        let rank_of = |i: usize| corridor_rank.get(&c.cell(w, i)).copied().unwrap_or(0);
+        let mut stranded: Vec<Vec<usize>> = starts
+            .iter()
+            .filter(|&&q| due(q))
+            .map(|&q| c.fine_cells(q, w, h).collect::<Vec<_>>())
+            .filter(|cells| !cells.iter().any(|&i| recv.contains_key(&(i as u32))))
+            .collect();
+        stranded.extend(
+            my_inflows
+                .iter()
+                .filter(|f| !recv.contains_key(&f.cell))
+                .map(|f| vec![f.cell as usize]),
+        );
+        for sources in stranded {
+            // An earlier way may have run through this head: it is reached now.
+            if sources.iter().any(|&s| recv.contains_key(&(s as u32))) {
+                continue;
+            }
+            route_stranded(
+                dims,
+                ground,
+                flags,
+                body,
+                basins,
+                &sources,
+                |j| claimed.contains_key(&(j as u32)),
+                &back,
+                core_rows[1],
+                north_end.then_some(&|j| fixed_id(j) == id),
+                &mut recv,
+                &mut seeds,
+                &mut corridor,
+                &mut out.outlets,
+            );
+        }
+        // (cell, lake it leaves, entering surface and discharge)
+        type Head = (u32, u32, Option<(f32, f32)>);
+        let mut heads: Vec<Head> = Vec::new();
+        for &q in &starts {
+            match pick(ground, q, &recv, &seeds) {
+                Some((i, source)) => {
                     if source != 0 {
                         // The lake leaves here: the head is its sill at the level.
                         ground[i] = ground[i].min(basins[source as usize - 1].level);
@@ -2228,5 +2401,132 @@ mod tests {
             assert!(im.cap.get(&x).is_none_or(|&s| s >= 10.0));
         }
         assert!(im.fill.cells > 0 && (im.fill.max_m - 4.5).abs() < 1e-4);
+    }
+
+    /// River 3 (to the grid edge) over `ww` x `wh` coarse cells of 4 x 4 fine cells along
+    /// `line` (column, row, direction byte), its fine ground `g(x, y)`; the imprint at 4 m.
+    fn corridor_run(
+        ww: usize,
+        wh: usize,
+        line: &[(usize, usize, u8)],
+        g: impl Fn(usize, usize) -> f32,
+    ) -> (Imprint, usize) {
+        let mut c = coarse();
+        (c.k, c.size, c.ww, c.wh) = (4, [ww, wh], ww, wh);
+        let n = ww * wh;
+        (c.body, c.flow, c.surface) = (vec![0; n], vec![0; n], vec![f32::NAN; n]);
+        c.discharge = vec![1.0; n];
+        for &(x, y, d) in line {
+            let q = y * ww + x;
+            (c.body[q], c.flow[q], c.surface[q]) = (3, FLOW_CENTRE | d, 1.0);
+        }
+        c.lakes = HashMap::new();
+        c.rivers = HashMap::from([(
+            3,
+            River {
+                parent: 0,
+                drainage_km2: 1.0,
+            },
+        )]);
+        let (w, h) = (ww * 4, wh * 4);
+        let mut ground: Vec<f32> = (0..w * h).map(|i| g(i % w, i / w)).collect();
+        let im = rivers(
+            Dims { w, h },
+            &mut ground,
+            &vec![0; w * h],
+            &vec![0; w * h],
+            &[],
+            &c,
+            &[],
+            |_| 0,
+            |_| f32::NAN,
+            |_| f32::NEG_INFINITY,
+            |_| None,
+            [0, h],
+            4.0,
+        );
+        (im, w)
+    }
+
+    /// A straight river along coarse row `row` of an 8-wide grid, flowing west off the grid.
+    fn straight(row: usize) -> Vec<(usize, usize, u8)> {
+        (0..8).map(|x| (x, row, 3)).collect()
+    }
+
+    #[test]
+    fn a_valley_beside_the_corridor_draws_the_path_off_its_edge() {
+        // River in coarse row 3 (fine rows 12 to 15); the valley floor meets it at the outlet
+        // and runs up to fine row 5 (coarse row 1, two rings off) upstream.
+        let valley = |x: usize| 13.0 - 8.0 * x as f32 / 31.0;
+        let (im, w) = corridor_run(8, 6, &straight(3), |x, y| {
+            20.0 + 0.05 * x as f32 + (y as f32 - valley(x)).abs()
+        });
+        assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
+        assert_eq!(im.widened, [0, 1, 0, 0]);
+        assert_eq!((im.edge_cells, im.edge_runs), (0, 0));
+        let cells = &im.paths[0].cells;
+        let off = cells
+            .iter()
+            .map(|&i| (i as usize % w, i as usize / w))
+            // Below the head's own descent into the valley.
+            .filter(|&(x, _)| x < 22)
+            .map(|(x, y)| (y as f32 - valley(x)).abs())
+            .fold(0f32, f32::max);
+        assert!(off <= 1.0, "path {off} cells off the valley");
+        // Two coarse cells off the river: no coarse cap there.
+        for &i in cells.iter().filter(|&&i| (i as usize / w) / 4 == 1) {
+            assert!(!im.cap.contains_key(&i), "cap at {i}");
+        }
+    }
+
+    #[test]
+    fn a_path_inside_its_corridor_is_not_widened() {
+        // The valley floor in fine row 13, inside the river's own coarse row 3.
+        let (im, w) = corridor_run(8, 6, &straight(3), |x, y| {
+            20.0 + 0.05 * x as f32 + (y as f32 - 13.0).abs()
+        });
+        assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
+        assert_eq!(im.widened, [1, 0, 0, 0]);
+        assert_eq!(im.edge_cells, 0);
+        // From the head's lowest cell west along the valley to the grid edge.
+        let want: Vec<u32> = (0..=28).rev().map(|x| (13 * w + x) as u32).collect();
+        assert_eq!(im.paths[0].cells, want);
+    }
+
+    #[test]
+    fn a_diagonal_river_reaches_a_valley_rings_off() {
+        // River from the north-east corner south-west off the grid (fine x + y = 38 along
+        // it); the valley meets it at the outlet and lies up to 12 fine cells (about three
+        // coarse rings) north-west of it upstream. Added cells keep their order, so the
+        // flood can climb the river through them.
+        let line: Vec<(usize, usize, u8)> = (0..10).map(|t| (9 - t, t, 7)).collect();
+        let valley = |x: usize| 38.0 - 12.0 * x as f32 / 39.0;
+        let (im, w) = corridor_run(10, 10, &line, |x, y| {
+            20.0 + 0.03 * x as f32 + ((x + y) as f32 - valley(x)).abs()
+        });
+        assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
+        assert!(im.widened[1..].iter().sum::<u64>() == 1, "{:?}", im.widened);
+        assert_eq!(im.edge_cells, 0);
+        let off = im.paths[0]
+            .cells
+            .iter()
+            .map(|&i| (i as usize % w, i as usize / w))
+            // Below the head's own descent into the valley.
+            .filter(|&(x, _)| (4..28).contains(&x))
+            .map(|(x, y)| ((x + y) as f32 - valley(x)).abs())
+            .fold(0f32, f32::max);
+        assert!(off <= 1.0, "path {off} cells off the valley");
+    }
+
+    #[test]
+    fn a_valley_beyond_the_widest_corridor_is_reported() {
+        // River in coarse row 8; the valley floor in fine row 2, seven coarse rows off.
+        let (im, _) = corridor_run(8, 10, &straight(8), |x, y| {
+            20.0 + 0.05 * x as f32 + (y as f32 - 2.0).abs()
+        });
+        assert!(im.unrouted.is_empty(), "unrouted {:?}", im.unrouted);
+        assert_eq!(im.widened, [0, 0, 0, 1]);
+        assert!(im.edge_cells > 0 && im.edge_runs >= 1);
+        assert!(im.edge_run_max_m >= EDGE_RUN_M);
     }
 }
