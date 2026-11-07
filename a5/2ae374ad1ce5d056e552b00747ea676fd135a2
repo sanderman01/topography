@@ -1,0 +1,32 @@
+crates/topography-core/src/world/water/breach.rs
+  s_8c1b40ea9c1e0d::t_908ec18ae884a4 60-61
+  s_8c1b40ea9c1e0d::t_dd55fb644d6ad5 18,383,391-393,400,433
+  s_8c1b40ea9c1e0d::t_2e1456cf456433 441-443,446,450-459
+  s_8c1b40ea9c1e0d::t_ae1eb04fbb95f5 584,935-936,938,940-942
+  s_8c1b40ea9c1e0d::t_28cf9d43cf8d6d 566,943-973
+  s_8c1b40ea9c1e0d::t_5fdd6585565d19 353,355
+  s_8c1b40ea9c1e0d::t_1cf50d67b98f24 476-477
+  s_8c1b40ea9c1e0d::t_810f148973420d 327-329,357-358
+  s_8c1b40ea9c1e0d::t_5c82465c2485f2 310-313
+  s_8c1b40ea9c1e0d::t_ac4f1dae9979d8 330-352,354,356
+  s_8c1b40ea9c1e0d::t_6aba0f742acea1 414-419
+  s_8c1b40ea9c1e0d::t_832d0af5ca09c5 9-13,563-565,579-583,585-597,913-916,919,937,939
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_5f1a58d634b540 1403-1404,1406-1407,1409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a52ae374ad1ce5d056e552b00747ea676fd135a2",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
