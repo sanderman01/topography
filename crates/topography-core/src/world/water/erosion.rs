@@ -12,7 +12,7 @@
 //! Never below the floor (the breached ground less the cell's cap) and never raised. One
 //! global single-threaded pass in a fixed order: deterministic.
 
-use super::checks::{CHANGED_M, NARROW_M, NARROW_SHARE, horn_deg, is_wall};
+use super::checks::{CHANGED_M, horn_deg, is_wall, narrow_at};
 use super::geom::{OFFSETS, Rect, World};
 use super::layers::Layer;
 use super::nodes::Nodes;
@@ -596,45 +596,21 @@ pub(crate) fn taper(
         walls
     };
     // Cells of `cells` (changed ones, two cells from the edge) that `handoff_narrow` fails on
-    // the whole cut so far (raw − z): over its 3 × 3 grey opening by more than
-    // max(NARROW_M, NARROW_SHARE × cut), on a trough of z (B9, ruling R3).
+    // the whole cut so far (raw − z; B9, ruling R5).
     let find_narrow = |z: &[f32], cells: &mut dyn Iterator<Item = usize>| {
-        let cut = |x: i64, y: i64| {
-            if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
-                return 0.0;
-            }
-            let j = y as usize * w + x as usize;
-            (raw[j] - z[j]).max(0.0)
-        };
-        let mut out: Vec<u32> = Vec::new();
-        for c in cells {
-            let (x, y) = ((c % w) as i64, (c / w) as i64);
-            if !changed.get(c) || x < 2 || y < 2 || x + 2 >= w as i64 || y + 2 >= h as i64 {
-                continue;
-            }
-            let cc = cut(x, y);
-            if cc <= CHANGED_M {
-                continue;
-            }
-            let zc = |dx: i64, dy: i64| z[(y + dy) as usize * w + (x + dx) as usize];
-            if ![(1, 0), (0, 1), (1, 1), (1, -1)]
-                .iter()
-                .any(|&(dx, dy)| zc(dx, dy).min(zc(-dx, -dy)) > zc(0, 0) + NARROW_M)
-            {
-                continue;
-            }
-            let mut open = f32::NEG_INFINITY;
-            for (dx, dy) in (-1..=1).flat_map(|dy| (-1..=1).map(move |dx| (dx, dy))) {
-                let mut m = f32::INFINITY;
-                for (ex, ey) in (-1..=1).flat_map(|ey| (-1..=1).map(move |ex| (ex, ey))) {
-                    m = m.min(cut(x + dx + ex, y + dy + ey));
-                }
-                open = open.max(m);
-            }
-            if cc - open > NARROW_M.max(NARROW_SHARE * cc) {
-                out.push(c as u32);
-            }
-        }
+        let mut out: Vec<u32> = cells
+            .filter(|&c| {
+                let (x, y) = (c % w, c / w);
+                changed.get(c)
+                    && x >= 2
+                    && y >= 2
+                    && x + 2 < w
+                    && y + 2 < h
+                    && raw[c] - z[c] > CHANGED_M
+                    && narrow_at(raw, z, w, h, x, y).1
+            })
+            .map(|c| c as u32)
+            .collect();
         out.sort_unstable();
         out.dedup();
         out

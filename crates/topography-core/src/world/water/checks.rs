@@ -67,8 +67,8 @@ const BANK_STEP_M: f32 = 0.5;
 const INTERIOR_P99_M: f64 = 1.0;
 const INTERIOR_MAX_M: f32 = 3.0;
 /// A cut its 3 × 3 opening removes by more than this is narrower than 3 cells (B9).
-pub(crate) const NARROW_M: f32 = 0.5;
-pub(crate) const NARROW_SHARE: f32 = 0.5;
+const NARROW_M: f32 = 0.5;
+const NARROW_SHARE: f32 = 0.5;
 /// Dam drops (B14): judged against the mean fall per cell over this far ahead, by this factor.
 const KNICK_AHEAD_M: f64 = 100.0;
 const KNICK_FACTOR: f32 = 3.0;
@@ -314,6 +314,55 @@ pub(crate) fn horn_deg(z: &[f32], w: usize, x: usize, y: usize, spacing_m: f64) 
 
 /// A changed cell's slope (Horn, degrees) fails `walls` against its raw slope and the level's
 /// angle (B8; shared with breach, channels and erosion).
+/// `handoff_narrow` at (x, y) of a w × h grid, at least one cell inside it (B9, review C2,
+/// ruling R5): the cut (raw − z, 0 outside the grid) against its 3 × 3 grey opening (max over
+/// the 3 × 3 of each one's 3 × 3 min); thr = max(NARROW_M, NARROW_SHARE × cut). It fails when
+/// cut − open > thr and on one of the four axes the cutting carved a trough: with
+/// t(a) = min(a[p], a[q]) − a[c] over the axis neighbours p, q, t(z) > NARROW_M and
+/// t(z) − max(t(raw), 0) > thr. A raw valley's own trough or a lowered crest does not count.
+/// Returns (cut − open, fails).
+pub(crate) fn narrow_at(
+    raw: &[f32],
+    z: &[f32],
+    w: usize,
+    h: usize,
+    x: usize,
+    y: usize,
+) -> (f32, bool) {
+    let (x, y) = (x as i64, y as i64);
+    let cut = |x: i64, y: i64| -> f32 {
+        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+            return 0.0;
+        }
+        let j = y as usize * w + x as usize;
+        (raw[j] - z[j]).max(0.0)
+    };
+    let open = (-1i64..=1)
+        .flat_map(|dy| (-1i64..=1).map(move |dx| (dx, dy)))
+        .map(|(dx, dy)| {
+            (-1i64..=1)
+                .flat_map(|ey| (-1i64..=1).map(move |ex| (ex, ey)))
+                .map(|(ex, ey)| cut(x + dx + ex, y + dy + ey))
+                .fold(f32::INFINITY, f32::min)
+        })
+        .fold(f32::NEG_INFINITY, f32::max);
+    let c = cut(x, y);
+    let excess = c - open;
+    let thr = NARROW_M.max(NARROW_SHARE * c);
+    if excess <= thr {
+        return (excess, false);
+    }
+    let t = |a: &[f32], dx: i64, dy: i64| {
+        let at = |dx: i64, dy: i64| a[(y + dy) as usize * w + (x + dx) as usize];
+        at(dx, dy).min(at(-dx, -dy)) - at(0, 0)
+    };
+    let carved = [(1, 0), (0, 1), (1, 1), (1, -1)].iter().any(|&(dx, dy)| {
+        let tz = t(z, dx, dy);
+        tz > NARROW_M && tz - t(raw, dx, dy).max(0.0) > thr
+    });
+    (excess, carved)
+}
+
 pub(crate) fn is_wall(slope: f64, raw_slope: f64, wall_deg: f64) -> bool {
     slope > wall_deg.max(raw_slope) + 0.01
 }
@@ -416,15 +465,8 @@ pub(crate) fn check_tile(
         (Some(f), true) => f.read(win)?,
         _ => vec![0; win.cells()],
     };
-    // A window cell's cut below raw (0 outside the window), and whether a cell is lower than
-    // all 8 neighbours of `v` (window coordinates; callers stay one cell inside).
-    let cut_at = |x: i64, y: i64| -> f32 {
-        if x < 0 || y < 0 || x >= win.w as i64 || y >= win.h as i64 {
-            return 0.0;
-        }
-        let j = y as usize * win.w + x as usize;
-        (raw[j] - z[j]).max(0.0)
-    };
+    // Whether a cell is lower than all 8 neighbours of `v` (window coordinates; callers stay
+    // one cell inside).
     let strict_min = |v: &[f32], lx: usize, ly: usize| {
         let c = v[ly * win.w + lx];
         (-1i64..=1).all(|dy| {
@@ -988,33 +1030,15 @@ pub(crate) fn check_tile(
             t.planar[0] += u64::from(planar(&block(&raw), s.spacing_m));
             t.planar[1] += u64::from(planar(&block(&z), s.spacing_m));
         }
-        // Hand-off narrowness (B9, review C2): the cut's grey opening with a 3 × 3 square (max
-        // over the 3 × 3 of each one's 3 × 3 min). A cut it removes by over max(NARROW_M,
-        // NARROW_SHARE × cut) is under 3 cells wide. A cut within 1 cm cannot fail.
+        // Hand-off narrowness (B9, review C2, ruling R5). A cut within 1 cm cannot fail.
         if coarse && inner && raw[j] - z[j] > CHANGED_M {
-            let (lx, ly) = ((x - win.x0) as i64, (y - win.y0) as i64);
-            let open = (-1i64..=1)
-                .flat_map(|dy| (-1i64..=1).map(move |dx| (dx, dy)))
-                .map(|(dx, dy)| {
-                    (-1i64..=1)
-                        .flat_map(|ey| (-1i64..=1).map(move |ex| (ex, ey)))
-                        .map(|(ex, ey)| cut_at(lx + dx + ex, ly + dy + ey))
-                        .fold(f32::INFINITY, f32::min)
-                })
-                .fold(f32::NEG_INFINITY, f32::max);
-            let cut = cut_at(lx, ly);
-            t.handoff_excess = t.handoff_excess.max(cut - open);
-            // Expert ruling R3: only a trough in the final ground (both neighbours on one of
-            // the four axes over NARROW_M higher) is a slot; a narrowly lowered crest is not.
-            let zc = |dx: i64, dy: i64| z[(ly + dy) as usize * win.w + (lx + dx) as usize];
-            let trough = [(1, 0), (0, 1), (1, 1), (1, -1)]
-                .iter()
-                .any(|&(dx, dy)| zc(dx, dy).min(zc(-dx, -dy)) > zc(0, 0) + NARROW_M);
-            if trough && cut - open > NARROW_M.max(NARROW_SHARE * cut) {
+            let (lx, ly) = ((x - win.x0) as usize, (y - win.y0) as usize);
+            let (excess, slot) = narrow_at(&raw, &z, win.w, win.h, lx, ly);
+            t.handoff_excess = t.handoff_excess.max(excess);
+            if slot {
                 t.fail("handoff_narrow", x, y);
             }
             // B33: a pit of the ground the channels cut into that the breached ground lacks.
-            let (lx, ly) = (lx as usize, ly as usize);
             if strict_min(&pc, lx, ly) && !strict_min(&bo, lx, ly) {
                 t.fail("erosion_new_pits", x, y);
             }
@@ -3335,6 +3359,44 @@ mod tests {
     }
 
     /// Expert ruling R3: a narrow lowering of a ridge crest is no trough and carries no water.
+    /// Ruling R5: a one-cell spike on a valley floor falling east, cut flush with the floor
+    /// (its neighbours across the valley tapered down too), sits in the trough the raw valley
+    /// already had: the cutting carved under max(0.5, 0.5 × cut) of it, so it passes.
+    #[test]
+    fn a_spike_removed_flush_on_a_sloping_valley_floor_passes_handoff_narrow() {
+        let valley = |x: u64, y: u64| 100.0 - 0.5 * x as f32 + 2.4 * (y as f32 - 16.0).abs();
+        let mut f = Case::new(32, 32, valley);
+        f.coarse();
+        let i = f.at(16, 16);
+        f.raw[i] += 1.8; // the spike; z keeps the floor (cut 1.8 m)
+        for (dx, dy, d) in [
+            (0i64, -1i64, 1.5f32),
+            (0, 1, 1.5),
+            (-1, -1, 1.2),
+            (1, -1, 1.2),
+        ]
+        .into_iter()
+        .chain([(-1, 1, 1.2), (1, 1, 1.2)])
+        {
+            let j = f.at((16 + dx) as usize, (16 + dy) as usize);
+            f.z[j] -= d;
+        }
+        assert_eq!(fails(&f.tile(), "handoff_narrow"), 0);
+    }
+
+    /// Ruling R5: a one-cell slot cut 2 m along the bottom of a raw V valley is carved.
+    #[test]
+    fn a_slot_cut_along_a_raw_v_valley_fails_handoff_narrow() {
+        let v = |x: u64, _| 100.0 + 2.0 * (x as f32 - 16.0).abs();
+        let mut f = Case::new(32, 32, v);
+        f.coarse();
+        for y in 4..28 {
+            let i = f.at(16, y);
+            f.z[i] -= 2.0;
+        }
+        assert!(fails(&f.tile(), "handoff_narrow") > 0);
+    }
+
     #[test]
     fn a_lowered_one_cell_ridge_crest_passes_handoff_narrow() {
         let ridge = |x: u64, _| 100.0 - 2.0 * (x as f32 - 16.0).abs();

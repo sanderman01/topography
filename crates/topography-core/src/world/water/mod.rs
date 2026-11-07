@@ -421,7 +421,7 @@ impl Tags {
                     "taper_min_cells": erosion::TAPER_MIN_CELLS, "wall_rounds": erosion::WALL_ROUNDS,
                     "shape_min_m": erosion::SHAPE_MIN_M, "glacier_frozen": true, "sea_base_0": true,
                     "wall_removal": true, "remove_rounds": erosion::REMOVE_ROUNDS,
-                    "disc_rounds": true, "narrow_rounds": true}),
+                    "disc_rounds": true, "narrow_rounds": "carved"}),
         )
     }
     /// m2 reads the ground before channels: the eroded ground (e) or the breached one (b).
