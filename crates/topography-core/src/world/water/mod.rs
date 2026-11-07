@@ -1400,11 +1400,13 @@ mod tests {
                 assert!(raw[i] - eroded[i] <= 3.0 + 1e-4, "interior cap 3 m at {i}");
             }
         }
+        // The seam dam's sill is graded (its small catchment cuts ~0.25 m in 5 routings); the
+        // other dam's gorge would leave a narrow cut, so it fills (ruling Q4).
         assert!(
-            raw[20 * 64 + 44] - eroded[20 * 64 + 44] > 1.0
-                || stages["breach"]["breaches"].as_u64().unwrap() > 0,
-            "the dam is cut by erosion or breached"
+            raw[20 * 64 + 44] - eroded[20 * 64 + 44] > 0.1,
+            "the seam dam is cut by erosion"
         );
+        assert_eq!(stages["breach"]["breach_refused_narrow"]["count"], 1);
         // A second run resumes from the cache with the same answer.
         assert!(run(&o).is_ok());
         // finish accepts the coarse work directory (its tag list includes e; preflight F5).
