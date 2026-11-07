@@ -1,0 +1,27 @@
+crates/topography-core/src/world/water/erosion.rs
+  s_8c1b40ea9c1e0d::t_b36e0a59d49b38 239
+  s_8c1b40ea9c1e0d::t_da7d16131fec63 974
+  s_8c1b40ea9c1e0d::t_5b641c73806255 174
+  s_8c1b40ea9c1e0d::t_af23d5f9d31de4 872
+  s_8c1b40ea9c1e0d::t_16b7c0ec47c7e2 146-147
+  s_8c1b40ea9c1e0d::t_55506a5fc72bfc 228
+  s_8c1b40ea9c1e0d::t_f41da022a493d6 202
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_98bc1ac1f61507 1398-1404
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0658ccda8036c7c18667833bc181827eafa07f2a",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
