@@ -241,6 +241,8 @@ pub(crate) struct Tile {
     pub class_lakes: BTreeSet<(u8, u32)>,
     /// Largest |m3 level − label level| over closed lakes' cells: (m, lake id).
     pub lake_m3_gap: Option<(f32, u32)>,
+    /// Lake cells whose m3 receiver drains higher: (cells, largest rise in m).
+    pub lake_routing_rises: (u64, f32),
     /// m2 node cells in no m3 node, and the largest m2 level − m3 level (ground where dry)
     /// over m2 node cells: (m, m2 node, cell [x, y]).
     pub pond_lost: (u64, Option<PondDrop>),
@@ -986,7 +988,13 @@ pub(crate) fn check_tile(
                 Some((rx, ry)) => {
                     let r = at(rx, ry).expect("receiver in window");
                     if dsurf(r) > dsurf(j) + RISE_M {
-                        t.fail("drainage_rises", x, y);
+                        // A flat lake's water leaves at its exit, not by a cell's m3 receiver.
+                        if lake_cell(j) {
+                            let l = &mut t.lake_routing_rises;
+                            (l.0, l.1) = (l.0 + 1, l.1.max(dsurf(r) - dsurf(j)));
+                        } else {
+                            t.fail("drainage_rises", x, y);
+                        }
                     }
                     if surf[j].is_finite() && surf[r].is_nan() && surf[j] - z[r] > BANK_STEP_M {
                         let b = &mut t.bank_steps;
@@ -1046,7 +1054,8 @@ pub(crate) fn check_tile(
                     let dn = if same { lv } else { dsurf(n) };
                     let e = t.saddle.entry(body[j]).or_insert(f32::INFINITY);
                     *e = e.min(lv.max(dn));
-                    if dn < lv - SILL_M && !(full && gi(n) == outlet[1]) {
+                    // The spill's value (`relevel`): water over a bank cell leaks only to its ground.
+                    if dn.max(z[j]) < lv - SILL_M && !(full && gi(n) == outlet[1]) {
                         let (nx, ny) = win.world_xy(n);
                         t.fail("lake_leaks", nx, ny);
                     }
@@ -1614,6 +1623,7 @@ pub(crate) fn report(
     let mut class_cells: BTreeMap<u8, u64> = BTreeMap::new();
     let mut class_lakes: BTreeSet<(u8, u32)> = BTreeSet::new();
     let mut lake_gap = None;
+    let mut lake_rises = (0u64, 0f32);
     let mut pond_lost = (0u64, None);
     let mut spot_drops: Vec<SpotDrop> = Vec::new();
     let mut unlabelled = (0u64, 0u64, 0u64, Vec::new());
@@ -1654,6 +1664,10 @@ pub(crate) fn report(
         unlabelled.2 += t.unlabelled.2;
         unlabelled.3.extend(t.unlabelled.3.iter().copied());
         lake_gap = wider_gap(lake_gap, t.lake_m3_gap);
+        lake_rises = (
+            lake_rises.0 + t.lake_routing_rises.0,
+            lake_rises.1.max(t.lake_routing_rises.1),
+        );
         pond_lost = (
             pond_lost.0 + t.pond_lost.0,
             deeper_drop(pond_lost.1, t.pond_lost.1),
@@ -1814,6 +1828,10 @@ pub(crate) fn report(
     figures.insert(
         "closed_lake_m3_level_gap".into(),
         json!(lake_gap.map(|(m, id)| json!({"max_m": m, "lake": id}))),
+    );
+    figures.insert(
+        "lake_routing_rises".into(),
+        json!({"cells": lake_rises.0, "max_m": lake_rises.1}),
     );
     figures.insert(
         "m2_pond_cells_lost".into(),
@@ -2602,6 +2620,35 @@ mod tests {
         let low = c.k(6, 2);
         c.z[low] = 8.0;
         assert_eq!(fails(&c.tile(), "lake_leaks"), 1);
+    }
+
+    /// Review C2: water 5 mm over a bank cell beside lower water is within the sill, as in
+    /// `relevel`'s spill value; 2 cm over it leaks.
+    #[test]
+    fn a_shallow_bank_cell_does_not_leak() {
+        for (bank, leaks) in [(9.995, 0), (9.98, 1)] {
+            let mut c = lake_case(true, 10.5);
+            let k = c.k(5, 3);
+            (c.z[k], c.raw[k]) = (bank, bank);
+            let low = c.k(6, 2);
+            c.z[low] = 8.0;
+            assert_eq!(fails(&c.tile(), "lake_leaks"), leaks, "bank {bank}");
+        }
+    }
+
+    /// Review C1: a lake cell whose m3 receiver stands higher is a figure, not a failure.
+    #[test]
+    fn a_rise_from_a_lake_cell_is_a_figure() {
+        let mut c = lake_case(true, 10.5);
+        let k = c.k(5, 4);
+        c.flow[k] = 4;
+        let r = c.report();
+        assert_eq!(r["checks"]["drainage_rises"], 0);
+        assert_eq!(r["figures"]["lake_routing_rises"]["cells"], 1);
+        let m = r["figures"]["lake_routing_rises"]["max_m"]
+            .as_f64()
+            .unwrap();
+        assert!((m - 0.5).abs() < 1e-5, "{m}");
     }
 
     #[test]
