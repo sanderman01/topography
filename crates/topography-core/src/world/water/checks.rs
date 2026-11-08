@@ -195,7 +195,9 @@ pub(crate) struct Tile {
     pub hist: Vec<u64>,
     /// |Δ| over changed cells only.
     pub hist_changed: Vec<u64>,
+    /// The deepest lowering below raw and the highest rise above it (deposition).
     pub max_change: f32,
+    pub max_rise: f32,
     pub max_q: f32,
     pub planar: [u64; 2],
     pub straight_m: f64,
@@ -870,8 +872,10 @@ pub(crate) fn check_tile(
         if delta > CHANGED_M {
             t.hist_changed[bin] += 1;
         }
-        t.max_change = t.max_change.max(delta);
-        if delta > s.params.change_max_m() {
+        t.max_change = t.max_change.max(raw[j] - z[j]);
+        t.max_rise = t.max_rise.max(z[j] - raw[j]);
+        // One-sided (review M1): a cap bug cuts too deep; rises are deposition, a figure.
+        if raw[j] - z[j] > s.params.change_max_m() {
             t.fail("change_max", x, y);
         }
         // B26: (a) a dry cell cut into an m3 node that m2 lacks: a pond only the cutting made;
@@ -1599,7 +1603,7 @@ pub(crate) fn report(
     let (mut hist, mut hist_changed) = (vec![0u64; BINS], vec![0u64; BINS]);
     let (mut planar, mut straight, mut river, mut beside, mut ponds) =
         ([0u64; 2], 0.0, 0.0, 0.0, 0u64);
-    let (mut max_change, mut max_q) = (0.0f32, 0.0f32);
+    let (mut max_change, mut max_rise, mut max_q) = (0.0f32, 0.0f32, 0.0f32);
     let mut falls = Vec::new();
     let mut saddle: BTreeMap<u32, f32> = BTreeMap::new();
     let (mut runs, mut drops_any, mut rims_any) = (Vec::new(), Vec::new(), Vec::new());
@@ -1698,6 +1702,7 @@ pub(crate) fn report(
             ponds + t.pond_cells,
         );
         max_change = max_change.max(t.max_change);
+        max_rise = max_rise.max(t.max_rise);
         max_q = max_q.max(t.max_q);
         falls.extend(t.falls);
     }
@@ -1836,6 +1841,7 @@ pub(crate) fn report(
         json!(p99_m(&hist_changed)),
     );
     figures.insert("change_max_m".into(), json!(max_change));
+    figures.insert("rise_max_m".into(), json!(max_rise));
     figures.insert("max_discharge_km2".into(), json!(max_q));
     figures.insert("pond_cells".into(), json!(ponds));
     figures.insert("pond_km2".into(), json!(ponds as f64 * cell_km2));
@@ -3438,6 +3444,18 @@ mod tests {
         assert_eq!(fails(&c.tile(), "change_max"), 0, "within 2 m + 0.5 m");
         c.z[k] -= 0.2;
         assert_eq!(fails(&c.tile(), "change_max"), 1);
+    }
+
+    /// Review M1: deposition is no cut, so a rise is a figure (`rise_max_m`), never `change_max`.
+    #[test]
+    fn a_rise_is_a_figure_not_a_change_max_failure() {
+        let mut c = Case::new(9, 9, plane);
+        let k = c.k(4, 4);
+        c.z[k] += 10.0;
+        assert_eq!(fails(&c.tile(), "change_max"), 0);
+        let r = c.report();
+        assert_eq!(r["figures"]["rise_max_m"], 10.0);
+        assert_eq!(r["figures"]["change_max_m"], 0.0);
     }
 
     #[test]

@@ -894,7 +894,7 @@ checks, [Plan B](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regen
 | `facets` | more planar 5×5 windows (residual < 2 cm, slope > 5°) among changed cells than raw had (global) |
 | `walls` | a changed cell's Horn slope exceeds max(wall_deg, its raw slope) + 0.01° (`wall_deg` 40° at 1 m, 35° at 4 m and 32 m) |
 | `change_p99` | p99 of \|Δ\| over all cells > 1 m (global; the value is `change_p99_m`) |
-| `change_max` | a cell's \|Δ\| > the breach cap + the erosion cap + 0.5 m (2.5 m at 1 m, 15.5 m at 4 m, 50.5 m at 32 m) |
+| `change_max` | a cell lies more than the breach cap + the erosion cap + 0.5 m below raw (2.5 m at 1 m, 15.5 m at 4 m, 50.5 m at 32 m; figure `change_max_m`). Rises are deposition, a figure (`rise_max_m`) |
 | `interior_p99` | 32 m and 4 m: p99 of \|Δ\| over real piece-interior cells outside breaches > 1 m (global; figure `interior_change_p99_m`) |
 | `interior_max` | 32 m and 4 m: an interior cell outside breaches changed by more than 3 m (figure `interior_change_max_m`) |
 | `handoff_narrow` | 32 m and 4 m: the cut Δ = raw − final exceeds its 3 × 3 grey opening by more than max(0.5 m, 0.5 × Δ) and, on some axis, the final ground is a trough over that threshold deeper than raw's (the cut made the trough; B9, ruling R5; figure `handoff_excess_max_m`) |
