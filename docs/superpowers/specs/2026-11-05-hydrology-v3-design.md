@@ -36,8 +36,8 @@ the [plan](../plans/2026-11-07-hydrology-v3-b-coarse-and-regeneration.md) the ru
 numbers from the full run are added at gate 5 (Task 18).
 
 - **CPU erosion.** Erosion runs on the CPU: an implicit, global, single-threaded Braun–Willett
-  pass. The 16,384² 4 m benchmark (Task 9) took 701 s for its erosion passes and peaked at
-  6.2 GB, inside the 45 min and 7 GB limits, so the GPU contingency (Task 9b) was skipped.
+  pass. The 16,384² 4 m benchmark (Task 9) took 701 s for its erosion passes; the whole
+  level run peaked at 6.2 GB, inside the 45 min and 7 GB limits, so the GPU contingency (Task 9b) was skipped.
 - **Erosion budget.** k_dt stays 7 × 10⁻⁴ at 32 m (8.75 × 10⁻⁵ at 4 m). The seam-lake target
   was replaced by `seam_excess` ≤ 1.5 (lakes exiting near region borders against those
   farther away; measured 1.10). Graded K by seam strength was not needed (far blend p99

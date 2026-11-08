@@ -518,11 +518,15 @@ The world adds `provenance.u8` (32 m cells of the L3 square) and records both le
 as `manifest-failed.json`, the chain exits 1 and keeps `l2.npz` (the chain refuses to rerun
 a failed world as it is). To recover after a fix:
 
-1. Rerun the level alone: `python -m topography_training.water.run level --run
-   <world>/hydrology/run-4m --coarse <world>/hydrology/32m` (it resumes its finished stages).
-2. Delete `<world>/manifest-failed.json`.
-3. Set `hydrology_4m_done` to `false` in `<world>/progress.json`.
-4. Rerun the same `cascade_chain` command: it resumes after L3 from `l2.npz`, takes the
+1. Build, then replace the level's pinned binary: either delete
+   `<world>/hydrology/run-4m/bin` (the level starts fresh, about 35 min at 64 km) or follow
+   [Rerunning from a stage](#rerunning-from-a-stage) steps 1–5 to keep the unchanged stages.
+   Without this the level reruns the old binary on its finished stages and fails again.
+2. Rerun the level alone: `python -m topography_training.water.run level --run
+   <world>/hydrology/run-4m --coarse <world>/hydrology/32m`.
+3. Delete `<world>/manifest-failed.json`.
+4. Set `hydrology_4m_done` to `false` in `<world>/progress.json`.
+5. Rerun the same `cascade_chain` command: it resumes after L3 from `l2.npz`, takes the
    passed 4 m level and writes `manifest.json`.
 
 The world also holds `description.json`
@@ -632,7 +636,7 @@ shaping (Plan B ruling B27: only if the owner flags banks at gate 4).
 
 ### Commands
 
-`$P` and `CAP` as at the top of this page. Each driver resumes when run again with the same
+`$P` as at the top of this page and `CAP` with `MemoryMax=12G`. Each driver resumes when run again with the same
 arguments and pins a copy of `target/release/topography` in its run directory (`bin/`). A
 new build starts again from scratch: delete that `bin` directory and the driver wipes every
 cache. To keep the stages whose code did not change, see

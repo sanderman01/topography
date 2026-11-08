@@ -231,7 +231,7 @@ def pin_binary(dest: Path, prune: bool = True) -> tuple[Path, str]:
     return pinned, digest
 
 
-# Hydrology rasters a world output carries (beside water.u8, kept until export v2) and its
+# Hydrology rasters a world output carries (beside water.u8, the 4 m mask L4 conditions on) and its
 # body list (`world_bodies`).
 WORLD_LAYERS = ("elevation.f32", "water-surface.f32", "water-body.u32")
 # World body lists keep dry basins from this area (1 ha): a 1 m glacier holds thousands of

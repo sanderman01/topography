@@ -148,7 +148,7 @@ wet extent follows from the two heights, so a lake with one level is flat, and w
 climb a bank. Ruling (hydrology v2, Task 4): ground ahead of a river cell along the flow is
 the next cross-section's bank, so on a cascade water may stand above it; this is reported
 and no dry cell may lie below every water surface beside it
-([Hydrology v2](../workflows/terrain-cascade.md#hydrology-v2)).
+([Hydrology v2](../workflows/terrain-cascade.md#hydrology-v3), since replaced by hydrology v3).
 
 | Step | Level | What happens |
 | --- | --- | --- |

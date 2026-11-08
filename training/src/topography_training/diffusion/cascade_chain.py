@@ -648,7 +648,9 @@ def main(argv=None) -> int:
             return 2
         progress = json.loads(progress_path.read_text())
         if (args.out / "manifest-failed.json").exists() and progress.get("hydrology_4m_done"):
-            print(f"error: output is complete but its 4 m water failed; rerun the level with "
+            print(f"error: output is complete but its 4 m water failed; after a fix, build and replace "
+                  f"the pinned binary in {args.out / 'hydrology' / 'run-4m' / 'bin'} (delete it for a fresh "
+                  f"level, or see terrain-cascade.md, Rerunning from a stage), rerun the level with "
                   f"`python -m topography_training.water.run level --run {args.out / 'hydrology' / 'run-4m'} "
                   f"--coarse {args.out / 'hydrology' / '32m'}`, then delete manifest-failed.json, set "
                   f"hydrology_4m_done false in progress.json and rerun this command (it resumes after "
