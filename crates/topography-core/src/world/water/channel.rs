@@ -121,8 +121,8 @@ fn offer(slots: &mut [(f32, u32, u32); 2], cand: (f32, u32, u32), body: impl Fn(
     }
 }
 
-/// A cut beside another m2 node (lakes included) stops at the floor `rim` (or the ground, if
-/// lower), so carving never lowers a pond's outlet (fix round 2).
+/// A cut beside another m2 node (lakes, and ponds at least as deep as the river) stops at the
+/// floor `rim` (or the ground, if lower), so carving never lowers a pond's outlet (fix round 2).
 fn rim_floor(ground: f32, cut: f32, rim: Option<f32>) -> f32 {
     rim.map_or(cut, |lv| cut.max(ground.min(lv)))
 }
@@ -258,6 +258,13 @@ pub(crate) fn channels(
                 }
             };
             let river = |t: usize| if level[t].is_finite() { level[t] } else { g[t] };
+            let depth = |t: usize| geo.depth_m(f64::from(q[t]));
+            // Whether node `n`'s rim holds against a river `d` deep: lakes always, ponds as
+            // deep as the river or deeper.
+            let kept_rim = |n: u32, d: f32| {
+                let p = w.nodes.at(n - 2);
+                p.lake || p.level - p.low >= d
+            };
             // The centre cut: down to the surface − depth, within the raw − cap clamp.
             let centre = |t: usize| {
                 if !s.params.channels {
@@ -345,15 +352,20 @@ pub(crate) fn channels(
                     .collect();
                 // Fix round 2: a rim beside a neighbouring m2 node (lakes included) other than
                 // j's own is not cut to within SILL_M of its level; j's own spill cell not
-                // below its level.
+                // below its level. Ponds shallower than the cutting river's depth `d` drown in
+                // its channel and keep no rim (Task 13: else their rims comb the bed).
                 let own_rim = (node[j] >= 2 && g[j] >= level[j]).then_some(level[j]);
-                let pond_rim = rim_level(
-                    own_rim,
-                    around
-                        .iter()
-                        .filter(|&&j2| node[j2] >= 2 && node[j2] != node[j])
-                        .map(|&j2| level[j2]),
-                );
+                let pond_rim = |d: f32| {
+                    rim_level(
+                        own_rim.filter(|_| kept_rim(node[j], d)),
+                        around
+                            .iter()
+                            .filter(|&&j2| {
+                                node[j2] >= 2 && node[j2] != node[j] && kept_rim(node[j2], d)
+                            })
+                            .map(|&j2| level[j2]),
+                    )
+                };
                 // The lowest neighbouring lake level below a river surface `rs`.
                 let lake_below = |rs: f32| {
                     around
@@ -381,7 +393,7 @@ pub(crate) fn channels(
                             .max(rw[j] - CHANNEL_CAP_M)
                             .min(g[j])
                     };
-                    let cut = rim_floor(g[j], cut, pond_rim);
+                    let cut = rim_floor(g[j], cut, pond_rim(depth(t)));
                     if cut < rs || t == j {
                         lowered[a] = cut < g[j];
                         carved[a] = cut;
@@ -1417,6 +1429,61 @@ mod tests {
         assert_eq!(rim_level(Some(lv), [lv].into_iter()), Some(lv + SILL_M));
         assert_eq!(rim_level(Some(lv + 1.0), [lv].into_iter()), Some(lv + 1.0));
         assert_eq!(rim_level(None, std::iter::empty()), None);
+    }
+
+    /// Task 13 (B26, E41058 N56173): a river down a raw flat dotted with one-cell ponds a few
+    /// cm deep. Their rims held the cut a centimetre above each pond, so only the pond cells
+    /// were cut: a comb of pits along the bed. Ponds shallower than the river's depth are
+    /// drowned in its channel and their rims are cut like any section cell.
+    #[test]
+    fn a_river_over_shallow_pits_cuts_an_even_bed() {
+        let world = World { w: 96, h: 33 };
+        let z: Vec<f32> = (0..world.w * world.h)
+            .map(|i| {
+                let (x, y) = (i % world.w, i / world.w);
+                let pit = if y == 16 && x % 3 == 0 && (9..=84).contains(&x) {
+                    0.08
+                } else {
+                    0.0
+                };
+                40.0 - 0.01 * x as f32 + 0.3 * (y as f32 - 16.0).abs() - pit
+                    + ((i * 7919) % 7) as f32 * 0.001
+            })
+            .collect();
+        let s = || {
+            // A river from the west edge on.
+            let mut s = setup(world, 32, 1e-4);
+            s.table.lake_min_m2 = 1e9;
+            s
+        };
+        let m3s = 1e3;
+        let mut nl = (Vec::new(), Vec::new());
+        let (raw, carved, ..) = run_setup(s(), z, m3s, Some(&mut nl));
+        let (node, level) = nl;
+        let k = |x: usize| 16 * 96 + x;
+        assert!(
+            node[k(12)] >= 2 && level[k(12)] - raw[k(12)] < 0.1,
+            "a shallow pond"
+        );
+        // The river is deeper than the ponds from the first pit on.
+        let r = Rasters::memory(world);
+        model(
+            &s(),
+            &Layer::memory(world, raw.clone()),
+            None,
+            "m",
+            Some(&r),
+        )
+        .expect("model");
+        let q = r.discharge.to_vec().unwrap()[k(12)];
+        assert!(Geometry::new(m3s).depth_m(f64::from(q)) > 0.15, "Q {q}");
+        let uncut = (12..78)
+            .filter(|&x| carved[k(x)] > raw[k(x)] - 1e-3)
+            .count();
+        let teeth = (12..78)
+            .filter(|&x| carved[k(x)] < carved[k(x - 1)].min(carved[k(x + 1)]) - 0.05)
+            .count();
+        assert_eq!((uncut, teeth), (0, 0), "bed {:?}", &carved[k(12)..k(30)]);
     }
 
     /// No cut leaves a changed cell steeper than max(40°, raw) (the `walls` check) or a dry
