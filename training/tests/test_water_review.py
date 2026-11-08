@@ -56,6 +56,13 @@ class CoarseGuideTest(unittest.TestCase):
         self.assertEqual(self.case(106.0)["lakes_over_5m"], [2])
         self.assertEqual(self.case(100.0, split=True, split_level=92.0)["lakes_doubled"], [2])
 
+    def test_guide_captions_name_the_compared_levels(self):
+        m = {"lake": 6, "failure": "over_5m", "coarse_level_m": 618.84, "fine_level_m": 628.24}
+        c = review._guide_caption(m, 32.0, 4.0, 37376, 58288)
+        self.assertEqual(c, "32 m lake 6: over_5m, 32 m level 618.84 m, 4 m level 628.24 m   centre E37376 "
+                            "N58288   32 m water | 4 m water")
+        self.assertIn("1 m level none", review._guide_caption(m | {"fine_level_m": None}, 4.0, 1.0, 0, 0))
+
     def test_a_split_at_the_coarse_level_is_a_figure(self):
         """Lake 1906: two pits joined diagonally at 32 m, both at the coarse level at 4 m."""
         g = self.case(100.0, split=True)

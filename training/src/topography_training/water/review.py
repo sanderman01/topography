@@ -823,9 +823,21 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
     }
 
 
+def _level_name(spacing_m: float) -> str:
+    return f"{spacing_m:g} m"
+
+
+def _guide_caption(m: dict, coarse_m: float, fine_m: float, e: int, n: int) -> str:
+    """A coarse-guide figure's title, naming the two levels compared."""
+    c, f = _level_name(coarse_m), _level_name(fine_m)
+    lvl = "none" if m["fine_level_m"] is None else f"{m['fine_level_m']:.2f} m"
+    return (f"{c} lake {m['lake']}: {m['failure']}, {c} level {m['coarse_level_m']:.2f} m, {f} level {lvl}   "
+            f"centre E{e} N{n}   {c} water | {f} water")
+
+
 def guide_figures(src: Path, coarse: Path, guide: dict, dest: Path, raw: Path | None = None) -> list[Path]:
-    """One figure per coarse-guide mismatch: the result with the 4 m water beside it with the
-    1 m water, the 4 m lake's box marked (coarse-guide/lake-<id>-<failure>.png)."""
+    """One figure per coarse-guide mismatch: the result with the coarse level's water beside the
+    fine level's, the coarse lake's box marked (coarse-guide/lake-<id>-<failure>.png)."""
     from PIL import ImageDraw
 
     L = open_layers(src, raw)
@@ -853,12 +865,11 @@ def guide_figures(src: Path, coarse: Path, guide: dict, dest: Path, raw: Path | 
         ie = _illum(res, L.spacing * k)
         g = _gray(ie, _limits(ie, fk == 0))
         widen = scale < 2
-        lvl = "none" if m["fine_level_m"] is None else f"{m['fine_level_m']:.2f} m"
         e, n = L.en(*centre)
+        cname = _level_name(float(cg.get("spacing_m", 1.0)))
         img, xs = _compose([_u8(_water(g, ck, widen), scale), _u8(_water(g, fk, widen), scale)],
-                           f"4 m lake {m['lake']}: {m['failure']}, 4 m level {m['coarse_level_m']:.2f} m, "
-                           f"1 m level {lvl}   centre E{e} N{n}   4 m water | 1 m water",
-                           scale / (L.spacing * k), WATER_LEGEND[:2] + [("box", MARK, "4 m lake box")])
+                           _guide_caption(m, float(cg.get("spacing_m", 1.0)), L.spacing, e, n),
+                           scale / (L.spacing * k), WATER_LEGEND[:2] + [("box", MARK, f"{cname} lake box")])
         draw = ImageDraw.Draw(img)
         (bc0, br0), (bc1, br1) = L.cell(e0, n0), L.cell(e1, n1)
         for x in xs:
