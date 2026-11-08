@@ -296,8 +296,8 @@ for you to remove. Outputs:
     30 m; GLO-30 river floors carry pits of 20 m or so)
   - for a breached caldera, where water from the breach drains and where it joins a river
     (info)
-  - closed depressions on land of at least 1 km² and 50 m deep (info only; hydrology v2
-    breaches them)
+  - closed depressions on land of at least 1 km² and 50 m deep (info only; the hydrology
+    breaches or fills them)
 - `reach-l2.txt` and `reach-l2.png`, which bands reach which ground
 - `overview.png` and `pieces.png`, the annotated map and the piece footprints
 - `description.json` and `description.md`
@@ -373,18 +373,18 @@ surface is the world's `elevation.f32`.
 
 After L1 the land is made to drain in Python (`hydrology.drain`: largest depressions kept
 as lakes, others carved; hollows of crater, karst and dune cells stay dry basins). Water
-after L2 and L3 comes from [Hydrology v2](#hydrology-v2) (`topography world hydrology`, the
-release binary, which the chain builds with Cargo when it is stale): L1 lakes get a bed
-sloping down from their shore (0.1, at most 40 m) so the 32 m run keeps them, then the 32 m
-run (wind from the layout) carves L2's ground and sets its sea, lakes and rivers. L3
-refines that carved ground, with the 32 m water as its water channel (32 m rivers drawn
-about 20 m wide), and its ground under lakes and rivers eases down to the carved 32 m
-ground. The 4 m run (`--coarse` the 32 m output) then holds the 32 m network fixed, adds
-tarns and tributaries and carves the 4 m ground; that is the world's elevation. Outputs
-stay in `hydrology/32m` and `hydrology/4m` (L4 reads the 4 m one). The L1 128 m lake picker keeps 1% of the land as lakes and 1% as dry basins in
+after L2 and L3 comes from [Hydrology v3](#hydrology-v3), one level at a time
+(`water.run.run_level` with the release binary, which it builds with Cargo when it is
+stale): L1 lakes get a bed sloping down from their shore (0.1, at most 40 m) so the 32 m
+level keeps them, then the 32 m level (wind from the layout) breaches and erodes L2's ground
+and sets its sea, lakes and rivers. L3 refines that final ground, with the 32 m water as its
+water channel (32 m rivers drawn about 20 m wide). The 4 m level runs on the kept raw L3
+surface, guided by the 32 m level; its final ground is the world's elevation. Outputs stay in
+`hydrology/run-32m` and `hydrology/run-4m`, with `hydrology/32m` and `hydrology/4m` linking
+their `out/` (L4 reads the 4 m one; details in
+[Generating fujix from the collage](#generating-fujix-from-the-collage)). The L1 128 m lake picker keeps 1% of the land as lakes and 1% as dry basins in
 classes whose lake-to-catchment ratio r is at most 0.05 (`configs/hydrology/water-v3.toml`);
-`--stream-km2` sets the 32 m river start (default 10 km²). The 32 m and 4 m water now come
-from hydrology v3 (see [Generating fujix from the collage](#generating-fujix-from-the-collage)). `--l1-class-runs`, `--l2-class-runs` and `--l3-class-runs` mix
+`--stream-km2` sets the 32 m river start (default 10 km²). `--l1-class-runs`, `--l2-class-runs` and `--l3-class-runs` mix
 per-class expert runs (`cN` subdirectories) over a level's run. The output is a 4 m world
 (`manifest.json`, layers, hillshades of each level) that
 exports directly. Beside `water.u8` (the 4 m mask L4 conditions on; the export ignores it) it holds `water-surface.f32`
@@ -392,8 +392,7 @@ exports directly. Beside `water.u8` (the 4 m mask L4 conditions on; the export i
 the manifest's `moisture` entry); the rasters are hard links into `hydrology/4m` (copies
 across file systems). A world's `bodies.json` lists the sea, lakes, rivers and dry basins of
 at least 1 ha (a 1 m glacier holds thousands of tiny ice basins); a parent left out becomes 0.
-At 1 m it is merged from the bands: water areas count delivered cells, a dry basin keeps its
-largest band area, and each body's parent comes from the band whose core holds its end. A 32 km L3 takes about an hour. `--guidance w` applies class
+At 1 m it comes from `water.run world`. A 32 km L3 takes about an hour. `--guidance w` applies class
 guidance at every level (1: off); it evaluates the model a second time in each guided window. L1 runs trained on 128-cell crops are sampled in
 overlapping local windows, and generation takes the form channels from the run's
 per-class table (`python -m topography_training.diffusion.forms --run-dir <run>`
@@ -408,116 +407,47 @@ catalog is rebuilt from a context release with
 check the picks by eye. Craters are made at least as deep as painted; painted crater
 hollows always stay dry basins through drainage.
 
-`cascade_l4` refines that 4 m world to 1 m in bands of rows:
+`cascade_l4` refines that 4 m world to a raw 1 m surface in bands of rows, and
+`water.run world` then makes the 1 m water world from it ([Hydrology v3](#hydrology-v3)):
 
 ```sh
 $P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
-    --world data/worlds/fujion-v3-chain-14 --out data/worlds/fujion-v3-chain-14-l4 --band-m 1024
+    --world data/worlds/fujion-v3-chain-14 --out data/worlds/fujion-v3-chain-14-l4-raw --band-m 1024
+PYTHONPATH=training/src $P -m topography_training.water.run world \
+    --source data/worlds/fujion-v3-chain-14-l4-raw --out data/worlds/fujion-v3-chain-14-l4
 ```
 
-Bands default to 1,024 m with a 256 m halo (`--band-m`, `--halo-m`); overlapping bands
-share their starting noise (drawn per tile of the map's 1 m grid, as in L3) and are
-cross-faded, resuming exactly as in L3; the halo may be at most two thirds of a band. Once the band below is generated, a band's rows are final and it gets its 1 m water
-from `topography world hydrology` with `--coarse` the world's `hydrology/4m` and `--north`
-the previous band ([Bands and seams](#bands-and-seams---north)), over its rows plus a halo as
-wide as `--halo-m`; it keeps the core rows, and `hydrology-seam` checks each pair (a failure
-stops the run). Under water the ground is the refined 4 m ground (L4 learned land only), so
-bands, and windows inside a band, whose 4 m ground is all deep water (below −50 m) are not
-diffused (the manifest's `deep_sea_bands` and `windows`). `--guidance-classes` limits
-`--guidance` to windows holding those classes, as in the chain.
-The output adds `water-surface.f32`, `water-body.u32`, `bodies.json` and the world's 128 m
-`moisture.f32`; band reports stay in `hydrology/`. Rerunning the same command resumes after
-the last finished band (diffusion or hydrology), and after a failure while finishing.
+Bands default to 1,024 m with a 256 m halo (`--band-m`, `--halo-m`, multiples of 64 m, the
+halo no wider than a band); overlapping bands share their starting noise (drawn per tile of
+the map's 1 m grid, as in L3) and are cross-faded, resuming exactly as in L3. `cascade_l4`
+only diffuses: it writes a raw world (`manifest.json` of kind `world_raw`,
+`elevation-raw.f32`, `snow-ice.u8`, `vegetation.u8`, `overview.png` and `detail.png`) with
+no water. Under 4 m lakes and sea the ground is the refined 4 m ground (L4 learned land
+only); under 4 m rivers too, unless `--keep-river-residual` keeps the diffused residual there
+(B32 A/B). Bands, and windows inside a band, whose 4 m ground is all deep water (below
+−50 m) are not diffused (the manifest's `deep_sea_bands` and `windows`). `--guidance-classes`
+limits `--guidance` to windows holding those classes, as in the chain. Rerunning the same
+command resumes after the last finished band.
 
-The diffused surface hydrology reads, `elevation-raw.f32` (4 bytes a cell, 17 GB at 64 km),
-is kept: the manifest records it as `hydrology_input` with its digest. So hydrology can be
-rerun after a hydrology fix without diffusion and without the GPU:
-
-```sh
-systemd-run --user --scope -q -p MemoryMax=6G \
-    $P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --hydrology-only
-```
-
-A band's Rust hydrology peaked at about 2.8 GB at 64 km; the cap keeps a runaway band from
-taking the session down. It reruns every band's hydrology from the kept raw surface, north
-to south, rewrites `elevation.f32`, the water layers, `bodies.json`, the pictures and the
-manifest. It works on a finished world, on one whose seam audit failed and on one whose
-inline hydrology stopped at a failed band. It opens the raw surface read-only and checks it
-against the digest the manifest (`manifest.json`, else `manifest-failed.json`, or the first
-rerun) recorded, and keeps the diffusion's `peak_vram_gb`, `deep_sea_bands` and `windows`.
-
-Both the full command and the rerun pin the hydrology binary for the whole run: they copy
-`TOPOGRAPHY_BIN` (if set, else the release build, brought up to date first) to
-`hydrology/bin/topography-<sha12>` in the world and run that copy, so a later `cargo build`
-cannot change the remaining bands. The manifest records it as `hydrology_binary` (with
-`mixed`, every binary used, when a resumed full run changed it). Unset `TOPOGRAPHY_BIN` for a
-rerun after a hydrology fix, or point it at the fixed build: an old pin left exported reruns
-the old code. A rerun stopped part-way (no failed band, Python code unchanged) resumes with
-the binary it pinned when `TOPOGRAPHY_BIN` is unset, so building a later checkout does not
-restart it; to apply a hydrology fix there, set `TOPOGRAPHY_BIN` to the fixed build or pass
-`--restart`. Earlier pins are removed only once the rerun has decided to resume or restart and
-its raw surface checks out.
-
-`progress.json` keeps the rerun's state under `rerun`, with the binary's digest and a digest
-of the Python hydrology code (`hydrology.py` and the band step): the same command resumes
-after the last band it finished while both are unchanged, and starts again from band 0 when
-either changed (a code fix), or with
-`--restart`. A band that fails its checks does not stop the rerun: its grid and north band
-are copied to `hydrology/failed/band-NNN/` as a repro, the next band takes its output as the
-north, and the rerun exits 1 after the last band listing every failed band without finishing,
-so one pass finds every failing band. The next rerun starts again from band 0. A failure
-while finishing, the seam audit included, only finishes again (an audit fix needs no bands). So after a
-hydrology fix, rerun the same command. While a rerun is in progress or failed, the full
-command refuses to run, so it cannot finish over half-rerun bands. The manifest is moved
-aside while the rerun goes, so a half-rerun world does not look finished; its `game` entry is
-kept and marked stale, since the game layers follow the ground: run `game_layers` again
-afterwards. `--drop-raw` removes the raw surface when a run (or a rerun) finishes; a world
-without it needs diffusion again to change its hydrology.
-
-Each band's hydrology fails (and stops hydrology, while diffusion goes on, for any error)
-on a step or slot at its seam with the band above or on ground cut deeper than allowed
-([Bands and seams](#bands-and-seams---north)). After the last band, a seam audit checks the
-whole world with the same rule: at every band boundary, with d the change hydrology made
-(what shows, the water surface where wet, else the ground, less the raw surface; a lake's or
-the sea's depth is no change of the land, so their ground counts there), a column
-fails where d in one of the first four rows of the band differs from d in the last row above
-by more than 5 m plus the 35° side slope's rise per further row (except where both cells are
-water of one body), or where what shows less the raw surface (the water surface where wet,
-lakes and sea too) lies 5 m below both neighbours (north and south, or west and east) in those
-rows (a slot), as the band checks count them. A world without its raw surface falls back to steps of what
-shows over 5 m and 4 times the rows beside them. The audit writes
-`hydrology/seam-audit.json` and records the totals in the manifest (`seam_audit`). A world
-that fails gets `manifest-failed.json` instead of `manifest.json`, so export and resumes see
-it unfinished; fix hydrology and rerun `--hydrology-only`. The audit also runs on its own
-(exit status 1 on a failing column):
-
-```sh
-$P -m topography_training.diffusion.cascade_l4 --out data/worlds/fujix-55-l4 --seam-audit
-```
-
-On the first fujix-55-l4 world (before the seam fixes) it counted 8,260 columns at 28 of the
-63 boundaries, up to 206 m (at row 31,744).
-`--km N` limits the run to a central N × 1,024 m square for quick checks; worlds without a
-`hydrology/4m` output (made before hydrology v2) must be regenerated, and older chain
+`elevation-raw.f32` (4 bytes a cell, 17 GB at 64 km) is the input of `water.run world`, so
+the 1 m water can be rerun after a hydrology fix without diffusion and without the GPU.
+`--km N` limits the run to a central N × 1,024 m square for quick checks (`--centre X,Y`
+places it); worlds without a `hydrology/4m` output must be regenerated, and older chain
 worlds need `--class-id`. `--class-runs` mixes per-class expert runs over `--run`. At
 12 steps and stride 192, a central 4 km takes about 14 min.
 
 Memory and disk: output layers are memory-mapped and the 4 m world is read band by band, so
 host memory depends on the band width and height. Measured at 64 km on CPU with the sampler
 replaced by five band-size buffers (its working arrays): a 1,024 m band holds about 5.5 GB in
-Python besides those buffers, the run peaked at 9.4 GB (page cache included), and a band's
-hydrology takes 2.8 GB in Rust while Python holds 1.6 GB. So run it in a 12 GB cap; 2,048 m
-bands roughly double the Python share. The
-output takes 15 bytes a 1 m cell (elevation, water surface and body, and three masks: 64 GB
-at 64 km), plus 4 bytes a cell for the kept `elevation-raw.f32` (17 GB) and two
-band directories (about 4 GB); `cascade_l4` checks the free space before it starts. L4 still
-writes the 1 m binary `water.u8`, `snow-ice.u8` and `vegetation.u8` (12.9 GB at 64 km), which
-the export ignores; dropping them is left to sub-project 5. The
+Python besides those buffers and the run peaked at 9.4 GB (page cache included). So run it in
+a 12 GB cap; 2,048 m bands roughly double the Python share. The raw world takes 6 bytes a
+1 m cell (26 GB at 64 km); `cascade_l4` checks the free space before it starts. The 1 m water
+world needs its own room ([Settings, resuming and cost](#settings-resuming-and-cost)). The
 chain checks for 130 bytes a 4 m cell before it starts (35 GB at 64 km: world layers and raw L3
 about 44 B, the 4 m water work 54 B, erosion routings 28 B). Its L3 bands hold
-about 4.6 GB at 64 km width (8,192 m bands); the 4 m hydrology at 64 km takes 5.5 GB in Rust
-while Python holds about 2.5 GB, so a whole-map chain peaks at about 8 GB (measured in a
-10 GB cap).
+about 4.6 GB at 64 km width (8,192 m bands); the 4 m level at 64 km (16,384²) peaked at
+6.2 GB in Rust with erosion while Python holds about 2.5 GB, so run a whole-map chain in a
+10 GB cap.
 
 Then add the game layers the export needs (the chain still draws its 4 m cover internally;
 a chain world takes the same command before a 4 m export):
@@ -585,9 +515,17 @@ Water is hydrology v3, one level at a time (`water.run.run_level`):
 
 The world adds `provenance.u8` (32 m cells of the L3 square) and records both levels'
 `level.json` under the manifest's `water`. When the 4 m level fails, the world is written
-as `manifest-failed.json`, the chain exits 1 and keeps `l2.npz`; rerun the level alone with
-`python -m topography_training.water.run level --run <world>/hydrology/run-4m --coarse
-<world>/hydrology/32m` (the chain refuses to rerun a failed world). The world also holds `description.json`
+as `manifest-failed.json`, the chain exits 1 and keeps `l2.npz` (the chain refuses to rerun
+a failed world as it is). To recover after a fix:
+
+1. Rerun the level alone: `python -m topography_training.water.run level --run
+   <world>/hydrology/run-4m --coarse <world>/hydrology/32m` (it resumes its finished stages).
+2. Delete `<world>/manifest-failed.json`.
+3. Set `hydrology_4m_done` to `false` in `<world>/progress.json`.
+4. Rerun the same `cascade_chain` command: it resumes after L3 from `l2.npz`, takes the
+   passed 4 m level and writes `manifest.json`.
+
+The world also holds `description.json`
 and `description.md`: for a whole-map L3 the collage's description measured on the carved
 4 m surface (level `l3`: regions, passes and their bands, summit and caldera); for an L3
 square, measured on the carved 32 m surface (level `l2`) plus `finer`, pass ground and
@@ -601,16 +539,23 @@ Full run (it needs the owner's go). Class guidance 2 on the Grand Canyon windows
 
 ```sh
 CAP=(systemd-run --user --scope -q -p MemoryMax=12G)
+export PYTHONPATH=training/src
+$P -m topography_training.diffusion.collage provenance data/worlds/fujix-collage-55
 "${CAP[@]}" $P -m topography_training.diffusion.cascade_chain --collage data/worlds/fujix-collage-55 \
     --l3-run data/models/cascade-l3-run-5 --l3-class-runs data/models/cascade-l3-run-5-experts \
     --guidance 2 --guidance-classes 19 --out data/worlds/fujix-55-chain-v3
 "${CAP[@]}" $P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
     --class-runs data/models/cascade-l4-run-8-experts --guidance 2 --guidance-classes 19 \
-    --world data/worlds/fujix-55-chain --out data/worlds/fujix-55-l4
+    --world data/worlds/fujix-55-chain-v3 --out data/worlds/fujix-55-l4v3b-raw
+"${CAP[@]}" $P -m topography_training.water.run world \
+    --source data/worlds/fujix-55-l4v3b-raw --out data/worlds/fujix-55-l4v3b
+$P -m topography_training.diffusion.game_layers --world data/worlds/fujix-55-l4v3b
+target/release/topography export heightmap data/worlds/fujix-55-l4v3b data/exports/fujix-55-l4v3b
 ```
 
-Either command, rerun unchanged after a crash or kill, resumes where it stopped. Run them as
-background jobs with a log and an exit-code file ([AGENTS.md](../../AGENTS.md)).
+`collage provenance` writes the sidecar once (it is additive). Each long command, rerun
+unchanged after a crash or kill, resumes where it stopped. Run them as background jobs with a
+log and an exit-code file ([AGENTS.md](../../AGENTS.md)).
 
 Checks (2026-10-28; RAM is the cgroup's anonymous memory plus swap, as page cache from the
 memory-mapped layers fills any cap; VRAM is torch's peak reservation):
@@ -629,7 +574,7 @@ memory-mapped layers fills any cap; VRAM is torch's peak reservation):
 | L4 4 km canyon on each, guidance 1 / 2 on class 19 | 15 / 27 min (bands 195-238 s / 374-426 s) | 2.2 GB | 7.8 GB system |
 | L4 2 km on the class-19 zone's edge, guidance 1 / 2 (93 of 154 windows guided) | 6 / 16 min | | |
 
-Every hydrology report and band seam passed (after the fix of a cell widened out of a sink
+These runs used the v2 hydrology; every report and band seam passed (after the fix of a cell widened out of a sink
 basin without a receiver, found by the whole-map run). Two bands against one differ by 3 mm
 on average over the 16 km square, the same near the seam as elsewhere. Guidance, compared on
 one world at the same place and seed (`--guidance 2 --guidance-classes 19` at L3 and then
@@ -650,337 +595,74 @@ Full 64 km run. From the collage's 32 m surface: L3 has 18,796 windows in 8,192 
 and about 1.0 s (L3) and 1.3 s (L4) more where guided. So:
 
 - L3: about 4 to 5.5 h (5 to 6 h with guidance), plus about 15 min of band preparation,
-  7 min of 4 m hydrology and 5 min of layers.
-- L4: about 35 h of diffusion (41 h with guidance) and 2.6 h of band hydrology: about
-  38 h (44 h with guidance), against 55 h before the window skip.
-- RAM: L3 peaks at about 8 GB (bands about 4.6 GB; the 4 m hydrology 5.5 GB in Rust while
-  Python holds about 2.5 GB); L4 about 9.4 GB (earlier 64 km band measurement, 12 GB cap).
-  Run both in a 12 GB cap.
-- Disk: about 35 GB for the chain (130 bytes a 4 m cell checked), 82 GB for L4.
+  about 35 min of 4 m water with erosion (a 16,384² benchmark took 33 min, 701 s of it
+  erosion) and 5 min of layers. The 32 m level takes about 2 min.
+- L4: about 35 h of diffusion (41 h with guidance), against 55 h before the window skip.
+  Then `water.run world`: about 5 h of CPU (4.9 h fresh at gate 2).
+- RAM: L3 peaks at about 9 GB (bands about 4.6 GB; the 4 m level 6.2 GB in Rust while
+  Python holds about 2.5 GB); L4 about 9.4 GB (earlier 64 km band measurement, 12 GB cap);
+  the 1 m water world about 4.4 GB in Rust and up to 8 GB in the driver. Run each in a 12 GB
+  cap.
+- Disk: about 35 GB for the chain (130 bytes a 4 m cell checked), 26 GB for the raw L4
+  (6 bytes a 1 m cell), and for the 1 m water world about 232 GB of work plus 55 GB
+  published.
 
-## Hydrology v2
+## Hydrology v3
 
-Water as a surface height ([Fujix plan](../plans/fujix-v1.md) section 2), computed in Rust
-(`world::hydrology` in `topography-core`) one grid at a time: orographic rain, lakes,
-breached depressions, stream power at 32 m and discharge-sized channels. A finer level holds
-the coarser level's network fixed (`--coarse`), and 1 m bands take the previous band's rows
-(`--north`). The cascade calls it at 32 m, 4 m and in every 1 m band
-([Generating a world](#generating-a-world)); `scripts/hydrology_grid.py` makes grids to run
-it by hand:
-
-```sh
-training/.venv/bin/python -I scripts/hydrology_grid.py data/worlds/fujix-collage-55 <grid-dir>
-target/release/topography world hydrology --grid <grid-dir> --out <new-out-dir> [--wind-deg 225]
-target/release/topography world hydrology --grid <4m-grid> --coarse <32m-out> --out <4m-out>
-target/release/topography world hydrology --grid <band-k> --coarse <4m-out> --north <band-k-1-out> --out <band-k-out>
-target/release/topography world hydrology-seam --north <band-k-1-out> --south <band-k-out>
-```
-
-`hydrology_grid.py` takes a collage (`arrays.npz` `l2`, `class32.u8`, the layout's wind), or
-with `--chain-l2`, `--world` or `--band` a chain world's 32 m level, a world as it is, or rows
-of a 1 m world.
-
-### Grids and outputs
-
-A grid directory holds `grid.json`, `elevation.f32` and optional `classes.u8` (little-endian,
-rows north to south). `grid.json` gives `size` [w, h], `spacing_m`, `origin` [x, y] (the
-world's north-west corner in the layout plane, x east, y north; default [0, h · spacing]),
-and optionally `offset_m` [east, south] (a band or window inside that world), `core_rows`
-[start, end) (the rows a band delivers; the rest is halo), `classes_cell_m` and
-`wind_from_deg`. The output directory must not exist; it is staged and renamed into place:
-
-| File | Content |
-| --- | --- |
-| `grid.json` | the input plus `level`, `wind_from_deg`, `discharge`, `moisture` and `flow` entries and provenance (input and output SHA-256s, the coarse and previous band's files, water table, tool version) |
-| `elevation.f32` | ground after breaching, stream power and channel carving |
-| `water-surface.f32` | water surface in metres, NaN where dry, sea 0 |
-| `water-body.u32` | 0 dry, 1 sea, then lakes and rivers; coarse ids kept at finer levels |
-| `discharge.f32` | drainage area weighted by rain, km² at mean rain |
-| `moisture.f32` | 128 m grid, rain over its 95th percentile on land, 0 to 1 |
-| `flow.u8` | low 4 bits the D8 receiver (1 N, 2 S, 3 W, 4 E, 5 NW, 6 NE, 7 SW, 8 SE; 0 none), 16 centreline, 32 dry basin, 64 endorheic |
-| `bodies.json` | sea, lakes (`level_m`, `exit_cell`, `parent`), rivers (`coarse`, `mouth_cell`, `drainage_km2`, `length_km`, `parent`) and dry basins (`endorheic`, `ice`; not in the raster); `next_id`, the first id the next band or level may use |
-| `report.json` | checks, figures and `passed`; exit status 1 when a check fails (outputs are still written) |
-
-`--river-km2` defaults by spacing: 10 km² at 16 m and coarser, 0.5 km² from 2 m, 0.05 km²
-below. Water amounts per class come from `configs/hydrology/water-v1.toml` (built into the
-binary; `--water FILE` replaces it): `lake_share`, `tarn_share` and `dry_share` of each class's
-land. Timings and peak memory go to stderr only, so identical inputs give identical outputs.
-
-### The trunk level (32 m)
-
-- **Rain**: Smith and Barstad (2004) linear upslope model on a 128 m grid (FFT, padded with
-  0 m ground), clipped at 0 plus a background rate, then depleted along the wind from the
-  upwind edge (exp(−rained / budget)), which gives wet windward coasts and a dry far lee.
-  The wind is `--wind-deg` (degrees the wind comes from, clockwise from north), else
-  `wind_from_deg` in grid.json; without either, rain is uniform and moisture 0.5. Judgment
-  constants (`moisture::PARAMS`, in `report.json`): 10 m/s wind, N 0.005 s⁻¹, vapour scale
-  height 2,500 m, condensation and fallout 300 s, background 1.5 mm/h, 3 mm column budget.
-- **Sea** is ground below 0 m connected 8-way to the grid edge. A priority flood (Barnes
-  et al. 2014) finds the depressions.
-- **Lakes**: within each class's `lake_share`, the largest depressions by volume (at least
-  1 m deep and 4,096 m²). Glacier depressions (class 10) stay dry ice basins. **Dry basins**:
-  within `dry_share`, the deepest compact depressions of dry classes. Every other depression
-  is **breached** (Soille 2004 carving) by at most 30 m; deeper ones become lakes at the spill
-  minus 30 m, or dry sinks in glacier and arid classes; ground below 0 m makes lagoons at 0 m.
-- **Trench widening** cuts breach slots back to a 35° side slope, ring by ring, never below
-  the trench, 0 m or a kept basin level. **Stream power** (32 m and coarser): five implicit
-  iterations (Braun and Willett 2013), K·dt = 7 × 10⁻⁴, A^0.5; basins, glacier and ground
-  draining onto it untouched.
-- **Rivers** start at `--river-km2` of discharge, one id per river system. **Channels**: width
-  2.5 m · Q^0.5, depth 0.5 m · Q^0.4 (Q in km² at mean rain), a parabolic section; the
-  surface never rises downstream and stands at most at every dry bank beside or behind a
-  channel cell (ground ahead along the flow is the next section's bank, a ruling: figure
-  `river_ahead_exemptions`; not in the core's last four rows, which the next band takes, so it
-  gets water and banks that agree). Lake exits hold the lake level (a sill), rivers never stand below
-  an adjacent lake or the water they flow into, mouths ramp into the seabed, carved channels
-  deeper than a cell's rise widen like trenches, and holes (dry cells over 0.5 m below every
-  adjacent water) are raised.
-- **Receivers** follow the fall line: of the two neighbours bracketing a cell's gradient
-  (Horn's 3 × 3 slope) it takes one with a share equal to the angle between them, against a
-  low-discrepancy threshold of its world column and row, so streams on smooth slopes follow
-  the slope instead of grid lines, and overlapping bands route shared rows alike. Where that
-  neighbour is not lower it takes the steepest descent; flats keep the flood order. A flood
-  step left uphill (a pit lowered later, such as a trench end) can close a receiver cycle:
-  its cells get their flood receivers back, and any cycle left spills like a depression
-  (`receivers_spilled`).
-
-### Finer levels (`--coarse`)
-
-The finer grid must lie inside the coarse output, aligned to its cells. Moisture is the
-coarse one (bilinear); `--wind-deg` is refused. The sea also starts from coarse sea cells; a
-window edge is an outlet only at the world's edge or where the coarse flow leaves.
-
-- **Coarse lakes** keep their id and level. Wet is fine ground below the level connected to
-  the coarse lake's cells; no ground is dug out. A branch that leaks (grows more than a few
-  coarse cells, or reaches the sea, an edge or a lower lake) is cut by a sill at the level;
-  dry ground beside a lake below its level is raised (a shore). A lake cell beside the
-  previous band's ground or water lower than the level leaks too (the water would run back
-  across the seam). A lake of the previous band
-  that the coarse level lacks (one made at this level, such as a river sink filled to its
-  spill) goes on across the seam the same way, from that band's cells at its level.
-- **Coarse rivers** keep their id and get a fine centreline: a priority flood over a corridor
-  around the river's coarse cells starts where the coarse river ends and climbs upstream; each
-  coarse head follows it down (a head whose fine cells are all sea starts at the first coarse
-  cell down the river with land). Paths cross dry basin floors, a path ending in a coarse dry basin
-  with no fine hollow continues down the routing, and the path is burned below a cap from the
-  coarse surfaces. Its discharge is the coarse one. The corridor is the river's coarse cells
-  and one ring around them. A path stuck on its edge (free ground just outside more than
-  0.5 m lower: the finer valley floor lies beyond) would run along coarse cell lines and be
-  burned there into a stair-stepped trench, so the coarse cell of that lower ground joins
-  the corridor (with the order of the cell beside it) and the flood is made again, up to
-  three times. Paths that never touch the edge are laid as before. Beyond the coarse
-  river's 3×3 cells a path has no cap and only keeps descending. A path still stuck after
-  three widenings is kept and counted: `coarse.rivers` reports `corridor_widened` (rivers
-  by times widened), `rivers_widened` and their ids `widened_rivers`, `edge_cells`, `edge_runs_48m` (straight row or
-  column runs of stuck cells of 48 m or more) and `edge_run_max_m` / `edge_run_at_cell`.
-- **Depressions**: tarns at 4 m within `tarn_share`; at 1 m no new lakes and no new dry basins
-  (a depression touching a coarse dry basin stays one, glacier depressions stay ice basins).
-- **Tributaries** start at the finer `--river-km2`, with ids above every coarse id.
-- Extra checks (all 0): `coarse_lakes_missing`, `coarse_rivers_missing_or_unrouted`,
-  `water_above_coarse_surface` (a coarse river's fine water more than 1 cm above its coarse
-  surface), `coarse_lake_leaks_left` and `guard_coarse_lake_levels_changed`.
-
-### Bands and seams (`--north`)
-
-A band's grid holds its core rows and a halo above and below; its top rows must lie in the
-previous band's core, and its core starts where that core ends. Those rows are taken as they
-are, so adjacent bands agree on the seam by construction. A taken cell draining into this
-band feeds it; a taken river entering continues with its id. A taken cell whose flow there
-comes back into this band is no outlet and no river end (a loop across the seam). A stream
-draining back onto taken dry ground with the taken river up to three cells away is led along
-the first rows into it, never climbing (`streams_joined_across_seam`); a new stream that would
-end on taken dry ground, or join the taken river beside lower taken ground, is dropped
-(`streams_pruned_at_seam`), and this band's dry cells beside taken rivers are raised to their
-surface. `rivers_cut_at_seam` must be 0, and the cycle guard also counts the routing stitched
-with the previous band's.
-
-The seam: a band's first 64 rows (`SEAM_BLEND_ROWS`) start from a blend of the
-previous band's ground there (its halo, continuous with the taken rows) into this band's own,
-so the seam starts without a step in either direction; a cut that band made in its halo (a
-channel its hydrology guessed there) comes in only down to the seam limit below. On finer
-levels no cut goes deeper than
-`BREACH_MAX_M` (30 m) below that starting ground, and near the seam no cut goes below the
-previous band's dry ground in its last row less the 35° side slope over the distance (down to a
-taken river's or lake's bed beside it, and right beside a taken lake or the sea down to its
-level, such as a lake's exit notched to it), and in the first four rows after the seam never
-below what the seam step rule (below) allows: the carve floor. Breaching keeps a depression it
-cannot drain within that as a sink and fills a pocket instead (one whose fill would fail the
-seam step rule below stays a sink); trench walls, seam joins and
-channel beds stop there. Where a river's water would stand below the floor (a low bank
-downstream, a route over a rise), its bed stays on the floor and the water is raised to stand
-on it, upstream too (a backwater), and the dry banks beside are raised to the water (on a
-river over a high rise this fills the valley behind it); not above the previous band's dry
-ground beside it (not ground ahead along its flow, as for banks), a coarse path's surface cap,
-or, in the first four rows after the seam, the height the seam step rule (below) allows for its
-channel cells and any dry cell beside them, where the bed goes just below the water instead (bounded by `river_beds_below_carve_floor`). A channel cell
-beside the centreline whose bed cannot reach below the water stays dry. A river
-entering from the previous band that must be rerouted takes only a way whose cells can be
-lowered to its water level within their floor (it never climbs); with no such way it ends at
-its entry in a sink (`inflows_ended_in_a_sink`). Seam joins that would climb are not made.
-Coarse river paths may cut deeper (the coarse
-network sets where they run) but keep the seam limit, filling up to it where needed
-(`path_fill_*`), and keep four cells from taken dry ground below their water when a way that
-climbs no more allows. A coarse path that climbs more than 5 m above its lowest point upstream,
-or runs along the first 16 rows more than 16 columns from where its river crosses the seam, is
-laid again along the way to its end that climbs least, keeping off the seam there
-(`paths_relaid`; along the seam any such way is taken, since a climb there could only be
-cut below the floor). A coarse path whose ground in the core rises more than the 30 m carve
-depth above its lowest point upstream (the halo's rows are laid again by the next band) ends
-before that rise, flowing into that lowest cell; where the water there finds no way down but
-back into the path, that cell is a river sink, which the river-sink rules fill to a lake at its
-spill or keep dry (`paths_ended_before_a_deep_rise`, `path_hollows_ended_in_a_sink`). A path
-whose head is that lowest point is left out (`paths_dropped_before_a_deep_rise`). Cells of a
-path away from its coarse river get no surface cap (the coarse
-surface says nothing of the ground there), so the burn only keeps them descending. A coarse
-head the corridor flood misses (its river crosses the seam where the previous band laid it,
-off the coarse cells) takes the way that climbs least to that band's water of its own river
-before any lowest way to other water. A head whose coarse river comes from the previous band,
-which did not hand it over, is no head while the river has another, and a path laid again off
-the seam may leave the seam strip near its head as near its end. Other
-river routes whose water would have to climb past what the floor lets carving lower turn to
-their steepest other way down (`river_climbs_turned`). With no lower neighbour (a flat the
-breach filled where the floor kept it from cutting), such a river goes on along the way whose
-water level stays highest, over cells a channel can be cut in to that level, to where its
-routing goes on without climbing, and through any water on without coming back onto the route
-(`river_climbs_routed_on`); with no such way it ends there in a sink
-(`river_climbs_ended_in_a_sink`). Checks,
-with figures under `carving`: `ground_below_carve_floor` (dry ground below the floor),
-`river_beds_below_carve_floor` (river cells more than 5 m below it, coarse paths included,
-so a path burn deeper than about 35 m fails), `ground_raised_over_limit` (ground raised more
-than 60 m above the input by any fill), `seam_steps` (columns where the change hydrology made,
-shown height less the input, differs between the taken last row and one of the first four
-rows by more than 5 m plus the side slope's rise per further row, except where both cells are
-water of one body; a lake's or the sea's depth is no change of the land, so their ground counts
-there) and `seam_slots` (cells in those rows whose change lies 5 m below both
-neighbours, north and south or west and east). `slots` counts such cells over the whole band
-as a figure.
-
-On finer levels a sink that breaching left (not a coarse dry basin) that a river runs into
-fills to its spill as a lake draining over it, so a river does not end in a dry hollow (such
-as one below sea level behind a lagoon's rim, or one the seam floor kept from being breached).
-Neither way does it fill above a coarse river path beside it whose water is held lower (by its
-surface cap or the previous band's dry ground beside it, there or upstream): no lake grows over
-a path cell, so the lake would stand above the river. Nor where its outflow runs into, or the lake lies beside, a coarse path whose water is held
-above the level (on its bed floors or carve floor, or at the previous band's water it ends in).
-Nor where the outflow, followed down its routing to other water or an end, crosses a carve floor
-above the level: the river's water stands on that floor and would back up over the exit.
-A sink whose cells do not all drain to that spill (a pocket below 0 m left inside a breached
-depression, or a basin trench widening split), or that reaches the first three rows after the
-seam, fills to its own lowest spill instead: a priority flood from its lowest cell takes ground
-in rising order, and lower ground draining back in, until lower ground drains away to water, a
-dry pass-through basin or an edge. Other hollows breaching left, and a lake breaching left that
-drains in, fill with it; a lake beside it at or above the level takes it in; the previous
-band's cells and coarse river paths are walls (a path below the level may take the spill).
-The cells below that level become lakes at it, draining over the spill, and sink cells above it
-dry ground draining onto them (`river_sinks_filled_to_own_spill`, with the reasons sinks were
-left in `left_by_reason`). This runs again, up to four passes, while a lake made this way sends
-a river on into a further sink. It stays a sink where that is not clean: the flood meets a
-kept sink or other water draining in (such as a coarse lagoon whose outflow ends there) or the
-grid edge; ground draining away, the previous band's included, or water lies below the level
-beside the lake, or that band's ground beside its outflow (over the dry region at the level,
-then the river's water while in the rows the seam checks; that ground cannot be raised; a lake
-beside lower water would be a step in the surface), or that band's water its outflow runs into
-stands above the level (the outflow would climb off it). A sink a climbing river ends in has no spill and
-stays one. The figure `rivers_ending_in_a_dry_sink` counts the river ends still left in such
-sinks, with examples (`at_cells`), apart from those into kept dry basins (endorheic by design).
-
-`hydrology-seam` compares two band outputs and exits 1 on a failure: the shared rows must
-match (ground and surface within 1 mm, body ids equal), and across the seam no centreline may
-flow onto dry ground that is not a basin, no dry cell may sit more than 1 cm below an adjacent
-lake or the sea, nor below the northern band's river beside it, except on that river's cascade
-side (ahead along its flow where its water drops, judged by the northern band's own water or
-ground there, its halo for a southern cell) down to the seam step rule's limit (the southern
-band's own check uses that limit; `hydrology-seam`, without the input, allows 5 m there),
-and a lake keeps one level.
-
-Near the seam (judgment rules): a river joining the previous band's water in the first four rows
-may stand up to `SEAM_JOIN_STEP_M` (1 m) below it (channel cells of that band's river hold
-it too) where a taken bank, the seam step rule over the cell or a dry cell beside it, or a coarse
-path's surface cap holds it down (also into a join cell of this band that joins it); a coarse path ending in a cell of that water that
-cascades more than that onto a lower cell beside it goes on one free cell to the lower one (figure
-`seam_join_steps`, count and largest; more fails `river_cells_rising_downstream`). Dry cells
-beside the previous band's river are raised to its water, except on its cascade side, where they
-rise only as far as the seam step rule allows. Carving in the core's last four rows (which the
-next band takes) keeps the 35° side slope below the next band's first row, as that band's first
-rows do, river beds included (rivers cross the seam no deeper; water and banks are raised as
-needed); beside water in that row (a lake grown there, a coarse path at its cap) the limit
-goes down to it plus the slope, and coarse river paths keep the coarse network's level there. The seam blend and the carve floor in the first four
-rows never go below what the seam step rule allows. A lake exits over its main outflow (most flow; a coarse lake's dry main exit above its level is
-notched to it by up to 0.5 m, or further where the carve floor allows); among
-exits carrying that outflow (within 1 %), one where its water can go at its level (water, or
-ground not above it) comes first; an exit on a band edge row is not
-checked against the level (the lake may go on beyond it).
-
-### Checks
-
-All must be 0: lakes in more than one piece or with ground at or above their level, lake
-exits off the level (by more than 1 cm, plus 1 mm of f32 rounding), river cells below an
-adjacent lake, wet cells whose surface is not above
-the ground, centreline surfaces rising downstream, rivers ending on dry land, dry land
-draining uphill, dry cells more than 1 cm below an adjacent lake, sea or river (river banks
-as above), dry cells in holes, on finer levels the carving and seam checks (above), and the
-`guard_` checks (land not draining to an outlet, including receiver cycles; lakes with
-several levels; beds rising downstream, except onto a bed held at its carve floor). Unit tests
-(`cargo test -p topography-core hydrology`, run by `scripts/check.sh`) break each check.
-`check_examples` gives up to three failing cells per check.
-
-### Figures
-
-| Run | Time | Peak RAM | Notes |
-| --- | --- | --- | --- |
-| fujix-collage-55, 32 m, 2048² | 4 s | 0.16 GB | 287 lakes, 114 rivers (294 km) |
-| Fujion chain world, 4 m, 8192², `--coarse` | 94 s | 1.9 GB | 203 lakes, 461 rivers (616 km) |
-| Fujion 1 m band, 32,768 × 1,536 | 45-55 s | 1.0-1.2 GB | about 350 rivers a band |
-| fujix 64 km, 4 m, 16,384² `--coarse` | 6.2 min | 5.3 GB | the carved 32 m ground upsampled, with 1 m noise |
-| fujix 64 km, 1 m band, 65,536 × 1,536 | 2.4 min | 2.7 GB | one 1,024 m band with 256 m halos |
-
-In the cascade on an 8 km Fujion crop, generating each level from the carved level above
-keeps cuts small: at 4 m all steps together lower ground at most 9 m, at 1 m at most 7 m.
-
-## Hydrology v3 (1 m)
-
-Water as one field over the whole 1 m world ([spec](../superpowers/specs/2026-11-05-hydrology-v3-design.md),
-[Plan A](../superpowers/plans/2026-11-05-hydrology-v3-a-water-model.md)): every cell has a
-ground height, a water surface or none, and a discharge. Lakes and rivers are labels read off
-that field. Rust (`world::water` in `topography-core`) runs exact graph passes on tiles with
-halos: the priority-flood spill graph, the depression hierarchy and Fill-Spill-Merge, fall-line
+Water as one field at every level ([spec](../superpowers/specs/2026-11-05-hydrology-v3-design.md),
+[Plan A](../superpowers/plans/2026-11-05-hydrology-v3-a-water-model.md) for the 1 m model,
+[Plan B](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regeneration.md) for the
+coarse levels): every cell has a ground height, a water surface or none, and a discharge.
+Lakes and rivers are labels read off that field. One model runs at 32 m, 4 m and 1 m. Rust
+(`world::water` in `topography-core`) runs exact graph passes on tiles with halos: the
+priority-flood spill graph, the depression hierarchy and Fill-Spill-Merge, fall-line
 receivers, flat ponds and accumulation, then breaches, labels and channel carving. Tiled runs
-give the same bytes as one tile, so there are no bands and no seam rules. It replaces the
-band-by-band `--hydrology-only` rerun for 1 m worlds; the 32 m and 4 m levels still use v2.
+give the same bytes as one tile, so there are no bands and no seam rules. The 32 m and 4 m
+levels add an erosion stage (`e`) and hand their final ground to the next diffusion level;
+each finer level's own model sets its courses and levels, and the coarser level only guides
+(the [coarse guide](#the-coarse-guide)). Where the code departs from the spec, the spec lists
+it under "Plan A departures" and "Plan B departures".
 
 Departure from the spec: the spec's GPU bank relaxation is dropped in Plan A. On an 8192²
 probe at the deepest cut (1.33 m) the carved ground alone passed `walls` and `facets`, the
 relaxed ground had more `drainage_rises`, and the hillshades looked the same. Plan A ships the
 carved ground (`relaxation: none` in the manifest). The relaxation is kept in git at
-`d0c0055` (`training/src/topography_training/water/relax.py`) for Plan B, should deeper cuts
-need bank shaping.
+`d0c0055` (`training/src/topography_training/water/relax.py`), should deeper cuts need bank
+shaping (Plan B ruling B27: only if the owner flags banks at gate 4).
 
 ### Commands
 
-`$P` and `CAP` as at the top of this page. The driver runs the whole chain, resumes when run
-again with the same arguments, and pins a copy of `target/release/topography` in the run
-directory. A new build starts again from scratch: delete that `bin` directory and the driver
-wipes every cache. To keep the stages whose code did not change, see
+`$P` and `CAP` as at the top of this page. Each driver resumes when run again with the same
+arguments and pins a copy of `target/release/topography` in its run directory (`bin/`). A
+new build starts again from scratch: delete that `bin` directory and the driver wipes every
+cache. To keep the stages whose code did not change, see
 [Rerunning from a stage](#rerunning-from-a-stage).
 
 ```sh
-PYTHONPATH=training/src "${CAP[@]}" $P -m topography_training.water.run world \
-    --source data/worlds/fujix-55-l4v2 --out <new-world> [--tile 2048] [--threads 4]
-PYTHONPATH=training/src "${CAP[@]}" $P -m topography_training.water.run window \
+export PYTHONPATH=training/src
+"${CAP[@]}" $P -m topography_training.water.run world \
+    --source data/worlds/fujix-55-l4v3b-raw --out <new-world> [--tile 2048] [--threads 4]
+"${CAP[@]}" $P -m topography_training.water.run level \
+    --run <run-dir> [--coarse <coarser-level-out>] [--tile 2048] [--threads 4] [--river-km2 A]
+"${CAP[@]}" $P -m topography_training.water.run window \
     --source data/worlds/fujix-55-l4v2 --level 1 --centre 27169,44546 --size 2048 --tile 512 --out <dir>
 ```
 
-`world` needs an L4 world with a kept `elevation-raw.f32` and a `source_world` chain world
-whose `hydrology/4m/grid.json` carries the 128 m moisture field; without real rain the run is
-refused. It never writes to the source and refuses an `--out` inside it. `window` cuts a test
-window: `--level 1` from the L4 world's raw surface, `--level 4` and `--level 32` from the
-chain world (`--source data/worlds/fujix-55-chain`; the 4 m input is v2's carved 4 m ground,
-so these show the model's behaviour, not a v3 4 m result). Exit status: 0 passed, 1 a check
-failed (outputs kept; a world gets `manifest-failed.json`), 2 refused or failed.
+`world` needs an L4 world with a kept `elevation-raw.f32` (`cascade_l4` output) and a
+`source_world` chain world whose `hydrology/4m/grid.json` carries the 128 m moisture field;
+without real rain the run is refused. It never writes to the source and refuses an `--out`
+inside it. It compares its result with the 4 m level as the [coarse guide](#the-coarse-guide).
+`level` runs one coarse level ([The level runner](#the-level-runner)); `cascade_chain` calls
+it for 32 m and 4 m. `window` cuts a test window: `--level 1` from the L4 world's raw surface,
+`--level 4` and `--level 32` from a chain world (`--level 4` reads the chain's final 4 m
+ground, so it shows the model's behaviour, not a level result; `--level 32` reads the
+chain's `l2_raw`). Exit status: 0 passed, 1 a check failed (outputs kept; a world gets
+`manifest-failed.json`), 2 refused or failed.
 
-The two Rust commands, by hand:
+The Rust commands, by hand:
 
 ```sh
+target/release/topography world rain --grid <grid-dir> [--wind-deg 225]
 target/release/topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
 target/release/topography world water-finish --grid <grid-dir> --work <work-dir> --ground <work-dir>/carved.f32 \
     --out <new-out-dir> [--tile 4096] [--threads 4] [--spots E,N;E,N]
@@ -989,13 +671,122 @@ target/release/topography world water-finish --grid <grid-dir> --work <work-dir>
 `--spots` (metres; the driver passes the review spots) only feeds the `dam_drops_at_spots`
 figure; it is not part of the work stamp.
 
+### Rain (`world rain`)
+
+`world rain` writes the trunk grid's 128 m moisture field from its own raw ground, before any
+erosion: `moisture.f32` (rain over its 95th percentile on land, 0 to 1) and the grid.json
+entries `moisture`, `discharge.mean_land_mm_h` and `precipitation` that `world water` reads.
+The level runner calls it when the 32 m grid has no `moisture` entry; the 4 m and 1 m grids
+copy the 32 m field. The model is Smith and Barstad (2004), the linear upslope model on a
+128 m grid (FFT, padded with 0 m ground), clipped at 0 plus a background rate, then depleted
+along the wind from the upwind edge (exp(−rained / budget)), which gives wet windward coasts
+and a dry far lee. The wind is `--wind-deg` (degrees the wind comes from, clockwise from
+north), else `wind_from_deg` in grid.json; without either, rain is uniform and moisture 0.5.
+Sea is ground below 0 m connected 8-way to the grid edge. Judgment constants: 10 m/s wind,
+N 0.005 s⁻¹, vapour scale height 2,500 m, condensation and fallout 300 s, background
+1.5 mm/h, 3 mm column budget. On `fujix-collage-55` it reproduces v2's 32 m moisture field
+byte for byte (ruling B12).
+
+### Provenance
+
+`python -m topography_training.diffusion.collage provenance <collage>` replays a collage's
+surface steps from its layout and release and writes the sidecar `provenance32.u8` and
+`provenance32.json` beside it (ruling B10; refused on a layout or region mismatch). One byte a
+32 m cell:
+
+| Bits | Meaning |
+| --- | --- |
+| 0–2 (kind) | 0 sea outside every region, 1 piece interior (one real GLO-30 piece, at least 1 km from any other kind), 2 blend zone, 3 painted feature, 4 exemplar fill |
+| 64 | an inland basin below 0 m here may keep a lake below sea level (a `hot_dry` class at least `below_sea_coast_km` from open sea) |
+| 128 | steep source: the collage is at least 30° steep (a figure tag) |
+
+`cascade_chain` crops it into each level's grid as `provenance.u8` (`provenance_cell_m` 32),
+with the collage's region ids as `region.u8` (a figure mask only), and the world keeps it as
+`provenance.u8`. At 32 m and 4 m the kind sets the erosion's K; at 1 m only the flags are read
+(no provenance scaling at 1 m). A grid without `provenance.u8` reads every cell as 0.
+
+### Coarse levels: erosion
+
+At 32 m and 4 m the `e` stage erodes the breached ground before the labels, in `routings`
+rounds ([water table](#settings-resuming-and-cost) `[levels.N.erosion]`; Plan B rulings
+[B1–B7, B23 and B33](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regeneration.md#rulings-on-what-the-spec-leaves-open)).
+Each routing:
+
+1. **Model**: the full water model on the current ground (routing 0 on the breached ground),
+   so depressions route to their outlets and sills incise.
+2. **Stream power**: one implicit step (Braun and Willett 2013, n = 1),
+   F = k_dt · A^m / L with A the discharge in m² (rain-weighted) and m = 0.5: one global,
+   single-threaded pass in ascending ground order (a tie's receiver chain first), so it is
+   exact and independent of the tiling. K depends on the provenance kind: piece interiors and
+   glacier cells (class 10) take `interior_k` (0.05) × K and no diffusion; blend zones,
+   painted features and fills take full K; the sea is never eroded, and a base below 0 m on a
+   river into the sea counts as 0 m.
+3. **Taper**: each stream-power cut of d ≥ 1 cm becomes a disc lowered by d · (1 − (r/R)²),
+   R = max(2.5 cells, 2d / (tan(wall_deg) · spacing)), never below the floor and never under
+   water or sea, so cuts are at least 5 cells wide.
+4. **Diffusion**: explicit 4-neighbour Jacobi, α = `diffusion` (0.05) a routing, lowering
+   only, and only near this routing's stream-power cuts (the footprint grows from cuts of at
+   least 0.25 m by the taper radius plus a cell). It never makes a trough or a wall.
+5. **Wall rounds**: up to 16 rounds halve the lowering of any changed cell steeper than
+   max(wall_deg, raw slope) + 0.01°, alternating with a bed-grade pass so no new pit forms;
+   a cut still beside a wall after that is reverted to the routing's start (figures
+   `wall_cuts_removed`, `sills_reverted`, `wall_rounds`).
+
+Caps per cell, below the breached ground (so breach gorges are excepted): `cap_m` on full-K
+cells (30 m at 32 m, 10 m at 4 m) and `interior_cap_m` (3 m) on interior cells. The ground
+before channels (`pre_channel`) is the last routing's `e<k>.f32`. Breaches at the coarse
+levels follow the same shape rules: a gorge's taper radius is at least 2.5 cells, its discs
+also cut steep raw ground, and a gorge that would leave a wall or fail `handoff_narrow` is
+refused, so the depression stays filled. The 1 m level has no `e` stage.
+
+Calibration (Task 9, 32 m): k_dt 7 × 10⁻⁴ keeps v2's value. It passes every hard check;
+`seam_excess` (the density of lakes exiting within 2 km of a region border over that of
+lakes exiting farther away) is 1.10, under the 1.5 target, and far blend-zone cells change by
+a p99 of 1.95 m. Erosion takes 7 to 9 s a routing at 32 m and 701 s for both
+routings of a 16,384² 4 m grid (peak 6.2 GB): the CPU solver is fast enough.
+
+### The level runner
+
+`water.run level --run <dir>` runs one coarse level from a grid its caller prepared
+(`cascade_chain` does this for `hydrology/run-32m` and `hydrology/run-4m`):
+
+| Path | Content |
+| --- | --- |
+| `grid/` | `grid.json`, `elevation.f32` (at 4 m a symlink to the chain's `l3-raw.f32`), `classes.u8`, `provenance.u8`, `region.u8`, `moisture.f32` |
+| `work/` | the stage files of `world water` (below) |
+| `out/` | the published output of `world water-finish` |
+| `review/` | review figures and `coarse-guide.json` |
+| `bin/` | the pinned binary |
+| `progress.json` | the driver's finished steps |
+| `level.json` | `passed`, `failures` (the report's plus `coarse_guide`), `report`, `coarse_guide` summary and the review figures |
+
+It runs `world rain` when the grid has no moisture, then `world water`, `world water-finish`,
+the review and, with `--coarse`, the hard coarse guide against the next coarser level's
+`out/`. Exit status 0 when every check and the guide pass, else 1 (2 refused).
+
+### The coarse guide
+
+The level runner and the 1 m driver compare each level with the next coarser v3 level
+(`coarse-guide.json`, ruling B15). It is hard only for coarse lakes of at least 0.05 km²,
+deeper than the finer level's breach cap plus 1 m (6 m from 32 m to 4 m, 3 m from 4 m to 1 m)
+and at least 1 km from an inner window or square edge: such a lake fails when its fine
+level differs by more than 5 m, when it is gone, or when it is doubled (two fine lakes each
+over 25 % of its area). Every other coarse lake is a figure (`lakes_small`, `lakes_shallow`,
+`lakes_near_edge`), as is the share of coarse rivers with a fine river within 100 m. A hard
+failure withholds the level's pass (`level.json`) and, in a world, `manifest.json`
+(`manifest-failed.json` instead), and the run exits 1.
+
 ### Grid and work directories
 
-The grid directory is v2's ([Grids and outputs](#grids-and-outputs)) at 1 m: `elevation.f32`
-(the raw surface), `classes.u8` (the chain's 4 m classes, `classes_cell_m` 4), `moisture.f32`
-and `grid.json`. `grid.json` must have a `moisture` entry (`file`, `size`, `spacing_m`,
-`nw_m`, `scale_mm_h`) and `discharge.mean_land_mm_h`; the driver adds `window` and `inputs`
-(class map and moisture provenance).
+A grid directory holds `grid.json`, `elevation.f32` and optional `classes.u8`,
+`provenance.u8`, `region.u8` and `moisture.f32` (little-endian, rows north to south).
+`grid.json` gives `size` [w, h], `spacing_m`, `origin` [x, y] (the world's north-west corner
+in the layout plane, x east, y north; default [0, h · spacing]), and optionally `offset_m`
+[east, south] (a window inside that world), `classes_cell_m`, `provenance_cell_m` and
+`wind_from_deg`. `world water` needs a `moisture` entry (`file`, `size`, `spacing_m`, `nw_m`,
+`scale_mm_h`) and `discharge.mean_land_mm_h` (from `world rain`); the drivers add `window`
+and `inputs` (class map and moisture provenance). At 1 m the grid is the raw surface with
+the chain's 4 m classes (`classes_cell_m` 4).
 
 `world water` writes the work directory stage by stage; each stage's tag digests its inputs
 and settings, and `stamp.json` ties the directory to its grid, class map, moisture and binary,
@@ -1027,19 +818,35 @@ settle again until the channels rerun.
 ### Outputs
 
 The world's `elevation.f32`, `water-surface.f32`, `water-body.u32`, `bodies.json` and
-`water.u8` have v2's names and formats, so `game_layers` and export are unchanged.
+`water.u8` keep their earlier names and formats, so `game_layers` and export are unchanged.
 `snow-ice.u8`, `vegetation.u8` and `moisture.f32` come from the source and chain worlds.
 `hydrology/1m` holds the published water output: those layers plus `discharge.f32` and
-`flow.u8` (both from m3, bits as v2), `report.json` and `grid.json` with provenance.
+`flow.u8` (both from m3), `report.json` and `grid.json` with provenance. `discharge.f32` is
+drainage area weighted by rain, km² at mean rain. `flow.u8` holds the D8 receiver in its low
+4 bits (1 N, 2 S, 3 W, 4 E, 5 NW, 6 NE, 7 SW, 8 SE; 0 none), 16 on a channel at the river
+start, 32 on a dry closed basin and 64 in a closed (endorheic) basin or lake.
 `hydrology/review` holds the review figures (owner spots, longest straight runs, failing-check
 clusters, lake-exit sheets, overview) and `coarse-guide.json`, the comparison against the 4 m
-v2 network. A window run has the same under `out/` and `review/`.
+level ([The coarse guide](#the-coarse-guide)). A window or level run has the same under
+`out/` and `review/`.
+
+A level's `bodies.json` lists the sea, lakes (`level_m`, `exit_cell`, `parent`), rivers and
+dry basins. Every full labelled lake starts a river at its outflow cell (the outlet
+trickle, ruling B16), labelled down its path to the next water, the sea or the map edge
+whatever its discharge, with a channel sized from that discharge; at most one river per lake.
+
+The coastal water table (ruling B13): in a depression with ground below 0 m, the lake level
+is never below min(0 m, its spill) unless every sub-zero cell carries provenance bit 64 (a
+hot, dry class far from the sea). Where that floor governs, the lake covers the cells below
+it, takes no extra supply and is not full, so no water flows on downstream. Ground is never
+raised. Basins allowed below sea level keep their balance level.
 
 ### Checks
 
 Every count must be 0. D is the water surface where wet, the pond level in ponds (m3), else the
 final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-11-05-hydrology-v3-a-water-model.md)
-(Task 13 and rulings R7, R11, R14, R16, R27, R29–R31):
+(Task 13 and rulings R7, R11, R14, R16, R27, R29–R31) and, for the coarse levels and the newer
+checks, [Plan B](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regeneration.md#rulings-on-what-the-spec-leaves-open):
 
 | Check | Fails a cell (or lake) when |
 | --- | --- |
@@ -1051,7 +858,9 @@ final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-1
 | `lake_leaks` | a non-lake neighbour of a lake cell, other than its outlet, has D more than 0.01 m below the level |
 | `lake_exit_surface` | the first cell of a full lake's outflow is more than 0.01 m off the level |
 | `lake_balance` | a closed lake covers fewer cells than its supply needs |
-| `dam_steps` | within 50 m below a lake exit, D drops more than 1.5 m between adjacent path cells and raw does not drop as much |
+| `dam_steps` | within 50 m below a lake exit, D drops more than 1.5 m between adjacent path cells and raw does not drop as much. Hard at 1 m; at 32 m and 4 m a figure, `dam_steps_over_raw` (ruling R2: 1.5 m a cell is a gentle grade there) |
+| `dam_drops` | on a labelled lake's exit walk (receivers, at most 150 m, to standing water, no receiver or the edge), a drop D over 1.5 m within 50 m of the exit is a knickpoint: D > 3 × the mean fall a cell over the next 100 m and D > 3 × the mean fall before it. At 32 m and 4 m it fails only where D exceeds the raw step there by over 1.5 m; 1 m ignores raw. Drops onto water and walks with fewer than 2 steps ahead are figures (`dam_drops_into_water`, `dam_drops_unjudged`); pond exits are figures (`dam_drops_ponds`, `dam_drops_any`) (B14) |
+| `lake_below_sea` | a labelled lake's level is below −0.01 m and one of its cells lacks provenance bit 64 (B13) |
 | `dam_rims` | a guard: an exit-side dry cell stands over level + 0.5 m and raw did not (v3 never raises ground) |
 | `bed_rises` | on a dry m2 thalweg link where the ground before channels falls, the carved bed rises |
 | `thalweg_beside` | beside a thalweg with Q ≥ 1 km², the lowest standing cell across the flow (to the first ridge 0.5 m up, ±30 m) is more than 1 m below this river, belongs to no tributary, and carries a second channel (see below) |
@@ -1059,9 +868,14 @@ final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-1
 | `straight_share` | figure (owner ruling 2026-11-06: raw-terrain straight/parallel rivers accepted), `figures.straight_share_count`: more than 5 % of river length lies in straight runs over 60 m (global, 0 or 1; the share itself is `figures.straight_share`) |
 | `straight_runs` | figure (owner ruling 2026-11-06: raw-terrain straight/parallel rivers accepted), `figures.straight_runs_count`: a river thalweg stays within 1 m of its chord (any angle) for more than 150 m, unless the raw thalweg is straight there too (90 % of cells) |
 | `facets` | more planar 5×5 windows (residual < 2 cm, slope > 5°) among changed cells than raw had (global) |
-| `walls` | a changed cell's Horn slope exceeds max(40°, its raw slope) + 0.01° |
-| `change_p99` | p99 of \|Δ\| over all cells > 1 m (global) |
-| `change_max` | a cell's \|Δ\| > the breach cap + 0.5 m (2.5 m at 1 m) |
+| `walls` | a changed cell's Horn slope exceeds max(wall_deg, its raw slope) + 0.01° (`wall_deg` 40° at 1 m, 35° at 4 m and 32 m) |
+| `change_p99` | p99 of \|Δ\| over all cells > 1 m (global). At 32 m and 4 m a figure, `change_p99_all_cells_m`: their budget is `interior_p99` and `interior_max` (B4) |
+| `change_max` | a cell's \|Δ\| > the breach cap + the erosion cap + 0.5 m (2.5 m at 1 m, 15.5 m at 4 m, 50.5 m at 32 m) |
+| `interior_p99` | 32 m and 4 m: p99 of \|Δ\| over real piece-interior cells outside breaches > 1 m (global; figure `interior_change_p99_m`) |
+| `interior_max` | 32 m and 4 m: an interior cell outside breaches changed by more than 3 m (figure `interior_change_max_m`) |
+| `handoff_narrow` | 32 m and 4 m: the cut Δ = raw − final exceeds its 3 × 3 grey opening by more than max(0.5 m, 0.5 × Δ) and, on some axis, the final ground is a trough over that threshold deeper than raw's (the cut made the trough; B9, ruling R5; figure `handoff_excess_max_m`) |
+| `erosion_new_pits` | 32 m and 4 m: a strict local minimum of the eroded ground that was none of the breached ground (B33) |
+| `carve_pits` | (a) a dry cell lowered from raw by more than 1 cm inside an m3 node and in no m2 node (a pond only the cutting made), or (b) a one-cell pit the cutting deepened by more than 1 cm (B26; figure `carve_pool_cells` for wider pools) |
 | `label_agreement` | the written rivers' thalwegs (m2) and m3's agree less than 0.95 within one cell (global) |
 | `export_bodies` | lakes + rivers > 50,000 (global) |
 | `wet_not_above_ground` | a labelled cell's surface (a lake's or the sea's `bodies.json` level) is not strictly above the final ground |
@@ -1087,7 +901,9 @@ dry valley floor passes. Gate 1 rulings: the channel cell near the lower cell is
 own when it is water this river joins within 150 m or a thalweg joining this river within
 150 m. Fix round 2: written water of another body (a lower river or lake) is no second
 channel; only an unwritten m3 channel near the lower cell counts. The cost: a bench river
-beside a lower written river passes.
+beside a lower written river passes. Plan B (Task 9) counts these as the river's own water, not
+a second channel: the sea, a fed lake's outflow within 150 m, the river's own unlabelled
+continuation, and a dry drainage end on a shore.
 
 Settle (`s`) lifts written water to the m3 routing (a river or pool cell inside a higher m3
 pond stands at its level; a dry cell draining into higher labelled water is wetted) but leaves
@@ -1103,26 +919,43 @@ level; ground below that floor is left as it is. A river cell cut below a lower 
 stands at the lake's level, keeping its body. The figure `m2_pond_cells_lost` counts m2 node
 cells in no m3 node and names the largest m2 level − m3 level (ground where dry) with its m2
 node and cell. m3 keeps an m2 receiver that is not higher on the carved ground (ties
-included), so a bed carved flat does not send the river off its labelled line.
+included), so a bed carved flat does not send the river off its labelled line. Rims (Plan B
+Task 13): the floor beside a cut holds only for lakes and for ponds at least as deep as the
+river, not for micro-pits beside the channel, and a pit-restore rule keeps channel cuts from
+deepening a one-cell pit, so cutting on raw flats leaves no comb of pits (`carve_pits`).
 
-Breach (gate 2 fix round 1): cells beside the gorge's path whose raw slope is at least 39° are
-not cut (path cells always are); each path cell's taper reaches max(half-width + 1,
-2·cut / tan 35°) cells; and a gorge that would still leave a changed cell steeper than
-max(40°, raw) is refused, so the depression stays filled. `stages.breach.breaches_rejected_walls`
-counts the refused gorges and lists the 20 deepest (node, cut, spill cell, filled depth).
+Breach (gate 2 fix round 1): at 1 m, cells beside the gorge's path whose raw slope is at least
+39° are not cut (path cells always are); each path cell's taper reaches max(half-width + 1,
+2·cut / (tan 35° · spacing)) cells; and a gorge that would still leave a changed cell steeper
+than max(wall_deg, raw) is refused, so the depression stays filled. At 32 m and 4 m the taper
+is at least 2.5 cells, the discs also cut steep raw ground, and a gorge whose cut fails
+`handoff_narrow` is refused too. `stages.breach.breaches_rejected_walls` and
+`breach_refused_narrow` count the refused gorges and list the 20 deepest (node, cut, spill
+cell, filled depth).
 
 Two more figures: `dam_drops_at_spots` lists, per review spot, the exit-walk drops over 1.5 m
 within 100 m with their raw drop (count and largest 10), and `unlabelled_main_river_cells`
 counts dry m3 thalweg cells in no node with Q ≥ 1 km², plus runs of 10 or more such cells at
 the river threshold.
 
+Coarse-level figures: `seam_lakes` lists labelled lakes whose outlet saddle cell is blend,
+painted or fill (lakes behind seams between collage pieces; B25);
+`interior_change_p99_m` and `interior_change_max_m` are the interior budget's values and
+`blend_change_p99_m` / `blend_change_max_m` the same for blend cells at least 2 km from a
+region border; `stages.erosion` sums each routing's lowering, the hillslope lowering outside
+the diffusion footprint and the wall-round figures (`per_routing` lists them by routing).
+
 ### Settings, resuming and cost
 
-`configs/hydrology/water-v3.toml` (built in; `--water` replaces it) gives each class's
-lake-to-catchment ratio `r` and `hot_dry` flag, the game setting `lake_min_m2` (smaller
-standing water is an unlabelled pond), the river-width factor `m3s_per_km2`,
-`below_sea_coast_km`, and per level the river start, breach cap, wall angle (`wall_deg`) and,
-at 4 m and 32 m, the erosion settings.
+`configs/hydrology/water-v3.toml` (`schema_version = 3`, built in; `--water` replaces it)
+gives each class's lake-to-catchment ratio `r` and `hot_dry` flag (canyons 2, 13 and 19,
+badlands 7, dunes 8 and 16: a basin there at least `below_sea_coast_km`, 5 km, from open sea
+may keep a lake below sea level), the game setting `lake_min_m2` (smaller standing water is
+an unlabelled pond) and the river-width factor `m3s_per_km2`. Per level (`[levels.1]`,
+`[levels.4]`, `[levels.32]`) it gives the river start `river_km2`, the breach cap
+`breach_cap_m` (2, 5 and 20 m) and `wall_deg` (40°, 35°, 35°), and at 4 m and 32 m an
+`[levels.N.erosion]` table: `routings` (2, 5), `k_dt` (8.75 × 10⁻⁵, 7 × 10⁻⁴), `m` (0.5),
+`diffusion` (0.05), `cap_m` (10, 30 m), `interior_k` (0.05) and `interior_cap_m` (3 m).
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
 memory cap (`MemoryMax=10G` for 16,384² windows and the world). The work directory takes
@@ -1171,14 +1004,15 @@ kept stage then silently holds the old code's output. Go by
 Settle rewrites the channels' rasters, so rerunning settle or m3 means rerunning from the
 channels too. `world water` refuses to settle surfaces that are already settled.
 
-Steps, with the run stopped (`pgrep -af '[t]opography_training.water.run'` shows nothing);
-`$W` is the run directory and `$H` is `$W/hydrology` for a world or `$W` for a window:
+Steps, with the run stopped (its background job has exited and written its `exit_code`);
+`$W` is the run directory and `$H` is `$W/hydrology` for a world or `$W` for a window or a
+level:
 
 1. Build, then `D=$(sha256sum target/release/topography | cut -d' ' -f1)`.
 2. Swap the pin: delete `$H/bin/topography-*` and copy the new binary to
    `$H/bin/topography-${D:0:12}`.
 3. Set the new digest in the driver's `$W/progress.json` (`.binary = $D`). Keep only the steps
-   before `water`: a world keeps `raw`, a window keeps none. Set the same digest in the Rust stamp
+   before `water`: a world keeps `raw`, a window or level none. Set the same digest in the Rust stamp
    `$H/work/stamp.json` (`.code = $D`). Use `jq` to a temporary file, then `mv`.
 4. In `$H/work`, delete the first stage to rerun and every later stage. Always delete
    `stages.json`:
@@ -1193,7 +1027,9 @@ Steps, with the run stopped (`pgrep -af '[t]opography_training.water.run'` shows
    | m3 | `m3-<tag>/`, `m3-<tag>-*` (only when the model changed; m3 is keyed on the carved ground's content) |
 
 5. Delete the published outputs: a world's `hydrology/1m`, `hydrology/review` and
-   `manifest-failed.json`, or a window's `out/` and `review/`.
+   `manifest-failed.json`, a window's `out/` and `review/`, or a level's `out/`, `review/`
+   and `level.json` (inside a chain world, then recover the chain as in
+   [Generating fujix from the collage](#generating-fujix-from-the-collage)).
 6. Relaunch the same driver command. The log should show the kept stages loading from cache
    (passes done in well under a second) and no `removing …/work` line.
 
@@ -1208,8 +1044,8 @@ target/release/topography export view data/exports/fujion-v3-chain-14-l4
 ```
 
 Run `game_layers` first (above); without `game/` the export has height, water and moisture
-only. Worlds without the hydrology v2 water layers (`water-surface.f32`, `water-body.u32`,
-`bodies.json`) are refused: regenerate them. A world whose manifest names a 4 m hydrology
+only. Worlds without the water layers (`water-surface.f32`, `water-body.u32`,
+`bodies.json`) are refused: regenerate them with hydrology v3. A world whose manifest names a 4 m hydrology
 that is missing or does not overlap the export fails; a world without a `moisture` entry
 exports without moisture and prints a line. The contract is
 [heightmap export v2](../../schemas/heightmap-export-v2.md).

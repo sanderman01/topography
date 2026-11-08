@@ -91,8 +91,8 @@ as brush strokes (rejected 2026-09-29); the [terrain cascade](../plans/terrain-c
 plans real-data levels above 1 m instead.
 
 `world preview` interpolates any world input's 32 m surface to a few metres and
-samples its masks. It has no hydrology v2 water layers, so heightmap export v2
-refuses it.
+samples its masks. It has no water layers (hydrology v3 makes them), so heightmap
+export v2 refuses it.
 
 ## 5. Export and viewing
 

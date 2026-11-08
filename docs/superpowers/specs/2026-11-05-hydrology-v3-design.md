@@ -7,7 +7,7 @@ Diagnosis behind it: `scratch/hydrology-v3-expert-diagnosis.md`.
 ## Plan A departures
 
 Plan A (the 1 m water model, shipped at gate 2 on 2026-11-06) differs from this spec here. The
-[workflow doc](../../workflows/terrain-cascade.md#hydrology-v3-1-m) has the details.
+[workflow doc](../../workflows/terrain-cascade.md#hydrology-v3) has the details.
 
 - **No relaxation.** The GPU bank relaxation (1 m stage, "Where it runs") is dropped. Carving
   alone passed `walls` and `facets` and looked the same in hillshades. It is kept in git at
@@ -27,6 +27,64 @@ Plan A (the 1 m water model, shipped at gate 2 on 2026-11-06) differs from this 
   Flowing water over an uncut bed runs 0.005 m deep. Still water at ground level is dry shore.
 - **Settle.** After channels, written water is lifted to the final (m3) routing. Labelled lakes
   keep their label's level and extent, and the m3 level gap is a figure.
+
+## Plan B departures
+
+Plan B (the 32 m and 4 m levels, the regeneration and the removal of v2) differs from this spec
+here. The [workflow doc](../../workflows/terrain-cascade.md#hydrology-v3) has the details and
+the [plan](../plans/2026-11-07-hydrology-v3-b-coarse-and-regeneration.md) the rulings. Measured
+numbers from the full run are added at gate 5 (Task 18).
+
+- **CPU erosion.** Erosion runs on the CPU: an implicit, global, single-threaded Braun–Willett
+  pass. The 16,384² 4 m benchmark (Task 9) took 701 s for its erosion passes and peaked at
+  6.2 GB, inside the 45 min and 7 GB limits, so the GPU contingency (Task 9b) was skipped.
+- **Erosion budget.** k_dt stays 7 × 10⁻⁴ at 32 m (8.75 × 10⁻⁵ at 4 m). The seam-lake target
+  was replaced by `seam_excess` ≤ 1.5 (lakes exiting near region borders against those
+  farther away; measured 1.10). Graded K by seam strength was not needed (far blend p99
+  1.95 m).
+- **Provenance is replayed.** The collage's provenance comes from replaying its surface steps
+  and is written as a sidecar (`provenance32.u8`, `provenance32.json`); the collage itself is
+  not rebuilt.
+- **Hand-off checks at 32 m too.** `handoff_narrow` and the 35° `walls` apply at 32 m as well
+  as 4 m (L3 copies 32 m ground the same way). A cell fails only where the cut itself made a
+  trough deeper than raw's.
+- **Dams.** `dam_drops` judges labelled lakes' exits only (pond exits are figures) with a
+  knickpoint rule: a step over 1.5 m more than 3 × the mean fall after it and before it. At
+  32 m and 4 m it fails only where the step exceeds raw's by over 1.5 m; there is no
+  steep-source exception. At 32 m and 4 m Plan A's per-cell `dam_steps` is a figure
+  (`dam_steps_over_raw`): 1.5 m a cell is a gentle grade at those spacings.
+- **Hard coarse guide, narrowed.** The guide is hard only for coarse lakes of at least
+  0.05 km², deeper than the finer level's breach cap + 1 m and at least 1 km from a window
+  edge. Every other comparison is a figure.
+- **Coarse change budget.** At the coarse levels the all-cell `change_p99` is a figure; the
+  budget is `interior_p99` and `interior_max`. `change_max` adds both caps (breach cap + erosion
+  cap + 0.5 m).
+- **Coastal water table.** Basins below sea level are handled per basin: unless every sub-zero
+  cell is in a hot, dry class far from the sea, a lake's level is floored at min(0 m, its
+  spill). Where the floor governs, the lake covers the cells below it and is not full.
+- **Every full lake starts a river** (the outlet trickle), whatever its discharge.
+- **Diffusion only near river cuts.** Diffusion tapers only stream-power cuts. Its footprint
+  comes from cuts of at least 0.25 m, and it never makes a trough or a wall. A cut that wall
+  rounds cannot bring under the wall angle is reverted.
+- **Coarse breaches.** At erosion levels a gorge whose cut fails `handoff_narrow` is refused
+  (filled); breach discs are at least 2.5 cells wide and also cut steep raw ground.
+- **`thalweg_beside` own water.** These count as the river's own water, not a second channel:
+  the sea, a fed lake's outflow within 150 m, the river's own unlabelled continuation, and a dry
+  drainage end on a shore.
+- **Lake-exit sheets.** The contact sheet crops are max(128 m, 32 cells).
+- **Comb-cut pits (Task 13).** The cause was neither of the first two hypotheses: the rim floor
+  held cells beside micro-pits. Rims now hold only for lakes and for ponds at least as deep as
+  the river, and a pit-restore rule keeps cuts from deepening a one-cell pit. `carve_pits` has
+  a clause (b) for such pits.
+- **L4 diffuses only.** `cascade_l4` writes the raw 1 m surface; `water.run world` makes the
+  water world. Band hydrology, the seam audit and `--hydrology-only` are gone, and the L4 halo
+  may again be as wide as a band.
+- **Ground plus the existing water conditioning (B32).** L3 keeps its clamp to the 32 m ground
+  under lakes and sea, and L4 its zeroed residual under 4 m lakes and sea. The river clamp at
+  L3 (`--no-l3-river-clamp`) and the river residual at L4 (`--keep-river-residual`) are A/B
+  tested in Task 15 and at gate 4; the outcome is recorded here then.
+- **L4 test strip.** Four squares (dams 8 km, canyon, E43966 and alpine, 4 km each) instead of
+  one strip.
 
 ## Why
 
