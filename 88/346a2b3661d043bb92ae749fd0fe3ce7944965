@@ -1,0 +1,40 @@
+docs/superpowers/specs/2026-11-05-hydrology-v3-design.md
+  s_8c1b40ea9c1e0d::t_fc8f5c741b2f18 54-57
+crates/topography-core/src/world/water/checks.rs
+  s_8c1b40ea9c1e0d::t_f7b6ea9f93aa62 1612
+  s_8c1b40ea9c1e0d::t_e9f7422e4e65a3 1348-1351
+  s_8c1b40ea9c1e0d::t_f7b375544b761f 1885-1888
+  s_8c1b40ea9c1e0d::t_000bc817752374 3683-3697,3700-3717
+  s_8c1b40ea9c1e0d::t_281ca68174f188 247-248
+  s_8c1b40ea9c1e0d::t_eaea9144042ae4 1632
+  s_8c1b40ea9c1e0d::t_98086418936b52 3698-3699
+  s_8c1b40ea9c1e0d::t_6ee107477b607f 1397-1424
+  s_8c1b40ea9c1e0d::t_b82c95a38db6e7 48-51
+  s_4a58eb6b32d6e0::t_ba514f675d7e1f 2044
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_a2f46684a9eb22 871
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88346a2b3661d043bb92ae749fd0fe3ce7944965",
+  "prompts": {},
+  "sessions": {
+    "s_4a58eb6b32d6e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a2fba5f79781f2b5c",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    },
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
