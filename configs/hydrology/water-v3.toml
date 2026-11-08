@@ -33,7 +33,7 @@ wall_deg = 35.0
 # (real GLO-30 piece interiors, glaciers) take interior_k × k_dt, no diffusion, and their cap.
 [levels.4.erosion]
 routings = 2
-k_dt = 4.4e-5  # Task 15 probe calibration: smallest passing k with seam_excess <= 1.5
+k_dt = 8.75e-5  # probe squares: every k passed; planned value kept
 m = 0.5
 diffusion = 0.05
 cap_m = 10.0
