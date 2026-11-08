@@ -67,7 +67,7 @@ RIVER_LEVEL = 0.3
 # (wider than every smoothing, the form blend and the cover's terrain measures).
 L3_MARGIN = 16
 FINISH_ROWS = 1024  # 4 m rows a block when writing world layers
-# L3 eases each 32 m lake's exit sill cell to the 32 m ground both ways, so it neither raises
+# L3 eases each 32 m lake's exit sill cell to that cell's 32 m ground both ways, so it neither raises
 # nor cuts the spill: the cell grown by this many 4 m cells, blurred like the lake clamp, and
 # doubled so the whole cell is eased in full.
 SILL_GROW_4M = 2
@@ -472,20 +472,31 @@ def _exit_cells(bodies: list[dict], shape) -> np.ndarray:
     return m
 
 
-def _sill_weight(sill4: np.ndarray) -> np.ndarray:
-    """The ease's weight at 4 m: 1 on the exit sill cells, tapering off around them."""
-    if not sill4.any():
-        return np.zeros(sill4.shape, np.float32)
-    grown = sill4
+def _sill_fields(h32: np.ndarray, sill32: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The ease's target and weight at 4 m. The target is the 32 m ground of the exit cell, the
+    height the 32 m water spilled over (not the smoothed refined surface, which fills narrow
+    notches), held over the sill's whole footprint. The weight is 1 on the cell, tapering off."""
+    shape = (h32.shape[0] * 8, h32.shape[1] * 8)
+    if not sill32.any():
+        return np.zeros(shape, np.float32), np.zeros(shape, np.float32)
+    from scipy import ndimage
+
+    grown = _nearest(sill32, 8)
     for _ in range(SILL_GROW_4M):
         grown = hydrology._maxpool3(grown)
-    return np.minimum(2.0 * smooth(grown.astype(np.float32), SILL_SIGMA_4M), 1.0)
+    s = np.minimum(2.0 * smooth(grown.astype(np.float32), SILL_SIGMA_4M), 1.0)
+    # Each sill's value over every cell its weight reaches (the blur's radius past the growth).
+    reach = SILL_GROW_4M + int(3 * SILL_SIGMA_4M)
+    v = _nearest(np.where(sill32, h32, -np.inf).astype(np.float32), 8)
+    target = ndimage.maximum_filter(v, size=2 * reach + 1)
+    s = np.where(np.isfinite(target) & (s > 1e-4), s, 0.0).astype(np.float32)
+    return np.where(s > 0, target, 0.0).astype(np.float32), s
 
 
-def _ease_sills(h: np.ndarray, coarse: np.ndarray, s: np.ndarray) -> np.ndarray:
-    """h eased by weight s to the refined 32 m ground, both ways. Affine in h, so it commutes
-    with the band cross-fade and can be re-applied to a kept raw surface."""
-    return (h - s * (h - coarse)).astype(np.float32)
+def _ease_sills(h: np.ndarray, target: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """h eased by weight s to the sill target, both ways. Affine in h, so it commutes with the
+    band cross-fade and can be re-applied to a kept raw surface."""
+    return (h - s * (h - target)).astype(np.float32)
 
 
 def _square(params: dict, n: int) -> tuple[int, int, int]:
@@ -512,7 +523,7 @@ def reease_sills(out: Path) -> dict:
     n4, band = n32 * 8, params["l3_band_m"] // 4
     if progress["l3_bands_done"] < len(cascade.bands(n4, band, params["l3_halo_m"] // 4)):
         raise SystemExit(f"error: {out} has not finished L3")
-    level, m = cascade.LEVELS["l3"], L3_MARGIN
+    m = L3_MARGIN
     pad_h = np.pad(h32, m, mode="edge")
     pad_s = np.pad(_exit_cells(w32.bodies, h32.shape), m)
     del h32, w32
@@ -524,9 +535,9 @@ def reease_sills(out: Path) -> dict:
         sl = np.s_[y0 + a // 8 : y0 + b // 8 + 2 * m, x0 : x0 + n32 + 2 * m]
         if not pad_s[sl].any():
             continue
-        coarse = cascade.refine_surface(level, pad_h[sl])[crop]
+        target, s = _sill_fields(pad_h[sl], pad_s[sl])
         h = np.array(raw[a:b])
-        eased = _ease_sills(h, coarse, _sill_weight(_nearest(pad_s[sl], 8))[crop])
+        eased = _ease_sills(h, target[crop], s[crop])
         d = np.abs(eased - h)
         changed, big, top = changed + int((d > 0).sum()), big + int((d > 0.01).sum()), max(top, float(d.max()))
         raw[a:b] = eased
@@ -627,7 +638,9 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
         under = smooth(clamp.astype(np.float32), 2.0)
         h = (h - under * np.maximum(h - coarse, 0)).astype(np.float32)
         # Each 32 m lake's exit sill keeps the 32 m spill: eased both ways (reease_sills).
-        h = _ease_sills(h, coarse, _sill_weight(_nearest(pad["sill"][sl], 8))[crop])
+        target, s = _sill_fields(pad["h"][sl], pad["sill"][sl])
+        h = _ease_sills(h, target[crop], s[crop])
+        del target, s
         del under, clamp, w, coarse, sea4, lake4, river4
         cascade.write_band(raw, h, bands, k, g0, halo, out)
         del h

@@ -51,7 +51,7 @@ class SillEaseTest(unittest.TestCase):
         self.assertEqual(m.sum(), 1)
         self.assertTrue(m[1, 3])
 
-    def test_a_raised_or_cut_sill_is_eased_back_both_ways(self):
+    def test_a_raised_or_cut_sill_is_eased_to_the_32_m_cell_both_ways(self):
         for residual in (10.0, -5.5):
             with tempfile.TemporaryDirectory() as tmp:
                 out = _world(Path(tmp), residual)
@@ -60,28 +60,31 @@ class SillEaseTest(unittest.TestCase):
                 coarse = cascade.refine_surface(cascade.LEVELS["l3"], _ground32())
                 x, y = EXIT
                 sill = np.s_[y * 8 : y * 8 + 8, x * 8 : x * 8 + 8]
-                self.assertLess(np.abs(raw[sill] - coarse[sill]).max(), 0.05, residual)
-                # The spill across the sill (lowest crossing of its column) keeps the 32 m one.
-                self.assertAlmostEqual(raw[sill].min(), coarse[sill].min(), delta=0.05)
+                # The whole exit cell takes the 32 m ground it spilled over.
+                self.assertLess(np.abs(raw[sill] - _ground32()[y, x]).max(), 1e-3, residual)
                 # Far from the sill nothing moves.
                 self.assertEqual(np.abs(raw[:128] - coarse[:128]).max(), 0.0)
                 self.assertGreater(stats["cells_changed"], 64)
-                self.assertAlmostEqual(stats["max_change_m"], abs(residual), delta=0.05)
                 # A second ease would ease again: refused.
                 with self.assertRaises(SystemExit):
                     cascade_chain.reease_sills(out)
 
-    def test_the_weight_eases_the_whole_sill_cell(self):
+    def test_a_notch_the_refined_surface_fills_is_not_the_target(self):
+        """Lake 6: a narrow 32 m notch between high cells; smoothing fills it, the ease must not."""
         h = _ground32()
-        coarse = cascade.refine_surface(cascade.LEVELS["l3"], h)
-        sill4 = cascade_chain._nearest(cascade_chain._exit_cells(
-            [{"kind": "lake", "exit_cell": list(EXIT)}], h.shape), 8)
-        raw = coarse + 7.0
-        eased = cascade_chain._ease_sills(raw, coarse, cascade_chain._sill_weight(sill4))
         x, y = EXIT
-        self.assertLess(np.abs(eased[y * 8 : y * 8 + 8, x * 8 : x * 8 + 8] - coarse[y * 8 : y * 8 + 8,
-                                                                                    x * 8 : x * 8 + 8]).max(), 1e-4)
+        h[y - 1 : y + 2, x - 1 : x + 2] += 60.0
+        h[y, x - 1 : x + 2] -= 60.0  # the notch through the sill row
+        coarse = cascade.refine_surface(cascade.LEVELS["l3"], h)
+        target, s = cascade_chain._sill_fields(h, cascade_chain._exit_cells(
+            [{"kind": "lake", "exit_cell": list(EXIT)}], h.shape))
+        sill = np.s_[y * 8 : y * 8 + 8, x * 8 : x * 8 + 8]
+        self.assertGreater(coarse[sill].mean() - h[y, x], 5.0, "the refined surface fills the notch")
+        eased = cascade_chain._ease_sills(coarse + 3.0, target, s)
+        self.assertLess(np.abs(eased[sill] - h[y, x]).max(), 1e-3)
         self.assertEqual(eased.dtype, np.float32)
+        # Continuous: no step between neighbouring 4 m cells beyond the surface's own.
+        self.assertLess(np.abs(np.diff(eased, axis=1)).max(), np.abs(np.diff(coarse, axis=1)).max() + 15.0)
 
 
 if __name__ == "__main__":
