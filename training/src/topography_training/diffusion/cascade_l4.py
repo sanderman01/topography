@@ -5,9 +5,8 @@ python -m topography_training.diffusion.cascade_l4 --run <l4 run dir> --world <4
 
 The 1 m field is generated in bands of rows with a halo above and below, so host memory
 stays bounded at any world size. Bands share their starting noise where they overlap
-and are cross-faded over the halo. Water cells keep the refined 4 m ground (L4 learned land
-only); `--keep-river-residual` keeps the residual under 4 m rivers (zeroed under lakes and sea
-only). Bands and windows whose 4 m ground is all deep sea water keep it without diffusion.
+and are cross-faded over the halo. Lake and sea cells keep the refined 4 m ground (L4 learned
+land only); 4 m rivers keep the diffused residual unless `--zero-river-residual`. Bands and windows whose 4 m ground is all deep sea water keep it without diffusion.
 `--guidance-classes` limits class guidance to windows holding those classes. `--km` with
 `--centre` places the square anywhere. Output layers are memory-mapped and filled band by
 band; rerunning with the same arguments resumes after the last finished band.
@@ -127,7 +126,7 @@ def _layers(c: SimpleNamespace, mode: str) -> None:
     c.snow_out, c.veg_out = layer("snow-ice.u8", np.uint8), layer("vegetation.u8", np.uint8)
 
 
-def main(argv=None) -> int:
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--run", type=Path, required=True, help="L4 run directory")
     p.add_argument("--class-runs", type=Path, help="directory of per-class expert runs (c1, c2, ...) mixed over --run")
@@ -146,8 +145,16 @@ def main(argv=None) -> int:
     p.add_argument("--guidance", type=float, default=1.0, help="class guidance scale (1: off)")
     p.add_argument("--guidance-classes", type=int, nargs="+",
                    help="legend classes whose windows get --guidance; other windows none (default: all)")
-    p.add_argument("--keep-river-residual", action="store_true",
-                   help="keep the diffused residual under 4 m rivers (zeroed under lakes and sea only; B32 A/B)")
+    p.add_argument("--zero-river-residual", dest="keep_river_residual", action="store_false", default=True,
+                   help="zero the diffused residual under 4 m rivers too (default: under lakes and sea "
+                        "only; owner rule 2026-11-08)")
+    p.add_argument("--keep-river-residual", dest="keep_river_residual", action="store_true",
+                   help="the default; kept so older commands still run")
+    return p
+
+
+def main(argv=None) -> int:
+    p = parser()
     args = p.parse_args(argv)
     if args.centre is not None and args.km is None:
         p.error("--centre needs --km")

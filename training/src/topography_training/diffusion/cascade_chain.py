@@ -540,8 +540,8 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
         del extra
         w = np.clip(-coarse / L3_SEABED_M, 0, 1)
         h = (1 - w) * h + w * coarse
-        # L3 learned land only: under lakes (and, unless --no-l3-river-clamp, rivers) the ground
-        # eases down to the 32 m ground (B32: rivers in the clamp are under A/B test).
+        # L3 learned land only: under lakes (and, with --l3-river-clamp, rivers) the ground eases
+        # down to the 32 m ground (B32; rivers left out by default, owner rule 2026-11-08).
         clamp = (lake4 | river4) if args.l3_river_clamp else lake4
         under = smooth(clamp.astype(np.float32), 2.0)
         h = (h - under * np.maximum(h - coarse, 0)).astype(np.float32)
@@ -581,7 +581,7 @@ def _preview(ground: np.ndarray, wet_rows, n: int, size: int) -> tuple[np.ndarra
     return h, wet, k
 
 
-def main(argv=None) -> int:
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     for level in ("l1", "l2", "l3"):
         p.add_argument(f"--{level}-run", type=Path, required=level == "l3",
@@ -609,8 +609,16 @@ def main(argv=None) -> int:
                    help="L3: legend classes whose windows get --guidance; other windows none (default: all)")
     p.add_argument("--no-exemplars", action="store_true", help="authored layouts: do not hold real exemplars")
     p.add_argument("--stream-km2", type=float, help="drainage area where 32 m rivers begin (default 10)")
+    p.add_argument("--l3-river-clamp", dest="l3_river_clamp", action="store_true", default=False,
+                   help="L3: also ease the ground to the 32 m surface under rivers (default: lakes and sea "
+                        "only; owner rule 2026-11-08)")
     p.add_argument("--no-l3-river-clamp", dest="l3_river_clamp", action="store_false",
-                   help="L3: ease the ground to the 32 m surface under lakes and sea only, not rivers (B32 A/B)")
+                   help="the default; kept so older commands still run")
+    return p
+
+
+def main(argv=None) -> int:
+    p = parser()
     args = p.parse_args(argv)
     if sum((args.layout is not None, args.collage is not None, args.release is not None and args.region is not None)) != 1:
         p.error("give --layout, --collage, or --release and --region")
