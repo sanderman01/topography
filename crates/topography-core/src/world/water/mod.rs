@@ -461,7 +461,7 @@ impl Tags {
     fn s(m3: &str, c: &str) -> String {
         stage_tag(
             "s",
-            &json!({"after": m3, "channels": c, "lakes_at_label": true, "relevel": 1}),
+            &json!({"after": m3, "channels": c, "lakes_at_label": true, "relevel": 2}),
         )
     }
     /// Every tag, from the settings, the pools on m2 and the carved and pre-channel grounds'
@@ -600,12 +600,13 @@ fn relevel_json(r: &[channel::Relevelled]) -> Value {
         .take(20)
         .map(|l| {
             json!({"id": l.id, "from_m": l.from, "to_m": l.to, "drop_m": l.from - l.to,
-                   "cells": l.cells, "dried": l.dried})
+                   "cells": l.cells, "dried": l.dried, "basin": l.basin})
         })
         .collect();
     json!({
         "lakes": lowered.len(),
         "drained": r.len() - lowered.len(),
+        "confined": lowered.iter().filter(|l| l.basin != 0).count(),
         "drained_ids": r.iter().filter(|l| l.to.is_nan()).map(|l| l.id).collect::<Vec<_>>(),
         "max_drop_m": lowered.iter().map(|l| l.from - l.to).fold(0.0f32, f32::max),
         "cells_dried": r.iter().map(|l| l.dried).sum::<u64>(),
