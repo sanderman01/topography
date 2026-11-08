@@ -1398,6 +1398,7 @@ pub(crate) fn check_tile(
                     continue;
                 }
                 // Owner ruling Q3: without a counter-slope behind the top it is a waterfall.
+                // At the exit (i == 0) the ground behind is the lake bed: a lake held at a drop is a dam.
                 let (tx, ty) = if i == 0 {
                     (ix, iy)
                 } else {
