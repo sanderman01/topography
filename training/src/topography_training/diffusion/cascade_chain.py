@@ -67,6 +67,12 @@ RIVER_LEVEL = 0.3
 # (wider than every smoothing, the form blend and the cover's terrain measures).
 L3_MARGIN = 16
 FINISH_ROWS = 1024  # 4 m rows a block when writing world layers
+# L3 eases each 32 m lake's exit sill cell to the 32 m ground both ways, so it neither raises
+# nor cuts the spill: the cell grown by this many 4 m cells, blurred like the lake clamp, and
+# doubled so the whole cell is eased in full.
+SILL_GROW_4M = 2
+SILL_SIGMA_4M = 2.0
+SILL_ROWS = 2048  # 4 m rows a block when re-easing a kept l3-raw.f32
 COVER_MARGIN_4M = 96  # about 400 m around a block for the cover's terrain measures
 # L1 128 m lake picker for authored and region layouts (not collages; B22): one share for every
 # class, dry basins in classes whose lake-to-catchment ratio is at most L1_DRY_R.
@@ -456,6 +462,80 @@ def _run_level(run: Path, **kw) -> int:
         raise SystemExit(f"error: {e}") from e
 
 
+def _exit_cells(bodies: list[dict], shape) -> np.ndarray:
+    """The exit sill cell of every full 32 m lake."""
+    m = np.zeros(shape, bool)
+    for b in bodies:
+        if b["kind"] == "lake" and b.get("exit_cell") is not None:
+            x, y = b["exit_cell"]
+            m[y, x] = True
+    return m
+
+
+def _sill_weight(sill4: np.ndarray) -> np.ndarray:
+    """The ease's weight at 4 m: 1 on the exit sill cells, tapering off around them."""
+    if not sill4.any():
+        return np.zeros(sill4.shape, np.float32)
+    grown = sill4
+    for _ in range(SILL_GROW_4M):
+        grown = hydrology._maxpool3(grown)
+    return np.minimum(2.0 * smooth(grown.astype(np.float32), SILL_SIGMA_4M), 1.0)
+
+
+def _ease_sills(h: np.ndarray, coarse: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """h eased by weight s to the refined 32 m ground, both ways. Affine in h, so it commutes
+    with the band cross-fade and can be re-applied to a kept raw surface."""
+    return (h - s * (h - coarse)).astype(np.float32)
+
+
+def _square(params: dict, n: int) -> tuple[int, int, int]:
+    """(x0, y0, n32): the L3 square in 32 m cells of an n² map, from the run's arguments."""
+    n32 = n if params["l3_km"] is None else params["l3_km"] * 1024 // 32
+    y0 = x0 = (n - n32) // 2
+    if params.get("l3_centre") is not None:  # kept inside the map
+        centre = (float(v) for v in params["l3_centre"].split(","))
+        x0, y0 = (int(np.clip(round(c / 32.0 - n32 / 2), 0, n - n32)) for c in centre)
+    return x0, y0, n32
+
+
+def reease_sills(out: Path) -> dict:
+    """Apply the exit-sill ease to a finished world's kept l3-raw.f32 (made before the ease
+    existed) in place, on the CPU. Refuses a world already eased."""
+    progress_path = out / "progress.json"
+    progress = json.loads(progress_path.read_text())
+    if progress.get("l3_sills_eased"):
+        raise SystemExit(f"error: {out} already has its L3 exit sills eased")
+    params = progress["params"]
+    w32 = hydrology.read(out / "hydrology" / "32m")
+    h32 = np.array(w32.ground)
+    x0, y0, n32 = _square(params, h32.shape[0])
+    n4, band = n32 * 8, params["l3_band_m"] // 4
+    if progress["l3_bands_done"] < len(cascade.bands(n4, band, params["l3_halo_m"] // 4)):
+        raise SystemExit(f"error: {out} has not finished L3")
+    level, m = cascade.LEVELS["l3"], L3_MARGIN
+    pad_h = np.pad(h32, m, mode="edge")
+    pad_s = np.pad(_exit_cells(w32.bodies, h32.shape), m)
+    del h32, w32
+    raw = np.memmap(out / "l3-raw.f32", dtype="<f4", mode="r+", shape=(n4, n4))
+    crop = np.s_[m * 8 : -m * 8, m * 8 : -m * 8]
+    changed, big, top = 0, 0, 0.0
+    for a in range(0, n4, SILL_ROWS):
+        b = min(a + SILL_ROWS, n4)
+        sl = np.s_[y0 + a // 8 : y0 + b // 8 + 2 * m, x0 : x0 + n32 + 2 * m]
+        if not pad_s[sl].any():
+            continue
+        coarse = cascade.refine_surface(level, pad_h[sl])[crop]
+        h = np.array(raw[a:b])
+        eased = _ease_sills(h, coarse, _sill_weight(_nearest(pad_s[sl], 8))[crop])
+        d = np.abs(eased - h)
+        changed, big, top = changed + int((d > 0).sum()), big + int((d > 0.01).sum()), max(top, float(d.max()))
+        raw[a:b] = eased
+    raw.flush()
+    progress["l3_sills_eased"] = True
+    cascade.save_json(progress_path, progress)
+    return {"cells_changed": changed, "cells_changed_over_1cm": big, "max_change_m": round(top, 3)}
+
+
 def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, device, out: Path, progress: dict,
         save) -> np.memmap:
     """L3 over the n32² square of 32 m cells at (x0, y0), in bands of rows north to south
@@ -476,6 +556,7 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
     h32, sea32, wet32, river32 = np.array(w32.ground), w32.kind("sea"), w32.wet, w32.kind("river")
     lake32 = wet32 & ~sea32 & ~river32
     pad = {k: np.pad(v, m, mode="edge") for k, v in (("h", h32), ("sea", sea32), ("lake", lake32), ("river", river32))}
+    pad["sill"] = np.pad(_exit_cells(w32.bodies, h32.shape), m)
     if src.l0 is None:
         snow32, veg32 = src.cover(h32, 4)
         pad["snow"], pad["veg"] = np.pad(snow32 & ~sea32, m, mode="edge"), np.pad(veg32 & ~sea32, m, mode="edge")
@@ -545,6 +626,8 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
         clamp = (lake4 | river4) if args.l3_river_clamp else lake4
         under = smooth(clamp.astype(np.float32), 2.0)
         h = (h - under * np.maximum(h - coarse, 0)).astype(np.float32)
+        # Each 32 m lake's exit sill keeps the 32 m spill: eased both ways (reease_sills).
+        h = _ease_sills(h, coarse, _sill_weight(_nearest(pad["sill"][sl], 8))[crop])
         del under, clamp, w, coarse, sea4, lake4, river4
         cascade.write_band(raw, h, bands, k, g0, halo, out)
         del h
@@ -680,7 +763,7 @@ def main(argv=None) -> int:
         args.out.mkdir(parents=True)
         hyd.mkdir()
         progress = {"params": params, "times": {}, "l2_done": False, "l3_bands_done": 0, "l3_band_s": [],
-                    "hydrology_4m_done": False}
+                    "hydrology_4m_done": False, "l3_sills_eased": True}
         save()  # so a crash during L1, L2 or the 32 m level resumes (run_level resumes itself)
     if not progress.get("l2_done"):
         h128, sea128, lake128, raw32 = _l1_l2(args, src, device, hyd, progress["times"])
@@ -718,10 +801,7 @@ def main(argv=None) -> int:
 
     # L3: the whole world, as the layout specifies, or a square (16 km: 512 cells of 32 m,
     # 4,096 of 4 m). Sea, lakes and streams are water, as in its lidar training data.
-    n32 = h32.shape[0] if args.l3_km is None else args.l3_km * 1024 // 32
-    y0 = x0 = (h32.shape[0] - n32) // 2
-    if centre is not None:  # kept inside the map
-        x0, y0 = (int(np.clip(round(c / 32.0 - n32 / 2), 0, h32.shape[0] - n32)) for c in centre)
+    x0, y0, n32 = _square({"l3_km": args.l3_km, "l3_centre": args.l3_centre}, h32.shape[0])
     n4, sl = n32 * 8, np.s_[y0 : y0 + n32, x0 : x0 + n32]
     raw = _l3(args, src, w32, x0, y0, n32, device, args.out, progress, save)
     times["l3_s"] = sum(progress["l3_band_s"])
