@@ -933,21 +933,31 @@ continuation, and a dry drainage end on a shore.
 
 Settle (`s`) lifts written water to the m3 routing (a river or pool cell inside a higher m3
 pond stands at its level; a dry cell draining into higher labelled water is wetted) but leaves
-labelled lakes at their label's level and extent. The figure `closed_lake_m3_level_gap` is
+labelled lakes at their level and extent. The figure `closed_lake_m3_level_gap` is
 the largest |m3 level − label level| over closed lakes' cells; `stages.settled` names the
 largest lift's cell and body.
 
-Carving keeps m2 ponds (fix round 2): a cut beside another m2 node (lakes included) stops
-0.01 m above that node's level (gate 2 fix round 1: cut to the level itself it became a new
-spill), and a cut on a node's own cell standing at its level (its spill cell) stops at that
-level; ground below that floor is left as it is. A river cell cut below a lower lake beside it
-stands at the lake's level, keeping its body. The figure `m2_pond_cells_lost` counts m2 node
-cells in no m3 node and names the largest m2 level − m3 level (ground where dry) with its m2
-node and cell. m3 keeps an m2 receiver that is not higher on the carved ground (ties
-included), so a bed carved flat does not send the river off its labelled line. Rims (Plan B
-Task 13): the floor beside a cut holds only for lakes and for ponds at least as deep as the
-river, not for micro-pits beside the channel. A one-cell pit a cut deepens stays (a scour
-pool; `carve_pits` counts them as a figure).
+Channels cut rims beside lakes and ponds like any other ground (F1, owner rule 2026-11-08:
+outlet incision). Before settle, `relevel` lowers each labelled lake whose spill now lies
+more than 0.01 m below its label: the spill is the lowest edge, from a lake cell to a cell
+outside it, of the higher of the lake cell's ground and what the outside cell drains at once
+settled (settle's rule). The lake drops to it, its cells at or above the new level turn dry
+and the edge moves, until it stands at its spill; a lake left with no cell below its spill
+drains and leaves `bodies.json`. Cells in a pocket the lowering cut off (an m3 pond whose
+level lies between the new and the old level) turn dry too; they stay m3 ponds. Where the
+largest pocket holds more cells than reached the spill and is full, the lake is that pocket
+instead, at its level and exit. A river cell
+beside a lowered lake's old extent that stood at its old level (a mouth, below) follows it
+down, 5 mm over its bed where that lies above the new level. The lake's own outflow river keeps it at its label: its water
+stands at the outlet's height over its cut bed. Passes repeat on the rewritten surfaces until
+no lake moves. `stages.relevelled` counts lowered and drained lakes, dried and mouth cells and
+lists the 20 largest drops; `finish` checks them at their new level and exit (`bodies.json`
+keeps `label_level_m`). A river cell cut below a lower lake beside it stands at the lake's
+level, keeping its body. The figure `m2_pond_cells_lost` counts m2 node cells in no m3 node
+and names the largest m2 level − m3 level (ground where dry) with its m2 node and cell. m3
+keeps an m2 receiver that is not higher on the carved ground (ties included), so a bed carved
+flat does not send the river off its labelled line. A one-cell pit a cut deepens stays (a
+scour pool; `carve_pits` counts them as a figure).
 
 Breach: each path cell's taper reaches max(half-width + 1, 2·cut / (tan 35° · spacing)) cells,
 at 32 m and 4 m at least 2.5 cells, and cuts steep raw ground like any other. Owner rule
