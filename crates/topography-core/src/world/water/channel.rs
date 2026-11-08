@@ -873,7 +873,7 @@ pub(crate) fn relevel(
                 from: labels[&r.id],
                 ..*r
             });
-            (m.to, m.outlet, m.cells) = (r.to, r.outlet, kept);
+            (m.to, m.outlet, m.basin, m.cells) = (r.to, r.outlet, r.basin, kept);
             (m.dried, m.mouths) = (m.dried + dried, m.mouths + mouths);
         }
     }
