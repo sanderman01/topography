@@ -423,8 +423,8 @@ the map's 1 m grid, as in L3) and are cross-faded, resuming exactly as in L3. `c
 only diffuses: it writes a raw world (`manifest.json` of kind `world_raw`,
 `elevation-raw.f32`, `snow-ice.u8`, `vegetation.u8`, `overview.png` and `detail.png`) with
 no water. Under 4 m lakes and sea the ground is the refined 4 m ground (L4 learned land
-only); under 4 m rivers too, unless `--keep-river-residual` keeps the diffused residual there
-(B32 A/B). Bands, and windows inside a band, whose 4 m ground is all deep water (below
+only); under 4 m rivers the diffused residual stays (owner rule 2026-11-08;
+`--zero-river-residual` zeros it there too, `--keep-river-residual` is the default). Bands, and windows inside a band, whose 4 m ground is all deep water (below
 −50 m) are not diffused (the manifest's `deep_sea_bands` and `windows`). `--guidance-classes`
 limits `--guidance` to windows holding those classes, as in the chain. Rerunning the same
 command resumes after the last finished band.
@@ -507,11 +507,11 @@ Water is hydrology v3, one level at a time (`water.run.run_level`):
   review. L3 refines its final ground. A failed 32 m level exits 1 before L3 and writes no
   manifest.
 - **L3**: the raw 4 m surface `l3-raw.f32` is kept. Under 32 m lakes and sea the ground eases
-  down to the 32 m ground; under 32 m rivers too unless `--no-l3-river-clamp` (B32; the Task 15
-  A/B tied, so the clamp stays on; recorded in `progress.json` and the manifest as
-  `l3_river_clamp`).
+  down to the 32 m ground; rivers are not clamped (owner rule 2026-11-08; the Task 15 A/B
+  tied). `--l3-river-clamp` clamps them too; recorded in `progress.json` and the manifest as
+  `l3_river_clamp`.
 - **4 m**: `hydrology/run-4m/…` on `l3-raw.f32` (symlinked into its grid), guided by the
-  32 m level (hard coarse guide), with `hydrology/4m` linking `run-4m/out`. Its final ground
+  32 m level (the coarse guide, a figure), with `hydrology/4m` linking `run-4m/out`. Its final ground
   is the world's `elevation.f32`.
 
 The world adds `provenance.u8` (32 m cells of the L3 square) and records both levels'
@@ -729,20 +729,24 @@ Each routing:
 3. **Taper**: each stream-power cut of d ≥ 1 cm becomes a disc lowered by d · (1 − (r/R)²),
    R = max(2.5 cells, 2d / (tan(wall_deg) · spacing)), never below the floor and never under
    water or sea, so cuts are at least 5 cells wide.
-4. **Diffusion**: explicit 4-neighbour Jacobi, α = `diffusion` (0.05) a routing, lowering
-   only, and only near this routing's stream-power cuts (the footprint grows from cuts of at
-   least 0.25 m by the taper radius plus a cell). It never makes a trough or a wall.
-5. **Wall rounds**: up to 16 rounds halve the lowering of any changed cell steeper than
-   max(wall_deg, raw slope) + 0.01°, alternating with a bed-grade pass so no new pit forms;
-   a cut still beside a wall after that is reverted to the routing's start (figures
-   `wall_cuts_removed`, `sills_reverted`, `wall_rounds`).
+4. **Diffusion**: one explicit 4-neighbour step in flux form, α = `diffusion` (0.05) a
+   routing, only near this routing's stream-power cuts (the footprint grows from cuts of at
+   least 0.25 m by the taper radius plus a cell). It conserves mass: convex cells give soil
+   and concave ones (footslopes, valley floors) take it, which is deposition. A cell's outflow
+   is scaled so it never goes below its floor or its water bound.
+
+**Owner rule (2026-11-08).** The water model changes terrain only through erosion where water
+flows and deposition where it pools; other edits are allowed only for runtime or band and
+tile seams. Removed: the erosion wall, narrow-cut and bed-grade rounds, the diffusion trough
+and wall bounds, breach refusals for walls or `handoff_narrow` and its sparing of steep raw
+ground, and the channel wall halving, restore, bed-grade and pit-restore rounds. The checks
+those edits served are figures now (below). The rim floor beside lakes and deep ponds stays for
+now. This overrides rulings B8, B9, B26, B33, Q2, Q4 and R5.
 
 Caps per cell, below the breached ground (so breach gorges are excepted): `cap_m` on full-K
 cells (30 m at 32 m, 10 m at 4 m) and `interior_cap_m` (3 m) on interior cells. The ground
 before channels (`pre_channel`) is the last routing's `e<k>.f32`. Breaches at the coarse
-levels follow the same shape rules: a gorge's taper radius is at least 2.5 cells, its discs
-also cut steep raw ground, and a gorge that would leave a wall or fail `handoff_narrow` is
-refused, so the depression stays filled. The 1 m level has no `e` stage.
+levels take a taper radius of at least 2.5 cells. The 1 m level has no `e` stage.
 
 Calibration (Task 9, 32 m): k_dt 7 × 10⁻⁴ keeps v2's value. It passes every hard check;
 `seam_excess` (the density of lakes exiting within 2 km of a region border over that of
@@ -767,28 +771,30 @@ Calibration (Task 15, 4 m): on two real L3 squares (dam spots and canyon) every 
 | `review/` | review figures and `coarse-guide.json` |
 | `bin/` | the pinned binary |
 | `progress.json` | the driver's finished steps |
-| `level.json` | `passed`, `failures` (the report's plus `coarse_guide`), `report`, `coarse_guide` summary and the review figures |
+| `level.json` | `passed`, `failures` (the report's), `report`, `coarse_guide` summary and the review figures |
 
 It runs `world rain` when the grid has no moisture, then `world water`, `world water-finish`,
-the review and, with `--coarse`, the hard coarse guide against the next coarser level's
-`out/`. Exit status 0 when every check and the guide pass, else 1 (2 refused).
+the review and, with `--coarse`, the coarse guide against the next coarser level's `out/`.
+Exit status 0 when every check passes, else 1; 2 when refused, including a `--coarse`
+directory without `water-body.u32`.
 
 ### The coarse guide
 
 The level runner and the 1 m driver compare each level with the next coarser v3 level
-(`coarse-guide.json`, ruling B15). It is hard only for coarse lakes of at least 0.05 km²,
-deeper than the finer level's breach cap plus 1 m (6 m from 32 m to 4 m, 3 m from 4 m to 1 m)
-and at least 1 km from an inner window or square edge: such a lake fails when its fine
-level differs by more than 5 m, when it is gone, or when it is doubled (two fine lakes each
-over 25 % of its area). When either level's lake is not full (endorheic: its level comes from
-supply or the water table), a level more than 5 m off or a missing fine lake is judged by the
-spills of the depressions under the coarse lake instead (each level's ground within 1 km of
-it): within 5 m, with the fine depression present, it is a figure (`lakes_supply`,
-`spill_diff_m`). A split whose large parts all lie within 5 m of the coarse level is a
-figure too (`lakes_split_same_level`). Every other coarse lake is a figure (`lakes_small`, `lakes_shallow`,
-`lakes_near_edge`), as is the share of coarse rivers with a fine river within 100 m. A hard
-failure withholds the level's pass (`level.json`) and, in a world, `manifest.json`
-(`manifest-failed.json` instead), and the run exits 1.
+(`coarse-guide.json`, ruling B15). The guide is a figure: it never fails a level or a world
+(owner rule 2026-11-08; two model results at different resolutions may legitimately place a
+lake differently). It counts a gross mismatch (`gross_mismatches`, with a picture per
+mismatch) only for coarse lakes of at least 0.05 km², deeper than the finer level's breach
+cap plus 1 m (6 m from 32 m to 4 m, 3 m from 4 m to 1 m) and at least 1 km from an inner
+window or square edge, when the fine level differs by more than 5 m, the lake is gone, or it
+is doubled (two fine lakes each over 25 % of its area). When either level's lake is not full
+(endorheic: its level comes from supply or the water table), a level more than 5 m off or a
+missing fine lake is judged by the spills of the depressions under the coarse lake instead
+(each level's ground within 1 km of it): within 5 m, with the fine depression present, it is
+counted in `lakes_supply` and `spill_diff_m`. A split whose large parts all lie within 5 m of
+the coarse level is counted in `lakes_split_same_level`. Every other coarse lake is counted in
+`lakes_small`, `lakes_shallow` or `lakes_near_edge`, and the share of coarse rivers with a fine
+river within 100 m is reported. A guide that cannot run records its error.
 
 ### Grid and work directories
 
@@ -810,7 +816,7 @@ so a rerun resumes and a changed input is refused:
 | --- | --- |
 | `m1` model on raw | tile caches `m1-<tag>/` |
 | `b` breach | `breached.f32` |
-| `e` erosion (32 m and 4 m only): per routing k, a model run and stream power, diffusion, taper, and wall and narrow-cut rounds | `e<k>.f32`, `e<k>-*.{f32,u32,u8}`, `e-<tag>/` |
+| `e` erosion (32 m and 4 m only): per routing k, a model run, stream power, taper and diffusion | `e<k>.f32`, `e<k>-*.{f32,u32,u8}`, `e-<tag>/` |
 | `m2` model on the pre-channel ground (the last `e<k>.f32`, else `breached.f32`) | `m2-level.f32`, `m2-node.u32`, `m2-discharge.f32`, `m2-flow.u8` |
 | `l` labels (lakes, rivers, river pools) | `body.u32`, `bodies.json` |
 | `c` channels | `carved.f32`, `water-surface.f32`, `water-body.u32` |
@@ -857,7 +863,12 @@ raised. Basins allowed below sea level keep their balance level.
 
 ### Checks
 
-Every count must be 0. D is the water surface where wet, the pond level in ponds (m3), else the
+Every hard check's count must be 0. Figures are counted the same way but reported as
+`figures.<name>_count` and never fail a run: `parallel_rivers`, `straight_runs` and
+`straight_share` (owner ruling 2026-11-06), and `walls`, `handoff_narrow`, `erosion_new_pits`,
+`carve_pits`, `bed_rises`, `facets`, `change_p99`, `interior_p99`, `label_agreement`,
+`thalweg_beside`, `dam_drops` and `dam_steps` at every level (owner rule 2026-11-08).
+D is the water surface where wet, the pond level in ponds (m3), else the
 final ground. Thresholds and rulings are in [Plan A](../superpowers/plans/2026-11-05-hydrology-v3-a-water-model.md)
 (Task 13 and rulings R7, R11, R14, R16, R27, R29–R31) and, for the coarse levels and the newer
 checks, [Plan B](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regeneration.md#rulings-on-what-the-spec-leaves-open):
@@ -872,10 +883,9 @@ checks, [Plan B](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regen
 | `lake_leaks` | a non-lake neighbour of a lake cell, other than its outlet, has D more than 0.01 m below the level |
 | `lake_exit_surface` | the first cell of a full lake's outflow is more than 0.01 m off the level |
 | `lake_balance` | a closed lake covers fewer cells than its supply needs |
-| `dam_steps` | within 50 m below a lake exit, D drops more than 1.5 m between adjacent path cells and raw does not drop as much. Hard at 1 m; at 32 m and 4 m a figure, `dam_steps_over_raw` (ruling R2: 1.5 m a cell is a gentle grade there) |
+| `dam_steps` | within 50 m below a lake exit, D drops more than 1.5 m between adjacent path cells and raw does not drop as much |
 | `dam_drops` | on a labelled lake's exit walk (receivers, at most 150 m, to standing water, no receiver or the edge), a drop D over 1.5 m within 50 m of the exit is a knickpoint: D > 3 × the mean fall a cell over the next 100 m and D > 3 × the mean fall before it. At 32 m and 4 m it fails only where D exceeds the raw step there by over 1.5 m; 1 m ignores raw. A knickpoint with no counter-slope (ground 2–15 m behind the step top not over 1 m below the top) is a natural waterfall, a figure (`dam_drops_waterfalls`). Drops onto water and walks with fewer than 2 steps ahead are figures (`dam_drops_into_water`, `dam_drops_unjudged`); pond exits are figures (`dam_drops_ponds`, `dam_drops_any`) (B14) |
 | `lake_below_sea` | a labelled lake's level is below −0.01 m and one of its cells lacks provenance bit 64 (B13) |
-| `dam_rims` | a guard: an exit-side dry cell stands over level + 0.5 m and raw did not (v3 never raises ground) |
 | `bed_rises` | on a dry m2 thalweg link where the ground before channels falls, the carved bed rises |
 | `thalweg_beside` | beside a thalweg with Q ≥ 1 km², the lowest standing cell across the flow (to the first ridge 0.5 m up, ±30 m) is more than 1 m below this river, belongs to no tributary, and carries a second channel (see below) |
 | `parallel_rivers` | figure (owner ruling 2026-11-06: raw-terrain straight/parallel rivers accepted), `figures.parallel_rivers_count`: along a river with Q ≥ 1 km², another flow line with Q ≥ 0.05 km² runs within 10 m and parallel (cosine ≥ 0.7) for over 100 m without joining it within 100 m |
@@ -883,7 +893,7 @@ checks, [Plan B](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regen
 | `straight_runs` | figure (owner ruling 2026-11-06: raw-terrain straight/parallel rivers accepted), `figures.straight_runs_count`: a river thalweg stays within 1 m of its chord (any angle) for more than 150 m, unless the raw thalweg is straight there too (90 % of cells) |
 | `facets` | more planar 5×5 windows (residual < 2 cm, slope > 5°) among changed cells than raw had (global) |
 | `walls` | a changed cell's Horn slope exceeds max(wall_deg, its raw slope) + 0.01° (`wall_deg` 40° at 1 m, 35° at 4 m and 32 m) |
-| `change_p99` | p99 of \|Δ\| over all cells > 1 m (global). At 32 m and 4 m a figure, `change_p99_all_cells_m`: their budget is `interior_p99` and `interior_max` (B4) |
+| `change_p99` | p99 of \|Δ\| over all cells > 1 m (global; the value is `change_p99_m`) |
 | `change_max` | a cell's \|Δ\| > the breach cap + the erosion cap + 0.5 m (2.5 m at 1 m, 15.5 m at 4 m, 50.5 m at 32 m) |
 | `interior_p99` | 32 m and 4 m: p99 of \|Δ\| over real piece-interior cells outside breaches > 1 m (global; figure `interior_change_p99_m`) |
 | `interior_max` | 32 m and 4 m: an interior cell outside breaches changed by more than 3 m (figure `interior_change_max_m`) |
@@ -899,8 +909,8 @@ checks, [Plan B](../superpowers/plans/2026-11-07-hydrology-v3-b-coarse-and-regen
 | `wet_unknown_body` | a labelled cell's body is not a sea, lake or river of `bodies.json` (id 1, the sea, always counts) |
 
 The last five are the heightmap export's water contract (`export/water.rs`), so a world that
-passes `water-finish` is not refused by the export. Rivers over a bed left uncut (steep raw
-reaches, rim floors, pond spill cells) run 0.005 m deep: half the checks' 1 cm tolerance, so
+passes `water-finish` is not refused by the export. Rivers over a bed left uncut (the
+rim floors, pond spill cells) run 0.005 m deep: half the checks' 1 cm tolerance, so
 f32 rounding cannot carry such water past a lake exit's or a dam step's 1 cm (at 0.01 m it did,
 by one ulp). Lake and sea cells whose ground reaches their level, and a lake's exit cell at the
 level, are dry shore. `water-finish` writes lake levels to `bodies.json` as the exact f32 the
@@ -923,8 +933,7 @@ Settle (`s`) lifts written water to the m3 routing (a river or pool cell inside 
 pond stands at its level; a dry cell draining into higher labelled water is wetted) but leaves
 labelled lakes at their label's level and extent. The figure `closed_lake_m3_level_gap` is
 the largest |m3 level − label level| over closed lakes' cells; `stages.settled` names the
-largest lift's cell and body. The channel restore rounds stop at a hard cap of 128 (31 seen at gate 1); a core
-cell still changing after that is an error.
+largest lift's cell and body.
 
 Carving keeps m2 ponds (fix round 2): a cut beside another m2 node (lakes included) stops
 0.01 m above that node's level (gate 2 fix round 1: cut to the level itself it became a new
@@ -935,17 +944,13 @@ cells in no m3 node and names the largest m2 level − m3 level (ground where dr
 node and cell. m3 keeps an m2 receiver that is not higher on the carved ground (ties
 included), so a bed carved flat does not send the river off its labelled line. Rims (Plan B
 Task 13): the floor beside a cut holds only for lakes and for ponds at least as deep as the
-river, not for micro-pits beside the channel, and a pit-restore rule keeps channel cuts from
-deepening a one-cell pit, so cutting on raw flats leaves no comb of pits (`carve_pits`).
+river, not for micro-pits beside the channel. A one-cell pit a cut deepens stays (a scour
+pool; `carve_pits` counts them as a figure).
 
-Breach (gate 2 fix round 1): at 1 m, cells beside the gorge's path whose raw slope is at least
-39° are not cut (path cells always are); each path cell's taper reaches max(half-width + 1,
-2·cut / (tan 35° · spacing)) cells; and a gorge that would still leave a changed cell steeper
-than max(wall_deg, raw) is refused, so the depression stays filled. At 32 m and 4 m the taper
-is at least 2.5 cells, the discs also cut steep raw ground, and a gorge whose cut fails
-`handoff_narrow` is refused too. `stages.breach.breaches_rejected_walls` and
-`breach_refused_narrow` count the refused gorges and list the 20 deepest (node, cut, spill
-cell, filled depth).
+Breach: each path cell's taper reaches max(half-width + 1, 2·cut / (tan 35° · spacing)) cells,
+at 32 m and 4 m at least 2.5 cells, and cuts steep raw ground like any other. Owner rule
+(2026-11-08): no gorge is refused for walls or `handoff_narrow`; a depression keeps its water
+only when its gorge leaves the radius, exceeds the cap or removes more than it drains.
 
 Two more figures: `dam_drops_at_spots` lists, per review spot, the exit-walk drops over 1.5 m
 within 100 m with their raw drop (count and largest 10), and `unlabelled_main_river_cells`
@@ -957,7 +962,8 @@ painted or fill (lakes behind seams between collage pieces; B25);
 `interior_change_p99_m` and `interior_change_max_m` are the interior budget's values and
 `blend_change_p99_m` / `blend_change_max_m` the same for blend cells at least 2 km from a
 region border; `stages.erosion` sums each routing's lowering, the hillslope lowering outside
-the diffusion footprint and the wall-round figures (`per_routing` lists them by routing).
+the diffusion footprint, the diffusion's deepest lowering and highest rise (`per_routing` lists
+them by routing).
 
 ### Settings, resuming and cost
 
@@ -1009,7 +1015,7 @@ kept stage then silently holds the old code's output. Go by
 | Changed | First stage to rerun |
 | --- | --- |
 | the model (`pipeline`, `balance`, `hierarchy`, `flow`, `receivers`, `flats`, `watershed`, `contract`, `nodes`, `rain`, `table`) or shared code (`geom`, `layers`, `store`, `mod.rs` constants) | m1: start fresh |
-| `breach`, `hydraulic` (widths), or in `checks` the `CHANGED_M`, `horn_deg` or `is_wall` that breach uses | b |
+| `breach`, `hydraulic` (widths) | b |
 | `erosion` | e |
 | `bodies` | l |
 | `channel` (channels or settle), or in `checks` the `SILL_M` that channels use | c |
