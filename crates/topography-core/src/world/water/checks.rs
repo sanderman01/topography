@@ -848,6 +848,10 @@ pub(crate) fn check_tile(
         if delta > s.params.change_max_m() {
             t.fail("change_max", x, y);
         }
+        // B26: a dry cell cut into an m3 node that m2 lacks: a pond only the cutting made.
+        if raw[j] - z[j] > CHANGED_M && body[j] == 0 && node[j] >= 2 && n2[j] == 0 {
+            t.fail("carve_pits", x, y);
+        }
         // Coarse change budget (spec): real interiors outside breaches; far blend as figures.
         let unbreached = raw[j] - bo[j] <= CHANGED_M;
         if coarse && unbreached {
@@ -1508,6 +1512,7 @@ pub(crate) fn report(
         "interior_max",
         "handoff_narrow",
         "erosion_new_pits",
+        "carve_pits",
         "thalweg_beside",
         "walls",
         "change_max",
@@ -3676,6 +3681,20 @@ mod tests {
             f.tile().fails.get("erosion_new_pits").copied().unwrap_or(0),
             0
         );
+    }
+
+    /// B26: a dry cell the cutting lowered into an m3 node that m2 lacks is a pond only the
+    /// cutting made.
+    #[test]
+    fn carve_pits_counts_ponds_only_the_cutting_made() {
+        let mut f = Case::flat(32, 100.0);
+        let i = f.at(10, 10);
+        f.z[i] = 99.7;
+        f.pre_channel[i] = 99.7;
+        f.node[i] = 2;
+        assert_eq!(fails(&f.tile(), "carve_pits"), 1);
+        f.n2[i] = 2; // a pond before the cutting
+        assert_eq!(fails(&f.tile(), "carve_pits"), 0);
     }
 
     /// Ruling R2 and B4: at levels with erosion `dam_steps` and the all-cell `change_p99` are
