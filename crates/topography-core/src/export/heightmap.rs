@@ -545,7 +545,7 @@ pub fn heightmap(
         ["water-surface.f32", "water-body.u32", "bodies.json"]
             .iter()
             .all(|name| layers.get(name).is_some() && world.join(name).is_file()),
-        "world has no hydrology v2 water layers; regenerate it",
+        "world has no water layers; regenerate it with hydrology v3",
     )?;
     let mut elevation = Layer::open(world, "elevation.f32", layers, (w, h), 4)?;
     let mut surface = Layer::open(world, "water-surface.f32", layers, (w, h), 4)?;

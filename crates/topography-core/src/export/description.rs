@@ -26,7 +26,7 @@ impl Frame {
 }
 
 /// River width W = 2.5 · Q^0.5 m from discharge Q in km², the hydrology's rule
-/// (`world::hydrology::rivers::WIDTH_A`).
+/// (v2's `rivers::WIDTH_A`, kept for the description).
 const RIVER_WIDTH_A: f64 = 2.5;
 /// River polylines keep every fourth 4 m node plus the ends.
 const NODE_STRIDE: usize = 4;

@@ -650,7 +650,9 @@ def main(argv=None) -> int:
         if (args.out / "manifest-failed.json").exists() and progress.get("hydrology_4m_done"):
             print(f"error: output is complete but its 4 m water failed; rerun the level with "
                   f"`python -m topography_training.water.run level --run {args.out / 'hydrology' / 'run-4m'} "
-                  f"--coarse {args.out / 'hydrology' / '32m'}`", file=sys.stderr)
+                  f"--coarse {args.out / 'hydrology' / '32m'}`, then delete manifest-failed.json, set "
+                  f"hydrology_4m_done false in progress.json and rerun this command (it resumes after "
+                  f"L3 from l2.npz)", file=sys.stderr)
             return 2
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.collage:

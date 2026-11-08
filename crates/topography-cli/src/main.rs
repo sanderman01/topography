@@ -43,8 +43,6 @@ Usage: topography [--help | --version]
        topography world sketch <sketch.toml> <new-output-dir>
        topography world layout <layout.toml> <new-output-dir>
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
-       topography world hydrology --grid <grid-dir> --out <new-output-dir> [--coarse <coarse-out-dir>] [--north <band-out-dir>] [--wind-deg 225] [--water water.toml] [--river-km2 10]
-       topography world hydrology-seam --north <band-out-dir> --south <band-out-dir>
        topography world rain --grid <grid-dir> [--wind-deg 225]
        topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
        topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05] [--spots E,N;E,N]
@@ -371,9 +369,6 @@ fn main() -> ExitCode {
                 Err(error) => workflow_result(Err(error)),
             };
         }
-        [command, action, rest @ ..] if command == "world" && action == "hydrology" => {
-            return hydrology(rest);
-        }
         [command, action, rest @ ..] if command == "world" && action == "water" => {
             return water(rest);
         }
@@ -382,26 +377,6 @@ fn main() -> ExitCode {
         }
         [command, action, rest @ ..] if command == "world" && action == "water-finish" => {
             return water_finish(rest);
-        }
-        [command, action, f1, north, f2, south]
-            if command == "world"
-                && action == "hydrology-seam"
-                && f1 == "--north"
-                && f2 == "--south" =>
-        {
-            use topography_core::world::hydrology;
-            return match hydrology::seam(Path::new(north), Path::new(south)) {
-                Ok((report, passed)) => {
-                    println!("{report}");
-                    if passed {
-                        ExitCode::SUCCESS
-                    } else {
-                        eprintln!("Band seam check failed");
-                        ExitCode::FAILURE
-                    }
-                }
-                Err(error) => workflow_result(Err(error)),
-            };
         }
         [command, action, config, output] if command == "world" && action == "layout" => {
             return workflow_result(
@@ -529,60 +504,6 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
-}
-
-/// `world hydrology --grid DIR --out DIR [--coarse DIR] [--north DIR] [--wind-deg D]
-/// [--water FILE] [--river-km2 A]`
-fn hydrology(args: &[std::ffi::OsString]) -> ExitCode {
-    use topography_core::world::hydrology;
-    let mut options = hydrology::Options {
-        grid: Default::default(),
-        out: Default::default(),
-        coarse: None,
-        north: None,
-        wind_deg: None,
-        water: None,
-        river_km2: None,
-    };
-    for pair in args.chunks(2) {
-        let [flag, value] = pair else {
-            return usage_error();
-        };
-        match flag.to_str() {
-            Some("--grid") => options.grid = value.into(),
-            Some("--out") => options.out = value.into(),
-            Some("--coarse") => options.coarse = Some(value.into()),
-            Some("--north") => options.north = Some(value.into()),
-            Some("--water") => options.water = Some(value.into()),
-            Some("--wind-deg") => match number(value) {
-                Some(v) => options.wind_deg = Some(v),
-                None => return usage_error(),
-            },
-            Some("--river-km2") => match number(value) {
-                Some(v) => options.river_km2 = Some(v),
-                None => return usage_error(),
-            },
-            _ => return usage_error(),
-        }
-    }
-    if options.grid.as_os_str().is_empty() || options.out.as_os_str().is_empty() {
-        return usage_error();
-    }
-    match hydrology::run(&options) {
-        Ok(outcome) => {
-            println!("{}", outcome.summary);
-            if outcome.passed {
-                ExitCode::SUCCESS
-            } else {
-                eprintln!(
-                    "Hydrology validation failed; see {}",
-                    outcome.out.join("report.json").display()
-                );
-                ExitCode::FAILURE
-            }
-        }
-        Err(error) => workflow_result(Err(error)),
-    }
 }
 
 /// Flags shared by `world water` and `world water-finish`; false on an unknown flag or value.

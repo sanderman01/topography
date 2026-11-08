@@ -13,7 +13,7 @@ import numpy as np
 
 def write_grid(path: Path, h: np.ndarray | None, spacing_m: float, origin: tuple[float, float],
                classes: np.ndarray | None = None, offset_m: tuple[float, float] | None = None,
-               core_rows: tuple[int, int] | None = None, classes_cell_m: float | None = None,
+               classes_cell_m: float | None = None,
                wind_from_deg: float | None = None, provenance: np.ndarray | None = None,
                provenance_cell_m: float | None = None, elevation_link: Path | None = None,
                size: tuple[int, int] | None = None) -> Path:
@@ -28,8 +28,6 @@ def write_grid(path: Path, h: np.ndarray | None, spacing_m: float, origin: tuple
             "origin": [float(origin[0]), float(origin[1])]}
     if offset_m is not None:
         grid["offset_m"] = [float(offset_m[0]), float(offset_m[1])]
-    if core_rows is not None:
-        grid["core_rows"] = [int(core_rows[0]), int(core_rows[1])]
     if classes_cell_m is not None:
         grid["classes_cell_m"] = float(classes_cell_m)
     if wind_from_deg is not None:

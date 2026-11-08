@@ -1,9 +1,9 @@
-"""Water for the cascade.
+"""Water helpers for the cascade.
 
-The cascade's water (sea, lakes, rivers as a surface height) comes from the Rust
-`topography world hydrology`; `write_grid`, `run`, `read` and `seam` call it. What stays here
+The cascade's water comes from hydrology v3 (`topography_training.water`). What stays here
 is the priority flood (Barnes et al. 2014) for analysis (collage, description, exemplar,
-cascade) and `drain`, which makes the 128 m L1 surface drain before L2.
+cascade), `drain`, which makes the 128 m L1 surface drain before L2, the release binary and
+the file helpers shared by world outputs.
 """
 
 from __future__ import annotations
@@ -13,38 +13,13 @@ import json
 import os
 import shutil
 import subprocess
-import sys
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from ..water.grids import write_grid  # noqa: F401
-
 EPSILON_M = 1e-3  # gradient across filled flats so every cell drains
 ROOT = Path(__file__).resolve().parents[4]
-# One water table for Rust and Python.
-WATER_TABLE = ROOT / "configs" / "hydrology" / "water-v1.toml"
-
-
-@dataclass(frozen=True)
-class Water:
-    """How much water a terrain class gets (configs/hydrology/water-v1.toml): shares of its
-    land kept as lakes, as tarns at 4 m and as closed dry basins."""
-
-    lake_share: float
-    tarn_share: float
-    dry_share: float = 0.0
-
-
-def load_water(path: Path = WATER_TABLE) -> dict[int, Water]:
-    """Water by legend v3 class id; classes missing from the table take class 0."""
-    table = tomllib.loads(path.read_text())["classes"]
-    return {int(k): Water(**v) for k, v in table.items()}
-
-
-WATER = load_water()
 
 # Dry basins kept by `drain`: at least 2 m deep and compact (bounding-box side squared over area).
 DRY_MIN_DEPTH_M = 2.0
@@ -207,7 +182,7 @@ def drain(h: np.ndarray, sea: np.ndarray, lake_share: float, widen_sigma: float,
     return out, keep, np.where(keep, filled, np.nan).astype(np.float32), dry
 
 
-# Rust `topography world hydrology` (docs/workflows/terrain-cascade.md, "Hydrology v2").
+# The release `topography` binary (hydrology v3 runs it through `topography_training.water`).
 
 _BINARY: Path | None = None
 
@@ -254,71 +229,6 @@ def pin_binary(dest: Path, prune: bool = True) -> tuple[Path, str]:
         prune_pins(dest, pinned)
     _BINARY = pinned
     return pinned, digest
-
-
-def write_table(path: Path, **overrides: float) -> Path:
-    """The water table with some fields set for every class (cascade_chain overrides)."""
-    lines = ['schema_version = 1', 'kind = "water_table"', 'legend = "topography terrain-v3"']
-    for c, w in sorted(WATER.items()):
-        fields = vars(w) | overrides
-        lines.append(f"\n[classes.{c}]")
-        lines += [f"{k} = {str(v).lower() if isinstance(v, bool) else float(v)}" for k, v in fields.items()]
-    path.write_text("\n".join(lines) + "\n")
-    return path
-
-
-# Judgment constant: a hydrology run this long (a band takes a few minutes) is taken for a
-# loop. TOPOGRAPHY_HYDROLOGY_TIMEOUT_S overrides it.
-TIMEOUT_S = 1200.0
-
-
-def _report(path: Path) -> dict | None:
-    try:
-        return json.loads(path.read_text()) if path.exists() else None
-    except ValueError:
-        return None
-
-
-def run(grid: Path, out: Path, coarse: Path | None = None, north: Path | None = None,
-        wind_deg: float | None = None, water: Path | None = None, river_km2: float | None = None,
-        timeout_s: float | None = None) -> dict:
-    """Run hydrology on `grid` into `out` (replaced if present); returns report.json. Raises
-    RuntimeError on a failed check (the outputs stay for reading), a missing or unreadable
-    report, or a run past `timeout_s` (default TIMEOUT_S), naming the last finished stage."""
-    if out.exists():
-        shutil.rmtree(out)
-    cmd = [str(binary()), "world", "hydrology", "--grid", str(grid), "--out", str(out)]
-    for flag, value in (("--coarse", coarse), ("--north", north), ("--wind-deg", wind_deg),
-                        ("--water", water), ("--river-km2", river_km2)):
-        if value is not None:
-            cmd += [flag, str(value)]
-    if timeout_s is None:
-        timeout_s = float(os.environ.get("TOPOGRAPHY_HYDROLOGY_TIMEOUT_S", TIMEOUT_S))
-    try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired as e:
-        err = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
-        stages = [line for line in err.splitlines() if line.startswith("hydrology: ")]
-        last = stages[-1] if stages else "none"
-        raise RuntimeError(f"hydrology on {grid} ran past {timeout_s:.0f} s and was stopped "
-                           f"(likely looping); last stage line: {last}") from None
-    sys.stdout.write(done.stdout)
-    report = _report(out / "report.json")
-    if done.returncode != 0:
-        sys.stderr.write(done.stderr)
-        failures = report.get("failures") if report else None
-        raise RuntimeError(f"hydrology failed on {grid} (exit {done.returncode}): {failures}")
-    if report is None:
-        raise RuntimeError(f"hydrology on {grid} wrote no readable report.json")
-    return report
-
-
-def seam(north: Path, south: Path) -> None:
-    """The seam check between two band outputs; raises on a failure."""
-    done = subprocess.run([str(binary()), "world", "hydrology-seam", "--north", str(north), "--south", str(south)],
-                          capture_output=True, text=True)
-    if done.returncode != 0:
-        raise RuntimeError(f"seam check failed between {north.name} and {south.name}:\n{done.stdout}{done.stderr}")
 
 
 # Hydrology rasters a world output carries (beside water.u8, kept until export v2) and its

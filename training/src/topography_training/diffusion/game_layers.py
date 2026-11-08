@@ -170,7 +170,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     if layout_dir is None:
         raise ValueError("world records no layout; pass --layout")
     if "moisture" not in manifest:
-        raise ValueError("world has no moisture entry; regenerate it with hydrology v2")
+        raise ValueError("world has no moisture entry; regenerate it with hydrology v3")
     origin = json.loads((Path(manifest["world_input"]) / "world.json").read_text())["origin"]
     sampler = cover.Sampler(layout.load(layout_dir))
     oy, ox = _layout_offset(origin, sampler.extent_m, n * c0)
