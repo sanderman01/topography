@@ -80,7 +80,8 @@ numbers from the full run are added at gate 5 (Task 18).
   spill). Where the floor governs, the lake covers the cells below it and is not full.
 - **Every full lake starts a river** (the outlet trickle), whatever its discharge.
 - **Diffusion only near river cuts.** Diffusion tapers only stream-power cuts. Its footprint
-  comes from cuts of at least 0.25 m. It is mass-conserving: hollows fill (deposition).
+  comes from cuts of at least 0.25 m. Hollows fill (deposition) except channel cells, whose
+  supply the river carries off; α is 0.006 at 32 m.
 - **Coarse breaches.** Breach discs are at least 2.5 cells wide at erosion levels and cut steep
   raw ground at every level; no gorge is refused for walls or `handoff_narrow`.
 - **`thalweg_beside` own water.** These count as the river's own water, not a second channel:

@@ -41,7 +41,7 @@ pub(crate) struct Erosion {
     pub routings: u32,
     pub k_dt: f64,
     pub m: f64,
-    /// Lowering-only diffusion: alpha = D·dt/dx² per routing (explicit, at most 0.25).
+    /// Mass-conserving diffusion: alpha = D·dt/dx² per routing (explicit, at most 0.25).
     pub diffusion: f32,
     pub cap_m: f32,
     pub interior_k: f64,

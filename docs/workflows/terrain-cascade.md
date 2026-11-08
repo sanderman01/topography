@@ -729,11 +729,13 @@ Each routing:
 3. **Taper**: each stream-power cut of d ≥ 1 cm becomes a disc lowered by d · (1 − (r/R)²),
    R = max(2.5 cells, 2d / (tan(wall_deg) · spacing)), never below the floor and never under
    water or sea, so cuts are at least 5 cells wide.
-4. **Diffusion**: one explicit 4-neighbour step in flux form, α = `diffusion` (0.05) a
-   routing, only near this routing's stream-power cuts (the footprint grows from cuts of at
-   least 0.25 m by the taper radius plus a cell). It conserves mass: convex cells give soil
-   and concave ones (footslopes, valley floors) take it, which is deposition. A cell's outflow
-   is scaled so it never goes below its floor or its water bound.
+4. **Diffusion**: one explicit 4-neighbour step in flux form, α = `diffusion` a routing
+   (0.05 at 4 m, 0.006 at 32 m: the same hillslope rate), only near this routing's
+   stream-power cuts (the footprint grows from cuts of at least 0.25 m by the taper radius
+   plus a cell). Convex cells give soil and concave ones (footslopes, valley floors) take it,
+   which is deposition; a channel cell (cut 0.25 m or more by stream power) takes none, as
+   the river carries it off. A cell's outflow is scaled so it never goes below its floor or
+   its water bound.
 
 **Owner rule (2026-11-08).** The water model changes terrain only through erosion where water
 flows and deposition where it pools; other edits are allowed only for runtime or band and
