@@ -74,10 +74,15 @@ class SillEaseTest(unittest.TestCase):
         flow = np.zeros(h.shape, np.uint8)
         flow[EXIT[1], EXIT[0]] = 4
         sills = cascade_chain._sills([{"id": 1, "kind": "lake", "exit_cell": list(EXIT)},
-                                      {"id": 2, "kind": "lake", "exit_cell": None}], h, body, flow)
+                                      {"id": 2, "kind": "lake", "exit_cell": None}], h, body, flow, body > 0)
         self.assertEqual(len(sills), 1)
         self.assertEqual((sills[0].lake, sills[0].exit, sills[0].recv), ((39, 32), EXIT, (41, 32)))
         self.assertEqual(sills[0].v, 116.0)
+        # A river through the lake carries its own id: the wet cell draining into the exit is the lake side.
+        body = np.where(body == 1, 9, 0)
+        flow[31, 39] = 8  # SE into the exit
+        sills = cascade_chain._sills([{"id": 1, "kind": "lake", "exit_cell": list(EXIT)}], h, body, flow, body > 0)
+        self.assertEqual(sills[0].lake, (39, 31))
 
     def test_a_raised_sill_is_cut_to_the_32_m_spill_keeping_its_shape(self):
         raw = _near(_coarse(), 10.0)

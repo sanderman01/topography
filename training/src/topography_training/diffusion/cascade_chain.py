@@ -481,8 +481,11 @@ class Sill:
 D8 = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0), 5: (-1, -1), 6: (1, -1), 7: (-1, 1), 8: (1, 1)}
 
 
-def _sills(bodies: list[dict], ground: np.ndarray, body: np.ndarray, flow: np.ndarray) -> list[Sill]:
-    """The outlet corridor of every full 32 m lake whose exit has a receiver and a lake cell beside it."""
+def _sills(bodies: list[dict], ground: np.ndarray, body: np.ndarray, flow: np.ndarray,
+           wet: np.ndarray) -> list[Sill]:
+    """The outlet corridor of every full 32 m lake whose exit cell has a receiver. The lake-side
+    cell is the lowest neighbour draining into the exit cell, of the lake's own cells if any (a
+    river through the lake carries its own id), else of the wet ones, else of all."""
     n_y, n_x = ground.shape
     out = []
     for b in bodies:
@@ -490,11 +493,20 @@ def _sills(bodies: list[dict], ground: np.ndarray, body: np.ndarray, flow: np.nd
             continue
         x, y = b["exit_cell"]
         d = D8.get(int(flow[y, x]) & 15)
-        side = [(float(ground[y + dy, x + dx]), (x + dx, y + dy)) for dx, dy in D8.values()
-                if 0 <= x + dx < n_x and 0 <= y + dy < n_y and body[y + dy, x + dx] == b["id"]]
-        if d is None or not side or not (0 <= x + d[0] < n_x and 0 <= y + d[1] < n_y):
+        if d is None or not (0 <= x + d[0] < n_x and 0 <= y + d[1] < n_y):
             continue
-        out.append(Sill(min(side)[1], (x, y), (x + d[0], y + d[1]), float(ground[y, x])))
+        near = [((x + dx, y + dy), D8.get(int(flow[y + dy, x + dx]) & 15) == (-dx, -dy))
+                for dx, dy in D8.values() if 0 <= x + dx < n_x and 0 <= y + dy < n_y and (x + dx, y + dy) != (x + d[0], y + d[1])]
+        tiers = (lambda c, i: body[c[1], c[0]] == b["id"], lambda c, i: i and wet[c[1], c[0]],
+                 lambda c, i: i, lambda c, i: wet[c[1], c[0]])
+        for pick in tiers:
+            side = [c for c, i in near if pick(c, i)]
+            if side:
+                break
+        if not side:
+            continue
+        lake = min(side, key=lambda c: float(ground[c[1], c[0]]))
+        out.append(Sill(lake, (x, y), (x + d[0], y + d[1]), float(ground[y, x])))
     return out
 
 
@@ -604,7 +616,7 @@ def _ease_world(out: Path, x0: int, y0: int, n32: int) -> dict:
     o32 = out / "hydrology" / "32m"
     w32 = hydrology.read(o32)
     flow = np.memmap(o32 / "flow.u8", dtype="u1", mode="r", shape=w32.ground.shape)
-    sills = _sills(w32.bodies, w32.ground, w32.body, flow)
+    sills = _sills(w32.bodies, w32.ground, w32.body, flow, w32.wet)
     raw = np.memmap(out / "l3-raw.f32", dtype="<f4", mode="r+", shape=(n32 * 8, n32 * 8))
     stats = ease_sill_passes(raw, sills, x0, y0, n32)
     raw.flush()
