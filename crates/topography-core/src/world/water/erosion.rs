@@ -7,8 +7,9 @@
 //!    discharge while the level follows it (Cordonnier et al. 2019 with one outlet per node);
 //! 2. each stream-power cut re-expressed as Plan A's parabolic gorge taper (valley-side
 //!    response to incision);
-//! 3. mass-conserving hillslope diffusion near cuts of at least DIFFUSE_MIN_M: convex cells
-//!    give soil, concave ones take it (deposition).
+//! 3. hillslope diffusion near cuts of at least DIFFUSE_MIN_M: convex cells give soil and
+//!    concave cells take it (deposition), except channel cells, whose supply the river
+//!    carries off.
 //!
 //! The owner rule (2026-11-08): ground changes only by erosion where water flows and
 //! deposition where it pools; no pass undoes a cut to satisfy a check (`walls`,
@@ -412,12 +413,19 @@ pub(crate) struct Diffused {
     pub max_rise_m: f32,
 }
 
-/// Mass-conserving hillslope diffusion, one explicit step (alpha = D·dt/dx² <= 0.25) in flux
-/// form on the 4-neighbour edges between `near` cells (the river cuts' footprint, B6): convex
-/// cells give soil, concave ones (footslopes, valley floors) take it as deposition. Interior,
-/// held, sea and edge cells take no part (no-flux). A cell's outflows are scaled so it never
-/// goes below its floor or water bound, so every flux lands somewhere: mass is conserved.
-pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> Diffused {
+/// Hillslope diffusion, one explicit step (alpha = D·dt/dx² <= 0.25) in flux form on the
+/// 4-neighbour edges between `near` cells (the river cuts' footprint, B6): convex cells give
+/// soil, concave ones (footslopes, valley floors) take it as deposition, except `channel`
+/// cells, whose supply the river carries off (review C1). Interior, held, sea and edge cells
+/// take no part (no-flux). A cell's outflows are scaled so it never goes below its floor or
+/// water bound; mass is conserved except what channels export.
+pub(crate) fn diffuse(
+    r: &Routing,
+    z: &mut [f32],
+    alpha: f32,
+    near: &Bits,
+    channel: &Bits,
+) -> Diffused {
     let (w, h) = (r.world.w as usize, r.world.h as usize);
     let mut out = Diffused::default();
     if alpha <= 0.0 || w < 3 || h < 3 {
@@ -472,6 +480,9 @@ pub(crate) fn diffuse(r: &Routing, z: &mut [f32], alpha: f32, near: &Bits) -> Di
                 for j in nbrs(c).into_iter().filter(|&j| active(j)) {
                     let d = old(j) - zc;
                     dz += alpha * d * if d > 0.0 { give(j) } else { gc };
+                }
+                if channel.get(c) {
+                    dz = dz.min(0.0);
                 }
                 *v = zc + dz;
             }
@@ -638,6 +649,11 @@ pub(crate) fn step(
     let mut fig = stream_power(&Routing { ka: &ka, ..*r }, z);
     let stream_s = started.elapsed().as_secs_f64();
     snap("sp", z)?;
+    // Channels: cells stream power cut by DIFFUSE_MIN_M or more take no deposition (C1).
+    let mut channel = Bits::new(n);
+    for c in (0..n).filter(|&c| before[c] - z[c] >= DIFFUSE_MIN_M) {
+        channel.set(c);
+    }
     fig.sills_cut = r
         .sills
         .iter()
@@ -654,7 +670,7 @@ pub(crate) fn step(
     drop(lower);
     snap("tp", z)?;
     let diffuse_start = std::time::Instant::now();
-    let d = diffuse(r, z, alpha, &diffusing);
+    let d = diffuse(r, z, alpha, &diffusing, &channel);
     (
         fig.diffused_cells,
         fig.diffusion_max_m,
@@ -1042,7 +1058,7 @@ mod tests {
         let mut r = s.routing();
         r.world = World { w: 7, h: 7 };
         let mut out = z.clone();
-        diffuse(&r, &mut out, 0.05, &all(w * h));
+        diffuse(&r, &mut out, 0.05, &all(w * h), &Bits::new(w * h));
         // Rows beside the map edge are skipped: edge cells take no part in diffusion.
         for y in 2..h - 2 {
             let c = y * w + 3;
@@ -1113,7 +1129,7 @@ mod tests {
         let mut r = s.routing();
         r.world = World { w: w as u64, h: 5 };
         let mut out = z.clone();
-        let d = diffuse(&r, &mut out, 0.05, &all(25));
+        let d = diffuse(&r, &mut out, 0.05, &all(25), &Bits::new(25));
         assert!(out[12] < 12.0 && d.cells >= 2, "the bump drops");
         assert!(out[13] > 9.0, "the pit fills (deposition)");
         assert!(d.max_rise_m > 0.0 && d.max_lowering_m > 0.0);
@@ -1121,10 +1137,38 @@ mod tests {
         assert!((sum(&out) - sum(&z)).abs() < 1e-3, "mass is conserved");
         let mut far = z.clone();
         assert_eq!(
-            diffuse(&r, &mut far, 0.05, &Bits::new(25)).cells,
+            diffuse(&r, &mut far, 0.05, &Bits::new(25), &Bits::new(25)).cells,
             0,
             "no cut nearby: the bump stays (B6)"
         );
+    }
+
+    #[test]
+    fn a_cut_thalweg_takes_no_deposition_and_its_sides_still_lower() {
+        // A V valley along row 3 (sides 5 m a cell) whose thalweg was cut 2 m: the river carries
+        // off what the sides shed, so the thalweg never rises (review C1).
+        let (w, h) = (9usize, 7usize);
+        let z: Vec<f32> = (0..w * h)
+            .map(|i| {
+                let side = (i / w).abs_diff(3) as f32;
+                100.0 + 5.0 * side - if side == 0.0 { 2.0 } else { 0.0 }
+            })
+            .collect();
+        let s = grid(&z, w, h);
+        let mut r = s.routing();
+        r.world = World {
+            w: w as u64,
+            h: h as u64,
+        };
+        let mut channel = Bits::new(w * h);
+        (0..w).for_each(|x| channel.set(3 * w + x));
+        let mut out = z.clone();
+        diffuse(&r, &mut out, 0.05, &all(w * h), &channel);
+        for x in 1..w - 1 {
+            let (bed, side) = (3 * w + x, 2 * w + x);
+            assert!(out[bed] <= z[bed], "thalweg ({x}) rose to {}", out[bed]);
+            assert!(out[side] < z[side], "side ({x}) did not lower");
+        }
     }
 
     #[test]
@@ -1137,7 +1181,7 @@ mod tests {
         let mut r = s.routing();
         r.world = World { w: 5, h: 5 };
         let mut out = z.clone();
-        diffuse(&r, &mut out, 0.25, &all(25));
+        diffuse(&r, &mut out, 0.25, &all(25), &Bits::new(25));
         assert!(out[12] >= 13.0 - 1e-5, "floor held, got {}", out[12]);
         let sum = |v: &[f32]| v.iter().map(|&x| f64::from(x)).sum::<f64>();
         assert!((sum(&out) - sum(&z)).abs() < 1e-3, "mass is conserved");

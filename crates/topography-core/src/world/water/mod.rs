@@ -422,7 +422,7 @@ impl Tags {
                     "taper_min_cells": erosion::TAPER_MIN_CELLS,
                     "shape_min_m": erosion::SHAPE_MIN_M, "glacier_frozen": true, "sea_base_0": true,
                     "diffuse_min_m": erosion::DIFFUSE_MIN_M, "taper_sources": "stream_power",
-                    "owner_rule": 1, "diffusion": "mass_conserving"}),
+                    "owner_rule": 1, "diffusion_kind": "mass_conserving", "channel_sink": true}),
         )
     }
     /// m2 reads the ground before channels: the eroded ground (e) or the breached one (b).
@@ -1356,6 +1356,18 @@ mod tests {
             }
         );
         assert_eq!(p(1.0, Some(0.2)).river_km2, 0.2);
+    }
+
+    #[test]
+    fn the_erosion_tag_sees_the_diffusion_rate() {
+        let t = table::Table::parse(table::DEFAULT).expect("table");
+        let e = t.level(32.0).erosion.expect("32 m erodes");
+        assert_eq!(e.diffusion, 0.006, "the 32 m hillslope rate (review C1)");
+        let other = table::Erosion {
+            diffusion: 0.05,
+            ..e
+        };
+        assert_ne!(Tags::e("b", &e, 35.0), Tags::e("b", &other, 35.0));
     }
 
     #[test]

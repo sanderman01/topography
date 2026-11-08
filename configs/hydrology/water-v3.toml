@@ -17,7 +17,7 @@ m3s_per_km2 = 0.56
 below_sea_coast_km = 5.0
 
 # Per level (grid spacing in m): river start (km² at mean rain), deepest breach cut, the
-# steepest changed cell (walls, breach refusal, erosion wall rounds: max(wall_deg, raw)).
+# steepest changed cell for the `walls` figure and the taper angle (max(wall_deg, raw)).
 [levels.1]
 river_km2 = 0.05
 breach_cap_m = 2.0
@@ -28,7 +28,7 @@ river_km2 = 0.5
 breach_cap_m = 5.0
 wall_deg = 35.0
 # Erosion (rulings B2-B7): `routings` model runs, each followed by one implicit stream-power
-# step (F = k_dt·A^m / L, A in m², n = 1) and one lowering-only diffusion step (alpha per
+# step (F = k_dt·A^m / L, A in m², n = 1) and one mass-conserving diffusion step (alpha per
 # routing); cuts tapered to wall_deg. Caps are below the breached ground. Interior cells
 # (real GLO-30 piece interiors, glaciers) take interior_k × k_dt, no diffusion, and their cap.
 [levels.4.erosion]
@@ -48,7 +48,7 @@ wall_deg = 35.0
 routings = 5
 k_dt = 7e-4
 m = 0.5
-diffusion = 0.05
+diffusion = 0.006  # 0.05 × (k_dt ratio 8) × (4 / 32)²: the 4 m hillslope rate at 32 m
 cap_m = 30.0
 interior_k = 0.05
 interior_cap_m = 3.0
