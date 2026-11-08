@@ -111,15 +111,43 @@ pub(crate) fn dammed(world: World) -> Vec<f32> {
     z
 }
 
+/// A valley along row 40 falling east 5 cm a cell, its sides rising 0.3 m a cell, and a
+/// 4 m deep bowl of radius 7 at (48, 30) on its north side: the bowl's lake spills south over
+/// a rim about 3 cells from the valley's thalweg (96 × 64 or larger).
+pub(crate) fn lake_by_river(world: World) -> Vec<f32> {
+    (0..world.w * world.h)
+        .map(|i| {
+            let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
+            let base = 20.0 - 0.05 * x + 0.3 * (y - 40.0).abs() + ((i * 7919) % 7) as f32 * 0.002;
+            let d2 = ((x - 48.0).powi(2) + (y - 30.0).powi(2)) / 49.0;
+            if d2 < 1.0 {
+                base - 4.0 * (1.0 - d2)
+            } else {
+                base
+            }
+        })
+        .collect()
+}
+
 /// A grid directory holding `dammed(world)` at 1 m with `classes(world)` and a 2 × 2
 /// moisture field.
 pub(crate) fn grid_dir(dir: &std::path::Path, world: World) -> std::path::PathBuf {
+    grid_dir_of(dir, world, &dammed(world), &classes(world))
+}
+
+/// A grid directory as `grid_dir`, holding the ground `z` and the classes `cls`.
+pub(crate) fn grid_dir_of(
+    dir: &std::path::Path,
+    world: World,
+    z: &[f32],
+    cls: &[u8],
+) -> std::path::PathBuf {
     use std::fs;
     let grid = dir.join("grid");
     fs::create_dir_all(&grid).expect("grid dir");
-    let z: Vec<u8> = dammed(world).iter().flat_map(|v| v.to_le_bytes()).collect();
+    let z: Vec<u8> = z.iter().flat_map(|v| v.to_le_bytes()).collect();
     fs::write(grid.join("elevation.f32"), z).expect("elevation");
-    fs::write(grid.join("classes.u8"), classes(world)).expect("classes");
+    fs::write(grid.join("classes.u8"), cls).expect("classes");
     let moisture: Vec<u8> = [1.0f32, 0.6, 1.4, 0.8]
         .iter()
         .flat_map(|v| v.to_le_bytes())

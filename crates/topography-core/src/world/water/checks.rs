@@ -3963,7 +3963,22 @@ mod tests {
             "{}",
             serde_json::to_string_pretty(&report).unwrap()
         );
-        assert_eq!(read_json(&dir.path().join("out/bodies.json")), exact);
+        // As labelled, but lakes re-levelled on the carved ground (F1) stand lower.
+        let out = read_json(&dir.path().join("out/bodies.json"));
+        let (a, e) = (
+            out["bodies"].as_array().unwrap(),
+            exact["bodies"].as_array().unwrap(),
+        );
+        assert_eq!(a.len(), e.len());
+        for (a, e) in a.iter().zip(e) {
+            match a.get("label_level_m") {
+                Some(lv) => {
+                    assert_eq!(lv, &e["level_m"]);
+                    assert!(a["level_m"].as_f64() < e["level_m"].as_f64(), "{a}");
+                }
+                None => assert_eq!(a, e),
+            }
+        }
         for name in [
             "wet_not_above_ground",
             "wet_without_surface",

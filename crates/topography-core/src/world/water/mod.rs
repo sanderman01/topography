@@ -442,7 +442,7 @@ impl Tags {
             "c",
             &json!({"after": l, "m3s_per_km2": m3s_per_km2, "cap": CHANNEL_CAP_M,
                     "halo": channel::HALO, "backwater": channel::BACKWATER,
-                    "owner_rule": 1, "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M,
+                    "owner_rule": 1, "rims": "cut", "lake_mouths": true,
                     "min_depth_m": MIN_DEPTH_M, "shore_dry": true}),
         )
     }
@@ -456,12 +456,12 @@ impl Tags {
             &json!({"after": m1, "ground": ground, "breached": breached, "kept": true, "kept_ties": true}),
         )
     }
-    /// Settle reads m3 on the carved ground and the channels' surfaces, bodies and labelled
-    /// lakes (c): m3's content tag alone survives a channels rerun.
+    /// Relevel and settle read m3 on the carved ground and the channels' surfaces, bodies and
+    /// labelled lakes (c): m3's content tag alone survives a channels rerun.
     fn s(m3: &str, c: &str) -> String {
         stage_tag(
             "s",
-            &json!({"after": m3, "channels": c, "lakes_at_label": true}),
+            &json!({"after": m3, "channels": c, "lakes_at_label": true, "relevel": 1}),
         )
     }
     /// Every tag, from the settings, the pools on m2 and the carved and pre-channel grounds'
@@ -557,6 +557,63 @@ fn drop_other_finals(work: &store::Work, keep: &str) -> Result<()> {
 }
 
 /// Runs model → breach → model → bodies → channels into `work` (resumable). Returns a
+/// The labelled lakes (`bodies.json` from `label`): body id → their m2 node's level.
+fn lake_labels(bodies: &Value, nodes: &nodes::Nodes) -> Result<BTreeMap<u32, f32>> {
+    let mut out = BTreeMap::new();
+    for b in bodies["bodies"].as_array().into_iter().flatten() {
+        if b["kind"] != "lake" {
+            continue;
+        }
+        let id = b["id"]
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| AcquisitionError::Invalid("a lake id exceeds u32".into()))?;
+        let key = b["node"].as_u64().unwrap_or(u64::MAX);
+        let n = nodes.get(key).ok_or_else(|| {
+            AcquisitionError::Invalid(format!("lake {id}: node {key} not in the model"))
+        })?;
+        out.insert(id, n.level);
+    }
+    Ok(out)
+}
+
+/// The run's re-levelled lakes (`channel::relevel`, cached).
+fn read_relevel(work: &store::Work, name: &str) -> Result<Vec<channel::Relevelled>> {
+    work.cached(name, || {
+        Err(AcquisitionError::Invalid(
+            "the re-levelled lakes are missing; run `world water` to the end first".into(),
+        ))
+    })
+}
+
+/// `stages.relevelled`: lakes lowered to their spill on the carved ground and its water,
+/// lakes drained, and the 20 largest drops.
+fn relevel_json(r: &[channel::Relevelled]) -> Value {
+    let mut lowered: Vec<&channel::Relevelled> = r.iter().filter(|l| l.to.is_finite()).collect();
+    lowered.sort_by(|a, b| {
+        (b.from - b.to)
+            .total_cmp(&(a.from - a.to))
+            .then(a.id.cmp(&b.id))
+    });
+    let drops: Vec<Value> = lowered
+        .iter()
+        .take(20)
+        .map(|l| {
+            json!({"id": l.id, "from_m": l.from, "to_m": l.to, "drop_m": l.from - l.to,
+                   "cells": l.cells, "dried": l.dried})
+        })
+        .collect();
+    json!({
+        "lakes": lowered.len(),
+        "drained": r.len() - lowered.len(),
+        "drained_ids": r.iter().filter(|l| l.to.is_nan()).map(|l| l.id).collect::<Vec<_>>(),
+        "max_drop_m": lowered.iter().map(|l| l.from - l.to).fold(0.0f32, f32::max),
+        "cells_dried": r.iter().map(|l| l.dried).sum::<u64>(),
+        "mouth_cells": r.iter().map(|l| l.mouths).sum::<u64>(),
+        "largest": drops,
+    })
+}
+
 /// one-line summary; the figures go to `work/stages.json`.
 pub fn run(o: &Options) -> Result<String> {
     let (s, raw, stamp) = setup(&o.grid, o.tile, o.threads, o.water.as_deref(), o.river_km2)?;
@@ -644,6 +701,8 @@ pub fn run(o: &Options) -> Result<String> {
     if !erosion_json.is_null() {
         stages["erosion"] = erosion_json;
     }
+    // Labelled lakes at their m2 level (the exact f32 the rasters hold).
+    let labels = lake_labels(&bodies, &m2.water.nodes)?;
     drop(m2);
     // The routing on the carved ground (m3: `finish` checks this ground on the same one) and
     // the written water settled on it (review: drainage_rises). m3 keeps m2's receivers where
@@ -666,18 +725,20 @@ pub fn run(o: &Options) -> Result<String> {
             ),
         )?;
     }
-    let lakes: HashSet<u32> = bodies["bodies"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|b| b["kind"] == "lake")
-        .filter_map(|b| b["id"].as_u64().and_then(|id| u32::try_from(id).ok()))
-        .collect();
+    let lakes: HashSet<u32> = labels.keys().copied().collect();
+    let relevel_name = format!("{s_tag}/relevel");
     let settled = work.cached(&format!("{s_tag}/settled"), || {
         let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
-        pipeline::model_on(&s, &carved, Some(&pre), wk, &m3_tag, Some(&finals))?;
+        let m3 = pipeline::model_on(&s, &carved, Some(&pre), wk, &m3_tag, Some(&finals))?;
+        // Outlet incision first (F1): settle then keeps the lakes at their new levels.
+        work.cached(&relevel_name, || {
+            let n3 = &m3.water.nodes;
+            channel::relevel(&s, &finals, n3, &carved, &out, &labels, wk, &s_tag)
+        })?;
+        drop(m3);
         channel::settle(&s, &finals, &carved, &out, &lakes, wk, &s_tag)
     })?;
+    stages["relevelled"] = relevel_json(&read_relevel(&work, &relevel_name)?);
     let lift_cell = (settled.3 != u64::MAX).then(|| s.world.xy(settled.3));
     stages["settled"] = json!({"raised_cells": settled.0, "wetted_cells": settled.1,
                                "max_raise_m": settled.2,
@@ -796,7 +857,38 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         "read bodies.json",
         fs::read(work.path("bodies.json")),
     )?)?;
-    // Lake levels as the exact f32 the rasters hold (earlier label runs rounded them to cm).
+    // Lakes re-levelled on the carved ground (F1), by id.
+    let relevelled: HashMap<u32, channel::Relevelled> =
+        read_relevel(&work, &format!("{}/relevel", tags.s))?
+            .into_iter()
+            .map(|r| (r.id, r))
+            .collect();
+    let drained = |b: &Value| {
+        b["id"]
+            .as_u64()
+            .and_then(|id| relevelled.get(&u32::try_from(id).ok()?))
+            .is_some_and(|r| r.to.is_nan())
+    };
+    let drained_keys: HashSet<u64> = bodies["bodies"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["kind"] == "lake" && drained(b))
+        .filter_map(|b| b["node"].as_u64())
+        .collect();
+    // Drained lakes leave the list; bodies inside them lose their parent.
+    if let Some(list) = bodies["bodies"].as_array_mut() {
+        list.retain(|b| b["kind"] != "lake" || !drained(b));
+        for b in list.iter_mut() {
+            let gone = b["parent"].as_u64().and_then(|p| u32::try_from(p).ok());
+            if gone.is_some_and(|p| relevelled.get(&p).is_some_and(|r| r.to.is_nan())) {
+                b["parent"] = json!(0);
+            }
+        }
+    }
+    // Lake levels as the exact f32 the rasters hold (earlier label runs rounded them to cm), a
+    // re-levelled lake's at its new level, area and exit.
+    let km2 = s.cell_km2();
     for b in bodies["bodies"].as_array_mut().into_iter().flatten() {
         if b["kind"] == "lake" {
             let key = b["node"].as_u64().unwrap_or(u64::MAX);
@@ -804,6 +896,16 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
                 AcquisitionError::Invalid(format!("lake {}: node {key} not in the model", b["id"]))
             })?;
             b["level_m"] = json!(f64::from(n.level));
+            let id = b["id"].as_u64().and_then(|v| u32::try_from(v).ok());
+            if let Some(r) = id.and_then(|id| relevelled.get(&id)) {
+                let (x, y) = s.world.xy(r.outlet[1]);
+                b["level_m"] = json!(f64::from(r.to));
+                b["label_level_m"] = json!(f64::from(r.from));
+                b["area_km2"] = json!((r.cells as f64 * km2 * 1e6).round() / 1e6);
+                b["max_depth_m"] = json!((f64::from(r.to - n.low) * 100.0).round() / 100.0);
+                b["exit_cell"] = json!([x, y]);
+                b["endorheic"] = json!(false);
+            }
         }
     }
     let list = bodies["bodies"].as_array().cloned().unwrap_or_default();
@@ -835,6 +937,11 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         let n = m2.water.nodes.get(key).ok_or_else(|| {
             AcquisitionError::Invalid(format!("lake {id}: node {key} not in the model"))
         })?;
+        if let Some(r) = relevelled.get(&id) {
+            // At its spill on the carved ground: full, the m3 node's exit.
+            lakes.insert(id, (r.to, true, r.outlet, 0));
+            continue;
+        }
         lakes.insert(id, (n.level, n.full, n.outlet, n.need));
         // Its labelled cells against the balance's need.
         let area = b["area_km2"].as_f64().unwrap_or(0.0);
@@ -852,8 +959,18 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
                 .map(|key| (key, id))
         })
         .collect();
+    // m2 nodes as the finished run holds them: a lowered lake at its new level and exit.
+    let lowered = |n: &nodes::Node| {
+        let r = lake_of.get(&n.key).and_then(|id| relevelled.get(id));
+        r.map_or(*n, |r| nodes::Node {
+            level: r.to,
+            full: true,
+            outlet: r.outlet,
+            ..*n
+        })
+    };
     let mut exits: Vec<Vec<checks::Exit>> = vec![Vec::new(); s.tiles().len()];
-    for n in m2.water.nodes.0.iter().filter(|n| n.full) {
+    for n in m2.water.nodes.0.iter().map(lowered).filter(|n| n.full) {
         let (x, y) = s.world.xy(n.outlet[1]);
         exits[geom::tile_of(s.world, s.tile, x, y)].push(checks::Exit {
             key: n.key,
@@ -871,8 +988,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             .nodes
             .0
             .iter()
-            .filter(|n| n.full && n.lake)
-            .copied()
+            .map(lowered)
+            .filter(|n| n.full && n.lake && !drained_keys.contains(&n.key))
             .collect(),
     );
     drop(m2);
@@ -1368,6 +1485,102 @@ mod tests {
             ..e
         };
         assert_ne!(Tags::e("b", &e, 35.0), Tags::e("b", &other, 35.0));
+    }
+
+    /// F1: a river cuts the rim of the lake beside it (no rim floor). The lake drops to its
+    /// spill on the carved ground (outlet incision), and the lake checks pass on it.
+    #[test]
+    fn a_channel_cutting_a_lake_outlet_lowers_the_lake_to_its_new_spill() {
+        let dir = tempfile::tempdir().expect("temp");
+        let world = geom::World { w: 96, h: 64 };
+        let grid = testing::grid_dir_of(
+            dir.path(),
+            world,
+            &testing::lake_by_river(world),
+            &vec![18u8; (world.w * world.h) as usize],
+        );
+        // Wide channels on the small grid (radii of several cells).
+        let table = fs::read_to_string(grid.join("water.toml")).unwrap();
+        let wide = table.replace("m3s_per_km2 = 0.56", "m3s_per_km2 = 36000.0");
+        assert_ne!(wide, table, "the table's m3s_per_km2 moved");
+        fs::write(grid.join("water.toml"), wide).unwrap();
+        // Run and finish at `tile`: (passed, report, labels, bodies, stages, surface, body).
+        let at = |tile: u64| {
+            let o = Options {
+                grid: grid.clone(),
+                work: dir.path().join(format!("work-{tile}")),
+                tile,
+                threads: 2,
+                water: Some(grid.join("water.toml")),
+                river_km2: Some(1e-3),
+            };
+            run(&o).expect("run");
+            let f = finish(&FinishOptions {
+                grid: grid.clone(),
+                work: o.work.clone(),
+                ground: o.work.join("carved.f32"),
+                out: dir.path().join(format!("out-{tile}")),
+                tile,
+                threads: 2,
+                water: o.water.clone(),
+                river_km2: o.river_km2,
+                spots: Vec::new(),
+            })
+            .expect("finish");
+            let read =
+                |p: &Path| -> Value { serde_json::from_slice(&fs::read(p).unwrap()).unwrap() };
+            let words = |p: &str| -> Vec<[u8; 4]> {
+                fs::read(f.out.join(p))
+                    .unwrap()
+                    .chunks(4)
+                    .map(|c| c.try_into().unwrap())
+                    .collect()
+            };
+            (
+                f.passed,
+                read(&f.out.join("report.json")),
+                read(&o.work.join("bodies.json")),
+                read(&f.out.join("bodies.json")),
+                read(&o.work.join("stages.json")),
+                words("water-surface.f32"),
+                words("water-body.u32"),
+            )
+        };
+        let (passed, report, labels, bodies, stages, surface_w, body_w) = at(32);
+        assert!(passed, "{}", report["checks"]);
+        for k in [
+            "lake_not_flat",
+            "lake_leaks",
+            "lake_off_sill",
+            "lake_exit_surface",
+        ] {
+            assert_eq!(report["checks"][k], 0, "{k}");
+        }
+        let surface: Vec<f32> = surface_w.iter().map(|&b| f32::from_le_bytes(b)).collect();
+        let body: Vec<u32> = body_w.iter().map(|&b| u32::from_le_bytes(b)).collect();
+        // The bowl's lake (its pit at (48, 30)) is lowered and stands at its new level.
+        let id = body[30 * 96 + 48];
+        let level = |b: &Value| {
+            b["bodies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["id"] == id)
+                .and_then(|e| e["level_m"].as_f64())
+                .unwrap()
+        };
+        let (from, to) = (level(&labels), level(&bodies));
+        assert!(to < from - 0.1, "lake {id} from {from} m to {to} m");
+        let cells: Vec<usize> = (0..body.len()).filter(|&k| body[k] == id).collect();
+        assert!(cells.len() > 20, "{} lake cells", cells.len());
+        for k in cells {
+            assert_eq!(f64::from(surface[k]), to, "lake cell {k}");
+        }
+        // Alike at every tiling.
+        let one = at(16);
+        assert_eq!((&one.3, &one.5, &one.6), (&bodies, &surface_w, &body_w));
+        let r = &stages["relevelled"];
+        assert_eq!(r["lakes"], 1, "{r}");
     }
 
     #[test]

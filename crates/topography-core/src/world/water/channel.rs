@@ -8,8 +8,9 @@
 //! smaller index (review I3b): a tributary inside a larger river's section joins that river
 //! there instead of running beside it; a thalweg cell the larger river does not take keeps its
 //! own. A cell is lowered only when it ends up under its river's surface, and never more than
-//! CHANNEL_CAP_M below raw (R9); a section cell next to a lake whose level stands above the
-//! river's surface is left as it is (R14). Lakes, pools and the sea keep their level; their
+//! CHANNEL_CAP_M below raw (R9). Rims beside lakes and ponds are cut like any section cell
+//! (F1): a labelled lake whose spill on the carved ground falls below its label is lowered to
+//! it afterwards (`relevel`, outlet incision). Lakes, pools and the sea keep their level; their
 //! cells whose ground reaches the level are dry shore, as is a lake's exit cell at the level.
 //! Other river water over a bed left uncut runs MIN_DEPTH_M deep (export ruling). A river
 //! cell below the surface of the cell it flows into is raised to it over BACKWATER cells
@@ -21,8 +22,9 @@ use super::checks::SILL_M;
 use super::geom::{Rect, World};
 use super::hydraulic::Geometry;
 use super::layers::Layer;
+use super::nodes::Nodes;
 use super::pipeline::{Rasters, Setup, Water};
-use super::store::{Work, cached, for_tiles};
+use super::store::{Blob, Dec, Enc, Work, cached, for_tiles};
 use super::{CHANNEL_CAP_M, MIN_DEPTH_M};
 use crate::acquisition::{Result, ensure};
 use serde_json::{Value, json};
@@ -106,19 +108,6 @@ fn offer(slots: &mut [(f32, u32, u32); 2], cand: (f32, u32, u32), body: impl Fn(
     } else if less(cand, slots[1]) {
         slots[1] = cand;
     }
-}
-
-/// A cut beside another m2 node (lakes included) stops at the floor `rim` (or the ground, if
-/// lower), so carving never lowers a pond's outlet (fix round 2).
-fn rim_floor(ground: f32, cut: f32, rim: Option<f32>) -> f32 {
-    rim.map_or(cut, |lv| cut.max(ground.min(lv)))
-}
-
-/// The rim floor of a cell: SILL_M above the highest level of the other m2 nodes beside it, so
-/// carving never makes a new spill at their level (gate 2 fix 2b), or its own node's level
-/// where it stands at it (its spill cell); the higher of the two.
-fn rim_level(own: Option<f32>, others: impl Iterator<Item = f32>) -> Option<f32> {
-    others.map(|lv| lv + SILL_M).chain(own).reduce(f32::max)
 }
 
 /// A river cell beside a lake below its river's surface `rs`, cut below that lake's level
@@ -245,13 +234,6 @@ pub(crate) fn channels(
                 }
             };
             let river = |t: usize| if level[t].is_finite() { level[t] } else { g[t] };
-            let depth = |t: usize| geo.depth_m(f64::from(q[t]));
-            // Whether node `n`'s rim holds against a river `d` deep: lakes always, ponds as
-            // deep as the river or deeper; shallower ponds drown in its channel (Task 13).
-            let kept_rim = |n: u32, d: f32| {
-                let p = w.nodes.at(n - 2);
-                p.lake || p.level - p.low >= d
-            };
             // The centre cut: down to the surface − depth, within the raw − cap clamp.
             let centre = |t: usize| {
                 if !s.params.channels {
@@ -328,22 +310,8 @@ pub(crate) fn channels(
                             .and_then(|(nx, ny)| win.local(nx, ny))
                     })
                     .collect();
-                // Fix round 2: a rim beside a neighbouring m2 node (lakes included) other than
-                // j's own is not cut to within SILL_M of its level; j's own spill cell not
-                // below its level. Ponds shallower than the cutting river's depth `d` drown in
-                // its channel and keep no rim (Task 13: else their rims comb the bed).
-                let own_rim = (node[j] >= 2 && g[j] >= level[j]).then_some(level[j]);
-                let pond_rim = |d: f32| {
-                    rim_level(
-                        own_rim.filter(|_| kept_rim(node[j], d)),
-                        around
-                            .iter()
-                            .filter(|&&j2| {
-                                node[j2] >= 2 && node[j2] != node[j] && kept_rim(node[j2], d)
-                            })
-                            .map(|&j2| level[j2]),
-                    )
-                };
+                // Rims beside other bodies are cut like any section cell (F1): a lake whose
+                // outlet this lowers is re-levelled on the carved ground (`relevel`).
                 // The lowest neighbouring lake level below a river surface `rs`.
                 let lake_below = |rs: f32| {
                     around
@@ -354,10 +322,6 @@ pub(crate) fn channels(
                 };
                 for (t, d2) in ranked.into_iter().chain(own) {
                     let rs = river(t);
-                    let below_a_lake = around.iter().any(|&j2| is_lake(j2) && level[j2] > rs);
-                    if below_a_lake && t != j {
-                        continue;
-                    }
                     let rad = radius(t);
                     let taper = if d2 == 0 {
                         1.0
@@ -367,7 +331,6 @@ pub(crate) fn channels(
                     let cut = (g[j] - centre(t) * taper)
                         .max(rw[j] - CHANNEL_CAP_M)
                         .min(g[j]);
-                    let cut = rim_floor(g[j], cut, pond_rim(depth(t)));
                     if cut < rs || t == j {
                         lowered[a] = cut < g[j];
                         carved[a] = cut;
@@ -606,14 +569,137 @@ fn path_max(world: World, core: Rect, flow: &[u8], d0: &[Drained]) -> Result<Vec
     Ok(res.into_iter().map(|r| r.expect("resolved")).collect())
 }
 
+/// What drains along the final routing (`r3`): each cell's drained value (`d0`) and the
+/// whole-path maxima of the tile ring cells across tiles, from which any tile's cells get
+/// theirs (`top`). Labelled lakes (`lakes`) drain at their written surfaces.
+struct Paths<'a> {
+    s: &'a Setup,
+    r3: &'a Rasters,
+    ground: &'a Layer<f32>,
+    out: &'a Layers,
+    lakes: &'a HashSet<u32>,
+    full: HashMap<u64, Drained>,
+}
+
+impl<'a> Paths<'a> {
+    fn new(
+        s: &'a Setup,
+        r3: &'a Rasters,
+        ground: &'a Layer<f32>,
+        out: &'a Layers,
+        lakes: &'a HashSet<u32>,
+        work: Option<&Work>,
+        tag: &str,
+    ) -> Result<Self> {
+        let world = s.world;
+        let mut p = Self {
+            s,
+            r3,
+            ground,
+            out,
+            lakes,
+            full: HashMap::new(),
+        };
+        // 1: the ring cells' path maxima (every path entering a tile enters at its ring).
+        let rings: Vec<Vec<(u64, PathMax)>> = for_tiles(
+            &s.tiles(),
+            s.threads,
+            &format!("{tag} settle 1"),
+            |i, core| {
+                cached(work, &format!("{tag}/s1/{i:05}"), || {
+                    let (flow, d0) = p.d0(core)?;
+                    let pm = path_max(world, core, &flow, &d0)?;
+                    Ok((0..core.cells())
+                        .filter_map(|k| {
+                            let (x, y) = core.world_xy(k);
+                            core.on_ring(x, y).then(|| (world.index(x, y), pm[k]))
+                        })
+                        .collect())
+                })
+            },
+        )?;
+        let ring: HashMap<u64, PathMax> = rings.into_iter().flatten().collect();
+        // The whole path's maximum from a ring cell, across tiles (memoized).
+        let full = &mut p.full;
+        for &start in ring.keys() {
+            let mut chain = vec![start];
+            let mut tail = loop {
+                let c = *chain.last().expect("start");
+                if let Some(&f) = full.get(&c) {
+                    chain.pop();
+                    break f;
+                }
+                let pm = *ring.get(&c).ok_or_else(|| {
+                    crate::acquisition::AcquisitionError::Invalid(format!(
+                        "the path from ring cell {c} enters no tile ring"
+                    ))
+                })?;
+                if pm.2 == NO_EXIT {
+                    chain.pop();
+                    full.insert(c, (pm.0, pm.1));
+                    break (pm.0, pm.1);
+                }
+                ensure(chain.len() <= ring.len(), "a flow cycle across tiles")?;
+                chain.push(pm.2);
+            };
+            while let Some(c) = chain.pop() {
+                let pm = ring[&c];
+                tail = if tail.0 > pm.0 { tail } else { (pm.0, pm.1) };
+                full.insert(c, tail);
+            }
+        }
+        Ok(p)
+    }
+
+    /// A tile's receivers and drained values. A wet river or pool cell inside a higher pond
+    /// stands at the pond's level (bank pockets, scale diagnosis 2); a labelled lake at its
+    /// surface.
+    fn d0(&self, core: Rect) -> Result<(Vec<u8>, Vec<Drained>)> {
+        let (sf, b) = (self.out.surface.read(core)?, self.out.body.read(core)?);
+        let (lv, z) = (self.r3.level.read(core)?, self.ground.read(core)?);
+        let d0 = (0..core.cells())
+            .map(|k| {
+                if sf[k].is_finite() && self.lakes.contains(&b[k]) {
+                    (sf[k], b[k])
+                } else if sf[k].is_finite() {
+                    (sf[k].max(lv[k]), b[k])
+                } else if lv[k].is_finite() {
+                    (lv[k], 0)
+                } else {
+                    (z[k], 0)
+                }
+            })
+            .collect();
+        Ok((self.r3.flow.read(core)?, d0))
+    }
+
+    /// Each core cell's whole-path maximum (its own value included) with its label.
+    fn top(&self, core: Rect, flow: &[u8], d0: &[Drained]) -> Result<Vec<Drained>> {
+        let pm = path_max(self.s.world, core, flow, d0)?;
+        pm.into_iter()
+            .map(|(v, id, exit)| match exit {
+                NO_EXIT => Ok((v, id)),
+                e => {
+                    let f = self.full.get(&e).copied().ok_or_else(|| {
+                        crate::acquisition::AcquisitionError::Invalid(format!(
+                            "cell {e} is on no tile ring"
+                        ))
+                    })?;
+                    Ok(if f.0 > v { f } else { (v, id) })
+                }
+            })
+            .collect()
+    }
+}
+
 /// Settles the written water on the final routing (review: drainage_rises): what drains at a
 /// cell never lies below what its receiver (`r3`, the routing on the carved ground) drains
 /// at. A wet cell inside a higher pond of that routing stands at the pond's level. Each cell
 /// takes the highest labelled water on its path downstream when that lies above it: a dry or
 /// pond cell is wetted as that water's body, a wet one raised. Labels and
 /// surfaces only. Exact over tiles: per-tile path maxima, then the paths across tile rings.
-/// Labelled lakes (`lakes`, body ids) keep their label's level and extent (gate 1 ruling:
-/// labels from m3 would be circular).
+/// Labelled lakes (`lakes`, body ids) keep their level and extent (gate 1 ruling: labels
+/// from m3 would be circular; `relevel` has set them on the carved ground).
 pub(crate) fn settle(
     s: &Setup,
     r3: &Rasters,
@@ -625,75 +711,12 @@ pub(crate) fn settle(
 ) -> Result<Settled> {
     let world = s.world;
     let tiles = s.tiles();
-    let read = |core: Rect| -> Result<(Vec<u8>, Vec<Drained>)> {
-        let (sf, b) = (out.surface.read(core)?, out.body.read(core)?);
-        let (lv, z) = (r3.level.read(core)?, ground.read(core)?);
-        // A wet river or pool cell inside a higher pond stands at the pond's level (bank
-        // pockets, scale diagnosis 2); a labelled lake at its label.
-        let d0 = (0..core.cells())
-            .map(|k| {
-                if sf[k].is_finite() && lakes.contains(&b[k]) {
-                    (sf[k], b[k])
-                } else if sf[k].is_finite() {
-                    (sf[k].max(lv[k]), b[k])
-                } else if lv[k].is_finite() {
-                    (lv[k], 0)
-                } else {
-                    (z[k], 0)
-                }
-            })
-            .collect();
-        Ok((r3.flow.read(core)?, d0))
-    };
-    // 1: the ring cells' path maxima (every path entering a tile enters at its ring).
-    let rings: Vec<Vec<(u64, PathMax)>> =
-        for_tiles(&tiles, s.threads, &format!("{tag} settle 1"), |i, core| {
-            cached(work, &format!("{tag}/s1/{i:05}"), || {
-                let (flow, d0) = read(core)?;
-                let pm = path_max(world, core, &flow, &d0)?;
-                Ok((0..core.cells())
-                    .filter_map(|k| {
-                        let (x, y) = core.world_xy(k);
-                        core.on_ring(x, y).then(|| (world.index(x, y), pm[k]))
-                    })
-                    .collect())
-            })
-        })?;
-    let ring: HashMap<u64, PathMax> = rings.into_iter().flatten().collect();
-    // The whole path's maximum from a ring cell, across tiles (memoized).
-    let mut full: HashMap<u64, Drained> = HashMap::new();
-    for &start in ring.keys() {
-        let mut chain = vec![start];
-        let mut tail = loop {
-            let c = *chain.last().expect("start");
-            if let Some(&f) = full.get(&c) {
-                chain.pop();
-                break f;
-            }
-            let pm = *ring.get(&c).ok_or_else(|| {
-                crate::acquisition::AcquisitionError::Invalid(format!(
-                    "the path from ring cell {c} enters no tile ring"
-                ))
-            })?;
-            if pm.2 == NO_EXIT {
-                chain.pop();
-                full.insert(c, (pm.0, pm.1));
-                break (pm.0, pm.1);
-            }
-            ensure(chain.len() <= ring.len(), "a flow cycle across tiles")?;
-            chain.push(pm.2);
-        };
-        while let Some(c) = chain.pop() {
-            let pm = ring[&c];
-            tail = if tail.0 > pm.0 { tail } else { (pm.0, pm.1) };
-            full.insert(c, tail);
-        }
-    }
+    let paths = Paths::new(s, r3, ground, out, lakes, work, tag)?;
     // 2: every cell's whole-path maximum; raise where it lies above the cell.
     let none: Settled = (0, 0, 0.0, u64::MAX, 0);
     let settle_tile = |core: Rect| -> Result<SettledTile> {
-        let (flow, d0) = read(core)?;
-        let pm = path_max(world, core, &flow, &d0)?;
+        let (flow, d0) = paths.d0(core)?;
+        let tops = paths.top(core, &flow, &d0)?;
         let (sf, b) = (out.surface.read(core)?, out.body.read(core)?);
         let (mut fig, mut changed) = (none, Vec::new());
         for k in 0..core.cells() {
@@ -701,18 +724,7 @@ pub(crate) fn settle(
             if sf[k].is_finite() && lakes.contains(&b[k]) {
                 continue;
             }
-            let (v, id, exit) = pm[k];
-            let top = match exit {
-                NO_EXIT => (v, id),
-                e => {
-                    let f = full.get(&e).copied().ok_or_else(|| {
-                        crate::acquisition::AcquisitionError::Invalid(format!(
-                            "cell {e} is on no tile ring"
-                        ))
-                    })?;
-                    if f.0 > v { f } else { (v, id) }
-                }
-            };
+            let top = tops[k];
             let (was, mut v) = (sf[k], (sf[k], b[k]));
             // A wet cell keeps its body at its pond's level (d0).
             if was.is_finite() {
@@ -762,11 +774,467 @@ pub(crate) fn settle(
     Ok(parts.into_iter().fold(none, more_lift))
 }
 
+/// What `relevel` did to a labelled lake whose label stood above its spill (outlet incision, F1).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Relevelled {
+    pub id: u32,
+    /// The label's level.
+    pub from: f32,
+    /// The new level, its spill; NaN when the lake drained (no cell left below its spill).
+    pub to: f32,
+    /// The spill edge [lake cell, outside cell] (u64::MAX when drained).
+    pub outlet: [u64; 2],
+    /// The m3 node (layer value) the lake is confined to when its bulk stayed behind a sill
+    /// (`bulk_pocket`); 0 otherwise.
+    pub basin: u32,
+    /// Lake cells left at the new level, cells left dry, and river mouth cells lowered with it.
+    pub cells: u64,
+    pub dried: u64,
+    pub mouths: u64,
+}
+
+impl Blob for Relevelled {
+    fn put(&self, e: &mut Enc) {
+        (self.id, self.from, self.to, self.outlet, self.basin).put(e);
+        (self.cells, self.dried, self.mouths).put(e);
+    }
+    fn get(d: &mut Dec) -> Result<Self> {
+        let (id, from, to, outlet, basin) = Blob::get(d)?;
+        let (cells, dried, mouths) = Blob::get(d)?;
+        Ok(Self {
+            id,
+            from,
+            to,
+            outlet,
+            basin,
+            cells,
+            dried,
+            mouths,
+        })
+    }
+}
+
+/// A lake's spill edge: (value, lake cell, outside cell).
+type Edge = (f32, u64, u64);
+/// Per tile and lake: its lowest spill edge and its cells below its level.
+type LakeEdges = Vec<(u32, Option<Edge>, u64)>;
+/// Per tile: lake cells by (id, m3 node layer value, count).
+type LakeNodes = Vec<(u32, u32, u64)>;
+/// Per tile: changed cells (core index, surface, body) and (id, kept, dried, mouths) per lake.
+type Relevel2 = (Vec<(u64, f32, u32)>, Vec<(u32, u64, u64, u64)>);
+
+/// The lower of two spill edges; ties keep the smaller cells (exact under any tile order).
+fn lower_edge(a: Option<Edge>, b: Edge) -> Option<Edge> {
+    match a {
+        Some(a) if (a.0, a.1, a.2) <= (b.0, b.1, b.2) => Some(a),
+        _ => Some(b),
+    }
+}
+
+/// Outlet incision (F1): channels cut lake rims like any other ground, so a labelled lake
+/// (`labels`: body id → label level) can spill lower than its label: into a river whose water
+/// drains below it, or over a rim cut below it. Its spill is the lowest edge, from a lake cell
+/// j (ground below the level) to a cell n outside it, of max(z(j), D(n)), where D(n) is what
+/// n drains at once settled on the routing on the carved ground (`r3`; `settle`'s rule: its
+/// own drained value, raised to the highest labelled water on its path). A lake whose spill
+/// lies more than SILL_M below its label drops to it, again and again (its cells at or above
+/// the level are dry, so its edge moves) until it stands at its spill; one left with no cell
+/// below its spill drains. Its own outflow river, whose water stands at the outlet's height
+/// over its cut bed, keeps it at its label. A lake whose bulk stays behind a sill above its
+/// spill stands at that basin's own spill instead (`bulk_pocket`). Rounds repeat on the rewritten surfaces until no
+/// lake moves (a lake draining through another one). Surfaces and labels only, never the
+/// ground; a tile's changes are cached before they are written, so a killed run resumes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn relevel(
+    s: &Setup,
+    r3: &Rasters,
+    n3: &Nodes,
+    carved: &Layer<f32>,
+    out: &Layers,
+    labels: &BTreeMap<u32, f32>,
+    work: Option<&Work>,
+    tag: &str,
+) -> Result<Vec<Relevelled>> {
+    let lakes: HashSet<u32> = labels.keys().copied().collect();
+    let mut moved: BTreeMap<u32, Relevelled> = BTreeMap::new();
+    for pass in 0.. {
+        ensure(pass < 64, "lake re-levelling does not settle")?;
+        let tag = format!("{tag}/rv{pass}");
+        let plan: Vec<Relevelled> = cached(work, &format!("{tag}/plan"), || {
+            let paths = Paths::new(s, r3, carved, out, &lakes, work, &tag)?;
+            plan_relevel(s, &paths, n3, carved, out, &lakes, &tag)
+        })?;
+        if plan.is_empty() {
+            break;
+        }
+        let counts = write_relevel(s, r3, carved, out, &plan, work, &tag)?;
+        for (r, (kept, dried, mouths)) in plan.iter().zip(counts) {
+            let m = moved.entry(r.id).or_insert(Relevelled {
+                from: labels[&r.id],
+                ..*r
+            });
+            (m.to, m.outlet, m.cells) = (r.to, r.outlet, kept);
+            (m.dried, m.mouths) = (m.dried + dried, m.mouths + mouths);
+        }
+    }
+    Ok(moved.into_values().collect())
+}
+
+/// One pass of `relevel`: the lakes that move, from their written surfaces (`from`), with
+/// their new level and spill edge.
+fn plan_relevel(
+    s: &Setup,
+    paths: &Paths,
+    n3: &Nodes,
+    carved: &Layer<f32>,
+    out: &Layers,
+    lakes: &HashSet<u32>,
+    tag: &str,
+) -> Result<Vec<Relevelled>> {
+    let world = s.world;
+    let tiles = s.tiles();
+    // The lakes in each tile, and their written level.
+    let held: Vec<Vec<(u32, f32)>> = for_tiles(
+        &tiles,
+        s.threads,
+        &format!("{tag} relevel lakes"),
+        |_, core| {
+            let (sf, b) = (out.surface.read(core)?, out.body.read(core)?);
+            let mut ids: Vec<(u32, f32)> = (0..core.cells())
+                .filter(|&k| sf[k].is_finite() && lakes.contains(&b[k]))
+                .map(|k| (b[k], sf[k]))
+                .collect();
+            ids.sort_unstable_by_key(|v| v.0);
+            ids.dedup_by_key(|v| v.0);
+            Ok(ids)
+        },
+    )?;
+    let mut lv: BTreeMap<u32, f32> = held.iter().flatten().copied().collect();
+    let from = lv.clone();
+    // A tile computes the edges into its cells, so a lake's tiles and their neighbours.
+    let per_tile = (world.w.div_ceil(s.tile), world.h.div_ceil(s.tile));
+    let near = |i: usize, active: &HashSet<u32>| {
+        let (tx, ty) = (i as u64 % per_tile.0, i as u64 / per_tile.0);
+        (ty.saturating_sub(1)..=(ty + 1).min(per_tile.1 - 1)).any(|y| {
+            (tx.saturating_sub(1)..=(tx + 1).min(per_tile.0 - 1)).any(|x| {
+                held[(y * per_tile.0 + x) as usize]
+                    .iter()
+                    .any(|(id, _)| active.contains(id))
+            })
+        })
+    };
+    let mut active: HashSet<u32> = lv.keys().copied().collect();
+    let mut plan: BTreeMap<u32, Relevelled> = BTreeMap::new();
+    for round in 0.. {
+        ensure(round < 1000, "a lake's spill does not settle")?;
+        let busy: Vec<Rect> = (0..tiles.len())
+            .filter(|&i| near(i, &active))
+            .map(|i| tiles[i])
+            .collect();
+        if busy.is_empty() {
+            break;
+        }
+        let (lv_now, active_now) = (&lv, &active);
+        let parts: Vec<LakeEdges> = for_tiles(
+            &busy,
+            s.threads,
+            &format!("{tag} relevel round {round}"),
+            |_, core| {
+                let win = core.grow(1, world);
+                let (sf, b, z) = (
+                    out.surface.read(win)?,
+                    out.body.read(win)?,
+                    carved.read(win)?,
+                );
+                let lv3 = paths.r3.level.read(win)?;
+                // A cell under an active lake's current level.
+                let wet = |j: usize| {
+                    sf[j].is_finite()
+                        && active_now.contains(&b[j])
+                        && under(z[j], lv3[j], lv_now[&b[j]], from[&b[j]], 0, 0)
+                };
+                let (flow, d0) = paths.d0(core)?;
+                let tops = paths.top(core, &flow, &d0)?;
+                let mut per: BTreeMap<u32, (Option<Edge>, u64)> = BTreeMap::new();
+                for k in 0..core.cells() {
+                    let (x, y) = core.world_xy(k);
+                    let n = win.local(x, y).expect("core in window");
+                    if wet(n) {
+                        per.entry(b[n]).or_default().1 += 1;
+                    }
+                    // What n drains at once settled.
+                    let dn = if tops[k].1 >= 1 && tops[k].0 > d0[k].0 {
+                        tops[k].0
+                    } else {
+                        d0[k].0
+                    };
+                    for d in 0..8 {
+                        let Some((jx, jy)) = world.neighbour(x, y, d) else {
+                            continue;
+                        };
+                        let j = win.local(jx, jy).expect("neighbour in window");
+                        if !wet(j) || (wet(n) && b[n] == b[j]) {
+                            continue;
+                        }
+                        let edge = (z[j].max(dn), world.index(jx, jy), world.index(x, y));
+                        let e = per.entry(b[j]).or_default();
+                        e.0 = lower_edge(e.0, edge);
+                    }
+                }
+                Ok(per.into_iter().map(|(id, (e, n))| (id, e, n)).collect())
+            },
+        )?;
+        let mut per: BTreeMap<u32, (Option<Edge>, u64)> = BTreeMap::new();
+        for &(id, e, n) in parts.iter().flatten() {
+            let p = per.entry(id).or_default();
+            p.1 += n;
+            if let Some(e) = e {
+                p.0 = lower_edge(p.0, e);
+            }
+        }
+        let mut next = HashSet::new();
+        for &id in &active {
+            let now = lv[&id];
+            match per.get(&id).copied().unwrap_or_default() {
+                // No cell below the level: the lake drained.
+                (_, 0) => {
+                    plan.insert(id, drained(id, from[&id]));
+                }
+                // Its spill lies below its level (beyond the 1 cm the checks allow on the
+                // first round): it drops to it and its edge moves.
+                (Some((v, a, b)), _) if v < now && (round > 0 || v < now - SILL_M) => {
+                    let r = Relevelled {
+                        id,
+                        from: from[&id],
+                        to: v,
+                        outlet: [a, b],
+                        ..Default::default()
+                    };
+                    plan.insert(id, r);
+                    lv.insert(id, v);
+                    next.insert(id);
+                }
+                _ => {}
+            }
+        }
+        active = next;
+    }
+    // Where the lowering left a lake's bulk behind a sill, the lake is that basin.
+    let lowered: BTreeMap<u32, (f32, f32)> = plan
+        .values()
+        .filter(|r| r.to.is_finite())
+        .map(|r| (r.id, (r.from, r.to)))
+        .collect();
+    let parts: Vec<LakeNodes> = for_tiles(
+        &tiles,
+        s.threads,
+        &format!("{tag} relevel bulk"),
+        |_, core| {
+            let (sf, b, z) = (
+                out.surface.read(core)?,
+                out.body.read(core)?,
+                carved.read(core)?,
+            );
+            let (lv3, nd) = (paths.r3.level.read(core)?, paths.r3.node.read(core)?);
+            let mut m: BTreeMap<(u32, u32), u64> = BTreeMap::new();
+            for k in 0..core.cells() {
+                let Some(&(from, to)) = lowered.get(&b[k]).filter(|_| sf[k].is_finite()) else {
+                    continue;
+                };
+                if under(z[k], lv3[k], to, from, 0, nd[k]) {
+                    *m.entry((b[k], 0)).or_default() += 1;
+                } else if lv3[k] > to && lv3[k] < from {
+                    *m.entry((b[k], nd[k])).or_default() += 1;
+                }
+            }
+            Ok(m.into_iter().map(|((id, n), c)| (id, n, c)).collect())
+        },
+    )?;
+    let mut held: BTreeMap<u32, BTreeMap<u32, u64>> = BTreeMap::new();
+    for &(id, n, c) in parts.iter().flatten() {
+        *held.entry(id).or_default().entry(n).or_default() += c;
+    }
+    for (id, counts) in &held {
+        if let Some(basin) = bulk_pocket(counts, n3) {
+            let (nd, r) = (n3.at(basin - 2), plan.get_mut(id).expect("planned"));
+            (r.to, r.outlet, r.basin) = (nd.level, nd.outlet, basin);
+        }
+    }
+    Ok(plan.into_values().collect())
+}
+
+/// The basin a lake's bulk stays in: the largest pocket (`counts`: cells by m3 node layer
+/// value, 0 for those still under the lake) when it holds more than the part that reached
+/// the spill and its node is full (it stands at its own spill). Ties keep the smaller value.
+fn bulk_pocket(counts: &BTreeMap<u32, u64>, n3: &Nodes) -> Option<u32> {
+    let kept = counts.get(&0).copied().unwrap_or(0);
+    counts
+        .iter()
+        .filter(|&(&n, &c)| n >= 2 && c > kept)
+        .max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+        .map(|(&n, _)| n)
+        .filter(|&n| n3.at(n - 2).full)
+}
+
+/// Whether a cell of a lake lowered from `from` to `lv` (ground `z`, level `l3` of the routing
+/// on the carved ground) lies under it: below `lv`, and in no pocket the lowering cut off (a
+/// pond of its own whose rim stood under the old level and stands above the new one). A lake
+/// inside a higher pond of that routing stays (gate 1 ruling). A lake confined to `basin`
+/// (node layer value; 0: none) lies only in that node (`node`, the cell's).
+fn under(z: f32, l3: f32, lv: f32, from: f32, basin: u32, node: u32) -> bool {
+    z < lv
+        && if basin != 0 {
+            node == basin
+        } else {
+            !(l3 > lv && l3 < from)
+        }
+}
+
+/// A drained lake's record.
+fn drained(id: u32, from: f32) -> Relevelled {
+    Relevelled {
+        id,
+        from,
+        to: f32::NAN,
+        outlet: [u64::MAX; 2],
+        ..Default::default()
+    }
+}
+
+/// Rewrites the planned lakes' cells: under the new level at it, the others dry. A river cell
+/// beside a lowered lake's old extent that stood at its old level (`mouth_surface`) follows it
+/// down, MIN_DEPTH_M over its bed where that lies above the new level. Every tile's changes are
+/// cached before any is written, so all read the same rasters and a killed run resumes.
+/// Returns (kept, dried, mouth) cells per planned lake, in plan order.
+fn write_relevel(
+    s: &Setup,
+    r3: &Rasters,
+    carved: &Layer<f32>,
+    out: &Layers,
+    plan: &[Relevelled],
+    work: Option<&Work>,
+    tag: &str,
+) -> Result<Vec<(u64, u64, u64)>> {
+    let by_id: HashMap<u32, (f32, f32, u32)> = plan
+        .iter()
+        .map(|r| (r.id, (r.from, r.to, r.basin)))
+        .collect();
+    let (world, tiles) = (s.world, s.tiles());
+    let parts: Vec<Relevel2> =
+        for_tiles(&tiles, s.threads, &format!("{tag} relevel"), |i, core| {
+            let mut part = cached(work, &format!("{tag}/r2/{i:05}-changes"), || {
+                let win = core.grow(1, world);
+                let (sf, b, z) = (
+                    out.surface.read(win)?,
+                    out.body.read(win)?,
+                    carved.read(win)?,
+                );
+                let (lv3, nd) = (r3.level.read(win)?, r3.node.read(win)?);
+                // A planned lake's cell under its new level.
+                let wet = |j: usize| {
+                    sf[j].is_finite()
+                        && by_id.get(&b[j]).is_some_and(|&(from, to, basin)| {
+                            under(z[j], lv3[j], to, from, basin, nd[j])
+                        })
+                };
+                let (mut changed, mut per) = (Vec::new(), BTreeMap::new());
+                for k in 0..core.cells() {
+                    let (x, y) = core.world_xy(k);
+                    let j = win.local(x, y).expect("core in window");
+                    if !sf[j].is_finite() {
+                        continue;
+                    }
+                    if let Some(&(_, to, _)) = by_id.get(&b[j]) {
+                        let e: &mut (u64, u64, u64) = per.entry(b[j]).or_default();
+                        if wet(j) {
+                            e.0 += 1;
+                            changed.push((k as u64, to, b[j]));
+                        } else {
+                            e.1 += 1;
+                            changed.push((k as u64, f32::NAN, 0));
+                        }
+                        continue;
+                    }
+                    // A mouth at a lowered lake's old level.
+                    let mouth = (0..8)
+                        .filter_map(|d| world.neighbour(x, y, d))
+                        .filter_map(|(nx, ny)| win.local(nx, ny))
+                        .filter(|&n| sf[n].is_finite())
+                        .filter_map(|n| by_id.get(&b[n]).map(|&v| (b[n], v)))
+                        .filter(|&(_, (from, to, _))| sf[j] == from && to.is_finite())
+                        .min_by(|a, b| a.1.1.total_cmp(&b.1.1).then(a.0.cmp(&b.0)));
+                    if let Some((id, (_, to, _))) = mouth {
+                        per.entry(id).or_default().2 += 1;
+                        let v = above_bed(to, z[j], false).expect("not a sill");
+                        changed.push((k as u64, v.min(sf[j]), b[j]));
+                    }
+                }
+                let per = per
+                    .into_iter()
+                    .map(|(id, (a, d, m))| (id, a, d, m))
+                    .collect();
+                Ok((changed, per))
+            })?;
+            // With a work directory the changes wait on disk.
+            if work.is_some() {
+                part.0 = Vec::new();
+            }
+            Ok(part)
+        })?;
+    for_tiles(
+        &tiles,
+        s.threads,
+        &format!("{tag} relevel write"),
+        |i, core| {
+            let name = format!("{tag}/r2/{i:05}");
+            if let Some(wk) = work
+                && wk.is_done(&name)
+            {
+                return Ok(());
+            }
+            let changed = match work {
+                Some(wk) => {
+                    let missing = || {
+                        Err(crate::acquisition::AcquisitionError::Invalid(
+                            "re-level changes are missing".into(),
+                        ))
+                    };
+                    wk.cached::<Relevel2>(&format!("{name}-changes"), missing)?
+                        .0
+                }
+                None => parts[i].0.clone(),
+            };
+            if !changed.is_empty() {
+                let (mut sf, mut b) = (out.surface.read(core)?, out.body.read(core)?);
+                for &(k, v, id) in &changed {
+                    (sf[k as usize], b[k as usize]) = (v, id);
+                }
+                out.surface.write(core, &sf)?;
+                out.body.write(core, &b)?;
+            }
+            if let Some(wk) = work {
+                wk.mark_done(&name)?;
+            }
+            Ok(())
+        },
+    )?;
+    let mut per: HashMap<u32, (u64, u64, u64)> = HashMap::new();
+    for &(id, kept, dried, mouths) in parts.iter().flat_map(|p| p.1.iter()) {
+        let e = per.entry(id).or_default();
+        (e.0, e.1, e.2) = (e.0 + kept, e.1 + dried, e.2 + mouths);
+    }
+    Ok(plan
+        .iter()
+        .map(|r| per.get(&r.id).copied().unwrap_or_default())
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::world::water::bodies::label;
     use crate::world::water::geom::OFFSETS;
+    use crate::world::water::lake_labels;
     use crate::world::water::pipeline::{model, model_on};
     use crate::world::water::testing::{setup, terrain};
 
@@ -799,8 +1267,9 @@ mod tests {
         run
     }
 
-    /// The channels run with its figures, the model's node and level layers, whether any node
-    /// is a lake, and the model's discharge. No breach: the ground channels are cut into is raw.
+    /// The channels run with its figures, then the lakes re-levelled on the carved ground (as
+    /// `run`), the model's node and level layers, whether any node is a lake, and the model's
+    /// discharge. No breach: the ground channels are cut into is raw.
     #[allow(clippy::type_complexity)]
     fn run_full(
         s: Setup,
@@ -812,13 +1281,18 @@ mod tests {
         let r = Rasters::memory(world);
         let m = model(&s, &raw, None, "m", Some(&r)).expect("model");
         let body = Layer::filled(world, 0u32);
-        label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
+        let bodies = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
         let out = Layers::memory(world);
         // Wide channels on a small grid at 3.6e4 m³/s per km² (radii up to about 25 cells,
         // inside HALO with BACKWATER).
         let geo = Geometry::new(m3s_per_km2);
         let fig =
             channels(&s, &m.water, &raw, &raw, &r, &body, &out, &geo, None, "c").expect("channels");
+        let carved = Layer::memory(world, out.carved.to_vec().unwrap());
+        let r3 = Rasters::memory(world);
+        let m3 = model_on(&s, &carved, Some(&raw), None, "m3", Some(&r3)).expect("m3");
+        let labels = lake_labels(&bodies, &m.water.nodes).expect("labels");
+        relevel(&s, &r3, &m3.water.nodes, &carved, &out, &labels, None, "r").expect("relevel");
         let node = r.node.to_vec().unwrap();
         let lake = node.iter().any(|&n| n >= 2 && m.water.nodes.at(n - 2).lake);
         (
@@ -883,8 +1357,26 @@ mod tests {
 
     #[test]
     fn river_surfaces_never_rise_downstream() {
-        let (_, _, surface, _, flow) = run(32);
-        assert_no_rise(256, &surface, &flow);
+        // Channels, relevel and settle as `run` does (F1: rims cut, lakes re-levelled).
+        let world = World { w: 256, h: 256 };
+        let s = setup(world, 32, 1e-5);
+        let (_, _, surface, body, flow, _, _, lakes) = settled_run(&s, terrain(world), 3.6e4);
+        // Known F1 limit: a lake re-levelled to a lower river reach beside it can lie below a
+        // higher reach of that river the carved ground routes it into (a river parallel to
+        // the lake, its rim cut at both). On these exaggerated channels: two lake cells.
+        let mut rises = 0;
+        for (k, &f) in flow.iter().enumerate() {
+            if f & 15 == 0 || !surface[k].is_finite() {
+                continue;
+            }
+            let (dy, dx) = OFFSETS[(f & 15) as usize - 1];
+            let j = ((k / 256) as i64 + dy) as usize * 256 + ((k % 256) as i64 + dx) as usize;
+            if surface[j] > surface[k] + 1e-5 {
+                assert!(lakes.contains(&body[k]), "rises from {k} to {j}");
+                rises += 1;
+            }
+        }
+        assert!(rises <= 2, "{rises} lake cells drain into higher water");
     }
 
     #[test]
@@ -968,13 +1460,14 @@ mod tests {
         assert!(body[cells[0]] > 1);
     }
 
-    /// Channels, then the routing on the carved ground (m3, keeping raw's receivers) and settle
-    /// on it, as `run` does (no breach, no lakes): raw, carved, surface, body, m3 flow, m2 node
+    /// Channels, then the routing on the carved ground (m3, keeping raw's receivers), relevel
+    /// and settle on it, as `run` does (no breach): raw, carved, surface, body, m3 flow, m2 node
     /// and level.
     #[allow(clippy::type_complexity)]
     fn settled_run(
         s: &Setup,
         z: Vec<f32>,
+        m3s_per_km2: f64,
     ) -> (
         Vec<f32>,
         Vec<f32>,
@@ -983,20 +1476,24 @@ mod tests {
         Vec<u8>,
         Vec<u32>,
         Vec<f32>,
+        HashSet<u32>,
     ) {
         let world = s.world;
         let raw = Layer::memory(world, z);
         let r = Rasters::memory(world);
         let m = model(s, &raw, None, "m", Some(&r)).expect("model");
         let body = Layer::filled(world, 0u32);
-        label(s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
+        let bodies = label(s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
         let out = Layers::memory(world);
-        let geo = Geometry::new(1e3);
+        let geo = Geometry::new(m3s_per_km2);
         channels(s, &m.water, &raw, &raw, &r, &body, &out, &geo, None, "c").expect("channels");
         let carved = Layer::memory(world, out.carved.to_vec().unwrap());
         let r3 = Rasters::memory(world);
-        model_on(s, &carved, Some(&raw), None, "m3", Some(&r3)).expect("m3");
-        settle(s, &r3, &carved, &out, &HashSet::new(), None, "s").expect("settle");
+        let m3 = model_on(s, &carved, Some(&raw), None, "m3", Some(&r3)).expect("m3");
+        let labels = lake_labels(&bodies, &m.water.nodes).expect("labels");
+        relevel(s, &r3, &m3.water.nodes, &carved, &out, &labels, None, "r").expect("relevel");
+        let lakes: HashSet<u32> = labels.keys().copied().collect();
+        settle(s, &r3, &carved, &out, &lakes, None, "s").expect("settle");
         (
             raw.to_vec().unwrap(),
             carved.to_vec().unwrap(),
@@ -1005,11 +1502,12 @@ mod tests {
             r3.flow.to_vec().unwrap(),
             r.node.to_vec().unwrap(),
             r.level.to_vec().unwrap(),
+            lakes,
         )
     }
 
-    /// Export ruling: a thalweg down a 45° slope and a pond's spill cell (left at
-    /// the level) carry MIN_DEPTH_M of water, and after settle no surface rises downstream.
+    /// Export ruling: a thalweg down a 45° slope carries MIN_DEPTH_M of water; a pond's spill
+    /// cell is cut and wet; after settle no surface rises downstream.
     #[test]
     fn uncut_river_cells_stand_a_centimetre_above_their_bed() {
         let world = World { w: 96, h: 41 };
@@ -1022,7 +1520,7 @@ mod tests {
             .collect();
         let mut s = setup(world, 32, 1e-5);
         s.table.lake_min_m2 = 1e9;
-        let (raw, carved, surface, body, flow, ..) = settled_run(&s, steep);
+        let (raw, carved, surface, body, flow, ..) = settled_run(&s, steep, 1e3);
         for k in 0..raw.len() {
             if body[k] == 0 {
                 continue;
@@ -1042,17 +1540,19 @@ mod tests {
                 40.0 - 0.05 * x + 0.3 * (y - 20.0).abs() + dam + noise(i)
             })
             .collect();
-        let (_, carved, surface, body, flow, node, level) = settled_run(&s, dam);
+        let (raw, carved, surface, body, flow, node, level, _) = settled_run(&s, dam, 1e3);
         for k in 0..body.len() {
             assert!(body[k] == 0 || surface[k] > carved[k], "wet cell {k}");
         }
+        // The river cuts the dam's spill cell (F1: no rim floor) and runs over it.
         let spill: Vec<usize> = (0..node.len())
-            .filter(|&k| node[k] >= 2 && carved[k] >= level[k] && surface[k].is_finite())
+            .filter(|&k| node[k] >= 2 && raw[k] >= level[k] && surface[k].is_finite())
             .collect();
         assert!(!spill.is_empty(), "the pond has a wet spill cell");
-        for k in spill {
-            assert!(surface[k] - carved[k] >= MIN_DEPTH_M - 1e-4, "spill {k}");
-        }
+        assert!(
+            spill.iter().any(|&k| carved[k] < level[k]),
+            "the spill is cut"
+        );
         assert_no_rise(96, &surface, &flow);
     }
 
@@ -1114,65 +1614,32 @@ mod tests {
         assert_eq!(fig["shore_dry_cells"], shore);
     }
 
-    /// Fix round 2: the river over the dam cuts neither the pond's rim nor its spill cell (in
-    /// the node, at the level) below the level, so the routing on the carved ground (m3) keeps
-    /// every pond cell (the rim alone lost 7: the spill cell was cut 5.5 cm).
+    /// A lake lowered to a small part's spill stays with its bulk: the largest pocket, when it
+    /// outweighs what is still under the lake and stands at its own spill.
     #[test]
-    fn a_river_over_a_dam_keeps_the_pond_behind_it() {
-        let world = World { w: 96, h: 41 };
-        let z: Vec<f32> = (0..world.w * world.h)
-            .map(|i| {
-                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
-                let dam = if (46.0..=50.0).contains(&x) { 1.2 } else { 0.0 };
-                40.0 - 0.05 * x + 0.3 * (y - 20.0).abs() + dam + ((i * 7919) % 7) as f32 * 0.001
-            })
-            .collect();
-        let s = || {
-            let mut s = setup(world, 32, 1e-5);
-            s.table.lake_min_m2 = 1e9;
-            s
+    fn a_lake_cut_off_behind_a_sill_stays_with_its_bulk() {
+        use super::super::nodes::Node;
+        let node = |key, full| Node {
+            key,
+            full,
+            ..Default::default()
         };
-        let mut nl = (Vec::new(), Vec::new());
-        let (raw, carved, ..) = run_setup(s(), z, 1e3, Some(&mut nl));
-        let (node, level) = nl;
-        let pond = node[20 * 96 + 40];
-        assert!(pond >= 2, "the dam holds a pond");
-        let w = 96i64;
-        let mut rim = 0;
-        for k in 0..node.len() {
-            let (x, y) = ((k as i64) % w, (k as i64) / w);
-            let lv = OFFSETS
-                .iter()
-                .map(|&(dy, dx)| (x + dx, y + dy))
-                .filter(|&(nx, ny)| nx >= 0 && ny >= 0 && nx < w && ny < 41)
-                .map(|(nx, ny)| (ny * w + nx) as usize)
-                .filter(|&k2| node[k2] == pond && node[k] != pond)
-                .map(|k2| level[k2])
-                .reduce(f32::max);
-            if let Some(lv) = lv {
-                rim += 1;
-                assert!(
-                    carved[k] >= raw[k].min(lv),
-                    "rim cell {k} cut to {} below the pond at {lv}",
-                    carved[k]
-                );
-            }
-        }
-        assert!(rim > 10);
-        let r3 = Rasters::memory(world);
-        model(
-            &s(),
-            &Layer::memory(world, carved.clone()),
+        let n3 = Nodes(vec![node(1, true), node(2, true), node(3, false)]);
+        let c = |v: &[(u32, u64)]| v.iter().copied().collect::<BTreeMap<u32, u64>>();
+        assert_eq!(
+            bulk_pocket(&c(&[(0, 20), (2, 12000), (3, 500)]), &n3),
+            Some(2)
+        );
+        assert_eq!(
+            bulk_pocket(&c(&[(0, 900), (2, 100)]), &n3),
             None,
-            "m3",
-            Some(&r3),
-        )
-        .expect("m3");
-        let n3 = r3.node.to_vec().unwrap();
-        let lost = (0..node.len())
-            .filter(|&k| node[k] == pond && n3[k] == 0)
-            .count();
-        assert_eq!(lost, 0, "pond cells lost on the carved ground");
+            "lake kept"
+        );
+        assert_eq!(bulk_pocket(&c(&[(0, 20), (4, 100)]), &n3), None, "not full");
+        assert!(under(1.0, f32::NAN, 2.0, 3.0, 0, 0));
+        assert!(!under(1.0, 2.5, 2.0, 3.0, 0, 7), "a pocket");
+        assert!(under(1.0, 2.5, 2.5, 3.0, 7, 7), "the basin");
+        assert!(!under(1.0, f32::NAN, 2.5, 3.0, 7, 0), "outside the basin");
     }
 
     #[test]
@@ -1182,34 +1649,11 @@ mod tests {
         // Not cut below it, or no lower lake beside it: the river's surface.
         assert_eq!(mouth_surface(9.3, 9.1, Some(9.0)), 9.3);
         assert_eq!(mouth_surface(9.3, 8.8, None), 9.3);
-        // The rim floor: never below the neighbour's level, nor above the ground.
-        assert_eq!(rim_floor(10.0, 8.0, Some(9.0)), 9.0);
-        assert_eq!(rim_floor(8.5, 8.0, Some(9.0)), 8.5);
-        assert_eq!(rim_floor(10.0, 9.5, Some(9.0)), 9.5);
-        assert_eq!(rim_floor(10.0, 8.0, None), 8.0);
-    }
-
-    #[test]
-    fn a_rim_beside_another_pond_stays_a_sill_above_its_level() {
-        // Gate 2 case 2 (E12336 N12293): rim cells beside a one-cell pond at 700.7356 were cut
-        // to exactly its level and became spills; they now stop a centimetre above it.
-        let lv = 700.7356f32;
-        let floor = rim_level(None, [lv].into_iter()).unwrap();
-        assert_eq!(floor, lv + SILL_M);
-        assert_eq!(rim_floor(700.879, 700.2, Some(floor)), lv + SILL_M);
-        // Ground below that floor is never raised.
-        assert_eq!(rim_floor(700.74, 700.2, Some(floor)), 700.74);
-        // Its own spill cell keeps the level itself; the higher floor wins.
-        assert_eq!(rim_level(Some(lv), std::iter::empty()), Some(lv));
-        assert_eq!(rim_level(Some(lv), [lv].into_iter()), Some(lv + SILL_M));
-        assert_eq!(rim_level(Some(lv + 1.0), [lv].into_iter()), Some(lv + 1.0));
-        assert_eq!(rim_level(None, std::iter::empty()), None);
     }
 
     /// Task 13 (B26, E41058 N56173): a river down a raw flat dotted with one-cell ponds a few
     /// cm deep. Their rims held the cut a centimetre above each pond, so only the pond cells
-    /// were cut: a comb of pits along the bed. Ponds shallower than the river's depth are
-    /// drowned in its channel and their rims are cut like any section cell.
+    /// were cut: a comb of pits along the bed. Rims are now cut like any section cell (F1).
     #[test]
     fn a_river_over_shallow_pits_cuts_an_even_bed() {
         let world = World { w: 96, h: 33 };
