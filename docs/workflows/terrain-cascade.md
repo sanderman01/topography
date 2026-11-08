@@ -381,10 +381,10 @@ refines that carved ground, with the 32 m water as its water channel (32 m river
 about 20 m wide), and its ground under lakes and rivers eases down to the carved 32 m
 ground. The 4 m run (`--coarse` the 32 m output) then holds the 32 m network fixed, adds
 tarns and tributaries and carves the 4 m ground; that is the world's elevation. Outputs
-stay in `hydrology/32m` and `hydrology/4m` (L4 reads the 4 m one). Water amounts follow
-the region class (`configs/hydrology/water-v1.toml`, which Rust and Python both read);
-`--lake-share` and `--tarn-share` set them for every class, `--stream-km2` the 32 m river
-start (default 10 km²). `--l1-class-runs`, `--l2-class-runs` and `--l3-class-runs` mix
+stay in `hydrology/32m` and `hydrology/4m` (L4 reads the 4 m one). The L1 128 m lake picker keeps 1% of the land as lakes and 1% as dry basins in
+classes whose lake-to-catchment ratio r is at most 0.05 (`configs/hydrology/water-v3.toml`);
+`--stream-km2` sets the 32 m river start (default 10 km²). The 32 m and 4 m water now come
+from hydrology v3 (see [Generating fujix from the collage](#generating-fujix-from-the-collage)). `--l1-class-runs`, `--l2-class-runs` and `--l3-class-runs` mix
 per-class expert runs (`cN` subdirectories) over a level's run. The output is a 4 m world
 (`manifest.json`, layers, hillshades of each level) that
 exports directly. Beside `water.u8` (the 4 m mask L4 conditions on; the export ignores it) it holds `water-surface.f32`
@@ -513,7 +513,8 @@ at 64 km), plus 4 bytes a cell for the kept `elevation-raw.f32` (17 GB) and two
 band directories (about 4 GB); `cascade_l4` checks the free space before it starts. L4 still
 writes the 1 m binary `water.u8`, `snow-ice.u8` and `vegetation.u8` (12.9 GB at 64 km), which
 the export ignores; dropping them is left to sub-project 5. The
-chain needs about 44 bytes a 4 m cell while it runs (12 GB at 64 km). Its L3 bands hold
+chain checks for 130 bytes a 4 m cell before it starts (35 GB at 64 km: world layers and raw L3
+about 44 B, the 4 m water work 54 B, erosion routings 28 B). Its L3 bands hold
 about 4.6 GB at 64 km width (8,192 m bands); the 4 m hydrology at 64 km takes 5.5 GB in Rust
 while Python holds about 2.5 GB, so a whole-map chain peaks at about 8 GB (measured in a
 10 GB cap).
@@ -566,8 +567,27 @@ and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
 models: L2 is the collage's 32 m `l2` (seabed included), L1 its `l1`, and the classes are the
 dithered `class32.u8` (class 19 on the canyon plateau), read nearest at 4 m for L3 and
 written as the world's `classes.u8` and `biome.u8`, so L4 gets them too. Wind, snowline,
-treeline and forest come from the collage's `layout.json`. Then the usual 32 m hydrology,
-banded L3, 4 m hydrology and world output follow. The world also holds `description.json`
+treeline and forest come from the collage's `layout.json`. The collage needs its provenance
+sidecar `provenance32.u8` (`python -m topography_training.diffusion.collage provenance <dir>`).
+
+Water is hydrology v3, one level at a time (`water.run.run_level`):
+
+- **32 m**: `hydrology/run-32m/{grid,work,out,review,bin,level.json}`, with `hydrology/32m`
+  a symlink to `run-32m/out`. Rain, breach, erosion (K by provenance), water, checks and
+  review. L3 refines its final ground. A failed 32 m level exits 1 before L3 and writes no
+  manifest.
+- **L3**: the raw 4 m surface `l3-raw.f32` is kept. Under 32 m lakes and sea the ground eases
+  down to the 32 m ground; under 32 m rivers too unless `--no-l3-river-clamp` (B32, under
+  A/B test; recorded in `progress.json` and the manifest as `l3_river_clamp`).
+- **4 m**: `hydrology/run-4m/…` on `l3-raw.f32` (symlinked into its grid), guided by the
+  32 m level (hard coarse guide), with `hydrology/4m` linking `run-4m/out`. Its final ground
+  is the world's `elevation.f32`.
+
+The world adds `provenance.u8` (32 m cells of the L3 square) and records both levels'
+`level.json` under the manifest's `water`. When the 4 m level fails, the world is written
+as `manifest-failed.json`, the chain exits 1 and keeps `l2.npz`; rerun the level alone with
+`python -m topography_training.water.run level --run <world>/hydrology/run-4m --coarse
+<world>/hydrology/32m` (the chain refuses to rerun a failed world). The world also holds `description.json`
 and `description.md`: for a whole-map L3 the collage's description measured on the carved
 4 m surface (level `l3`: regions, passes and their bands, summit and caldera); for an L3
 square, measured on the carved 32 m surface (level `l2`) plus `finer`, pass ground and
@@ -577,14 +597,13 @@ puts the L3 square anywhere; `cascade_l4 --km` with `--centre X,Y` does the same
 whose default is the 4 m world's centre. Windows (and L4 bands) of deep sea only are not
 diffused at L3 or L4.
 
-Full run (not yet started; it needs the owner's go). Class guidance 2 on the Grand Canyon
-windows only:
+Full run (it needs the owner's go). Class guidance 2 on the Grand Canyon windows only:
 
 ```sh
 CAP=(systemd-run --user --scope -q -p MemoryMax=12G)
 "${CAP[@]}" $P -m topography_training.diffusion.cascade_chain --collage data/worlds/fujix-collage-55 \
     --l3-run data/models/cascade-l3-run-5 --l3-class-runs data/models/cascade-l3-run-5-experts \
-    --guidance 2 --guidance-classes 19 --out data/worlds/fujix-55-chain
+    --guidance 2 --guidance-classes 19 --out data/worlds/fujix-55-chain-v3
 "${CAP[@]}" $P -m topography_training.diffusion.cascade_l4 --run data/models/cascade-l4-run-8 \
     --class-runs data/models/cascade-l4-run-8-experts --guidance 2 --guidance-classes 19 \
     --world data/worlds/fujix-55-chain --out data/worlds/fujix-55-l4
@@ -637,7 +656,7 @@ and about 1.0 s (L3) and 1.3 s (L4) more where guided. So:
 - RAM: L3 peaks at about 8 GB (bands about 4.6 GB; the 4 m hydrology 5.5 GB in Rust while
   Python holds about 2.5 GB); L4 about 9.4 GB (earlier 64 km band measurement, 12 GB cap).
   Run both in a 12 GB cap.
-- Disk: about 12 GB for the chain (44 bytes a 4 m cell while it runs), 82 GB for L4.
+- Disk: about 35 GB for the chain (130 bytes a 4 m cell checked), 82 GB for L4.
 
 ## Hydrology v2
 

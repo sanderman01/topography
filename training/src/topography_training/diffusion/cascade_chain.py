@@ -16,12 +16,14 @@ memory-mapped files, so host memory stays bounded; rerunning with the same argum
 after the last finished band. Windows of deep sea only are not diffused at L3.
 Terrain continues under water: after
 each level the sea is the ground below 0 m connected to the field edge. After L1 the
-land is made to drain (lakes kept, other depressions carved). After L2 and L3 the Rust
-`topography world hydrology` carves the ground and sets the water surface (32 m, then 4 m
-holding the 32 m network); L3 refines the carved 32 m ground with its water as input.
+land is made to drain (lakes kept, other depressions carved). After L2 and L3 the hydrology
+v3 level (water.run.run_level: rain, breach, erosion, water, checks, review) sets the ground
+and water (32 m, then 4 m on the kept raw L3 surface, guided by the 32 m level); L3 refines
+the 32 m level's final ground with its water as input. A failed 32 m level stops before L3;
+a failed 4 m level writes manifest-failed.json and exits 1.
 Writes l1/l2/l3 hillshades, the real region for comparison, arrays.npz, the hydrology
-outputs (hydrology/32m, hydrology/4m) and a 4 m world output (manifest.json + layers) for
-`topography export heightmap`.
+levels (hydrology/run-32m, run-4m; hydrology/32m and 4m link their outputs) and a 4 m world
+output (manifest.json + layers) for `topography export heightmap`.
 """
 
 from __future__ import annotations
@@ -29,7 +31,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -67,6 +68,11 @@ RIVER_LEVEL = 0.3
 L3_MARGIN = 16
 FINISH_ROWS = 1024  # 4 m rows a block when writing world layers
 COVER_MARGIN_4M = 96  # about 400 m around a block for the cover's terrain measures
+# L1 128 m lake picker for authored and region layouts (not collages; B22): one share for every
+# class, dry basins in classes whose lake-to-catchment ratio is at most L1_DRY_R.
+L1_LAKE_SHARE = 0.01
+L1_DRY_SHARE = 0.01
+L1_DRY_R = 0.05
 
 
 def _lake_bed(lake: np.ndarray, level: np.ndarray, h: np.ndarray, cell_m: float) -> np.ndarray:
@@ -189,7 +195,6 @@ class Source:
     coarse: np.ndarray  # L1 mid surface (128 m)
     extra: list[np.ndarray]  # L1 relief channel
     classes: int | np.ndarray  # one class, or a uint8 class per 128 m cell
-    water: hydrology.Water
     snow: np.ndarray | None  # real 32 m cover, or None to derive it from the surface
     vegetation: np.ndarray | None
     reference: tuple[str, np.ndarray, float, np.ndarray]  # picture name, surface, cell, water
@@ -203,6 +208,7 @@ class Source:
     l2: np.ndarray | None = None
     classes32: np.ndarray | None = None
     region32: np.ndarray | None = None
+    provenance32: np.ndarray | None = None  # the collage's provenance sidecar (B10)
 
     def classes_at(self, k: int):
         """Classes on the 128/k m grid; a collage's from its dithered 32 m classes (k of 4 and up)."""
@@ -230,8 +236,9 @@ class Source:
         """Cells of classes with dry basins (authored layouts; a real region has one class)."""
         if isinstance(self.classes, int):
             return None
-        return np.array([hydrology.WATER.get(c, hydrology.WATER[0]).dry_share > 0
-                         for c in range(NUM_CLASSES)])[self.classes_at(k)]
+        from ..water import table as water_table
+
+        return np.array([water_table.r(c) <= L1_DRY_R for c in range(NUM_CLASSES)])[self.classes_at(k)]
 
     def craters_at(self, k: int):
         """Painted crater cells, whose hollows always stay dry (authored layouts)."""
@@ -259,33 +266,27 @@ def _region_source(release: Path, region: str) -> Source | None:
     meta = next(m for m in json.loads(release.read_text())["regions"] if m["id"] == region)
     f1 = cascade.l1_fields(r)
     sea = r.water | cascade.open_sea(np.nan_to_num(r.height))
-    return Source(region, f1.coarse, f1.extra, r.class_id, hydrology.WATER.get(r.class_id, hydrology.WATER[0]),
-                  r.snow, r.vegetation, ("real.png", np.nan_to_num(r.height), 32.0, sea), meta["crs"],
+    return Source(region, f1.coarse, f1.extra, r.class_id, r.snow, r.vegetation, ("real.png", np.nan_to_num(r.height), 32.0, sea), meta["crs"],
                   tuple(meta["origin"]), f1.target)
 
 
 def _layout_source(l0: layout.L0, coarse: np.ndarray | None = None) -> Source:
     """Envelope from the authored mid surface widened by its relief (or a given L1 `coarse`
-    without a relief channel); water amounts are the land-weighted class profiles."""
+    without a relief channel)."""
     if coarse is None:
         lo, hi = cascade.envelope(l0.mid)
         lo, hi = lo - l0.relief / 2, hi + l0.relief / 2
         coarse, extra = ((lo + hi) / 2).astype(np.float32), [((hi - lo) / 2048.0).astype(np.float32)]
     else:
         extra = []
-    land = l0.mid >= 0
-    share = np.bincount(l0.cls[land], minlength=NUM_CLASSES) / max(int(land.sum()), 1)
-    profiles = [hydrology.WATER.get(c, hydrology.WATER[0]) for c in range(NUM_CLASSES)]
-    mean = {f: float(sum(share[c] * getattr(profiles[c], f) for c in range(NUM_CLASSES)))
-            for f in ("lake_share", "tarn_share", "dry_share")}
     extent = l0.cell_m * l0.mid.shape[0]
-    return Source(l0.spec["name"], coarse, extra, l0.cls, hydrology.Water(**mean), None, None,
+    return Source(l0.spec["name"], coarse, extra, l0.cls, None, None,
                   ("layout.png", l0.mid, l0.cell_m, (l0.mid < 0) | l0.lake), LAYOUT_CRS, (0.0, extent), l0.mid, l0)
 
 
 def _collage_source(d: Path) -> Source:
     """A collage (collage.py): its layout L0, 128 m `l1` and 32 m `l2` with seabed, and the
-    dithered `class32.u8` and `region32.u8`."""
+    dithered `class32.u8`, `region32.u8` and the provenance sidecar `provenance32.u8`."""
     meta = json.loads((d / "collage.json").read_text())
     arrays = np.load(d / "arrays.npz")
     l1, l2 = arrays["l1"].astype(np.float32), arrays["l2"].astype(np.float32)
@@ -294,8 +295,14 @@ def _collage_source(d: Path) -> Source:
         return np.fromfile(d / meta[entry]["file"], np.uint8).reshape(l2.shape)
 
     src = _layout_source(layout.load(d), l1)
+    prov_path = d / "provenance32.u8"
+    if not prov_path.exists():
+        raise SystemExit(f"error: {d} has no provenance32.u8; run "
+                         f"`python -m topography_training.diffusion.collage provenance {d}`")
+    prov = np.fromfile(prov_path, np.uint8).reshape(l2.shape)
     return dataclasses.replace(src, reference=("collage.png", l2, 32.0, cascade.open_sea(l2)),
-                               marks_from=l1, l2=l2, classes32=grid("class32"), region32=grid("region32"))
+                               marks_from=l1, l2=l2, classes32=grid("class32"), region32=grid("region32"),
+                               provenance32=prov)
 
 
 def _reach(src: Source, h: np.ndarray, cell_m: float, out: Path, name: str):
@@ -332,7 +339,22 @@ def _lakes(src: Source, lake: np.ndarray, level: np.ndarray, out: Path):
     print(text, end="", flush=True)
 
 
-def _l1_l2(args, src: Source, device, water, table, hyd: Path, times: dict):
+def _link_dir(link: Path, target: str) -> None:
+    """A relative directory symlink (replaced if it points elsewhere)."""
+    if link.is_symlink() and str(link.readlink()) == target:
+        return
+    if link.is_symlink():
+        link.unlink()
+    link.symlink_to(target, target_is_directory=True)
+
+
+def _region_layer(grid: Path, region32: np.ndarray | None) -> None:
+    """Collage region ids beside a grid's provenance (32 m cells), for the blend-zone figures."""
+    if region32 is not None:
+        np.ascontiguousarray(region32, np.uint8).tofile(grid / "region.u8")
+
+
+def _l1_l2(args, src: Source, device, hyd: Path, times: dict):
     """L1 and L2 (or a collage's surfaces) and the 32 m hydrology; returns the 128 m surface,
     its sea and lakes, and the 32 m surface before hydrology."""
     if src.l2 is not None:  # a collage is the L2 surface, with L1 its 128 m mean
@@ -375,8 +397,8 @@ def _l1_l2(args, src: Source, device, water, table, hyd: Path, times: dict):
             h128 = np.minimum(h128, paint.border_limit(h128.shape[0], 128.0)).astype(np.float32)
         authored = src.l0.lake if src.l0 else None
         # Craters, dolines and interdune hollows stay dry basins here too, not lakes or carved valleys.
-        h128, lake128, level128, _ = hydrology.drain(h128, cascade.open_sea(h128), water.lake_share, 1.0,
-                                                     keep_at=authored, dry_share=water.dry_share, dry_at=src.dry_at(1),
+        h128, lake128, level128, _ = hydrology.drain(h128, cascade.open_sea(h128), L1_LAKE_SHARE, 1.0,
+                                                     keep_at=authored, dry_share=L1_DRY_SHARE, dry_at=src.dry_at(1),
                                                      dry_keep_at=src.craters_at(1))
         sea128 = cascade.open_sea(h128)
         lake128 &= ~sea128
@@ -405,15 +427,33 @@ def _l1_l2(args, src: Source, device, water, table, hyd: Path, times: dict):
         h32 = _lake_bed(lake32, lake_level32, h32, 32.0)
         raw32 = h32.copy()
         times["l2_s"] = time.time() - t
-    # Hydrology at 32 m (Rust): lakes, breached depressions, stream power, rivers and channels
-    # from rain under the layout's wind. Its carved ground is what L3 refines.
+    # Hydrology v3 at 32 m: rain, breach, erosion (provenance K), water, checks, review. Its
+    # final ground is what L3 refines.
+    from ..water import grids
+
     t = time.time()
-    grid = hydrology.write_grid(hyd / "grid-32m", h32, 32.0, src.origin, src.class_grid(4, np.s_[:, :], h32.shape),
-                                wind_from_deg=src.wind)
-    hydrology.run(grid, hyd / "32m", water=table, river_km2=args.stream_km2)
-    shutil.rmtree(grid)
+    run32 = hyd / "run-32m"
+    if not (run32 / "level.json").exists():
+        g = grids.write_grid(run32 / "grid", h32, 32.0, src.origin, src.class_grid(4, np.s_[:, :], h32.shape),
+                             wind_from_deg=src.wind, provenance=src.provenance32, provenance_cell_m=32.0)
+        if src.provenance32 is not None:
+            _region_layer(g, src.region32)
+    code = _run_level(run32, river_km2=args.stream_km2)
+    _link_dir(hyd / "32m", "run-32m/out")
     times["hydrology_32m_s"] = time.time() - t
+    if code != 0:
+        raise SystemExit(f"error: the 32 m water failed ({run32 / 'level.json'}); fix it before L3")
     return h128, sea128, lake128, raw32
+
+
+def _run_level(run: Path, **kw) -> int:
+    """water.run.run_level; a refused level stops the chain."""
+    from ..water import run as water_run
+
+    try:
+        return water_run.run_level(run, **kw)
+    except water_run.Refused as e:
+        raise SystemExit(f"error: {e}") from e
 
 
 def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, device, out: Path, progress: dict,
@@ -500,11 +540,12 @@ def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, de
         del extra
         w = np.clip(-coarse / L3_SEABED_M, 0, 1)
         h = (1 - w) * h + w * coarse
-        # L3 learned land only: under lakes and rivers the ground eases down to the carved 32 m
-        # ground, so lake beds stay below their level and channels need little burning.
-        under = smooth((lake4 | river4).astype(np.float32), 2.0)
+        # L3 learned land only: under lakes (and, unless --no-l3-river-clamp, rivers) the ground
+        # eases down to the 32 m ground (B32: rivers in the clamp are under A/B test).
+        clamp = (lake4 | river4) if args.l3_river_clamp else lake4
+        under = smooth(clamp.astype(np.float32), 2.0)
         h = (h - under * np.maximum(h - coarse, 0)).astype(np.float32)
-        del under, w, coarse, sea4, lake4, river4
+        del under, clamp, w, coarse, sea4, lake4, river4
         cascade.write_band(raw, h, bands, k, g0, halo, out)
         del h
         progress["l3_band_s"].append(time.time() - t)
@@ -567,10 +608,9 @@ def main(argv=None) -> int:
     p.add_argument("--guidance-classes", type=int, nargs="+",
                    help="L3: legend classes whose windows get --guidance; other windows none (default: all)")
     p.add_argument("--no-exemplars", action="store_true", help="authored layouts: do not hold real exemplars")
-    # Water amounts default to the class profiles (configs/hydrology/water-v1.toml).
-    p.add_argument("--lake-share", type=float, help="share of land kept as lakes (every class)")
-    p.add_argument("--tarn-share", type=float, help="share of land kept as tarns at 4 m (every class)")
     p.add_argument("--stream-km2", type=float, help="drainage area where 32 m rivers begin (default 10)")
+    p.add_argument("--no-l3-river-clamp", dest="l3_river_clamp", action="store_false",
+                   help="L3: ease the ground to the 32 m surface under lakes and sea only, not rivers (B32 A/B)")
     args = p.parse_args(argv)
     if sum((args.layout is not None, args.collage is not None, args.release is not None and args.region is not None)) != 1:
         p.error("give --layout, --collage, or --release and --region")
@@ -607,6 +647,11 @@ def main(argv=None) -> int:
             print("error: output directory exists with other arguments", file=sys.stderr)
             return 2
         progress = json.loads(progress_path.read_text())
+        if (args.out / "manifest-failed.json").exists() and progress.get("hydrology_4m_done"):
+            print(f"error: output is complete but its 4 m water failed; rerun the level with "
+                  f"`python -m topography_training.water.run level --run {args.out / 'hydrology' / 'run-4m'} "
+                  f"--coarse {args.out / 'hydrology' / '32m'}`", file=sys.stderr)
+            return 2
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.collage:
         src = _collage_source(args.collage)
@@ -617,29 +662,28 @@ def main(argv=None) -> int:
     if src is None:
         print(f"error: region {args.region} not in the release", file=sys.stderr)
         return 2
-    overrides = {"lake_share": args.lake_share, "tarn_share": args.tarn_share}
-    overrides = {k: v for k, v in overrides.items() if v is not None}
-    water = dataclasses.replace(src.water, **overrides) if overrides else src.water
     hyd = args.out / "hydrology"
-    table = hyd / "water.toml" if overrides else None
 
     def save():
         cascade.save_json(progress_path, progress)
 
     if progress is None:
-        # Disk: about 44 bytes a 4 m cell (world layers, hydrology outputs, the staged grid, raw L3).
+        # Disk: world layers and raw L3 (44 B a 4 m cell), the 4 m water work (54 B) and
+        # erosion routings (28 B), with margin.
         n4 = (src.coarse.shape[0] * 4 if args.l3_km is None else args.l3_km * 32) * 8
         if args.l3_km != 0:
-            hydrology.check_disk(args.out, 44.0 * n4 * n4, "the chain")
+            hydrology.check_disk(args.out, 130.0 * n4 * n4, "the chain")
         args.out.mkdir(parents=True)
         hyd.mkdir()
-        if overrides:
-            hydrology.write_table(table, **overrides)
-        progress = {"params": params, "times": {}, "l3_bands_done": 0, "l3_band_s": [], "hydrology_4m_done": False}
-        h128, sea128, lake128, raw32 = _l1_l2(args, src, device, water, table, hyd, progress["times"])
+        progress = {"params": params, "times": {}, "l2_done": False, "l3_bands_done": 0, "l3_band_s": [],
+                    "hydrology_4m_done": False}
+        save()  # so a crash during L1, L2 or the 32 m level resumes (run_level resumes itself)
+    if not progress.get("l2_done"):
+        h128, sea128, lake128, raw32 = _l1_l2(args, src, device, hyd, progress["times"])
         _png(args.out / src.reference[0], *src.reference[1:])
         if args.l3_km != 0:  # kept for a resumed run
             np.savez(args.out / "l2.npz", h128=h128, sea128=sea128, lake128=lake128, raw32=raw32)
+            progress["l2_done"] = True
             save()
     else:
         print(f"resuming after L3 band {progress['l3_bands_done']}", flush=True)
@@ -661,7 +705,8 @@ def main(argv=None) -> int:
         np.savez_compressed(args.out / "arrays.npz", l1=h128, l2=h32, l2_raw=raw32)
         (args.out / "manifest.json").write_text(json.dumps({
             "kind": "cascade_chain_l2", "source": src.name, "steps": args.steps, "seed": args.seed,
-            "water": vars(water), "river_km2": args.stream_km2, "hydrology": {"32m": "hydrology/32m"}, "times": times,
+            "water": {"model": "hydrology v3", "32m": json.loads((hyd / "run-32m" / "level.json").read_text())},
+            "river_km2": args.stream_km2, "hydrology": {"32m": "hydrology/32m"}, "times": times,
             "runs": _runs(args, ("l1", "l2")), "collage": _collage_path(args),
             "class_runs": _class_runs(args)}, indent=1))
         print(f"wrote {args.out}", flush=True)
@@ -679,17 +724,29 @@ def main(argv=None) -> int:
     times["l3_band_s"] = progress["l3_band_s"]
     del w32
 
-    # Hydrology at 4 m, holding the 32 m network fixed: its carved ground and water are the world's.
+    # Hydrology v3 at 4 m on the kept raw L3 surface, guided by the 32 m level (coarse guide).
+    raw.flush()
+    del raw
     if not progress["hydrology_4m_done"]:
+        from ..water import grids
+
         t = time.time()
-        grid = hydrology.write_grid(hyd / "grid-4m", raw, 4.0, src.origin, src.class_grid(4, sl, (n32, n32)),
-                                    offset_m=(x0 * 32.0, y0 * 32.0), classes_cell_m=32.0)
-        hydrology.run(grid, hyd / "4m", coarse=hyd / "32m", water=table)
-        shutil.rmtree(grid)
+        run4 = hyd / "run-4m"
+        g = run4 / "grid"
+        if not (g / "grid.json").exists() or "moisture" not in json.loads((g / "grid.json").read_text()):
+            grids.write_grid(g, None, 4.0, src.origin, src.class_grid(4, sl, (n32, n32)),
+                             offset_m=(x0 * 32.0, y0 * 32.0), classes_cell_m=32.0,
+                             provenance=None if src.provenance32 is None else src.provenance32[sl],
+                             provenance_cell_m=32.0, elevation_link=args.out / "l3-raw.f32", size=(n4, n4))
+            if src.provenance32 is not None:
+                _region_layer(g, None if src.region32 is None else src.region32[sl])
+            grids.add_moisture(g, hyd / "32m")
+        code4 = _run_level(run4, coarse=hyd / "32m")
+        _link_dir(hyd / "4m", "run-4m/out")
         times["hydrology_4m_s"] = time.time() - t
         progress["hydrology_4m_done"] = True
+        progress["hydrology_4m_passed"] = code4 == 0
         save()
-    del raw
     w4 = hydrology.read(hyd / "4m")
     ground = w4.ground
 
@@ -771,14 +828,21 @@ def main(argv=None) -> int:
     elif src.l0 is not None:  # biomes for viewing and export, borders warped like the cover
         digests["biome.u8"] = _write_layer(args.out / "biome.u8", (
             src.sampler().classes(y0 * 32.0 + a * 4.0, x0 * 32.0, b - a, n4, 4.0) for a, b in _rows(n4)))
-    (args.out / "manifest.json").write_text(json.dumps({
+    prov = {}
+    if src.provenance32 is not None:
+        digests["provenance.u8"] = _write_layer(args.out / "provenance.u8", [src.provenance32[sl]])
+        prov = {"provenance": {"file": "provenance.u8", "cell_m": 32.0}}
+    levels = {k: json.loads((hyd / f"run-{k}" / "level.json").read_text()) for k in ("32m", "4m")}
+    passed = all(v["passed"] for v in levels.values())
+    name = "manifest.json" if passed else "manifest-failed.json"
+    (args.out / name).write_text(json.dumps({
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 4.0, "size": [n4, n4],
         "method": "cascade chain L3 over a collage's 32 m surface" if args.collage else
         f"cascade chain L1 -> L2 -> L3 from {'an authored' if src.l0 else 'a derived'} layout",
         "water_fill": hydrology.WATER_FILL,
         "hydrology": {"32m": "hydrology/32m", "4m": "hydrology/4m", "bodies": "bodies.json"},
-        "moisture": moisture | {"file": "moisture.f32"}, **desc,
+        "moisture": moisture | {"file": "moisture.f32"}, **desc, **prov,
         "source": src.name, "layout": str((args.layout or args.collage).resolve()) if src.l0 else None,
         "l3_window_m": [x0 * 32.0, y0 * 32.0, n32 * 32.0, n32 * 32.0],
         "l3_bands": {"band_m": args.l3_band_m, "halo_m": args.l3_halo_m,
@@ -786,16 +850,17 @@ def main(argv=None) -> int:
                      "windows": progress.get("l3_windows", {})},
         "class_id": src.classes if isinstance(src.classes, int) else None, "steps": args.steps,
         "guidance": args.guidance, "guidance_classes": args.guidance_classes,
-        "water": vars(water), "river_km2": args.stream_km2, "times": times,
+        "water": {"model": "hydrology v3", **levels}, "l3_river_clamp": args.l3_river_clamp,
+        "river_km2": args.stream_km2, "times": times,
         "runs": _runs(args, ("l1", "l2", "l3")), "collage": _collage_path(args),
         "class_runs": _class_runs(args),
         "layers": digests}, indent=1))
-    # Only now the run cannot be resumed any more. The raw L3 surface stays: the 4 m
-    # hydrology can be run again on it without diffusing again.
-    (args.out / "l2.npz").unlink(missing_ok=True)
-    cascade.drop_overlaps(args.out, 1 << 30)
-    print(f"wrote {args.out}", flush=True)
-    return 0
+    # The raw L3 surface always stays: the 4 m water can be run again on it without diffusing.
+    if passed:  # only now the run cannot be resumed any more
+        (args.out / "l2.npz").unlink(missing_ok=True)
+        cascade.drop_overlaps(args.out, 1 << 30)
+    print(f"wrote {args.out}" + ("" if passed else " (FAILED: see hydrology/run-*/level.json)"), flush=True)
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
