@@ -87,7 +87,7 @@ class RunTest(unittest.TestCase):
                 self.assertFalse((out / name).is_symlink(), name)
             self.assertTrue((out / "hydrology" / "1m" / "report.json").exists())
             # Review figures (Task 17); the fake chain's 4 m water has no lakes, so the guide passes.
-            self.assertEqual(m["water"]["coarse_guide"]["hard_failures"], 0)
+            self.assertEqual(m["water"]["coarse_guide"]["gross_mismatches"], 0)
             self.assertNotIn("coarse_guide", m["water"]["failures"])
             self.assertIn("hydrology/review/overview.png", m["water"]["review"])
             for name in m["water"]["review"]:
@@ -119,12 +119,13 @@ class RunTest(unittest.TestCase):
             with mock.patch.object(W.review, "crops", side_effect=RuntimeError("boom")):
                 code = W.run_world(src, out, tile=64, threads=2)
             report = json.loads((out / "hydrology" / "1m" / "report.json").read_text())
-            self.assertEqual(code, 1, "a coarse guide that cannot run fails the world (B15)")
-            m = json.loads((out / "manifest-failed.json").read_text())
+            # The guide is a figure (owner rule 2026-11-08): its error never fails the world.
+            self.assertEqual(code, 0 if report["passed"] else 1)
+            m = json.loads((out / ("manifest.json" if code == 0 else "manifest-failed.json")).read_text())
             self.assertIn("KeyError", m["water"]["coarse_guide"]["error"])
-            self.assertIn("coarse_guide", m["water"]["failures"])
+            self.assertNotIn("coarse_guide", m["water"]["failures"])
             self.assertEqual(m["water"]["review"], {"error": "RuntimeError: boom"})
-            self.assertTrue(set(report["failures"]) <= set(m["water"]["failures"]), "the water's own failures kept")
+            self.assertEqual(m["water"]["failures"], report["failures"], "only the water's own failures")
             win = root / "win"
             with mock.patch.object(W.review, "crops", side_effect=RuntimeError("boom")):
                 self.assertIn(W.run_window(src, 1, (128.0, 128.0), 128, win, 64, 2), (0, 1))

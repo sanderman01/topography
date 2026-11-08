@@ -485,11 +485,11 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
             digests["description.json"] = hydrology.sha256(out / "description.json")
     _pictures(out, n)
     # Next to the Rust output, never inside hydrology/1m (its provenance lists its files).
-    reviewed = _review(out, out1m, Path(m["source_world"]) / "hydrology" / "4m", out / "hydrology" / "review")
-    # A hard coarse-guide failure (or a guide that cannot run) withholds manifest.json (B15).
-    guide_failed = bool(reviewed.get("guide_failed"))
-    passed = report["passed"] and not guide_failed
-    failures = report["failures"] + (["coarse_guide"] if guide_failed else [])
+    reviewed = _review(out, out1m, _coarse_water(Path(m["source_world"]) / "hydrology" / "4m"),
+                       out / "hydrology" / "review")
+    # The coarse guide is a figure (owner rule 2026-11-08): only the water's checks decide.
+    passed = report["passed"]
+    failures = report["failures"]
     manifest = {
         "schema_version": 1, "kind": "world_preview", "world_input": str(world_input.resolve()),
         "spacing_m": 1.0, "size": [n, n], "class_id": m.get("class_id"),
@@ -513,12 +513,19 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
     return 0 if passed else 1
 
 
-def _review(src: Path, fine: Path, coarse: Path | None, dest: Path, hard: bool = True) -> dict:
+def _coarse_water(coarse: Path) -> Path:
+    """`coarse` if it holds the coarser level's water; else the run is refused."""
+    if not (coarse / "water-body.u32").exists():
+        raise Refused(f"no water-body.u32 in {coarse}: run the coarser level first")
+    return coarse
+
+
+def _review(src: Path, fine: Path, coarse: Path | None, dest: Path) -> dict:
     """The review figures after water-finish, made afresh in `dest`: the coarse guide of `fine`
     against the next coarser level's water `coarse` (when it has water) with a figure per
-    mismatch, and the crops of `src` (a world or window run). Never raises: a failure is logged
-    and recorded as {"error": ...} and the run goes on. `guide_failed` is set on a hard guide
-    failure (B15), or when `hard` and the guide could not run. Returns the manifest entries."""
+    mismatch, and the crops of `src` (a world or window run). The guide is a figure (owner rule
+    2026-11-08). Never raises: a failure is logged and recorded as {"error": ...} and the run
+    goes on. Returns the manifest entries."""
     import resource
     import traceback
 
@@ -529,8 +536,6 @@ def _review(src: Path, fine: Path, coarse: Path | None, dest: Path, hard: bool =
             if dest.exists():
                 shutil.rmtree(dest)
             dest.mkdir(parents=True)
-            if coarse is not None and hard and not (coarse / "water-body.u32").exists():
-                raise FileNotFoundError(f"no water-body.u32 in {coarse}")
             if coarse is not None and (coarse / "water-body.u32").exists():
                 guide = review.coarse_guide(src, coarse, fine_dir=fine)
                 cascade.save_json(dest / "coarse-guide.json", guide)
@@ -538,12 +543,9 @@ def _review(src: Path, fine: Path, coarse: Path | None, dest: Path, hard: bool =
                 entry["coarse_guide"] = {k: guide[k] for k in review.GUIDE_SUMMARY} | {
                     "file": str((dest / "coarse-guide.json").relative_to(src)),
                     "figures": [str(p.relative_to(src)) for p in figures]}
-                entry["guide_failed"] = bool(guide["hard_failures"])
         except Exception as e:
             traceback.print_exc()
             entry["coarse_guide"] = {"error": f"{type(e).__name__}: {e}"}
-            if hard:
-                entry["guide_failed"] = True
         try:
             entry["review"] = [str(p.relative_to(src)) for p in review.crops(src, dest)]
         except Exception as e:
@@ -620,7 +622,7 @@ def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, o
     m = _json(src / "manifest.json")
     coarse = Path(m["source_world"]) / "hydrology" / "4m" if level == 1 and m.get("source_world") else None
     # A test window's guide is a figure: its exit code is the water's own.
-    progress.mark("review", **_review(out, out / "out", coarse, out / "review", hard=False))
+    progress.mark("review", **_review(out, out / "out", coarse, out / "review"))
     print(f"done: {out / 'out'} ({'passed' if code == 0 else 'FAILED'})", flush=True)
     return code
 
@@ -628,10 +630,12 @@ def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, o
 def run_level(run: Path, tile: int = 2048, threads: int = 4, coarse: Path | None = None,
               river_km2: float | None = None) -> int:
     """One coarse level in `run` (grid/ built by the caller): rain if the grid has none, the water
-    model with erosion, finish, review and the hard coarse guide against `coarse`."""
+    model with erosion, finish, review and the coarse guide (a figure) against `coarse`."""
     grid = run / "grid"
     if not (grid / "grid.json").exists():
         raise Refused(f"{grid} has no grid.json")
+    if coarse is not None:
+        _coarse_water(coarse)
     progress = Progress(run / "progress.json", grid)
     m = _json(grid / "grid.json")
     work = run / "work"
@@ -642,18 +646,17 @@ def run_level(run: Path, tile: int = 2048, threads: int = 4, coarse: Path | None
             raise Refused("world rain failed")
     progress.key(digest, tile, grid, work)
     code = _water(progress, binary, grid, work, run / "out", tile, threads, river_km2)
-    # The guide's verdict depends on the coarse level too: redo the review when it changes.
+    # The guide depends on the coarse level too: redo the review when it changes.
     report_c = coarse / "report.json" if coarse is not None else None
     against = {"coarse": str(coarse.resolve()) if coarse is not None else None,
                "coarse_report_sha256": hydrology.sha256(report_c) if report_c and report_c.exists() else None}
     step = progress.done("review")
     if not step or {k: step.get(k) for k in against} != against:
-        step = _review(run, run / "out", coarse, run / "review", hard=coarse is not None) | against
+        step = _review(run, run / "out", coarse, run / "review") | against
         progress.mark("review", **step)
     report = _json(run / "out" / "report.json")
-    guide_failed = bool(step.get("guide_failed"))
-    passed = code == 0 and report["passed"] and not guide_failed
-    level = {"passed": passed, "failures": report["failures"] + (["coarse_guide"] if guide_failed else []),
+    passed = code == 0 and report["passed"]
+    level = {"passed": passed, "failures": report["failures"],
              "report": "out/report.json", "coarse_guide": step.get("coarse_guide"), "review": step.get("review")}
     cascade.save_json(run / "level.json", level)
     print(f"level {run}: {'passed' if passed else 'FAILED: ' + ', '.join(level['failures'])}", flush=True)

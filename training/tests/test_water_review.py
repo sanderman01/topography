@@ -48,7 +48,7 @@ class CoarseGuideTest(unittest.TestCase):
 
     def test_matching_lakes_and_rivers_pass(self):
         g = self.case(101.0)
-        self.assertEqual(g["hard_failures"], 0)
+        self.assertEqual(g["gross_mismatches"], 0)
         self.assertEqual(g["level_diff_m"]["2"], 1.0)
         self.assertEqual(g["coarse_river_share_with_fine_river_within_100m"], 1.0)
 
@@ -66,7 +66,7 @@ class CoarseGuideTest(unittest.TestCase):
     def test_a_split_at_the_coarse_level_is_a_figure(self):
         """Lake 1906: two pits joined diagonally at 32 m, both at the coarse level at 4 m."""
         g = self.case(100.0, split=True)
-        self.assertEqual((g["lakes_doubled"], g["lakes_split_same_level"], g["hard_failures"]), ([], [2], 0))
+        self.assertEqual((g["lakes_doubled"], g["lakes_split_same_level"], g["gross_mismatches"]), ([], [2], 0))
 
     def spill_case(self, fine_level: float | None, notch_m: float | None = None, pit: bool = True,
                    side_pit: bool = False):
@@ -107,14 +107,14 @@ class CoarseGuideTest(unittest.TestCase):
     def test_supply_limited_lakes_compare_spills(self):
         """Lakes 1140/1141: the fine catchment halves, so the level drops 8 m; the spill stays."""
         g = self.spill_case(92.0)
-        self.assertEqual((g["hard_failures"], g["lakes_supply"]), (0, [2]))
+        self.assertEqual((g["gross_mismatches"], g["lakes_supply"]), (0, [2]))
         self.assertLess(abs(g["spill_diff_m"]["2"]), 1.0)
         g = self.spill_case(None)  # dry at the fine level, its depression intact
-        self.assertEqual((g["hard_failures"], g["lakes_gone"], g["lakes_supply"]), (0, [], [2]))
+        self.assertEqual((g["gross_mismatches"], g["lakes_gone"], g["lakes_supply"]), (0, [], [2]))
 
     def test_the_fine_spill_starts_at_the_fine_lake_not_a_side_pit(self):
         g = self.spill_case(92.0, side_pit=True)
-        self.assertEqual((g["hard_failures"], g["lakes_supply"]), (0, [2]))
+        self.assertEqual((g["gross_mismatches"], g["lakes_supply"]), (0, [2]))
 
     def test_spills_found_at_the_crop_edge_are_recorded(self):
         self.assertEqual(self.spill_case(92.0)["spill_edge"], [2])  # the cone spills over the grid edge
@@ -145,7 +145,7 @@ class CoarseGuideTest(unittest.TestCase):
                                 edge_m=0)
         self.assertEqual(g["lakes_compared"], 1)
         self.assertEqual(g["level_diff_m"], {"2": 2.0})
-        self.assertEqual(g["hard_failures"], 0)
+        self.assertEqual(g["gross_mismatches"], 0)
 
     def test_only_large_deep_lakes_away_from_edges_can_fail(self):
         tmp = Path(tempfile.mkdtemp())
@@ -163,10 +163,10 @@ class CoarseGuideTest(unittest.TestCase):
         g = review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0.05, min_depth_m=3.0)
         self.assertEqual(g["lakes_gone"], [3])
         self.assertEqual(g["lakes_small"], 2)
-        self.assertEqual(g["hard_failures"], 1)
+        self.assertEqual(g["gross_mismatches"], 1)
         shallow = review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0.05,
                                       min_depth_m=12.0)
-        self.assertEqual((shallow["hard_failures"], shallow["lakes_shallow"]), (0, 1))
+        self.assertEqual((shallow["gross_mismatches"], shallow["lakes_shallow"]), (0, 1))
 
     def test_lakes_near_a_window_edge_are_figures(self):
         tmp = Path(tempfile.mkdtemp())
@@ -186,9 +186,9 @@ class CoarseGuideTest(unittest.TestCase):
 
         # A 1 m window over x, y in [0, 3,072) m: its east and south edges are inner, west and north are the world's.
         write(tmp / "fine", 3072, np.zeros((3072, 3072), np.uint32), [], origin=[0.0, 4096.0], offset_m=[0.0, 0.0])
-        self.assertEqual(coarse_with(300, 10)["hard_failures"], 1, "beside the world's west edge: judged")
+        self.assertEqual(coarse_with(300, 10)["gross_mismatches"], 1, "beside the world's west edge: judged")
         g = coarse_with(300, 680)  # ends 32 m from the window's inner east edge
-        self.assertEqual((g["hard_failures"], g["lakes_near_edge"]), (0, 1))
+        self.assertEqual((g["gross_mismatches"], g["lakes_near_edge"]), (0, 1))
 
 
 def window_run(root: Path, n: int = 600) -> Path:

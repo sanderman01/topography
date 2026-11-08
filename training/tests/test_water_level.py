@@ -55,22 +55,19 @@ class LevelTest(unittest.TestCase):
             grids.add_moisture(g, c / "out")
             code = W.run_level(f, tile=64, threads=2, coarse=c / "out", river_km2=0.005)
             level = json.loads((f / "level.json").read_text())
-            self.assertIn("hard_failures", level["coarse_guide"])
+            self.assertIn("gross_mismatches", level["coarse_guide"])
             self.assertEqual(code == 0, level["passed"])
-            if level["coarse_guide"]["hard_failures"]:
-                self.assertIn("coarse_guide", level["failures"])
+            self.assertNotIn("coarse_guide", level["failures"], "the guide is a figure")
 
-    def test_a_missing_coarse_level_fails_and_a_new_coarse_redoes_the_review(self):
+    def test_a_missing_coarse_level_is_refused(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
             run = Path(tmp) / "run-32m"
             coarse_grid(run)
             empty = Path(tmp) / "empty"
             empty.mkdir()
-            self.assertEqual(W.run_level(run, tile=32, threads=2, coarse=empty, river_km2=0.05), 1)
-            level = json.loads((run / "level.json").read_text())
-            self.assertIn("coarse_guide", level["failures"])
-            self.assertIn("water-body.u32", level["coarse_guide"]["error"])
-            # Without --coarse the cached failing review is not reused (M2).
+            with self.assertRaisesRegex(W.Refused, "water-body.u32"):
+                W.run_level(run, tile=32, threads=2, coarse=empty, river_km2=0.05)
+            self.assertFalse((run / "level.json").exists())
             W.run_level(run, tile=32, threads=2, river_km2=0.05)
             level = json.loads((run / "level.json").read_text())
             self.assertIsNone(level["coarse_guide"])

@@ -3,9 +3,9 @@ exits ringed | cut depth), a tinted overview with the crop boxes, lake-exit cont
 the coarse guide, a level's water against the next coarser level's, with a figure per mismatch.
 
 Works on a v3 world, a driver window run (grid/ and out/) or a bare water output directory
-(with --raw). Crops outside the processed grid are skipped. In the coarse guide a large, deep
-coarse lake away from inner edges more than 5 m off its coarse level, gone or doubled is a hard
-failure (ruling B15); the drivers withhold the result on one.
+(with --raw). Crops outside the processed grid are skipped. The coarse guide is a figure (owner
+rule 2026-11-08): a large, deep coarse lake away from inner edges more than 5 m off its coarse
+level, gone or doubled counts in `gross_mismatches`, with a picture per mismatch.
 
 python -m topography_training.water.review <world | run dir | out dir> [--dest D] [--raw F] [--coarse coarse out dir]
 """
@@ -663,13 +663,13 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
     """The fine water against the next coarser level's over the fine grid's footprint.
     `fine_dir` holds the fine water-body.u32, bodies.json and grid.json (the world itself when
     None). Coarse lakes that the footprint cuts are not compared; coarse river cells within
-    100 m of a footprint edge inside the coarse grid are not counted. A compared lake can fail
-    (B15) only when it covers at least `min_km2`, is deeper than `min_depth_m` (level minus its
+    100 m of a footprint edge inside the coarse grid are not counted. A compared lake is a gross
+    mismatch only when it covers at least `min_km2`, is deeper than `min_depth_m` (level minus its
     lowest coarse ground; default the fine level's breach cap + 1 m) and lies `edge_m` or more
     from every inner footprint edge; the others are counted as figures. A lake not full at
     either level is judged by its depression's spill instead (`lakes_supply`), and a split
     whose parts keep the coarse level is a figure (`lakes_split_same_level`). `mismatches` lists each
-    failing lake with its box in metres (E west, N north, E east, N south)."""
+    mismatched lake with its box in metres (E west, N north, E east, N south)."""
     from . import table as water_table
 
     fine_dir = fine_dir or world
@@ -727,22 +727,22 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
             continue
         box_m = [cex + (x0 + c0) * cs, cny - (y0 + r0) * cs, cex + (x0 + c1 + 1) * cs, cny - (y0 + r1 + 1) * cs]
         mask = cb(y0 + r0, y0 + r1 + 1, x0 + c0, x0 + c1 + 1) == i
-        # Only large, deep lakes away from inner edges can fail (B15); the rest are figures.
+        # Only large, deep lakes away from inner edges count as gross mismatches; the rest are figures.
         cells = int(mask.sum())
         lowest = float(_rows(coarse / "elevation.f32", "<f4", cw,
                              (y0 + r0, x0 + c0, r1 - r0 + 1, c1 - c0 + 1))[mask].min())
         near = ((inner[0] and r0 < edge_cells) or (inner[1] and c0 < edge_cells)
                 or (inner[2] and r1 >= ph - edge_cells) or (inner[3] and c1 >= pw - edge_cells))
-        hard = True
+        judged = True
         if cells < min_cells:
             small += 1
-            hard = False
+            judged = False
         elif clevels[i] - lowest <= min_depth_m:
             shallow += 1
-            hard = False
+            judged = False
         elif near:
             near_edge += 1
-            hard = False
+            judged = False
         fine = fb(r0 * k, (r1 + 1) * k, c0 * k, (c1 + 1) * k)
         inside = np.kron(mask, np.ones((k, k), bool))
         ids, counts = np.unique(fine[inside], return_counts=True)
@@ -772,7 +772,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
 
         found = []
         if not lakes:
-            if hard:
+            if judged:
                 if spills_agree():
                     supply.append(i)
                 else:
@@ -781,7 +781,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
         else:
             area = int(inside.sum())
             big = [j for c, j in lakes if c > DOUBLED_SHARE * area]
-            if hard and len(big) >= 2:
+            if judged and len(big) >= 2:
                 if all(abs(flevels[j] - clevels[i]) <= LEVEL_GROSS_M for j in big):
                     split_same.append(i)
                 else:
@@ -789,7 +789,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
                     found.append(("doubled", flevels[best]))
             d = abs(flevels[best] - clevels[i])
             diff[str(i)] = round(d, 3)
-            if hard and d > LEVEL_GROSS_M:
+            if judged and d > LEVEL_GROSS_M:
                 if spills_agree():
                     supply.append(i)
                 else:
@@ -827,7 +827,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
         "coarse_river_km2": coarse_river_km2,
         "coarse_river_cells": total,
         "coarse_river_share_with_fine_river_within_100m": hits / total if total else 1.0,
-        "hard_failures": len(over) + len(gone) + len(doubled),
+        "gross_mismatches": len(over) + len(gone) + len(doubled),
         "mismatches": mismatches,
     }
 
@@ -891,7 +891,7 @@ def guide_figures(src: Path, coarse: Path, guide: dict, dest: Path, raw: Path | 
     return out
 
 
-GUIDE_SUMMARY = ("hard_failures", "lakes_compared", "lakes_over_5m", "lakes_gone", "lakes_doubled",
+GUIDE_SUMMARY = ("gross_mismatches", "lakes_compared", "lakes_over_5m", "lakes_gone", "lakes_doubled",
                  "lakes_supply", "lakes_split_same_level", "lakes_small", "lakes_shallow", "lakes_near_edge",
                  "coarse_river_share_with_fine_river_within_100m")
 
