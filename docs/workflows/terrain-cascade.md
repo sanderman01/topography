@@ -958,7 +958,7 @@ may keep a lake below sea level), the game setting `lake_min_m2` (smaller standi
 an unlabelled pond) and the river-width factor `m3s_per_km2`. Per level (`[levels.1]`,
 `[levels.4]`, `[levels.32]`) it gives the river start `river_km2`, the breach cap
 `breach_cap_m` (2, 5 and 20 m) and `wall_deg` (40°, 35°, 35°), and at 4 m and 32 m an
-`[levels.N.erosion]` table: `routings` (2, 5), `k_dt` (8.75 × 10⁻⁵, 7 × 10⁻⁴), `m` (0.5),
+`[levels.N.erosion]` table: `routings` (2, 5), `k_dt` (4.4 × 10⁻⁵, 7 × 10⁻⁴), `m` (0.5),
 `diffusion` (0.05), `cap_m` (10, 30 m), `interior_k` (0.05) and `interior_cap_m` (3 m).
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
