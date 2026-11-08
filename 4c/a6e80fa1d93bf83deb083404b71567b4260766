@@ -1,0 +1,25 @@
+training/src/topography_training/diffusion/cascade_l4.py
+  s_8c1b40ea9c1e0d::t_f480e1ccd1727c 175-176
+  s_8c1b40ea9c1e0d::t_c7c5f8bf7bc066 1,8-16,36-37,48-59,61-63,67-68,70,75-78,80,84-87,109-112,114-119,122-124,126,132,134,149-150,198,210,218,220,224,250,265-268,296-298,328,335-338
+training/tests/test_cascade_l4_raw.py
+  s_8c1b40ea9c1e0d::t_a817856c4ae2eb 1-40
+training/tests/test_water_run.py
+  s_8c1b40ea9c1e0d::t_c8da81fe9ce916 19-20,24-27
+  s_8c1b40ea9c1e0d::t_abe83c5d9cabec 211-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ca6e80fa1d93bf83deb083404b71567b4260766",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
