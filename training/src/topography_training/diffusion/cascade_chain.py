@@ -530,8 +530,10 @@ def _bump(off32: np.ndarray) -> np.ndarray:
 
 
 def _corridor_pass(h: np.ndarray, lake: tuple[int, int], exit_: tuple[int, int], recv: tuple[int, int]) -> float:
-    """The lowest level at which 4 m ground h joins the lake cell to the receiver cell through the
-    exit cell: on their 8 × 8 blocks grown by SILL_GROW_4M (block corners (x, y) in 4 m cells)."""
+    """The lowest level at which 4 m ground h crosses the exit cell from the lake cell to the
+    receiver cell: within the exit cell's 8 × 8 block grown by SILL_GROW_4M (where the ease's
+    weight is 1), from its overlap with the lake cell to its overlap with the receiver cell
+    (block corners (x, y) in 4 m cells)."""
     from scipy import ndimage
 
     def block(c):
@@ -539,10 +541,10 @@ def _corridor_pass(h: np.ndarray, lake: tuple[int, int], exit_: tuple[int, int],
         m[c[1] : c[1] + 8, c[0] : c[0] + 8] = True
         return m
 
-    a, r = block(lake), block(recv)
-    corridor = a | block(exit_) | r
+    corridor = block(exit_)
     for _ in range(SILL_GROW_4M):
         corridor = hydrology._maxpool3(corridor)
+    a, r = corridor & block(lake), corridor & block(recv)
 
     def joins(level: float) -> bool:
         lab = ndimage.label(corridor & (h <= level), np.ones((3, 3), bool))[0]
