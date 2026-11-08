@@ -509,15 +509,7 @@ Water is hydrology v3, one level at a time (`water.run.run_level`):
 - **L3**: the raw 4 m surface `l3-raw.f32` is kept. Under 32 m lakes and sea the ground eases
   down to the 32 m ground; under 32 m rivers too unless `--no-l3-river-clamp` (B32; the Task 15
   A/B tied, so the clamp stays on; recorded in `progress.json` and the manifest as
-  `l3_river_clamp`). The clamp only lowers, so once L3 is done each full 32 m lake's outlet
-  pass is moved, up or down, to its 32 m spill: the lowest level at which L3's 4 m ground joins
-  the lake cell beside the exit cell (from `bodies.json`) to the exit's receiver is offset to
-  the exit cell's 32 m ground by a smooth bump (whole on the exit cell, tapering off over about
-  20 m; where bumps overlap the nearest exit's applies). L3's shape is kept: a notch stays a
-  notch, with its floor at the spill. This runs once over the whole raw L3 on the CPU
-  (`progress.json`: `l3_sills_eased`, `l3_sill_ease`). A world whose L3 ran without it gets it with
-  `python -m topography_training.diffusion.l3_sills --world <world>` (back up `l3-raw.f32`
-  first), then a 4 m rerun as below.
+  `l3_river_clamp`).
 - **4 m**: `hydrology/run-4m/…` on `l3-raw.f32` (symlinked into its grid), guided by the
   32 m level (hard coarse guide), with `hydrology/4m` linking `run-4m/out`. Its final ground
   is the world's `elevation.f32`.

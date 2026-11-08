@@ -67,16 +67,6 @@ RIVER_LEVEL = 0.3
 # (wider than every smoothing, the form blend and the cover's terrain measures).
 L3_MARGIN = 16
 FINISH_ROWS = 1024  # 4 m rows a block when writing world layers
-# After L3, each 32 m lake's outlet pass is shifted to the 32 m spill (ease_sill_passes): the
-# exit cell grown by this many 4 m cells, blurred like the lake clamp and doubled, so the whole
-# cell moves in full and the bump tapers off over about 20 m.
-SILL_GROW_4M = 2
-SILL_SIGMA_4M = 2.0
-SILL_TOL_M = 0.01
-SILL_ITER = 8
-SILL_LOCAL = 4  # 32 m cells around an exit cell when computing its bump (past its reach)
-SILL_CORE = 2  # 32 m cells around an exit cell holding its grown corridor
-SILL_ROWS = 2048  # 4 m rows a block when writing the bump
 COVER_MARGIN_4M = 96  # about 400 m around a block for the cover's terrain measures
 # L1 128 m lake picker for authored and region layouts (not collages; B22): one share for every
 # class, dry basins in classes whose lake-to-catchment ratio is at most L1_DRY_R.
@@ -466,183 +456,6 @@ def _run_level(run: Path, **kw) -> int:
         raise SystemExit(f"error: {e}") from e
 
 
-@dataclasses.dataclass
-class Sill:
-    """A full 32 m lake's outlet in 32 m cells (x, y): the lake cell beside the exit cell, the
-    exit cell and its receiver; `v` the exit cell's 32 m ground, the height the water spilled over."""
-
-    lake: tuple[int, int]
-    exit: tuple[int, int]
-    recv: tuple[int, int]
-    v: float
-
-
-# D8 receiver codes of flow.u8 (1 N, 2 S, 3 W, 4 E, 5 NW, 6 NE, 7 SW, 8 SE) as (dx, dy).
-D8 = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0), 5: (-1, -1), 6: (1, -1), 7: (-1, 1), 8: (1, 1)}
-
-
-def _sills(bodies: list[dict], ground: np.ndarray, body: np.ndarray, flow: np.ndarray,
-           wet: np.ndarray) -> list[Sill]:
-    """The outlet corridor of every full 32 m lake whose exit cell has a receiver. The lake-side
-    cell is the lowest neighbour draining into the exit cell, of the lake's own cells if any (a
-    river through the lake carries its own id), else of the wet ones, else of all."""
-    n_y, n_x = ground.shape
-    out = []
-    for b in bodies:
-        if b["kind"] != "lake" or b.get("exit_cell") is None:
-            continue
-        x, y = b["exit_cell"]
-        d = D8.get(int(flow[y, x]) & 15)
-        if d is None or not (0 <= x + d[0] < n_x and 0 <= y + d[1] < n_y):
-            continue
-        near = [((x + dx, y + dy), D8.get(int(flow[y + dy, x + dx]) & 15) == (-dx, -dy))
-                for dx, dy in D8.values() if 0 <= x + dx < n_x and 0 <= y + dy < n_y and (x + dx, y + dy) != (x + d[0], y + d[1])]
-        tiers = (lambda c, i: body[c[1], c[0]] == b["id"], lambda c, i: i and wet[c[1], c[0]],
-                 lambda c, i: i, lambda c, i: wet[c[1], c[0]])
-        for pick in tiers:
-            side = [c for c, i in near if pick(c, i)]
-            if side:
-                break
-        if not side:
-            continue
-        lake = min(side, key=lambda c: float(ground[c[1], c[0]]))
-        out.append(Sill(lake, (x, y), (x + d[0], y + d[1]), float(ground[y, x])))
-    return out
-
-
-def _bump(off32: np.ndarray) -> np.ndarray:
-    """The ease at 4 m over a window of 32 m cells holding each sill's pass offset on its exit
-    cell (NaN elsewhere): the weight (1 on the exit cell grown by SILL_GROW_4M, blurred and
-    doubled) times the offset of the nearest sill, so overlapping sills never add up."""
-    from scipy import ndimage
-
-    sill = np.isfinite(off32)
-    if not sill.any():
-        return np.zeros((off32.shape[0] * 8, off32.shape[1] * 8), np.float32)
-    sill4 = _nearest(sill, 8)
-    grown = sill4
-    for _ in range(SILL_GROW_4M):
-        grown = hydrology._maxpool3(grown)
-    s = np.minimum(2.0 * smooth(grown.astype(np.float32), SILL_SIGMA_4M), 1.0)
-    s[s < 1e-4] = 0.0
-    iy, ix = ndimage.distance_transform_edt(~sill4, return_distances=False, return_indices=True)
-    return (s * _nearest(np.nan_to_num(off32), 8)[iy, ix]).astype(np.float32)
-
-
-def _corridor_pass(h: np.ndarray, lake: tuple[int, int], exit_: tuple[int, int], recv: tuple[int, int]) -> float:
-    """The lowest level at which 4 m ground h crosses the exit cell from the lake cell to the
-    receiver cell: within the exit cell's 8 × 8 block grown by SILL_GROW_4M (where the ease's
-    weight is 1), from its overlap with the lake cell to its overlap with the receiver cell
-    (block corners (x, y) in 4 m cells)."""
-    from scipy import ndimage
-
-    def block(c):
-        m = np.zeros(h.shape, bool)
-        m[c[1] : c[1] + 8, c[0] : c[0] + 8] = True
-        return m
-
-    corridor = block(exit_)
-    for _ in range(SILL_GROW_4M):
-        corridor = hydrology._maxpool3(corridor)
-    a, r = corridor & block(lake), corridor & block(recv)
-
-    def joins(level: float) -> bool:
-        lab = ndimage.label(corridor & (h <= level), np.ones((3, 3), bool))[0]
-        return bool(np.intersect1d(lab[a & (lab > 0)], lab[r & (lab > 0)]).size)
-
-    lo, hi = max(float(h[a].min()), float(h[r].min())), float(h[corridor].max())
-    if joins(lo):
-        return lo
-    while hi - lo > 1e-3:
-        mid = (lo + hi) / 2
-        lo, hi = (lo, mid) if joins(mid) else (mid, hi)
-    return hi
-
-
-def ease_sill_passes(raw: np.ndarray, sills: list[Sill], x0: int, y0: int, n32: int) -> dict:
-    """Shift L3's 4 m pass through each 32 m lake's outlet corridor to the 32 m spill `v`, in
-    place: raw + weight × (v − pass), a smooth bump that keeps L3's shape. Passes are measured
-    on the eased ground and corrected until within SILL_TOL_M (a neighbour's bump or the taper
-    can move them); then the bump is written in blocks of rows. Not affine in raw: run once,
-    after L3 (`l3_sills_eased`)."""
-    k, w = SILL_LOCAL, SILL_CORE
-    inside = [s for s in sills if all(x0 + k <= c[0] < x0 + n32 - k and y0 + k <= c[1] < y0 + n32 - k
-                                      for c in (s.lake, s.exit, s.recv))]
-    off = np.full((n32, n32), np.nan, np.float32)
-    for s in inside:
-        off[s.exit[1] - y0, s.exit[0] - x0] = 0.0
-    err = {}
-    for _ in range(SILL_ITER):
-        for i, s in enumerate(inside):
-            if abs(err.get(i, np.inf)) <= SILL_TOL_M:
-                continue
-            ex, ey = s.exit[0] - x0, s.exit[1] - y0
-            bump = _bump(off[ey - k : ey + k + 1, ex - k : ex + k + 1])
-            c = (k - w) * 8, (k + w + 1) * 8
-            h = np.array(raw[(ey - w) * 8 : (ey + w + 1) * 8, (ex - w) * 8 : (ex + w + 1) * 8]) + bump[c[0] : c[1], c[0] : c[1]]
-            corner = [((p[0] - s.exit[0] + w) * 8, (p[1] - s.exit[1] + w) * 8) for p in (s.lake, s.exit, s.recv)]
-            err[i] = s.v - _corridor_pass(h, *corner)
-            off[ey, ex] += err[i]
-        if all(abs(e) <= SILL_TOL_M for e in err.values()):
-            break
-    pad = np.pad(off, k, constant_values=np.nan)
-    n4, moved = n32 * 8, 0
-    for a in range(0, n4, SILL_ROWS):
-        b = min(a + SILL_ROWS, n4)
-        win = pad[a // 8 : b // 8 + 2 * k]
-        if not np.isfinite(win).any():
-            continue
-        bump = _bump(win)[k * 8 : -k * 8, k * 8 : -k * 8]
-        moved += int((np.abs(bump) > 0.01).sum())
-        raw[a:b] += bump
-    o = np.abs(off[np.isfinite(off)])
-    return {"sills": len(sills), "eased": len(inside), "unconverged": sum(abs(e) > SILL_TOL_M for e in err.values()),
-            "cells_moved_over_1cm": moved,
-            "offset_m": {q: round(float(np.percentile(o, p)), 2) if o.size else 0.0
-                         for q, p in (("p50", 50), ("p90", 90), ("p99", 99), ("max", 100))},
-            "offsets_over_5m": int((o > 5).sum())}
-
-
-def _square(params: dict, n: int) -> tuple[int, int, int]:
-    """(x0, y0, n32): the L3 square in 32 m cells of an n² map, from the run's arguments."""
-    n32 = n if params["l3_km"] is None else params["l3_km"] * 1024 // 32
-    y0 = x0 = (n - n32) // 2
-    if params.get("l3_centre") is not None:  # kept inside the map
-        centre = (float(v) for v in params["l3_centre"].split(","))
-        x0, y0 = (int(np.clip(round(c / 32.0 - n32 / 2), 0, n - n32)) for c in centre)
-    return x0, y0, n32
-
-
-def _ease_world(out: Path, x0: int, y0: int, n32: int) -> dict:
-    """ease_sill_passes over a world's l3-raw.f32 from its 32 m level."""
-    o32 = out / "hydrology" / "32m"
-    w32 = hydrology.read(o32)
-    flow = np.memmap(o32 / "flow.u8", dtype="u1", mode="r", shape=w32.ground.shape)
-    sills = _sills(w32.bodies, w32.ground, w32.body, flow, w32.wet)
-    raw = np.memmap(out / "l3-raw.f32", dtype="<f4", mode="r+", shape=(n32 * 8, n32 * 8))
-    stats = ease_sill_passes(raw, sills, x0, y0, n32)
-    raw.flush()
-    return stats
-
-
-def reease_sills(out: Path) -> dict:
-    """Run the exit-pass ease on a finished world's kept l3-raw.f32 whose L3 ran without it, in
-    place, on the CPU. Refuses a world already eased."""
-    progress_path = out / "progress.json"
-    progress = json.loads(progress_path.read_text())
-    if progress.get("l3_sills_eased"):
-        raise SystemExit(f"error: {out} already has its L3 exit sills eased")
-    params = progress["params"]
-    n = json.loads((out / "hydrology" / "32m" / "grid.json").read_text())["size"][1]
-    x0, y0, n32 = _square(params, n)
-    if progress["l3_bands_done"] < len(cascade.bands(n32 * 8, params["l3_band_m"] // 4, params["l3_halo_m"] // 4)):
-        raise SystemExit(f"error: {out} has not finished L3")
-    stats = _ease_world(out, x0, y0, n32)
-    progress["l3_sills_eased"], progress["l3_sill_ease"] = True, stats
-    cascade.save_json(progress_path, progress)
-    return stats
-
-
 def _l3(args, src: Source, w32: hydrology.Output, x0: int, y0: int, n32: int, device, out: Path, progress: dict,
         save) -> np.memmap:
     """L3 over the n32² square of 32 m cells at (x0, y0), in bands of rows north to south
@@ -905,24 +718,19 @@ def main(argv=None) -> int:
 
     # L3: the whole world, as the layout specifies, or a square (16 km: 512 cells of 32 m,
     # 4,096 of 4 m). Sea, lakes and streams are water, as in its lidar training data.
-    x0, y0, n32 = _square({"l3_km": args.l3_km, "l3_centre": args.l3_centre}, h32.shape[0])
+    n32 = h32.shape[0] if args.l3_km is None else args.l3_km * 1024 // 32
+    y0 = x0 = (h32.shape[0] - n32) // 2
+    if centre is not None:  # kept inside the map
+        x0, y0 = (int(np.clip(round(c / 32.0 - n32 / 2), 0, h32.shape[0] - n32)) for c in centre)
     n4, sl = n32 * 8, np.s_[y0 : y0 + n32, x0 : x0 + n32]
     raw = _l3(args, src, w32, x0, y0, n32, device, args.out, progress, save)
     times["l3_s"] = sum(progress["l3_band_s"])
     times["l3_band_s"] = progress["l3_band_s"]
     del w32
-    raw.flush()
-    del raw
-    # The 32 m lakes' outlet passes, once over the whole raw L3 (not affine, so not per band).
-    if not progress.get("l3_sills_eased"):
-        t = time.time()
-        progress["l3_sill_ease"] = _ease_world(args.out, x0, y0, n32)
-        progress["l3_sills_eased"] = True
-        times["l3_sill_ease_s"] = time.time() - t
-        save()
-        print(f"L3 exit passes eased: {progress['l3_sill_ease']}", flush=True)
 
     # Hydrology v3 at 4 m on the kept raw L3 surface, guided by the 32 m level (coarse guide).
+    raw.flush()
+    del raw
     if not progress["hydrology_4m_done"]:
         from ..water import grids
 
