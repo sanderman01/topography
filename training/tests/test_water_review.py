@@ -68,7 +68,8 @@ class CoarseGuideTest(unittest.TestCase):
         g = self.case(100.0, split=True)
         self.assertEqual((g["lakes_doubled"], g["lakes_split_same_level"], g["hard_failures"]), ([], [2], 0))
 
-    def spill_case(self, fine_level: float | None, notch_m: float | None = None, pit: bool = True):
+    def spill_case(self, fine_level: float | None, notch_m: float | None = None, pit: bool = True,
+                   side_pit: bool = False):
         """A coarse (4 m) endorheic lake at 100 m in a cone spilling at 112 m over the grid edge;
         the fine (1 m) cone the same, a supply-limited lake at `fine_level` (none: dry), its rim
         notched down to `notch_m` east of the centre, or with no pit at all."""
@@ -86,10 +87,17 @@ class CoarseGuideTest(unittest.TestCase):
             fz[62:66, 64:] = np.minimum(fz[62:66, 64:], notch_m)
         if not pit:
             fz = (200.0 - x).astype(np.float32)
+        main = np.hypot(x - 16, y - 16) < 6.5
+        if side_pit:
+            # A walled side pit under the coarse lake, lower than the lake's floor, draining east
+            # through its own walled trench at 95 m.
+            fz[56:72, 88:128] = 120.0
+            fz[60:68, 92:100] = 60.0
+            fz[62:66, 100:128] = 95.0
         fb = np.zeros((n * 4, n * 4), np.uint32)
         bodies = []
         if fine_level is not None:
-            fb[fz < fine_level] = 5
+            fb[(fz < fine_level) & main] = 5
             bodies = [{"id": 5, "kind": "lake", "level_m": fine_level, "endorheic": True}]
         write(tmp / "fine", n * 4, fb, bodies)
         fz.tofile(tmp / "fine" / "elevation.f32")
@@ -103,6 +111,14 @@ class CoarseGuideTest(unittest.TestCase):
         self.assertLess(abs(g["spill_diff_m"]["2"]), 1.0)
         g = self.spill_case(None)  # dry at the fine level, its depression intact
         self.assertEqual((g["hard_failures"], g["lakes_gone"], g["lakes_supply"]), (0, [], [2]))
+
+    def test_the_fine_spill_starts_at_the_fine_lake_not_a_side_pit(self):
+        g = self.spill_case(92.0, side_pit=True)
+        self.assertEqual((g["hard_failures"], g["lakes_supply"]), (0, [2]))
+
+    def test_spills_found_at_the_crop_edge_are_recorded(self):
+        self.assertEqual(self.spill_case(92.0)["spill_edge"], [2])  # the cone spills over the grid edge
+        self.assertEqual(self.spill_case(92.0, side_pit=True)["spill_edge"], [2])
 
     def test_a_lowered_spill_or_a_missing_depression_stays_hard(self):
         g = self.spill_case(92.0, notch_m=104.0)  # the rim cut 8 m

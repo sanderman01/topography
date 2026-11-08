@@ -615,22 +615,24 @@ def _endorheic(dirpath: Path) -> set[int]:
     return {b["id"] for b in _json(dirpath / "bodies.json")["bodies"] if b.get("endorheic")}
 
 
-def _spill(z: np.ndarray, seed: np.ndarray) -> tuple[float, float]:
-    """(spill, bottom) of the depression at the lowest cell of `seed` in ground z: the lowest
-    level whose 8-connected water from there reaches lower ground or the crop's edge."""
+def _spill(z: np.ndarray, seed: np.ndarray) -> tuple[float, float, bool]:
+    """(spill, bottom, at the edge) of the depression at the lowest cell of `seed` in ground z:
+    the lowest level whose 8-connected water from there reaches lower ground or the crop's edge
+    (the last flag: the edge, so the depression may be larger than the crop)."""
     sy, sx = np.unravel_index(np.argmin(np.where(seed, z, np.inf)), z.shape)
     bottom = float(z[sy, sx])
 
-    def escapes(level: float) -> bool:
+    def escapes(level: float) -> tuple[bool, bool]:
         lab = ndimage.label(z <= level, np.ones((3, 3), bool))[0]
         c = lab == lab[sy, sx]
-        return bool(c[0].any() or c[-1].any() or c[:, 0].any() or c[:, -1].any() or (z[c] < bottom - 1e-3).any())
+        edge = bool(c[0].any() or c[-1].any() or c[:, 0].any() or c[:, -1].any())
+        return edge or bool((z[c] < bottom - 1e-3).any()), edge
 
     lo, hi = bottom, float(z.max())
     while hi - lo > SPILL_TOL_M:
         mid = (lo + hi) / 2
-        lo, hi = (lo, mid) if escapes(mid) else (mid, hi)
-    return hi, bottom
+        lo, hi = (lo, mid) if escapes(mid)[0] else (mid, hi)
+    return hi, bottom, escapes(hi)[1]
 
 
 def _lookup(kinds: dict[int, str], kind: str) -> np.ndarray:
@@ -714,7 +716,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
             b[:] = [min(b[0], y + sl[0].start), min(b[1], sl[1].start),
                     max(b[2], y + sl[0].stop - 1), max(b[3], sl[1].stop - 1)]
     diff, over, gone, doubled, mismatches, cut = {}, [], [], [], [], 0
-    spill_diff, supply, split_same = {}, [], []
+    spill_diff, spill_edge, supply, split_same = {}, [], [], []
     c_end, f_end = _endorheic(coarse), _endorheic(fine_dir)
     margin = int(math.ceil(SPILL_MARGIN_M / cs_m))
     small = shallow = near_edge = 0
@@ -758,8 +760,14 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
             seed[r0 - a0 : r1 + 1 - a0, c0 - b0 : c1 + 1 - b0] = mask
             cz = _rows(coarse / "elevation.f32", "<f4", cw, (y0 + a0, x0 + b0, a1 - a0, b1 - b0))
             fz = _rows(fine_dir / "elevation.f32", "<f4", fw, (a0 * k, b0 * k, (a1 - a0) * k, (b1 - b0) * k))
-            (cs_spill, _), (fs_spill, f_bottom) = _spill(cz, seed), _spill(fz, np.kron(seed, np.ones((k, k), bool)))
+            # The fine search starts under the fine lake when there is one, not in a side pit.
+            fseed = np.kron(seed, np.ones((k, k), bool))
+            if best is not None:
+                fseed = fb(a0 * k, a1 * k, b0 * k, b1 * k) == best
+            (cs_spill, _, c_edge), (fs_spill, f_bottom, f_edge) = _spill(cz, seed), _spill(fz, fseed)
             spill_diff[str(i)] = round(fs_spill - cs_spill, 3)
+            if c_edge or f_edge:
+                spill_edge.append(i)
             return fs_spill - f_bottom > SPILL_TOL_M and abs(fs_spill - cs_spill) <= LEVEL_GROSS_M
 
         found = []
@@ -812,7 +820,8 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
     return {
         "lakes_compared": len(boxes) - cut, "lakes_cut_by_window": cut, "level_diff_m": diff,
         "lakes_over_5m": over, "lakes_gone": gone, "lakes_doubled": doubled,
-        "lakes_supply": supply, "spill_diff_m": spill_diff, "lakes_split_same_level": split_same,
+        "lakes_supply": supply, "spill_diff_m": spill_diff, "spill_edge": spill_edge,
+        "lakes_split_same_level": split_same,
         "lakes_small": small, "lakes_shallow": shallow, "lakes_near_edge": near_edge,
         "min_cells": min_cells, "min_depth_m": min_depth_m, "edge_m": edge_m,
         "coarse_river_km2": coarse_river_km2,
