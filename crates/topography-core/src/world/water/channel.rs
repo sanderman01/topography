@@ -14,9 +14,10 @@
 //! Other river water over a bed left uncut runs MIN_DEPTH_M deep (export ruling). A river
 //! cell below the surface of the cell it flows into is raised to it over BACKWATER cells
 //! (N18). At coarser spacings (no channels) rivers are their thalweg cells at R and nothing
-//! is cut.
+//! is cut. Owner rule (2026-11-08): no pass takes a cut back to satisfy a check (`walls`,
+//! `bed_rises` and `carve_pits` are figures).
 
-use super::checks::{CHANGED_M, SILL_M, horn_deg, is_wall};
+use super::checks::SILL_M;
 use super::geom::{Rect, World};
 use super::hydraulic::Geometry;
 use super::layers::Layer;
@@ -36,23 +37,9 @@ pub(crate) const BACKWATER: u64 = 16;
 /// Section radii are clamped here (cells) so every section reaching a tile's area lies in
 /// its window; real rivers stay far below (30 m wide at most, R5).
 const MAX_RADIUS: f64 = (HALO - BACKWATER) as f64;
-/// Wall rounds: a cut that leaves a changed cell steeper than max(wall_deg, raw) is halved, at
-/// most this many Jacobi rounds; each round reaches 2 cells further, so the area carries a
-/// margin of 2 per round (+ 1 for the slope stencil) and every tiling agrees.
-pub(crate) const WALL_ROUNDS: u64 = 16;
-/// Then, at most this many Jacobi rounds, every cut in the 3 × 3 of a cell still a wall is
-/// removed (2 cells' reach), dry m2 thalweg beds are graded (1 cell's reach: a bed never
-/// rises to its receiver where the ground falls) and cut cells whose one-cell pit the cut
-/// deepened are raised (1 cell's reach); a core cell a further round would change is
-/// an error (hard cap, gate 1 ruling; the worst seen at gate 1 was 31; 4x headroom).
-pub(crate) const RESTORE_ROUNDS: u64 = 128;
-/// Raw slopes from this steep are never cut, so the restore rounds never undo long steep
-/// reaches (a cut of a few cm there is invisible).
-pub(crate) const NO_CUT_DEG: f64 = 39.0;
-/// The area's margin beyond the core: backwater (16), the halving rounds (2 × 16), the
-/// restore, grade and pit rounds with the closing test round (4 × 129) and the slope stencil
-/// (1): 565 cells.
-const MARGIN: u64 = BACKWATER + 2 * WALL_ROUNDS + 4 * (RESTORE_ROUNDS + 1) + 1;
+/// The area's margin beyond the core: the backwater (16) and one cell, so every tiling agrees.
+/// Owner rule (2026-11-08): no wall, grade or pit rounds undo a cut, so none need a margin.
+const MARGIN: u64 = BACKWATER + 1;
 
 pub(crate) struct Layers {
     pub carved: Layer<f32>,
@@ -79,10 +66,9 @@ impl Layers {
 }
 
 /// Per tile: lowered cells, deepest lowering below the ground, volume m³, river cells,
-/// deepest lowering below raw, cuts removed next to walls, the last restore/grade round
-/// that changed a cell, beds raised by grading; and cells by WetFix (index − 1), then
-/// thalwegs returned to their own river.
-type Figure = ((u64, f32, f64, u64, f32, u64, u64, u64), [u64; 4]);
+/// deepest lowering below raw; and cells by WetFix (index − 1), then thalwegs returned to
+/// their own river.
+type Figure = ((u64, f32, f64, u64, f32), [u64; 4]);
 /// How the export ruling changed a cell: river water raised to MIN_DEPTH_M over its bed, lake
 /// or sea ground at its level left dry, a lake's exit cell left dry.
 #[derive(Clone, Copy, PartialEq)]
@@ -233,16 +219,13 @@ pub(crate) fn channels(
     }
     drop(sizes);
 
-    let parts: Vec<Figure> = for_tiles(
-        &tiles,
-        s.threads,
-        &format!("{tag} channels"),
-        |i, core| {
+    let parts: Vec<Figure> =
+        for_tiles(&tiles, s.threads, &format!("{tag} channels"), |i, core| {
             let name = format!("{tag}/ch/{i:05}");
             if let Some(wk) = work {
                 if wk.is_done(&name) {
                     return wk.cached(&format!("{name}-figures"), || {
-                        Ok(((0, 0.0, 0.0, 0, 0.0, 0, 0, 0), [0; 4]))
+                        Ok(((0, 0.0, 0.0, 0, 0.0), [0; 4]))
                     });
                 }
             }
@@ -276,15 +259,6 @@ pub(crate) fn channels(
                 }
                 let floor = (river(t) - geo.depth_m(f64::from(q[t]))).max(rw[t] - CHANNEL_CAP_M);
                 (g[t] - floor).max(0.0)
-            };
-            // Raw at least NO_CUT_DEG steep here (window-edge cells count as gentle).
-            let raw_steep = |j: usize| {
-                let (lx, ly) = (j % win.w, j / win.w);
-                lx > 0
-                    && ly > 0
-                    && lx + 1 < win.w
-                    && ly + 1 < win.h
-                    && horn_deg(&rw, win.w, lx, ly, s.spacing_m) >= NO_CUT_DEG
             };
 
             // The two best thalwegs of distinct rivers for every area cell: (−body size,
@@ -390,13 +364,9 @@ pub(crate) fn channels(
                     } else {
                         1.0 - (f64::from(d2) / (rad * rad)) as f32
                     };
-                    let cut = if raw_steep(j) {
-                        g[j]
-                    } else {
-                        (g[j] - centre(t) * taper)
-                            .max(rw[j] - CHANNEL_CAP_M)
-                            .min(g[j])
-                    };
+                    let cut = (g[j] - centre(t) * taper)
+                        .max(rw[j] - CHANNEL_CAP_M)
+                        .min(g[j]);
                     let cut = rim_floor(g[j], cut, pond_rim(depth(t)));
                     if cut < rs || t == j {
                         lowered[a] = cut < g[j];
@@ -424,196 +394,11 @@ pub(crate) fn channels(
                     keep[a] = true;
                 }
             }
-            // Walls: no changed cell may end steeper than max(wall_deg, raw) (the `walls` check).
-            // The cut of every lowered cell in the 3 × 3 of such a cell is halved, Jacobi, at
-            // most WALL_ROUNDS rounds.
             let in_area = |a: usize| {
                 let (x, y) = area.world_xy(a);
                 win.local(x, y).expect("area in window")
             };
-            let (ga, ra): (Vec<f32>, Vec<f32>) =
-                (0..n).map(|a| (g[in_area(a)], rw[in_area(a)])).unzip();
-            let ring = |a: usize| {
-                let (lx, ly) = (a % area.w, a / area.w);
-                lx == 0 || ly == 0 || lx + 1 == area.w || ly + 1 == area.h
-            };
-            let nbrs = |a: usize| {
-                let (lx, ly) = ((a % area.w) as i64, (a / area.w) as i64);
-                (-1i64..=1)
-                    .flat_map(move |dy| (-1i64..=1).map(move |dx| (lx + dx, ly + dy)))
-                    .filter(move |&(x, y)| {
-                        x >= 0 && y >= 0 && (x as usize) < area.w && (y as usize) < area.h
-                    })
-                    .map(move |(x, y)| y as usize * area.w + x as usize)
-            };
-            // Only cells next to a cut can be steepened by it.
-            let mut near_cut: Vec<usize> = (0..n)
-                .filter(|&a| !ring(a) && nbrs(a).any(|b| carved[b] < ga[b]))
-                .collect();
-            let steep_in = |carved: &[f32], near_cut: &[usize]| -> Vec<usize> {
-                near_cut
-                    .iter()
-                    .copied()
-                    .filter(|&a| {
-                        let (lx, ly) = (a % area.w, a / area.w);
-                        (carved[a] - ra[a]).abs() > CHANGED_M
-                            && is_wall(
-                                horn_deg(carved, area.w, lx, ly, s.spacing_m),
-                                horn_deg(&ra, area.w, lx, ly, s.spacing_m),
-                                s.params.wall_deg,
-                            )
-                    })
-                    .collect()
-            };
-            for _ in 0..WALL_ROUNDS {
-                let steep = steep_in(&carved, &near_cut);
-                let mut shrink: Vec<usize> = steep
-                    .iter()
-                    .flat_map(|&a| nbrs(a))
-                    .filter(|&b| carved[b] < ga[b])
-                    .collect();
-                if shrink.is_empty() {
-                    break;
-                }
-                shrink.sort_unstable();
-                shrink.dedup();
-                for b in shrink {
-                    let cut = (ga[b] - carved[b]) / 2.0;
-                    carved[b] = if cut < 1e-3 { ga[b] } else { ga[b] - cut };
-                    // A section cell no longer under its river's surface is not cut at all
-                    // (it turns dry below).
-                    if is_river[b] && !keep[b] && carved[b] >= surface[b] {
-                        carved[b] = ga[b];
-                    }
-                }
-                near_cut.retain(|&a| nbrs(a).any(|b| carved[b] < ga[b]));
-            }
-            // Dry m2 thalweg links (cell, receiver) in `area` where the ground falls.
-            let grade_links: Vec<(u32, u32)> = (0..n)
-                .filter_map(|a| {
-                    let j = in_area(a);
-                    let d = flow[j] & 15;
-                    if !thalweg(j) || node[j] != 0 || d == 0 {
-                        return None;
-                    }
-                    let (x, y) = area.world_xy(a);
-                    let (nx, ny) = world.neighbour(x, y, d as usize - 1)?;
-                    let b = area.local(nx, ny)?;
-                    (node[in_area(b)] == 0 && ga[b] <= ga[a]).then_some((a as u32, b as u32))
-                })
-                .collect();
-            // Halving moves a step on a reach over 40° instead of removing it (scale
-            // diagnosis 1), and shrinks a downstream cut below an upstream one. Each round
-            // removes every cut next to a remaining wall, then raises each dry thalweg bed to
-            // its receiver's (within its cut), Jacobi, until neither changes. Both only take
-            // cuts back, so this ends.
-            let restore_set = |carved: &[f32], near_cut: &[usize]| -> Vec<usize> {
-                steep_in(carved, near_cut)
-                    .into_iter()
-                    .flat_map(|a| nbrs(a))
-                    .filter(|&b| carved[b] < ga[b])
-                    .collect()
-            };
-            let grade_set = |carved: &[f32]| -> Vec<(usize, f32)> {
-                grade_links
-                    .iter()
-                    .map(|&(a, b)| (a as usize, b as usize))
-                    .filter(|&(a, b)| carved[a] < ga[a] && carved[b] > carved[a])
-                    .map(|(a, b)| (a, carved[b].min(ga[a])))
-                    .collect()
-            };
-            // Task 13 (B26): a cut never deepens a one-cell pit. A low cell cut while its
-            // neighbours stay above the river's surface, or a bed cut below a kept rim
-            // downstream, is raised (within its cut) until its pit is no deeper than before.
-            let pit_low = |v: &[f32], a: usize| {
-                nbrs(a)
-                    .filter(|&b| b != a)
-                    .map(|b| v[b])
-                    .fold(f32::INFINITY, f32::min)
-            };
-            // Cells with all their world neighbours in `area` (world-edge cells included, as
-            // the check reads them).
-            let whole = |a: usize| {
-                let (x, y) = area.world_xy(a);
-                (0..8).all(|k| {
-                    world
-                        .neighbour(x, y, k)
-                        .is_none_or(|(nx, ny)| area.local(nx, ny).is_some())
-                })
-            };
-            let mut cut_cells: Vec<usize> =
-                (0..n).filter(|&a| carved[a] < ga[a] && whole(a)).collect();
-            let pit_ga: HashMap<usize, f32> = cut_cells
-                .iter()
-                .map(|&a| (a, (pit_low(&ga, a) - ga[a]).max(0.0)))
-                .collect();
-            let pit_set = |carved: &[f32], cut_cells: &[usize]| -> Vec<(usize, f32)> {
-                cut_cells
-                    .iter()
-                    .filter_map(|&a| {
-                        let low = pit_low(carved, a);
-                        let gain = (low - carved[a]).max(0.0) - pit_ga[&a];
-                        (carved[a] < ga[a] && gain > SILL_M / 2.0)
-                            .then(|| (a, (low - pit_ga[&a]).min(ga[a])))
-                    })
-                    .collect()
-            };
-            // The round (from 1) that last removed or raised each cut, 0 for none; cells
-            // whose cut a wall removed and whose bed was graded.
-            let (mut undone, mut restored, mut graded) =
-                (vec![0u64; n], vec![false; n], vec![false; n]);
-            for round in 0..=RESTORE_ROUNDS {
-                if round == RESTORE_ROUNDS {
-                    // Only cells beyond the core may still change (their tiles test them).
-                    let undo = restore_set(&carved, &near_cut);
-                    let ups = grade_set(&carved);
-                    let pits = pit_set(&carved, &cut_cells);
-                    let left = undo
-                        .iter()
-                        .chain(ups.iter().chain(&pits).map(|u| &u.0))
-                        .find(|&&b| {
-                            let (x, y) = area.world_xy(b);
-                            core.contains(x, y)
-                        });
-                    if let Some(&b) = left {
-                        let (x, y) = area.world_xy(b);
-                        return Err(crate::acquisition::AcquisitionError::Invalid(format!(
-                            "a channel cut at ({x}, {y}) still leaves a wall, a rising bed or a pit \
-                             after {RESTORE_ROUNDS} rounds"
-                        )));
-                    }
-                    break;
-                }
-                let undo = restore_set(&carved, &near_cut);
-                for &b in &undo {
-                    carved[b] = ga[b];
-                    (undone[b], restored[b]) = (round + 1, true);
-                }
-                let ups = grade_set(&carved);
-                for &(a, v) in &ups {
-                    // As in halving: a section cell no longer under its river is not cut.
-                    carved[a] = if is_river[a] && !keep[a] && v >= surface[a] {
-                        ga[a]
-                    } else {
-                        v
-                    };
-                    (undone[a], graded[a]) = (round + 1, true);
-                }
-                let pits = pit_set(&carved, &cut_cells);
-                for &(a, v) in &pits {
-                    carved[a] = if is_river[a] && !keep[a] && v >= surface[a] {
-                        ga[a]
-                    } else {
-                        carved[a].max(v)
-                    };
-                    (undone[a], graded[a]) = (round + 1, true);
-                }
-                if undo.is_empty() && ups.is_empty() && pits.is_empty() {
-                    break;
-                }
-                near_cut.retain(|&a| nbrs(a).any(|b| carved[b] < ga[b]));
-                cut_cells.retain(|&a| carved[a] < ga[a]);
-            }
+            let ga: Vec<f32> = (0..n).map(|a| g[in_area(a)]).collect();
             for a in 0..n {
                 lowered[a] = carved[a] < ga[a];
                 // A section cell its smaller cut leaves above the river's surface is dry again;
@@ -701,7 +486,7 @@ pub(crate) fn channels(
             out.carved.write(core, &cc)?;
             out.surface.write(core, &cs)?;
             out.body.write(core, &ci)?;
-            let (mut fig, mut fixes): Figure = ((0, 0.0, 0.0, 0, 0.0, 0, 0, 0), [0; 4]);
+            let (mut fig, mut fixes): Figure = ((0, 0.0, 0.0, 0, 0.0), [0; 4]);
             for k in 0..core.cells() {
                 let (x, y) = core.world_xy(k);
                 let j = win.local(x, y).expect("core in window");
@@ -710,9 +495,6 @@ pub(crate) fn channels(
                     fixes[fixed[a] as usize - 1] += 1;
                 }
                 fixes[3] += u64::from(returned[a]);
-                fig.5 += u64::from(restored[a]);
-                fig.6 = fig.6.max(undone[a]);
-                fig.7 += u64::from(graded[a]);
                 let drop = g[j] - cc[k];
                 if drop > 0.0 {
                     fig.0 += 1;
@@ -730,8 +512,7 @@ pub(crate) fn channels(
                 wk.mark_done(&name)?;
             }
             Ok(fig)
-        },
-    )?;
+        })?;
     let fixes = |i: usize| parts.iter().map(|p| p.1[i]).sum::<u64>();
     let parts: Vec<_> = parts.iter().map(|p| p.0).collect();
     Ok(json!({
@@ -740,9 +521,6 @@ pub(crate) fn channels(
         "max_below_raw_m": parts.iter().map(|p| p.4).fold(0.0f32, f32::max),
         "volume_m3": parts.iter().map(|p| p.2).sum::<f64>().round(),
         "river_cells": parts.iter().map(|p| p.3).sum::<u64>(),
-        "wall_cuts_removed": parts.iter().map(|p| p.5).sum::<u64>(),
-        "wall_restore_rounds": parts.iter().map(|p| p.6).max().unwrap_or(0),
-        "bed_graded_cells": parts.iter().map(|p| p.7).sum::<u64>(),
         // Export ruling: river cells raised to MIN_DEPTH_M over their bed, lake and sea shore
         // and lake exit cells left dry, thalwegs returned to their own river.
         "min_depth_cells": fixes(0), "shore_dry_cells": fixes(1),
@@ -1059,23 +837,6 @@ mod tests {
         )
     }
 
-    /// Dry m2 thalweg links whose carved bed rises over 0.1 mm where the ground falls (the
-    /// `bed_rises` check) in a `w`-wide world.
-    fn bed_rises(run: &Run, node: &[u32], w: usize) -> usize {
-        let (raw, carved, _, _, flow) = run;
-        (0..flow.len())
-            .filter(|&k| {
-                let d = flow[k] & 15;
-                if flow[k] & 16 == 0 || d == 0 || node[k] != 0 {
-                    return false;
-                }
-                let (dy, dx) = OFFSETS[d as usize - 1];
-                let r = ((k / w) as i64 + dy) as usize * w + ((k % w) as i64 + dx) as usize;
-                node[r] == 0 && raw[r] <= raw[k] && carved[r] > carved[k] + 1e-4
-            })
-            .count()
-    }
-
     #[test]
     fn only_river_cells_are_lowered_and_never_past_the_cap() {
         let (raw, carved, surface, body, _) = run(32);
@@ -1167,50 +928,6 @@ mod tests {
         assert!(cut >= 20, "tributary banks cut: {cut} of 28");
     }
 
-    /// A V valley with 1:1 walls: each wall cell loses at most the centre cut (the taper of
-    /// the thalweg's cut), never its height above the river (Task 11 lesson).
-    #[test]
-    fn steep_walls_lose_no_more_than_the_centre_cut() {
-        let world = World { w: 128, h: 41 };
-        let z: Vec<f32> = (0..world.w * world.h)
-            .map(|i| {
-                let (x, y) = ((i % world.w) as f32, (i / world.w) as f32);
-                40.0 - 0.05 * x + (y - 20.0).abs() + ((i * 7919) % 7) as f32 * 0.001
-            })
-            .collect();
-        // About 5 m wide and 0.4 m deep where the valley leaves the map.
-        let m3s = 1e3;
-        let (raw, carved, surface, _, flow) = run_on(world, z, 32, m3s, 1e-3);
-        let geo = Geometry::new(m3s);
-        let (s, r) = (setup(world, 32, 1e-3), Rasters::memory(world));
-        model(&s, &Layer::memory(world, raw.clone()), None, "m", Some(&r)).expect("model");
-        let qmax = r
-            .discharge
-            .to_vec()
-            .unwrap()
-            .into_iter()
-            .fold(0f32, f32::max);
-        let dmax = geo.depth_m(f64::from(qmax));
-        assert!(dmax < 1.0 && geo.width_m(f64::from(qmax)) > 4.0);
-        let mut bed = 0;
-        for k in 0..raw.len() {
-            let drop = raw[k] - carved[k];
-            assert!(
-                drop <= dmax + 1e-4,
-                "cut {drop} m at {k}, deeper than the centre"
-            );
-            if drop > 0.0 {
-                assert!(carved[k] < surface[k]);
-                bed += usize::from(flow[k] & 16 != 0);
-            }
-            // A wall cell a metre or more above the river would end above its surface.
-            if (k / 128).abs_diff(20) >= 2 {
-                assert_eq!(drop, 0.0, "a wall cell was cut at {k}");
-            }
-        }
-        assert!(bed > 50, "the valley floor carries a channel");
-    }
-
     /// A river through a 1 m deep pond (a dam across a valley; no lake: the lake minimum is
     /// out of reach): every pond cell is wet at the pond's level, as one river body.
     #[test]
@@ -1291,7 +1008,7 @@ mod tests {
         )
     }
 
-    /// Export ruling: a thalweg down a 45° slope (never cut) and a pond's spill cell (left at
+    /// Export ruling: a thalweg down a 45° slope and a pond's spill cell (left at
     /// the level) carry MIN_DEPTH_M of water, and after settle no surface rises downstream.
     #[test]
     fn uncut_river_cells_stand_a_centimetre_above_their_bed() {
@@ -1306,18 +1023,15 @@ mod tests {
         let mut s = setup(world, 32, 1e-5);
         s.table.lake_min_m2 = 1e9;
         let (raw, carved, surface, body, flow, ..) = settled_run(&s, steep);
-        let mut uncut = 0;
         for k in 0..raw.len() {
             if body[k] == 0 {
                 continue;
             }
             assert!(surface[k] > carved[k], "wet cell {k} not above its bed");
             if flow[k] & 16 != 0 && carved[k] == raw[k] {
-                uncut += 1;
                 assert!(surface[k] - carved[k] >= MIN_DEPTH_M - 1e-4, "cell {k}");
             }
         }
-        assert!(uncut > 30, "{uncut} uncut thalweg cells");
         assert_no_rise(96, &surface, &flow);
 
         // The dam of `a_pond_a_river_crosses_is_wet_at_its_level`: its spill cell.
@@ -1536,114 +1250,9 @@ mod tests {
         assert_eq!((uncut, teeth), (0, 0), "bed {:?}", &carved[k(12)..k(30)]);
     }
 
-    /// Lowered cells whose one-cell pit depth the cutting raised by over SILL_M (`carve_pits`
-    /// clause (b)) in a `w`-wide world, edge cells over their in-world neighbours.
-    fn deepened_pits(raw: &[f32], carved: &[f32], w: usize) -> Vec<(usize, usize)> {
-        let h = raw.len() / w;
-        let pitd = |v: &[f32], x: usize, y: usize| {
-            let low = (y.saturating_sub(1)..=(y + 1).min(h - 1))
-                .flat_map(|ny| (x.saturating_sub(1)..=(x + 1).min(w - 1)).map(move |nx| (nx, ny)))
-                .filter(|&(nx, ny)| (nx, ny) != (x, y))
-                .map(|(nx, ny)| v[ny * w + nx])
-                .fold(f32::INFINITY, f32::min);
-            (low - v[y * w + x]).max(0.0)
-        };
-        (0..h)
-            .flat_map(|y| (0..w).map(move |x| (x, y)))
-            .filter(|&(x, y)| {
-                raw[y * w + x] - carved[y * w + x] > CHANGED_M
-                    && pitd(carved, x, y) - pitd(raw, x, y) > SILL_M
-            })
-            .collect()
-    }
-
-    /// Task 13 I2 (4k window E39558 N55173): a gentle valley floor with one-cell pits beside
-    /// the river and a deep pond whose kept rim holds the bed. Low cells got the section cut
-    /// while their higher neighbours stayed above the river's surface, and the bed upstream of
-    /// the held rim was cut below it: teeth. Cutting never deepens a one-cell pit.
-    #[test]
-    fn cutting_never_deepens_a_one_cell_pit() {
-        let world = World { w: 96, h: 33 };
-        let z: Vec<f32> = (0..world.w * world.h)
-            .map(|i| {
-                let (x, y) = (i % world.w, i / world.w);
-                let side = (y == 14 || y == 18) && x % 4 == 2 && (9..=84).contains(&x);
-                let pit = if side { 0.05 } else { 0.0 };
-                // A pond 0.6 m deep north of the bed at x 50..54.
-                let pond = if (50..55).contains(&x) && (12..15).contains(&y) {
-                    0.6
-                } else {
-                    0.0
-                };
-                40.0 - 0.01 * x as f32 + 0.03 * (y as f32 - 16.0).abs() - pit - pond
-                    + ((i * 7919) % 7) as f32 * 0.001
-            })
-            .collect();
-        let mut s = setup(world, 32, 1e-4);
-        s.table.lake_min_m2 = 1e9;
-        let ((raw, carved, ..), fig, _, _, lake, _) = run_full(s, z, 1e3);
-        assert!(!lake);
-        assert!(fig["lowered_cells"].as_u64().unwrap() > 200, "{fig}");
-        let teeth = deepened_pits(&raw, &carved, 96);
-        assert_eq!(teeth, vec![], "{fig}");
-    }
-
-    /// No cut leaves a changed cell steeper than max(40°, raw) (the `walls` check) or a dry
-    /// thalweg bed rising where the ground falls (`bed_rises`): the synthetic world's rivers run
-    /// down 42-47° slopes.
-    #[test]
-    fn no_cut_leaves_a_wall_or_a_rising_bed() {
-        let world = World { w: 256, h: 256 };
-        let (run, fig, node, ..) = run_full(setup(world, 32, 1e-5), terrain(world), 3.6e4);
-        // Without grading, 54 dry thalweg beds rise here.
-        assert!(fig["bed_graded_cells"].as_u64().unwrap() > 0, "{fig}");
-        assert_eq!(bed_rises(&run, &node, 256), 0, "a dry thalweg bed rises");
-        let (raw, carved, ..) = run;
-        let (w, mut walls) = (256usize, 0);
-        for y in 1..w - 1 {
-            for x in 1..w - 1 {
-                let k = y * w + x;
-                if (carved[k] - raw[k]).abs() > CHANGED_M
-                    && is_wall(
-                        horn_deg(&carved, w, x, y, 1.0),
-                        horn_deg(&raw, w, x, y, 1.0),
-                        40.0,
-                    )
-                {
-                    walls += 1;
-                }
-            }
-        }
-        assert_eq!(walls, 0);
-    }
-
-    /// Changed cells steeper than max(40°, raw) (the `walls` check) in a `w`-wide world.
-    fn walls(raw: &[f32], carved: &[f32], w: usize) -> usize {
-        let h = raw.len() / w;
-        let mut n = 0;
-        for y in 1..h - 1 {
-            for x in 1..w - 1 {
-                let k = y * w + x;
-                n += usize::from(
-                    (carved[k] - raw[k]).abs() > CHANGED_M
-                        && is_wall(
-                            horn_deg(carved, w, x, y, 1.0),
-                            horn_deg(raw, w, x, y, 1.0),
-                            40.0,
-                        ),
-                );
-            }
-        }
-        n
-    }
-
-    /// Cut cells, walls, bed rises, channel figures.
-    type RillResult = (usize, usize, usize, Value);
-
-    /// A rill straight down a plane falling `fall` per cell with `across` per cell to its
-    /// sides, at tiles 160 and 32 (asserted bit-identical): cut cells, walls, bed rises and
-    /// the channel figures.
-    fn rill(fall: f32, across: f32, m3s: f64) -> RillResult {
+    /// Cut cells of a rill straight down a plane falling `fall` per cell with `across` per
+    /// cell to its sides, at tiles 160 and 32 (asserted bit-identical).
+    fn rill(fall: f32, across: f32, m3s: f64) -> usize {
         let world = World { w: 160, h: 41 };
         let z: Vec<f32> = (0..world.w * world.h)
             .map(|i| {
@@ -1651,40 +1260,31 @@ mod tests {
                 200.0 - fall * x + across * (y - 20.0).abs() + ((i * 7919) % 7) as f32 * 0.002
             })
             .collect();
-        let mut first: Option<(Vec<u32>, RillResult)> = None;
+        let mut first: Option<Vec<u32>> = None;
         for tile in [160, 32] {
-            let (run, fig, node, ..) = run_full(setup(world, tile, 1e-4), z.clone(), m3s);
-            let (raw, carved) = (&run.0, &run.1);
-            let res = (
-                (0..raw.len()).filter(|&k| carved[k] < raw[k]).count(),
-                walls(raw, carved, 160),
-                bed_rises(&run, &node, 160),
-                fig,
-            );
-            let bits: Vec<u32> = carved.iter().map(|v| v.to_bits()).collect();
-            let f = first.get_or_insert_with(|| (bits.clone(), res.clone()));
-            assert_eq!((&bits, &res), (&f.0, &f.1), "tile {tile}");
+            let (run, ..) = run_full(setup(world, tile, 1e-4), z.clone(), m3s);
+            let bits: Vec<u32> = run.1.iter().map(|v| v.to_bits()).collect();
+            let f = first.get_or_insert_with(|| bits.clone());
+            assert_eq!(&bits, f, "tile {tile}");
         }
-        first.expect("ran").1
+        let (raw, carved) = (z, first.expect("ran"));
+        (0..raw.len())
+            .filter(|&k| f32::from_bits(carved[k]) < raw[k])
+            .count()
     }
 
-    /// A rill straight down a 46° plane (raw 44–48° across it) is not cut at all (raw from
-    /// 39° is never cut), so no wall cascade starts there (scale diagnosis 1).
+    /// Owner rule: a rill straight down a 46° plane (raw 44–48° across it) is cut like any
+    /// other; steep raw is no reason to spare it.
     #[test]
-    fn a_rill_down_a_46_degree_slope_is_not_cut() {
-        let (cut, walls, rises, _) = rill(1.035, 0.3, 50.0);
-        assert_eq!((cut, walls, rises), (0, 0, 0));
+    fn a_rill_down_a_46_degree_slope_is_cut() {
+        assert!(rill(1.035, 0.3, 50.0) > 0);
     }
 
-    /// A rill down a 38° plane, just under the no-cut slope, cut deep enough that halving
-    /// leaves walls: the final rounds remove those cuts; no wall, no rising bed.
+    /// A rill down a 38° plane cut deep: its cut stays (no wall rounds take it back).
     #[test]
-    fn a_deep_rill_on_a_38_degree_slope_leaves_no_wall_and_no_rising_bed() {
-        let (cut, walls, rises, fig) = rill(0.79, 0.05, 1e4);
+    fn a_deep_rill_on_a_38_degree_slope_is_cut() {
+        let cut = rill(0.79, 0.05, 1e4);
         assert!(cut > 50, "the rill is cut ({cut} cells)");
-        assert_eq!((walls, rises), (0, 0));
-        assert!(fig["wall_cuts_removed"].as_u64().unwrap() > 0, "{fig}");
-        assert!(fig["wall_restore_rounds"].as_u64().unwrap() >= 1, "{fig}");
     }
 
     /// Water settles on the final routing: cells draining into water above them are wetted

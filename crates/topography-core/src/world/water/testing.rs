@@ -1,6 +1,5 @@
 //! Test-only: a synthetic grid with sea, a lagoon, a humid basin, an arid basin and rivers.
 
-use super::checks::{CHANGED_M, narrow_at};
 use super::geom::World;
 use super::layers::{Classes, Layer};
 use super::params;
@@ -183,15 +182,4 @@ pub(crate) fn coarse_grid_dir(
     m["moisture"]["nw_m"] = serde_json::json!([0.0, h]);
     fs::write(&path, serde_json::to_vec(&m).expect("json")).expect("grid.json");
     grid
-}
-
-/// Cells failing `handoff_narrow`'s rule (B9, ruling R5) for the cut `before − z`, two cells
-/// in from the edge.
-pub(crate) fn slots(z: &[f32], before: &[f32], w: usize, h: usize) -> Vec<(usize, usize)> {
-    (2..h - 2)
-        .flat_map(|y| (2..w - 2).map(move |x| (x, y)))
-        .filter(|&(x, y)| {
-            before[y * w + x] - z[y * w + x] > CHANGED_M && narrow_at(before, z, w, h, x, y).1
-        })
-        .collect()
 }

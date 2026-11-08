@@ -151,8 +151,25 @@ pub(crate) struct Spot {
 /// An exit-walk drop over DAM_STEP_M near a spot: (spot index, node key, lake, cell, drop m,
 /// raw drop m).
 type SpotDrop = (usize, u64, Option<u32>, [u64; 2], f32, f32);
-/// Counted like checks but reported as figures `<name>_count` (owner ruling 2026-11-06).
-const FIGURE_ONLY: [&str; 3] = ["parallel_rivers", "straight_runs", "straight_share"];
+/// Counted like checks but reported as figures `<name>_count` (owner rulings 2026-11-06 and
+/// 2026-11-08: terrain changes only by erosion and deposition, never to satisfy these).
+const FIGURE_ONLY: [&str; 15] = [
+    "parallel_rivers",
+    "straight_runs",
+    "straight_share",
+    "walls",
+    "handoff_narrow",
+    "erosion_new_pits",
+    "carve_pits",
+    "bed_rises",
+    "facets",
+    "change_p99",
+    "interior_p99",
+    "label_agreement",
+    "thalweg_beside",
+    "dam_drops",
+    "dam_steps",
+];
 /// Spot drops are recorded this far from their spot.
 const SPOT_M: f64 = 100.0;
 /// `unlabelled_main_river_cells` also counts runs of this many unlabelled river cells.
@@ -1504,9 +1521,6 @@ pub(crate) fn check_tile(
                     let cell = [px as u64, py as u64];
                     t.rims_any
                         .push((e.key, e.lake, cell, z[p] - lv, raw[p] - lv));
-                    if e.lake.is_some() && raw[p] <= lv + DAM_RIM_M {
-                        t.fail("dam_rims", cell[0], cell[1]);
-                    }
                 }
             }
         }
@@ -1531,9 +1545,6 @@ pub(crate) struct CheckExtra {
     pub cell_km2: f64,
     /// The review spots of `dam_drops_at_spots`.
     pub spots: Vec<Spot>,
-    /// A level with erosion: the coarse budget replaces `change_p99`, and `dam_steps` is a
-    /// figure (B4, ruling R2).
-    pub coarse: bool,
 }
 
 /// The largest `n` falls by reach `i` (0: 5 m, 1: 10 m, 2: 50 m), as JSON.
@@ -1568,7 +1579,6 @@ pub(crate) fn report(
         "lake_exit_surface",
         "dam_steps",
         "dam_drops",
-        "dam_rims",
         "interior_max",
         "handoff_narrow",
         "erosion_new_pits",
@@ -1909,17 +1919,6 @@ pub(crate) fn report(
                 .collect::<Vec<_>>(),
         }),
     );
-    if extra.coarse {
-        // B4 (review C3): the coarse budget is the interior one; the all-cell p99 is a figure.
-        fails.remove("change_p99");
-        figures.insert("change_p99_all_cells_m".into(), json!(p99));
-        // Ruling R2: 1.5 m per cell is a gentle grade at 32 m and erosion steepens below a
-        // retreating outlet; `dam_drops` is the coarse dam check.
-        figures.insert(
-            "dam_steps_over_raw".into(),
-            json!(fails.remove("dam_steps").unwrap_or(0)),
-        );
-    }
     let failures: Vec<&str> = fails
         .iter()
         .filter(|(_, v)| **v > 0)
@@ -2212,7 +2211,6 @@ mod tests {
                 lakes: self.lakes.clone(),
                 cell_km2: 1e-6,
                 spots: self.spots.clone(),
-                coarse: self.spacing > 1.0,
             }
         }
         fn layers(&self) -> CheckLayers {
@@ -3466,13 +3464,13 @@ mod tests {
             *v -= 1.2;
         }
         let r = f.report();
-        assert_eq!(r["checks"]["interior_p99"], 1);
+        assert_eq!(r["figures"]["interior_p99_count"], 1);
         assert_eq!(r["checks"]["interior_max"], 0);
         assert_eq!(r["figures"]["interior_cells"], 1024);
         assert!((r["figures"]["interior_change_p99_m"].as_f64().unwrap() - 1.2).abs() < 1e-9);
         // A 1 m run has no coarse budget.
         f.spacing = 1.0;
-        assert_eq!(f.report()["checks"]["interior_p99"], 0);
+        assert_eq!(f.report()["figures"]["interior_p99_count"], 0);
     }
 
     #[test]
@@ -3617,7 +3615,7 @@ mod tests {
         let k = s.k(4, 4);
         s.flags[k] = STEEP;
         let r = s.report();
-        assert_eq!(r["checks"]["dam_drops"], 1);
+        assert_eq!(r["figures"]["dam_drops_count"], 1);
         assert_eq!(r["figures"]["dam_drops_steep_source"], 1);
     }
 
@@ -3824,10 +3822,10 @@ mod tests {
         assert_eq!(fails(&f.tile(), "carve_pits"), 0);
     }
 
-    /// Ruling R2 and B4: at levels with erosion `dam_steps` and the all-cell `change_p99` are
-    /// figures; at 1 m they stay hard.
+    /// Owner rule (2026-11-08): the checks terrain edits used to "fix" are figures at every
+    /// level; they never fail a run.
     #[test]
-    fn at_erosion_levels_dam_steps_and_change_p99_are_figures() {
+    fn terrain_shape_checks_are_always_figures() {
         let dam: Vec<f32> = std::iter::once(7.0)
             .chain((1..150).map(|i| 7.0 - 0.01 * i as f32))
             .collect();
@@ -3838,19 +3836,23 @@ mod tests {
         for (r, z) in f.raw.iter_mut().zip(&f.z) {
             *r = r.max(z + 2.0);
         }
-        let r = f.report();
-        assert_eq!(r["checks"]["dam_steps"], 1);
-        assert_eq!(r["checks"]["change_p99"], 1);
-        f.coarse();
-        let r = f.report();
-        assert_eq!(r["checks"].get("dam_steps"), None);
-        assert_eq!(r["checks"].get("change_p99"), None);
-        assert_eq!(r["figures"]["dam_steps_over_raw"], 1);
-        assert_eq!(r["figures"]["change_p99_all_cells_m"], 2.0);
-        assert_eq!(
-            r["checks"]["dam_drops"], 1,
-            "the knickpoint check stays hard"
-        );
+        for coarse in [false, true] {
+            if coarse {
+                f.coarse();
+            }
+            let r = f.report();
+            for name in ["dam_steps", "change_p99", "dam_drops"] {
+                assert_eq!(r["checks"].get(name), None, "{name} (coarse {coarse})");
+                assert_eq!(r["figures"][format!("{name}_count")], 1, "{name}");
+            }
+            assert!(
+                FIGURE_ONLY
+                    .iter()
+                    .all(|n| !r["failures"].as_array().unwrap().contains(&json!(n))),
+                "{}",
+                r["failures"]
+            );
+        }
     }
 
     #[test]
@@ -3884,9 +3886,9 @@ mod tests {
             c.route(&fin, 16, 2.0);
             c.report()
         };
-        assert_eq!(agree(6)["checks"]["label_agreement"], 0);
+        assert_eq!(agree(6)["figures"]["label_agreement_count"], 0);
         let r = agree(8);
-        assert_eq!(r["checks"]["label_agreement"], 1);
+        assert_eq!(r["figures"]["label_agreement_count"], 1);
         assert_eq!(r["figures"]["label_agreement"], 0.0);
     }
 
@@ -3965,78 +3967,5 @@ mod tests {
             assert!(dir.path().join("out").join(name).exists(), "{name}");
         }
         assert!(finish(&f).is_err(), "an existing output is refused");
-    }
-
-    #[test]
-    fn a_raised_rim_below_a_lake_fails_the_dam_check() {
-        use crate::world::water::{FinishOptions, Options, finish, run, testing};
-        let dir = tempfile::tempdir().expect("temp");
-        let grid = testing::grid_dir(dir.path(), World { w: 64, h: 64 });
-        let o = Options {
-            grid: grid.clone(),
-            work: dir.path().join("work"),
-            tile: 16,
-            threads: 2,
-            water: Some(grid.join("water.toml")),
-            river_km2: Some(1e-5),
-        };
-        run(&o).expect("run");
-        // Raise the dry cells beside the humid lake's exit by 2 m in a copy of the ground.
-        let bodies: Value =
-            serde_json::from_slice(&std::fs::read(o.work.join("bodies.json")).unwrap()).unwrap();
-        let lake = bodies["bodies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|b| b["kind"] == "lake" && !b["exit_cell"].is_null())
-            .expect("a full lake");
-        let (ex, ey) = (
-            lake["exit_cell"][0].as_u64().unwrap(),
-            lake["exit_cell"][1].as_u64().unwrap(),
-        );
-        let read = |p: &std::path::Path| -> Vec<f32> {
-            std::fs::read(p)
-                .unwrap()
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-                .collect()
-        };
-        let mut z = read(&o.work.join("carved.f32"));
-        let surface = read(&o.work.join("water-surface.f32"));
-        for y in ey.saturating_sub(2)..=(ey + 2).min(63) {
-            for x in ex.saturating_sub(2)..=(ex + 2).min(63) {
-                let k = (y * 64 + x) as usize;
-                if surface[k].is_nan() {
-                    z[k] = lake["level_m"].as_f64().unwrap() as f32 + 2.0;
-                }
-            }
-        }
-        let bumped = dir.path().join("bumped.f32");
-        std::fs::write(
-            &bumped,
-            z.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(),
-        )
-        .unwrap();
-        let f = FinishOptions {
-            grid: grid.clone(),
-            work: o.work.clone(),
-            ground: bumped,
-            out: dir.path().join("out"),
-            tile: 16,
-            threads: 2,
-            water: Some(grid.join("water.toml")),
-            river_km2: Some(1e-5),
-            spots: Vec::new(),
-        };
-        let outcome = finish(&f).expect("finish");
-        assert!(!outcome.passed);
-        let report: Value =
-            serde_json::from_slice(&std::fs::read(dir.path().join("out/report.json")).unwrap())
-                .unwrap();
-        assert!(
-            report["checks"]["dam_rims"].as_u64().unwrap() > 0,
-            "{}",
-            report["checks"]
-        );
     }
 }

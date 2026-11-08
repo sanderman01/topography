@@ -405,7 +405,7 @@ impl Tags {
     fn b(m1: &str, p: &Params, m3s_per_km2: f64) -> String {
         let mut v = json!({"after": m1, "cap": p.breach_cap_m, "radius": p.breach_radius,
                 "channels": p.channels, "wall_deg": p.wall_deg, "m3s_per_km2": m3s_per_km2,
-                "no_cut_deg": channel::NO_CUT_DEG, "taper_deg": breach::TAPER_DEG, "walls": true});
+                "taper_deg": breach::TAPER_DEG, "owner_rule": 1});
         // Only erosion levels widen the taper; 1 m keeps its tag (and caches).
         if p.erosion.is_some() {
             v["taper_min_cells"] = json!(erosion::TAPER_MIN_CELLS);
@@ -419,12 +419,10 @@ impl Tags {
             &json!({"after": b, "routings": e.routings, "k_dt": e.k_dt, "m": e.m,
                     "diffusion": e.diffusion, "cap_m": e.cap_m, "interior_k": e.interior_k,
                     "interior_cap_m": e.interior_cap_m, "wall_deg": wall_deg,
-                    "taper_min_cells": erosion::TAPER_MIN_CELLS, "wall_rounds": erosion::WALL_ROUNDS,
+                    "taper_min_cells": erosion::TAPER_MIN_CELLS,
                     "shape_min_m": erosion::SHAPE_MIN_M, "glacier_frozen": true, "sea_base_0": true,
-                    "wall_removal": true, "remove_rounds": erosion::REMOVE_ROUNDS,
-                    "disc_rounds": true, "narrow_rounds": "carved",
                     "diffuse_min_m": erosion::DIFFUSE_MIN_M, "taper_sources": "stream_power",
-                    "diffusion_bounds": ["trough", "wall"]}),
+                    "owner_rule": 1, "diffusion": "mass_conserving"}),
         )
     }
     /// m2 reads the ground before channels: the eroded ground (e) or the breached one (b).
@@ -444,9 +442,7 @@ impl Tags {
             "c",
             &json!({"after": l, "m3s_per_km2": m3s_per_km2, "cap": CHANNEL_CAP_M,
                     "halo": channel::HALO, "backwater": channel::BACKWATER,
-                    "walls": channel::WALL_ROUNDS, "restore": channel::RESTORE_ROUNDS,
-                    "no_cut_deg": channel::NO_CUT_DEG, "bed_grade": true,
-                    "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M,
+                    "owner_rule": 1, "pond_rims": true, "lake_mouths": true, "rim_sill_m": checks::SILL_M,
                     "min_depth_m": MIN_DEPTH_M, "shore_dry": true}),
         )
     }
@@ -578,7 +574,7 @@ pub fn run(o: &Options) -> Result<String> {
     let (pre_tag, pre, erosion_json) = match p.erosion {
         Some(e) => {
             let e_tag = Tags::e(&b_tag, &e, p.wall_deg);
-            let (path, total, per) = erosion::erode(&s, &breached, &raw, &work, &e_tag, &e)?;
+            let (path, total, per) = erosion::erode(&s, &breached, &work, &e_tag, &e)?;
             let mut j = total.json();
             j["routings"] = json!(e.routings);
             j["per_routing"] = json!(per.iter().map(|f| f.json()).collect::<Vec<_>>());
@@ -971,7 +967,6 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         lakes,
         cell_km2: s.cell_km2(),
         spots,
-        coarse: s.params.erosion.is_some(),
     };
     let (report, passed) = checks::report(tiles, extra, figures);
 
@@ -1412,11 +1407,6 @@ mod tests {
             .map(|r| r["sills_cut"].as_u64().unwrap())
             .sum();
         assert_eq!(e["sills_cut"].as_u64(), Some(per_cut), "summed per routing");
-        assert_eq!(
-            e["erosion_new_pits"],
-            json!(0),
-            "no pit made by the erosion code (B33)"
-        );
         let open = |p: &Path| {
             layers::Layer::<f32>::open(world, p)
                 .unwrap()
@@ -1426,11 +1416,10 @@ mod tests {
         let raw = open(&grid.join("elevation.f32"));
         let eroded = open(&o.work.join("e4.f32"));
         let breached = open(&o.work.join("breached.f32"));
+        // Breach only lowers; erosion may deposit (diffusion fills hollows), so eroded ground
+        // can rise above the breached ground.
         for i in 0..raw.len() {
-            assert!(
-                eroded[i] <= breached[i] + 1e-6 && breached[i] <= raw[i] + 1e-6,
-                "cell {i} rose"
-            );
+            assert!(breached[i] <= raw[i] + 1e-6, "cell {i} rose in the breach");
             if (i as u64) % 64 < 30 && breached[i] == raw[i] {
                 assert!(raw[i] - eroded[i] <= 3.0 + 1e-4, "interior cap 3 m at {i}");
             }
