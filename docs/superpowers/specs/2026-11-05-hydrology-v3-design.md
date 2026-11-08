@@ -61,8 +61,9 @@ numbers from the full run are added at gate 5 (Task 18).
   edge. Every other comparison is a figure. A lake that is not full at either level is
   compared by the spills of its depression, not its water level, and a split whose parts
   all keep the coarse level is not doubled (gate 3, lakes 1140, 1141, 1906).
-- **L3 exit sills.** L3 also eases each full 32 m lake's exit sill cell to that cell's 32 m
-  ground in both directions, so it neither raises nor cuts a spill (gate 3, lakes 1138, 1564, 6).
+- **L3 exit passes.** After L3, the exit corridor's 4 m pass of each full 32 m lake is offset,
+  up or down, to the 32 m exit cell value by a smooth bump that keeps L3's shape, so L3 neither
+  raises nor cuts a spill (gate 3, lakes 1138, 1564, 6).
 - **Coarse change budget.** At the coarse levels the all-cell `change_p99` is a figure; the
   budget is `interior_p99` and `interior_max`. `change_max` adds both caps (breach cap + erosion
   cap + 0.5 m).

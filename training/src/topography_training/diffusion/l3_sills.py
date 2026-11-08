@@ -1,8 +1,8 @@
-"""Ease a finished chain world's kept l3-raw.f32 at the 32 m lakes' exit sills (CPU only).
+"""Ease a finished chain world's kept l3-raw.f32 at the 32 m lakes' outlet passes (CPU only).
 
-For worlds whose L3 ran before `cascade_chain` eased the sills itself: the ease is affine in
-the raw surface, so applying it afterwards matches applying it per band. Back up l3-raw.f32
-first; the world's 4 m level must then be rerun (terrain-cascade.md, Rerunning from a stage).
+`cascade_chain` runs this ease itself once L3 is done. This entry point is for a world whose L3
+ran without it (`progress.json` without `l3_sills_eased`). The ease is not affine and runs only
+once: back up l3-raw.f32 first, then rerun the world's 4 m level (terrain-cascade.md).
 """
 
 from __future__ import annotations
