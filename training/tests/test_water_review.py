@@ -280,6 +280,10 @@ class CropsTest(unittest.TestCase):
 
 
 class ExitCropTest(unittest.TestCase):
+
+    def test_failure_crops_span_128_m_or_32_cells(self):
+        # Review M3: a 128 m crop is 4 cells at 32 m.
+        self.assertEqual([review.failure_m(s) for s in (1.0, 4.0, 32.0)], [128.0, 128.0, 1024.0])
     def test_exit_crops_span_128_m_or_32_cells(self):
         self.assertEqual([review.exit_cells(s) * s for s in (1.0, 4.0, 32.0)], [128.0, 128.0, 1024.0])
 

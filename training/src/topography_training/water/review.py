@@ -74,9 +74,15 @@ DAM_M, DAM_PX = 256, 1024
 # Dry cells get a flow arrow from this discharge on (wet and thalweg cells always).
 ARROW_KM2 = 2e-5
 STRAIGHT_RUNS, RUN_M = 20, 256
-FAILURE_M, FAILURE_CROPS = 128, 10
+# Failure crops span at least FAILURE_M and FAILURE_CELLS (review M3: 128 m is 4 cells at 32 m).
+FAILURE_M, FAILURE_CELLS, FAILURE_CROPS = 128, 32, 10
 # Exit crops span at least EXIT_M and EXIT_CELLS: 128 m at 1 m and 4 m, 1,024 m at 32 m.
 EXIT_M, EXIT_CELLS, EXIT_PX, SHEET_COLS, SHEET_ROWS = 128, 32, 256, 6, 8
+
+
+def failure_m(spacing_m: float) -> float:
+    """A failure crop's side in metres at this spacing."""
+    return max(float(FAILURE_M), FAILURE_CELLS * spacing_m)
 
 
 def exit_cells(spacing_m: float) -> int:
@@ -559,12 +565,13 @@ def crops(src: Path, dest: Path, spots=SPOTS, areas=AREAS, dam: tuple[int, int] 
         add(_crop(L, dest / "straight-runs" / f"{i + 1:02d}-E{e}-N{n}.png", mid, RUN_M,
                   f"straight run {i + 1}, {run.get('length_m', 0):.0f} m", ends=(tuple(a), tuple(b))), RUNS)
     for check, cells in sorted(L.report.get("examples", {}).items()):
-        for j, g in enumerate(_clusters(cells, FAILURE_M / 2 / L.spacing)[:FAILURE_CROPS]):
+        size_m = failure_m(L.spacing)
+        for j, g in enumerate(_clusters(cells, size_m / 2 / L.spacing)[:FAILURE_CROPS]):
             lo = (min(c for c, _ in g), min(r for _, r in g))
             hi = (max(c for c, _ in g), max(r for _, r in g))
             mid = ((lo[0] + hi[0]) // 2, (lo[1] + hi[1]) // 2)
             e, n = L.en(*mid)
-            add(_crop(L, dest / "failures" / f"{check}-{j + 1:02d}-E{e}-N{n}.png", mid, FAILURE_M,
+            add(_crop(L, dest / "failures" / f"{check}-{j + 1:02d}-E{e}-N{n}.png", mid, size_m,
                       f"{check} cluster {j + 1} ({len(g)} cells)", box=(*lo, *hi)), CLOSED)
     out += _lake_sheets(L, dest / "lake-exits")
     out.append(_overview(L, dest / "overview.png", marks))
