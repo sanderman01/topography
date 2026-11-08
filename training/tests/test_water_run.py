@@ -16,11 +16,15 @@ SCRATCH.mkdir(parents=True, exist_ok=True)
 from topography_training.water import run as W  # noqa: E402
 
 
-def fake_world(root: Path, n: int = 256, n4: int | None = None, window_4m: list[int] | None = None) -> Path:
+def fake_world(root: Path, n: int = 256, n4: int | None = None, window_4m: list[int] | None = None,
+               square: bool = False) -> Path:
     """An L4-shaped world over a chain world: elevation-raw.f32, the chain's 4 m classes,
     provenance and its 4 m water (no lakes) with grid.json and moisture (real rain),
     snow/vegetation, world-input. With `n4` > n // 4 the world is a square of the chain at
-    `window_4m` (col, row in 4 m cells), and the chain's classes and provenance are patterned."""
+    `window_4m` (col, row in 4 m cells), and the chain's classes and provenance are patterned.
+    `square` is such a square over a chain of twice its side, as cascade_l4 --km writes it."""
+    if square:
+        n4, window_4m = n4 or n // 2, window_4m or [n // 16, n // 8]
     chain = root / "chain"
     h4 = chain / "hydrology" / "4m"
     h4.mkdir(parents=True)
@@ -203,6 +207,16 @@ class RunTest(unittest.TestCase):
             mtime = (grid / "elevation.f32").stat().st_mtime_ns
             W.build_window_grid(src, 1, (128.0, 128.0), 64, Path(tmp) / "g")
             self.assertEqual((grid / "elevation.f32").stat().st_mtime_ns, mtime)
+
+    def test_a_square_grid_crops_and_a_whole_world_grid_links(self):
+        n = 256
+        for square in (True, False):
+            with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+                grid = W.build_world_grid(fake_world(Path(tmp), n, square=square), Path(tmp) / "v3")
+                for name in ("classes.u8", "provenance.u8"):
+                    self.assertEqual((grid / name).is_symlink(), not square, name)
+                    want = (n // 4) ** 2 if square else (n // 4) ** 2 // (64 if name == "provenance.u8" else 1)
+                    self.assertEqual((grid / name).stat().st_size, want, name)
 
 
 class SquareTest(unittest.TestCase):
