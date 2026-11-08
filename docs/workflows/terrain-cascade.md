@@ -507,8 +507,9 @@ Water is hydrology v3, one level at a time (`water.run.run_level`):
   review. L3 refines its final ground. A failed 32 m level exits 1 before L3 and writes no
   manifest.
 - **L3**: the raw 4 m surface `l3-raw.f32` is kept. Under 32 m lakes and sea the ground eases
-  down to the 32 m ground; under 32 m rivers too unless `--no-l3-river-clamp` (B32, under
-  A/B test; recorded in `progress.json` and the manifest as `l3_river_clamp`).
+  down to the 32 m ground; under 32 m rivers too unless `--no-l3-river-clamp` (B32; the Task 15
+  A/B tied, so the clamp stays on; recorded in `progress.json` and the manifest as
+  `l3_river_clamp`).
 - **4 m**: `hydrology/run-4m/…` on `l3-raw.f32` (symlinked into its grid), guided by the
   32 m level (hard coarse guide), with `hydrology/4m` linking `run-4m/out`. Its final ground
   is the world's `elevation.f32`.
@@ -748,6 +749,10 @@ Calibration (Task 9, 32 m): k_dt 7 × 10⁻⁴ keeps v2's value. It passes every
 lakes exiting farther away) is 1.10, under the 1.5 target, and far blend-zone cells change by
 a p99 of 1.95 m. Erosion takes 7 to 9 s a routing at 32 m and 701 s for both
 routings of a 16,384² 4 m grid (peak 6.2 GB): the CPU solver is fast enough.
+
+Calibration (Task 15, 4 m): on two real L3 squares (dam spots and canyon) every k_dt from
+4.4 × 10⁻⁵ to 1.75 × 10⁻⁴ passes and `seam_excess` does not separate them, so the planned
+8.75 × 10⁻⁵ stays. The L3 river clamp A/B tied (same checks, figures within 1 %).
 
 ### The level runner
 

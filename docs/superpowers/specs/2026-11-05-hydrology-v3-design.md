@@ -82,7 +82,9 @@ numbers from the full run are added at gate 5 (Task 18).
 - **Ground plus the existing water conditioning (B32).** L3 keeps its clamp to the 32 m ground
   under lakes and sea, and L4 its zeroed residual under 4 m lakes and sea. The river clamp at
   L3 (`--no-l3-river-clamp`) and the river residual at L4 (`--keep-river-residual`) are A/B
-  tested in Task 15 and at gate 4; the outcome is recorded here then.
+  tested in Task 15 and at gate 4. Task 15: the L3 river clamp A/B tied (same hard checks,
+  figures within 1 %, no visible change), so the clamp stays on. The L4 river residual is
+  recorded after gate 4.
 - **L4 test strip.** Four squares (dams 8 km, canyon, E43966 and alpine, 4 km each) instead of
   one strip.
 
