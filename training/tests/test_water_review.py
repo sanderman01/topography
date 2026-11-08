@@ -27,7 +27,7 @@ def write(dirpath: Path, n: int, body: np.ndarray, bodies: list, discharge: np.n
 
 
 class CoarseGuideTest(unittest.TestCase):
-    def case(self, fine_level: float, split: bool = False):
+    def case(self, fine_level: float, split: bool = False, split_level: float | None = None):
         tmp = Path(tempfile.mkdtemp())
         cb = np.zeros((16, 16), np.uint32)
         cb[4:8, 4:8] = 2  # a 4 m lake
@@ -39,7 +39,8 @@ class CoarseGuideTest(unittest.TestCase):
         if split:
             fb[16:32, 24:32] = 6
         fb[41, 8:56] = 7
-        bodies = [{"id": 5, "kind": "lake", "level_m": fine_level}, {"id": 6, "kind": "lake", "level_m": fine_level},
+        bodies = [{"id": 5, "kind": "lake", "level_m": fine_level},
+                  {"id": 6, "kind": "lake", "level_m": fine_level if split_level is None else split_level},
                   {"id": 7, "kind": "river"}]
         write(tmp / "fine", 64, fb, bodies)
         return review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0, min_depth_m=0,
@@ -53,7 +54,56 @@ class CoarseGuideTest(unittest.TestCase):
 
     def test_gross_level_or_doubled_lakes_fail(self):
         self.assertEqual(self.case(106.0)["lakes_over_5m"], [2])
-        self.assertEqual(self.case(100.0, split=True)["lakes_doubled"], [2])
+        self.assertEqual(self.case(100.0, split=True, split_level=92.0)["lakes_doubled"], [2])
+
+    def test_a_split_at_the_coarse_level_is_a_figure(self):
+        """Lake 1906: two pits joined diagonally at 32 m, both at the coarse level at 4 m."""
+        g = self.case(100.0, split=True)
+        self.assertEqual((g["lakes_doubled"], g["lakes_split_same_level"], g["hard_failures"]), ([], [2], 0))
+
+    def spill_case(self, fine_level: float | None, notch_m: float | None = None, pit: bool = True):
+        """A coarse (4 m) endorheic lake at 100 m in a cone spilling at 112 m over the grid edge;
+        the fine (1 m) cone the same, a supply-limited lake at `fine_level` (none: dry), its rim
+        notched down to `notch_m` east of the centre, or with no pit at all."""
+        tmp = Path(tempfile.mkdtemp())
+        n = 32
+        y, x = np.mgrid[:n, :n] + 0.5
+        cz = (80.0 + 2.0 * np.hypot(x - 16, y - 16)).astype(np.float32)
+        cb = np.where(cz < 100.0, 2, 0).astype(np.uint32)
+        write(tmp / "coarse", n, cb, [{"id": 2, "kind": "lake", "level_m": 100.0, "endorheic": True}],
+              np.zeros((n, n)), 4.0)
+        cz.tofile(tmp / "coarse" / "elevation.f32")
+        y, x = (np.mgrid[: n * 4, : n * 4] + 0.5) / 4
+        fz = (80.0 + 2.0 * np.hypot(x - 16, y - 16)).astype(np.float32)
+        if notch_m is not None:
+            fz[62:66, 64:] = np.minimum(fz[62:66, 64:], notch_m)
+        if not pit:
+            fz = (200.0 - x).astype(np.float32)
+        fb = np.zeros((n * 4, n * 4), np.uint32)
+        bodies = []
+        if fine_level is not None:
+            fb[fz < fine_level] = 5
+            bodies = [{"id": 5, "kind": "lake", "level_m": fine_level, "endorheic": True}]
+        write(tmp / "fine", n * 4, fb, bodies)
+        fz.tofile(tmp / "fine" / "elevation.f32")
+        return review.coarse_guide(tmp / "fine", tmp / "coarse", fine_dir=tmp / "fine", min_km2=0, min_depth_m=0,
+                                   edge_m=0)
+
+    def test_supply_limited_lakes_compare_spills(self):
+        """Lakes 1140/1141: the fine catchment halves, so the level drops 8 m; the spill stays."""
+        g = self.spill_case(92.0)
+        self.assertEqual((g["hard_failures"], g["lakes_supply"]), (0, [2]))
+        self.assertLess(abs(g["spill_diff_m"]["2"]), 1.0)
+        g = self.spill_case(None)  # dry at the fine level, its depression intact
+        self.assertEqual((g["hard_failures"], g["lakes_gone"], g["lakes_supply"]), (0, [], [2]))
+
+    def test_a_lowered_spill_or_a_missing_depression_stays_hard(self):
+        g = self.spill_case(92.0, notch_m=104.0)  # the rim cut 8 m
+        self.assertEqual((g["lakes_over_5m"], g["lakes_supply"]), ([2], []))
+        g = self.spill_case(None, notch_m=104.0)
+        self.assertEqual(g["lakes_gone"], [2])
+        g = self.spill_case(None, pit=False)
+        self.assertEqual(g["lakes_gone"], [2])
 
     def test_a_window_is_compared_at_its_offset(self):
         """A 1 m window over part of the 4 m world: lakes outside it are not 'gone'."""

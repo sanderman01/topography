@@ -58,7 +58,11 @@ numbers from the full run are added at gate 5 (Task 18).
   (`dam_steps_over_raw`): 1.5 m a cell is a gentle grade at those spacings.
 - **Hard coarse guide, narrowed.** The guide is hard only for coarse lakes of at least
   0.05 km², deeper than the finer level's breach cap + 1 m and at least 1 km from a window
-  edge. Every other comparison is a figure.
+  edge. Every other comparison is a figure. A lake that is not full at either level is
+  compared by the spills of its depression, not its water level, and a split whose parts
+  all keep the coarse level is not doubled (gate 3, lakes 1140, 1141, 1906).
+- **L3 exit sills.** L3 also eases each full 32 m lake's exit sill cell to the 32 m ground
+  in both directions, so it neither raises nor cuts a spill (gate 3, lakes 1138, 1564).
 - **Coarse change budget.** At the coarse levels the all-cell `change_p99` is a figure; the
   budget is `interior_p99` and `interior_max`. `change_max` adds both caps (breach cap + erosion
   cap + 0.5 m).

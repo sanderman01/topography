@@ -785,7 +785,12 @@ The level runner and the 1 m driver compare each level with the next coarser v3 
 deeper than the finer level's breach cap plus 1 m (6 m from 32 m to 4 m, 3 m from 4 m to 1 m)
 and at least 1 km from an inner window or square edge: such a lake fails when its fine
 level differs by more than 5 m, when it is gone, or when it is doubled (two fine lakes each
-over 25 % of its area). Every other coarse lake is a figure (`lakes_small`, `lakes_shallow`,
+over 25 % of its area). When either level's lake is not full (endorheic: its level comes from
+supply or the water table), a level more than 5 m off or a missing fine lake is judged by the
+spills of the depressions under the coarse lake instead (each level's ground within 1 km of
+it): within 5 m, with the fine depression present, it is a figure (`lakes_supply`,
+`spill_diff_m`). A split whose large parts all lie within 5 m of the coarse level is a
+figure too (`lakes_split_same_level`). Every other coarse lake is a figure (`lakes_small`, `lakes_shallow`,
 `lakes_near_edge`), as is the share of coarse rivers with a fine river within 100 m. A hard
 failure withholds the level's pass (`level.json`) and, in a world, `manifest.json`
 (`manifest-failed.json` instead), and the run exits 1.

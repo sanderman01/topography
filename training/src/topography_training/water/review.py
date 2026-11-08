@@ -31,6 +31,10 @@ GAP_PX = 8
 BAR_PX = 40
 LEVEL_GROSS_M = 5.0
 DOUBLED_SHARE = 0.25
+# Supply-limited lakes compare the spills of their depressions, found within this margin of the
+# coarse lake's box, to this precision; a fine depression shallower than SPILL_TOL_M is missing.
+SPILL_MARGIN_M = 1000.0
+SPILL_TOL_M = 0.01
 RIVER_NEAR_M = 100.0
 
 
@@ -606,6 +610,29 @@ def _bodies(dirpath: Path) -> tuple[dict[int, str], dict[int, float]]:
             {b["id"]: float(b["level_m"]) for b in bodies if b.get("level_m") is not None})
 
 
+def _endorheic(dirpath: Path) -> set[int]:
+    """Lakes that are not full: their level comes from supply (or the water table), not a spill."""
+    return {b["id"] for b in _json(dirpath / "bodies.json")["bodies"] if b.get("endorheic")}
+
+
+def _spill(z: np.ndarray, seed: np.ndarray) -> tuple[float, float]:
+    """(spill, bottom) of the depression at the lowest cell of `seed` in ground z: the lowest
+    level whose 8-connected water from there reaches lower ground or the crop's edge."""
+    sy, sx = np.unravel_index(np.argmin(np.where(seed, z, np.inf)), z.shape)
+    bottom = float(z[sy, sx])
+
+    def escapes(level: float) -> bool:
+        lab = ndimage.label(z <= level, np.ones((3, 3), bool))[0]
+        c = lab == lab[sy, sx]
+        return bool(c[0].any() or c[-1].any() or c[:, 0].any() or c[:, -1].any() or (z[c] < bottom - 1e-3).any())
+
+    lo, hi = bottom, float(z.max())
+    while hi - lo > SPILL_TOL_M:
+        mid = (lo + hi) / 2
+        lo, hi = (lo, mid) if escapes(mid) else (mid, hi)
+    return hi, bottom
+
+
 def _lookup(kinds: dict[int, str], kind: str) -> np.ndarray:
     table = np.zeros(max(kinds, default=0) + 1, bool)
     for i, k in kinds.items():
@@ -637,7 +664,9 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
     100 m of a footprint edge inside the coarse grid are not counted. A compared lake can fail
     (B15) only when it covers at least `min_km2`, is deeper than `min_depth_m` (level minus its
     lowest coarse ground; default the fine level's breach cap + 1 m) and lies `edge_m` or more
-    from every inner footprint edge; the others are counted as figures. `mismatches` lists each
+    from every inner footprint edge; the others are counted as figures. A lake not full at
+    either level is judged by its depression's spill instead (`lakes_supply`), and a split
+    whose parts keep the coarse level is a figure (`lakes_split_same_level`). `mismatches` lists each
     failing lake with its box in metres (E west, N north, E east, N south)."""
     from . import table as water_table
 
@@ -685,6 +714,9 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
             b[:] = [min(b[0], y + sl[0].start), min(b[1], sl[1].start),
                     max(b[2], y + sl[0].stop - 1), max(b[3], sl[1].stop - 1)]
     diff, over, gone, doubled, mismatches, cut = {}, [], [], [], [], 0
+    spill_diff, supply, split_same = {}, [], []
+    c_end, f_end = _endorheic(coarse), _endorheic(fine_dir)
+    margin = int(math.ceil(SPILL_MARGIN_M / cs_m))
     small = shallow = near_edge = 0
     for i, (r0, c0, r1, c1) in sorted(boxes.items()):
         if (inner[0] and r0 == 0) or (inner[1] and c0 == 0) or (inner[2] and r1 == ph - 1) or \
@@ -713,22 +745,48 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
         inside = np.kron(mask, np.ones((k, k), bool))
         ids, counts = np.unique(fine[inside], return_counts=True)
         lakes = [(int(c), int(j)) for j, c in zip(ids, counts) if _is(f_lake, np.array([j]))[0]]
+        best = max(lakes)[1] if lakes else None
+
+        def spills_agree() -> bool:
+            """Supply-limited lakes (either level not full): the depressions' spills within
+            LEVEL_GROSS_M, the fine depression present."""
+            if i not in c_end and best not in f_end:
+                return False
+            a0, a1 = max(r0 - margin, 0), min(r1 + 1 + margin, ph)
+            b0, b1 = max(c0 - margin, 0), min(c1 + 1 + margin, pw)
+            seed = np.zeros((a1 - a0, b1 - b0), bool)
+            seed[r0 - a0 : r1 + 1 - a0, c0 - b0 : c1 + 1 - b0] = mask
+            cz = _rows(coarse / "elevation.f32", "<f4", cw, (y0 + a0, x0 + b0, a1 - a0, b1 - b0))
+            fz = _rows(fine_dir / "elevation.f32", "<f4", fw, (a0 * k, b0 * k, (a1 - a0) * k, (b1 - b0) * k))
+            (cs_spill, _), (fs_spill, f_bottom) = _spill(cz, seed), _spill(fz, np.kron(seed, np.ones((k, k), bool)))
+            spill_diff[str(i)] = round(fs_spill - cs_spill, 3)
+            return fs_spill - f_bottom > SPILL_TOL_M and abs(fs_spill - cs_spill) <= LEVEL_GROSS_M
+
         found = []
         if not lakes:
             if hard:
-                gone.append(i)
-                found.append(("gone", None))
+                if spills_agree():
+                    supply.append(i)
+                else:
+                    gone.append(i)
+                    found.append(("gone", None))
         else:
             area = int(inside.sum())
-            _, best = max(lakes)
-            if hard and sum(1 for c, _ in lakes if c > DOUBLED_SHARE * area) >= 2:
-                doubled.append(i)
-                found.append(("doubled", flevels[best]))
+            big = [j for c, j in lakes if c > DOUBLED_SHARE * area]
+            if hard and len(big) >= 2:
+                if all(abs(flevels[j] - clevels[i]) <= LEVEL_GROSS_M for j in big):
+                    split_same.append(i)
+                else:
+                    doubled.append(i)
+                    found.append(("doubled", flevels[best]))
             d = abs(flevels[best] - clevels[i])
             diff[str(i)] = round(d, 3)
             if hard and d > LEVEL_GROSS_M:
-                over.append(i)
-                found.append(("over_5m", flevels[best]))
+                if spills_agree():
+                    supply.append(i)
+                else:
+                    over.append(i)
+                    found.append(("over_5m", flevels[best]))
         for failure, level in found:
             mismatches.append({"lake": i, "failure": failure, "box_m": box_m, "coarse_level_m": clevels.get(i),
                                "fine_level_m": level})
@@ -754,6 +812,7 @@ def coarse_guide(world: Path, coarse: Path, fine_dir: Path | None = None, min_km
     return {
         "lakes_compared": len(boxes) - cut, "lakes_cut_by_window": cut, "level_diff_m": diff,
         "lakes_over_5m": over, "lakes_gone": gone, "lakes_doubled": doubled,
+        "lakes_supply": supply, "spill_diff_m": spill_diff, "lakes_split_same_level": split_same,
         "lakes_small": small, "lakes_shallow": shallow, "lakes_near_edge": near_edge,
         "min_cells": min_cells, "min_depth_m": min_depth_m, "edge_m": edge_m,
         "coarse_river_km2": coarse_river_km2,
@@ -813,7 +872,7 @@ def guide_figures(src: Path, coarse: Path, guide: dict, dest: Path, raw: Path | 
 
 
 GUIDE_SUMMARY = ("hard_failures", "lakes_compared", "lakes_over_5m", "lakes_gone", "lakes_doubled",
-                 "lakes_small", "lakes_shallow", "lakes_near_edge",
+                 "lakes_supply", "lakes_split_same_level", "lakes_small", "lakes_shallow", "lakes_near_edge",
                  "coarse_river_share_with_fine_river_within_100m")
 
 
