@@ -1,0 +1,30 @@
+training/src/topography_training/diffusion/cascade_chain.py
+  s_8c1b40ea9c1e0d::t_f1df3f68290ba4 651-653
+docs/plans/fujix-v1.md
+  s_8c1b40ea9c1e0d::t_f8c422ee680598 151
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_4fdb0713ae8b0c 639
+  s_8c1b40ea9c1e0d::t_d3b9fcc61deb9f 521-529
+docs/superpowers/specs/2026-11-05-hydrology-v3-design.md
+  s_8c1b40ea9c1e0d::t_1d1a052eb34ff6 39-40
+training/src/topography_training/diffusion/hydrology.py
+  s_8c1b40ea9c1e0d::t_f8c422ee680598 234
+crates/topography-core/src/export/description.rs
+  s_8c1b40ea9c1e0d::t_5a15e675f5278d 28-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d642f10556f8dedf0bc5f3c87620d8559473513e",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
