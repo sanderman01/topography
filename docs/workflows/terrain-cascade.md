@@ -933,7 +933,10 @@ continuation, and a dry drainage end on a shore.
 
 Settle (`s`) lifts written water to the m3 routing (a river or pool cell inside a higher m3
 pond stands at its level; a dry cell draining into higher labelled water is wetted) but leaves
-labelled lakes at their level and extent. The figure `closed_lake_m3_level_gap` is
+labelled lakes at their level and extent. `drainage_rises` is hard for every cell but a lake's:
+a flat lake's water leaves at its exit, so a lake cell whose m3 receiver drains higher counts in
+the figure `lake_routing_rises`. `lake_leaks` values an edge as `relevel` does, the higher of
+the lake cell's ground and the neighbour's water. The figure `closed_lake_m3_level_gap` is
 the largest |m3 level − label level| over closed lakes' cells; `stages.settled` names the
 largest lift's cell and body.
 
@@ -945,8 +948,9 @@ settled (settle's rule). The lake drops to it, its cells at or above the new lev
 and the edge moves, until it stands at its spill; a lake left with no cell below its spill
 drains and leaves `bodies.json`. Cells in a pocket the lowering cut off (an m3 pond whose
 level lies between the new and the old level) turn dry too; they stay m3 ponds. Where the
-largest pocket holds more cells than reached the spill and is full, the lake is that pocket
-instead, at its level and exit. A river cell
+largest pocket holds more cells than reached the spill, is full and its outlet's water allows
+its level, the lake is that pocket instead, at its level and exit; `stages.relevelled` counts
+these as `confined`. A river cell
 beside a lowered lake's old extent that stood at its old level (a mouth, below) follows it
 down, 5 mm over its bed where that lies above the new level. The lake's own outflow river keeps it at its label: its water
 stands at the outlet's height over its cut bed. Passes repeat on the rewritten surfaces until
