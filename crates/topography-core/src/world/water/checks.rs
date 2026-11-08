@@ -45,6 +45,10 @@ const RISE_M: f32 = 1e-4;
 pub(crate) const SILL_M: f32 = 0.01;
 const DAM_STEP_M: f32 = 1.5;
 const DAM_RIM_M: f32 = 0.5;
+/// A knickpoint is a dam only when ground this far behind its top (m)...
+const DAM_BEHIND_M: [f64; 2] = [2.0, 15.0];
+/// ...lies over this much below the top (a counter-slope; owner ruling Q3).
+const DAM_COUNTER_M: f32 = 1.0;
 /// Exit falls are read this far below each exit (figures; the 50 m one is also `dam_steps`'s
 /// reach).
 const FALL_M: [f64; 3] = [5.0, 10.0, 50.0];
@@ -240,6 +244,8 @@ pub(crate) struct Tile {
     /// water, and with under 2 steps ahead before the walk ends (expert ruling R2).
     pub dam_into_water: [u64; 2],
     pub dam_unjudged: [u64; 2],
+    /// Knickpoints with no counter-slope behind the top (natural waterfalls), [lakes, ponds].
+    pub dam_waterfalls: [u64; 2],
     /// Lakes whose outlet saddle cell is blend, painted or fill: (lake, cell, kind).
     pub seam_lakes: Vec<(u32, [u64; 2], u8)>,
 }
@@ -1339,8 +1345,10 @@ pub(crate) fn check_tile(
         // sample), a pit or the window edge; a drop with under 2 steps ahead of that end is not
         // judged (`dam_drops_unjudged`; onto water also `dam_drops_into_water`). At levels with
         // erosion a knickpoint fails only when it exceeds the raw step by DAM_STEP_M (a raw
-        // cliff); at 1 m raw is ignored (the l4v2 raw carries v2 dams). Pond exits are judged
-        // alike as a figure (`dam_drops_ponds`).
+        // cliff); at 1 m raw is ignored (the l4v2 raw carries v2 dams). A knickpoint with no
+        // counter-slope (ground DAM_BEHIND_M behind its top not over DAM_COUNTER_M below the
+        // top) is a natural waterfall (`dam_drops_waterfalls`, owner ruling Q3). Pond exits are
+        // judged alike as a figure (`dam_drops_ponds`).
         {
             // (x, y, D, metres from the exit cell, raw, standing water) along the walk.
             let mut walk: Vec<(u64, u64, f32, f64, f32, bool)> = Vec::new();
@@ -1386,7 +1394,34 @@ pub(crate) fn check_tile(
                 let after = (dv - walk[j].2) / (j - i).max(1) as f32;
                 let before = if i == 0 { 0.0 } else { (lv - top) / i as f32 };
                 let knick = drop > KNICK_FACTOR * after && drop > KNICK_FACTOR * before;
-                if knick && (!coarse || drop - raw_step > DAM_STEP_M) {
+                if !knick || (coarse && drop - raw_step <= DAM_STEP_M) {
+                    continue;
+                }
+                // Owner ruling Q3: without a counter-slope behind the top it is a waterfall.
+                let (tx, ty) = if i == 0 {
+                    (ix, iy)
+                } else {
+                    (walk[i - 1].0, walk[i - 1].1)
+                };
+                let (ux, uy) = (tx as f64 - cx as f64, ty as f64 - cy as f64);
+                let n = ux.hypot(uy);
+                // At least one cell behind at coarse spacings.
+                let [near, far] = DAM_BEHIND_M.map(|d| d.max(s.spacing_m) / s.spacing_m);
+                let mut lowest = f32::INFINITY;
+                let mut d = near;
+                while d <= far + 1e-9 {
+                    let (x, y) = (tx as f64 + ux / n * d, ty as f64 + uy / n * d);
+                    if let Some(j) = at_i(x.round() as i64, y.round() as i64) {
+                        lowest = lowest.min(z[j]);
+                    }
+                    d += 0.5;
+                }
+                // No ground sampled (window edge): judged as before.
+                if lowest.is_finite() && top - lowest <= DAM_COUNTER_M {
+                    t.dam_waterfalls[tally] += 1;
+                    continue;
+                }
+                {
                     for (k, spot) in spots.iter().enumerate() {
                         let Some([sx, sy]) = spot.cell else { continue };
                         let d = (sx.abs_diff(cx) as f64).hypot(sy.abs_diff(cy) as f64);
@@ -1574,7 +1609,7 @@ pub(crate) fn report(
     let mut seam_lakes: Vec<(u32, [u64; 2], u8)> = Vec::new();
     let mut pond_knicks: Vec<(u64, [u64; 2], f32)> = Vec::new();
     let mut spot_knicks: Vec<(usize, bool)> = Vec::new();
-    let (mut into_water, mut unjudged) = ([0u64; 2], [0u64; 2]);
+    let (mut into_water, mut unjudged, mut waterfalls) = ([0u64; 2], [0u64; 2], [0u64; 2]);
     for t in tiles {
         for (h, v) in hist_interior.iter_mut().zip(&t.hist_interior) {
             *h += v;
@@ -1594,6 +1629,7 @@ pub(crate) fn report(
         for k in 0..2 {
             into_water[k] += t.dam_into_water[k];
             unjudged[k] += t.dam_unjudged[k];
+            waterfalls[k] += t.dam_waterfalls[k];
         }
         seam_lakes.extend(t.seam_lakes.iter().copied());
         spot_drops.extend(t.spot_drops.iter().copied());
@@ -1846,6 +1882,10 @@ pub(crate) fn report(
         "dam_drops_unjudged".into(),
         json!({"lakes": unjudged[0], "ponds": unjudged[1]}),
     );
+    figures.insert(
+        "dam_drops_waterfalls".into(),
+        json!({"lakes": waterfalls[0], "ponds": waterfalls[1]}),
+    );
     pond_knicks.sort_by(|a, b| {
         b.2.total_cmp(&a.2)
             .then(a.1[1].cmp(&b.1[1]))
@@ -2001,7 +2041,7 @@ mod tests {
                 for x in 1..4 {
                     let k = c.k(x, y);
                     (c.z[k], c.raw[k], c.bz[k], c.pre_channel[k]) =
-                        (level - 1.0, level - 1.0, level - 1.0, level - 1.0);
+                        (level - 2.0, level - 2.0, level - 2.0, level - 2.0);
                     (c.surf[k], c.body[k], c.node[k], c.flow[k]) = (level, 2, 2, 0);
                 }
             }
@@ -3638,6 +3678,41 @@ mod tests {
         let t = cliff.tile();
         assert_eq!(fails(&t, "dam_drops"), 1);
         assert_eq!(t.examples["dam_drops"], vec![[4, 4]]);
+    }
+
+    /// Owner ruling Q3 (2026-11-08): a knickpoint is a dam only when the ground 2–15 m behind
+    /// the step top lies over 1 m below the top (a counter-slope); otherwise a waterfall.
+    #[test]
+    fn dam_drops_need_a_counter_slope_behind_the_step() {
+        let gentle = |top: f32, n: usize| (0..n).map(move |i| top - 0.01 * i as f32);
+        let waterfalls = |c: &Case| c.report()["figures"]["dam_drops_waterfalls"]["lakes"].clone();
+        // Chute (E24267 N51221): the walk falls 0.1 m per cell, then 3 m; the ground behind
+        // the top is higher.
+        let chute: Vec<f32> = (0..20)
+            .map(|i| 9.9 - 0.1 * i as f32)
+            .chain(gentle(5.0, 130))
+            .collect();
+        let c = Case::lake_with_exit_walk(10.0, &chute);
+        assert_eq!(fails(&c.tile(), "dam_drops"), 0, "a natural chute");
+        assert_eq!(waterfalls(&c), 1);
+        // Berm (E20456 N46236): a trough at 8.5 m behind a 9.6 m crest, then a 3.6 m drop.
+        let berm: Vec<f32> = [8.5, 8.5, 8.5, 8.5, 9.6]
+            .into_iter()
+            .chain(gentle(6.0, 145))
+            .collect();
+        let b = Case::lake_with_exit_walk(10.0, &berm);
+        let t = b.tile();
+        assert_eq!(fails(&t, "dam_drops"), 1, "a berm");
+        assert_eq!(t.examples["dam_drops"], vec![[9, 4]]);
+        // E25645-like: a 10 m deep lake held by its rim, 3 m straight down below the exit.
+        let mut d = Case::lake_with_exit_walk(10.0, &gentle(7.0, 150).collect::<Vec<_>>());
+        for k in 0..d.cells() {
+            if d.body[k] == 2 && d.k(3, 4) != k {
+                (d.z[k], d.raw[k], d.bz[k], d.pre_channel[k]) = (0.0, 0.0, 0.0, 0.0);
+            }
+        }
+        assert_eq!(fails(&d.tile(), "dam_drops"), 1, "a deep rim dam");
+        assert_eq!(waterfalls(&d), 0);
     }
 
     /// Expert ruling R3: a narrow lowering of a ridge crest is no trough and carries no water.

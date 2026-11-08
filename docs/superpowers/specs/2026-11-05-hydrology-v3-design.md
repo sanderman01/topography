@@ -51,7 +51,10 @@ numbers from the full run are added at gate 5 (Task 18).
 - **Dams.** `dam_drops` judges labelled lakes' exits only (pond exits are figures) with a
   knickpoint rule: a step over 1.5 m more than 3 × the mean fall after it and before it. At
   32 m and 4 m it fails only where the step exceeds raw's by over 1.5 m; there is no
-  steep-source exception. At 32 m and 4 m Plan A's per-cell `dam_steps` is a figure
+  steep-source exception. A knickpoint is a dam only with a counter-slope: the ground 2–15 m
+  (at least one cell) behind the step top lies over 1 m below the top. Without one it is a
+  natural waterfall, counted in the `dam_drops_waterfalls` figure (owner ruling, 2026-11-08).
+  At 32 m and 4 m Plan A's per-cell `dam_steps` is a figure
   (`dam_steps_over_raw`): 1.5 m a cell is a gentle grade at those spacings.
 - **Hard coarse guide, narrowed.** The guide is hard only for coarse lakes of at least
   0.05 km², deeper than the finer level's breach cap + 1 m and at least 1 km from a window
