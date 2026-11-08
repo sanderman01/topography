@@ -189,6 +189,9 @@ pub(crate) struct Tile {
     pub runs: Vec<Run>,
     /// Of the `straight_runs` cells, those in ponds (reported apart, still failing).
     pub pond_run_cells: u64,
+    /// Lowered cells whose m3 node depth exceeds their m2 depth by over SILL_M, wet or dry
+    /// (`carve_pool_cells`, a figure: troughs behind held rims).
+    pub carve_pool_cells: u64,
     /// Raw-independent dam figures (R31): (node key, lake, cell, drop m).
     pub drops_any: Vec<(u64, Option<u32>, [u64; 2], f32)>,
     /// Dry cells beside an exit above its level: (node key, lake, cell, after m, before m).
@@ -848,9 +851,30 @@ pub(crate) fn check_tile(
         if delta > s.params.change_max_m() {
             t.fail("change_max", x, y);
         }
-        // B26: a dry cell cut into an m3 node that m2 lacks: a pond only the cutting made.
-        if raw[j] - z[j] > CHANGED_M && body[j] == 0 && node[j] >= 2 && n2[j] == 0 {
+        // B26: (a) a dry cell cut into an m3 node that m2 lacks: a pond only the cutting made;
+        // (b) a one-cell pit the cutting deepened by over SILL_M, wet or dry (Task 13 ruling 1).
+        // (b) misses a tooth two cells wide; `carve_pool_cells` shows those as a figure.
+        let pitd = |v: &[f32]| {
+            let low = around(j).map(|k| v[k]).fold(f32::INFINITY, f32::min);
+            (low - v[j]).max(0.0)
+        };
+        let made = raw[j] - z[j] > CHANGED_M && body[j] == 0 && node[j] >= 2 && n2[j] == 0;
+        let deepened = pc[j] - z[j] > CHANGED_M && pitd(&z) - pitd(&pc) > SILL_M;
+        if made || deepened {
             t.fail("carve_pits", x, y);
+        }
+        let depth = |lv: f32, g: f32| {
+            if lv.is_finite() {
+                (lv - g).max(0.0)
+            } else {
+                0.0
+            }
+        };
+        if pc[j] - z[j] > CHANGED_M
+            && node[j] >= 2
+            && depth(level[j], z[j]) - depth(l2[j], pc[j]) > SILL_M
+        {
+            t.carve_pool_cells += 1;
         }
         // Coarse change budget (spec): real interiors outside breaches; far blend as figures.
         let unbreached = raw[j] - bo[j] <= CHANGED_M;
@@ -1534,6 +1558,7 @@ pub(crate) fn report(
     let mut saddle: BTreeMap<u32, f32> = BTreeMap::new();
     let (mut runs, mut drops_any, mut rims_any) = (Vec::new(), Vec::new(), Vec::new());
     let (mut agree, mut closed_ends, mut pond_run_cells) = ([0u64; 4], 0u64, 0u64);
+    let mut carve_pool_cells = 0u64;
     let mut excused = [0u64; 2];
     let mut bank = (0u64, 0f32, Vec::new());
     let mut class_cells: BTreeMap<u8, u64> = BTreeMap::new();
@@ -1596,6 +1621,7 @@ pub(crate) fn report(
         excused[0] += t.tributary_excused[0];
         excused[1] += t.tributary_excused[1];
         pond_run_cells += t.pond_run_cells;
+        carve_pool_cells += t.carve_pool_cells;
         bank.0 += t.bank_steps.0;
         bank.1 = bank.1.max(t.bank_steps.1);
         bank.2
@@ -1694,6 +1720,7 @@ pub(crate) fn report(
         ),
     );
     figures.insert("straight_run_cells_in_ponds".into(), json!(pond_run_cells));
+    figures.insert("carve_pool_cells".into(), json!(carve_pool_cells));
     figures.insert(
         "dam_drops_any".into(),
         json!({"count": drops_any.len(), "largest": drops_any.iter().take(50)
@@ -3694,6 +3721,30 @@ mod tests {
         f.node[i] = 2;
         assert_eq!(fails(&f.tile(), "carve_pits"), 1);
         f.n2[i] = 2; // a pond before the cutting
+        assert_eq!(fails(&f.tile(), "carve_pits"), 0);
+    }
+
+    /// Task 13 ruling 1 (b): a one-cell pit the cutting deepened, wet or dry, in any node.
+    #[test]
+    fn carve_pits_counts_pits_the_cutting_deepened() {
+        let mut f = Case::flat(32, 100.0);
+        let i = f.at(10, 10);
+        // A raw micro-pit, uncut.
+        (f.raw[i], f.bz[i], f.pre_channel[i], f.z[i]) = (99.95, 99.95, 99.95, 99.95);
+        (f.node[i], f.n2[i]) = (2, 2);
+        assert_eq!(fails(&f.tile(), "carve_pits"), 0);
+        // Cut a further 0.3 m alone, under a river.
+        f.z[i] = 99.65;
+        (f.body[i], f.surf[i]) = (5, 99.95);
+        assert_eq!(fails(&f.tile(), "carve_pits"), 1);
+        // The same cut over it and its 8 neighbours: an even section.
+        for y in 9..12 {
+            for x in 9..12 {
+                let k = f.at(x, y);
+                f.z[k] -= 0.3;
+            }
+        }
+        f.z[i] = 99.65;
         assert_eq!(fails(&f.tile(), "carve_pits"), 0);
     }
 
