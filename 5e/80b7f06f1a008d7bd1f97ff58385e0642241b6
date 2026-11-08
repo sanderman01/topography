@@ -1,0 +1,32 @@
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_06efa11750c06c 512-518
+training/tests/test_cascade_chain_sills.py
+  s_8c1b40ea9c1e0d::t_d7d467729af522 11,15,22-24,30-35,46-69,71,73-85,87-124
+training/src/topography_training/diffusion/cascade_chain.py
+  s_8c1b40ea9c1e0d::t_6585563b6f9153 902-911
+  s_8c1b40ea9c1e0d::t_683dbf041dc9af 856
+  s_8c1b40ea9c1e0d::t_ed7919e1a97f78 78
+  s_8c1b40ea9c1e0d::t_ea7abb3ccc1803 602-613,615-616,622-624,626-627,629
+  s_8c1b40ea9c1e0d::t_62593ea879d957 70-72,75-77,79
+  s_8c1b40ea9c1e0d::t_f2c819660008c8 469-487,489-504,507-511,515-523,525-528,530-589
+docs/superpowers/specs/2026-11-05-hydrology-v3-design.md
+  s_8c1b40ea9c1e0d::t_ce41d531a342df 64-66
+training/src/topography_training/diffusion/l3_sills.py
+  s_8c1b40ea9c1e0d::t_8ebbc93afe5b69 1,3-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e80b7f06f1a008d7bd1f97ff58385e0642241b6",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
