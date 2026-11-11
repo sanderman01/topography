@@ -911,7 +911,10 @@ pub(crate) fn relevel(
         let exits: BTreeMap<u32, (f32, [u64; 2])> = labels
             .iter()
             .filter_map(|(&id, l)| match moved.get(&id) {
-                Some(r) => r.to.is_finite().then_some((id, (r.to, r.outlet))),
+                // Drained and closed lakes have no spill edge.
+                Some(r) => {
+                    (r.to.is_finite() && r.outlet[1] != u64::MAX).then_some((id, (r.to, r.outlet)))
+                }
                 None => l.outlet.map(|o| (id, (l.level, o))),
             })
             .collect();
@@ -997,10 +1000,11 @@ fn apply_once<T: Blob>(
 }
 
 /// Ruling on diagnosis C (gate 1 for full lakes): a full labelled lake whose cells all lie in
-/// one full node of the routing on the carved ground (`n3`, layer value N) standing higher
-/// than its label, with no other labelled lake in it, takes that node's level, spill edge and
-/// extent (the node's cells below the level). It then stands at its spill on the final
-/// ground. Surfaces and labels only.
+/// one wet node of the routing on the carved ground (`n3`, layer value N) standing higher
+/// than its label, with no other labelled lake in it, takes that node's level and extent (the
+/// node's cells below the level). A full node gives its spill edge; one that is not full
+/// (lakes 103, 1183: the merge level of full children, endorheic in m3) leaves the lake closed,
+/// outlet [u64::MAX; 2], as m3 has it. Surfaces and labels only.
 #[allow(clippy::too_many_arguments)]
 fn basins(
     s: &Setup,
@@ -1043,7 +1047,7 @@ fn basins(
                 let &n = ns.iter().next().filter(|_| ns.len() == 1)?;
                 let nd = (n >= 2).then(|| n3.at(n - 2))?;
                 let l = labels[&id];
-                (l.outlet.is_some() && nd.full && nd.level > l.level && lakes_in[&n].len() == 1)
+                (l.outlet.is_some() && nd.level > l.level && lakes_in[&n].len() == 1)
                     .then_some((n, id))
             })
             .collect();
@@ -1088,7 +1092,7 @@ fn basins(
                     id,
                     from: labels[&id].level,
                     to: nd.level,
-                    outlet: nd.outlet,
+                    outlet: if nd.full { nd.outlet } else { [u64::MAX; 2] },
                     basin: n,
                     cells: cells.get(&id).copied().unwrap_or(0),
                     ..Default::default()
@@ -2714,18 +2718,22 @@ mod tests {
         assert_eq!(h.leaks(&d, 10.0, outlet).0, 0);
     }
 
-    /// Ruling on diagnosis C (lakes 103, 1183): a full labelled lake (10 m) inside a full,
-    /// higher m3 node (10.2 m, its pit included) takes that node's level, exit and extent.
-    /// A lake that is not full keeps its label (gate 1 ruling).
+    /// Ruling on diagnosis C (lakes 103, 1183): a full labelled lake (10 m) inside a wet,
+    /// higher m3 node (10.2 m, its pit and a river cell included) takes that node's level and
+    /// extent. A full node gives its exit; one that is not full (103 and 1183 in the
+    /// full-world run: the merge level of full children, endorheic in m3) leaves the lake
+    /// closed. A lake that is not full keeps its label (gate 1 ruling).
     #[test]
-    fn a_full_lake_inside_a_higher_full_basin_takes_its_level() {
-        let basin = |full: bool| {
-            let mut h = Hand::new().lake(full);
+    fn a_full_lake_inside_a_higher_basin_takes_its_level() {
+        let basin = |full_lake: bool, full_node: bool| {
+            let mut h = Hand::new().lake(full_lake);
             for x in 1..7 {
                 (h.node[at(x, 1)], h.level[at(x, 1)]) = (2, 10.2);
             }
             (h.z[at(1, 1)], h.z[at(5, 1)], h.z[at(6, 1)]) = (10.1, 10.05, 10.15);
             (h.sf[at(1, 1)], h.b[at(1, 1)]) = (f32::NAN, 0);
+            // The lake's outflow river starts inside the node.
+            (h.sf[at(5, 1)], h.b[at(5, 1)], h.flow[at(5, 1)]) = (10.1, 7, E);
             h.z[at(7, 1)] = 10.2;
             for x in 8..12 {
                 h.z[at(x, 1)] = 9.5 - 0.1 * (x - 8) as f32;
@@ -2736,29 +2744,38 @@ mod tests {
             h.nodes = Nodes(vec![super::super::nodes::Node {
                 key: 1,
                 level: 10.2,
-                full: true,
+                full: full_node,
                 lake: true,
-                outlet: [at(6, 1) as u64, at(7, 1) as u64],
+                outlet: if full_node {
+                    [at(6, 1) as u64, at(7, 1) as u64]
+                } else {
+                    [0, 0]
+                },
                 cells: 6,
                 ..Default::default()
             }]);
             h
         };
-        let h = basin(true);
-        let d = h.done();
-        let r = d.2.iter().find(|r| r.id == 9).expect("raised");
-        assert_eq!((r.from, r.to, r.basin), (10.0, 10.2, 2));
-        assert_eq!(r.outlet, [at(6, 1) as u64, at(7, 1) as u64]);
-        assert_eq!(r.cells, 6);
-        for x in 1..7 {
-            assert_eq!((d.0[at(x, 1)], d.1[at(x, 1)]), (10.2, 9), "lake at x = {x}");
+        for full_node in [true, false] {
+            let h = basin(true, full_node);
+            let d = h.done();
+            let r = d.2.iter().find(|r| r.id == 9).expect("raised");
+            assert_eq!((r.from, r.to, r.basin, r.cells), (10.0, 10.2, 2, 6));
+            for x in 1..7 {
+                assert_eq!((d.0[at(x, 1)], d.1[at(x, 1)]), (10.2, 9), "lake at x = {x}");
+            }
+            if full_node {
+                assert_eq!(r.outlet, [at(6, 1) as u64, at(7, 1) as u64]);
+                assert!(h.exit_gap(&d, 10.2, r.outlet) <= SILL_M);
+            } else {
+                assert_eq!(r.outlet, [u64::MAX; 2], "closed");
+            }
+            let (leaks, saddle) = h.leaks(&d, 10.2, r.outlet);
+            assert_eq!(leaks, 0);
+            assert!((saddle - 10.2).abs() <= SILL_M, "saddle {saddle}");
         }
-        assert!(h.exit_gap(&d, 10.2, r.outlet) <= SILL_M);
-        let (leaks, saddle) = h.leaks(&d, 10.2, r.outlet);
-        assert_eq!(leaks, 0);
-        assert!((saddle - 10.2).abs() <= SILL_M, "saddle {saddle}");
 
-        let h = basin(false);
+        let h = basin(false, true);
         let d = h.done();
         assert!(d.2.is_empty(), "not full: {:?}", d.2);
         for x in 2..5 {

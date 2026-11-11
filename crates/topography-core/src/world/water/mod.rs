@@ -461,7 +461,7 @@ impl Tags {
     fn s(m3: &str, c: &str) -> String {
         stage_tag(
             "s",
-            &json!({"after": m3, "channels": c, "lakes_at_label": true, "relevel": 3}),
+            &json!({"after": m3, "channels": c, "lakes_at_label": true, "relevel": 4}),
         )
     }
     /// Every tag, from the settings, the pools on m2 and the carved and pre-channel grounds'
@@ -618,6 +618,8 @@ fn relevel_json(r: &[channel::Relevelled], fig: (u64, bool, u64)) -> Value {
     json!({
         "lakes": lowered.len(),
         "raised": raised,
+        "raised_closed": r.iter().filter(|l| l.to > l.from && l.outlet[1] == u64::MAX).count(),
+        "max_raise_m": r.iter().map(|l| l.to - l.from).filter(|v| *v > 0.0).fold(0.0f32, f32::max),
         "drained": r.iter().filter(|l| l.to.is_nan()).count(),
         "passes": fig.0, "converged": fig.1, "outflow_cells": fig.2,
         "confined": lowered.iter().filter(|l| l.basin != 0).count(),
@@ -916,13 +918,19 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             b["level_m"] = json!(f64::from(n.level));
             let id = b["id"].as_u64().and_then(|v| u32::try_from(v).ok());
             if let Some(r) = id.and_then(|id| relevelled.get(&id)) {
-                let (x, y) = s.world.xy(r.outlet[1]);
                 b["level_m"] = json!(f64::from(r.to));
                 b["label_level_m"] = json!(f64::from(r.from));
                 b["area_km2"] = json!((r.cells as f64 * km2 * 1e6).round() / 1e6);
                 b["max_depth_m"] = json!((f64::from(r.to - n.low) * 100.0).round() / 100.0);
-                b["exit_cell"] = json!([x, y]);
-                b["endorheic"] = json!(false);
+                // Raised into a closed m3 node: no exit.
+                let closed = r.outlet[1] == u64::MAX;
+                b["exit_cell"] = if closed {
+                    Value::Null
+                } else {
+                    let (x, y) = s.world.xy(r.outlet[1]);
+                    json!([x, y])
+                };
+                b["endorheic"] = json!(closed);
             }
         }
     }
@@ -956,8 +964,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             AcquisitionError::Invalid(format!("lake {id}: node {key} not in the model"))
         })?;
         if let Some(r) = relevelled.get(&id) {
-            // At its spill on the carved ground: full, the m3 node's exit.
-            lakes.insert(id, (r.to, true, r.outlet, 0));
+            // At its spill on the carved ground: full, the m3 node's exit; or closed with it.
+            lakes.insert(id, (r.to, r.outlet[1] != u64::MAX, r.outlet, 0));
             continue;
         }
         lakes.insert(id, (n.level, n.full, n.outlet, n.need));
@@ -982,7 +990,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         let r = lake_of.get(&n.key).and_then(|id| relevelled.get(id));
         r.map_or(*n, |r| nodes::Node {
             level: r.to,
-            full: true,
+            full: r.outlet[1] != u64::MAX,
             outlet: r.outlet,
             ..*n
         })

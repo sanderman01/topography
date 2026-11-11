@@ -962,9 +962,11 @@ is seen by the next pass; a wet river cell a lake raises keeps its body. Each pa
 a lake's outflow that stands above the lake (stale section water carried up to the outlet) to
 the lake's level, along the m3 path down to where it falls below the lake, when every bed on
 it lies 5 mm below the lake and no higher m3 pond holds it (`outflow_cells`). Before the
-passes, a full labelled lake whose cells all lie in one full m3 node standing higher, holding
-no other labelled lake, takes that node's level, exit and extent (`raised`; ruling on
-diagnosis C, 2026-11-11). `stages.relevelled` counts lowered, raised and drained lakes, dried
+passes, a full labelled lake whose cells all lie in one wet m3 node standing higher, holding
+no other labelled lake, takes that node's level and extent (`raised`, `max_raise_m`; ruling
+on diagnosis C, 2026-11-11). A full node gives it its exit; in one that is not full (the
+merge level of full children, endorheic in m3) the lake is closed, with no exit
+(`raised_closed`). `stages.relevelled` counts lowered, raised and drained lakes, dried
 and flooded cells and lists the 20 largest drops; `finish` checks them at their new level and
 exit (`bodies.json` keeps `label_level_m`). A river cell cut below a lower lake beside it stands at the lake's
 level, keeping its body. The figure `m2_pond_cells_lost` counts m2 node cells in no m3 node
