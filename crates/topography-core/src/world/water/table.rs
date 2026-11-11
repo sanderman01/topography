@@ -57,6 +57,52 @@ pub(crate) struct Level {
     pub wall_deg: f64,
     #[serde(default)]
     pub erosion: Option<Erosion>,
+    #[serde(default)]
+    pub climate: Option<Climate>,
+}
+
+/// Climate from the moisture field (owner ruling 2026-11-11, option A and I1): lake supply
+/// follows rain, lakes evaporate more where it is dry, rivers carry runoff, glaciers hold ice.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Climate {
+    /// Rain (relative to the mean land rain) lost to evapotranspiration before any runoff.
+    pub runoff_threshold: f64,
+    /// Lake evaporation (relative to a humid lake) at or below `moist_dry`.
+    pub evap_dry: f64,
+    /// Moisture (0 to 1) at or below which lakes evaporate `evap_dry` ...
+    pub moist_dry: f64,
+    /// ... and at or above which they evaporate 1; linear between.
+    pub moist_wet: f64,
+    /// Standing water whose cells are more than this share glacier (class 10) is ice.
+    pub ice_share: f64,
+}
+
+/// The glacier class of legend terrain-v3.
+pub(crate) const GLACIER: u8 = 10;
+
+impl Climate {
+    /// Runoff relative to the mean land rain's: rain above the threshold, scaled so mean
+    /// rain gives 1.
+    pub fn runoff(&self, rain: f64) -> f64 {
+        (rain - self.runoff_threshold).max(0.0) / (1.0 - self.runoff_threshold)
+    }
+
+    /// Lake evaporation in thousandths of a humid lake cell's, at a moisture.
+    pub fn evap_milli(&self, moisture: f64) -> u64 {
+        let t = ((moisture - self.moist_dry) / (self.moist_wet - self.moist_dry)).clamp(0.0, 1.0);
+        (MILLI as f64 * (self.evap_dry + (1.0 - self.evap_dry) * t)).round() as u64
+    }
+
+    fn valid(&self) -> bool {
+        (0.0..1.0).contains(&self.runoff_threshold)
+            && self.evap_dry >= 1.0
+            && self.evap_dry <= 100.0
+            && 0.0 <= self.moist_dry
+            && self.moist_dry < self.moist_wet
+            && self.moist_wet <= 1.0
+            && (0.0..1.0).contains(&self.ice_share)
+    }
 }
 
 /// r in thousandths and the hot-dry flag by class id (0 to 255; ids missing from the file take
@@ -128,6 +174,13 @@ impl Table {
                 format!(
                     "water table level {key}: positive spacing and river start, cap 0 or more, \
                      0 < wall_deg < 90"
+                ),
+            )?;
+            ensure(
+                l.climate.is_none_or(|c| c.valid()),
+                format!(
+                    "water table level {key}: climate needs 0 <= runoff_threshold < 1, \
+                     1 <= evap_dry <= 100, 0 <= moist_dry < moist_wet <= 1, 0 <= ice_share < 1"
                 ),
             )?;
             if let Some(e) = &l.erosion {
@@ -211,6 +264,16 @@ mod tests {
             (0.05, 2.0, 40.0)
         );
         assert!(l1.erosion.is_none(), "no erosion at 1 m");
+        let c = l1.climate.expect("1 m has a climate");
+        assert!(t.level(4.0).climate.is_none() && t.level(32.0).climate.is_none());
+        assert_eq!(c.runoff(c.runoff_threshold), 0.0);
+        assert!(
+            (c.runoff(1.0) - 1.0).abs() < 1e-12,
+            "mean rain gives mean runoff"
+        );
+        assert_eq!(c.evap_milli(0.0), (c.evap_dry * 1000.0).round() as u64);
+        assert_eq!(c.evap_milli(c.moist_wet), 1000);
+        assert_eq!(c.evap_milli(1.0), 1000);
         let e4 = t.level(4.0).erosion.expect("4 m erodes");
         assert_eq!((e4.routings, e4.cap_m, e4.interior_cap_m), (2, 10.0, 3.0));
         assert_eq!(t.level(4.0).wall_deg, 35.0);

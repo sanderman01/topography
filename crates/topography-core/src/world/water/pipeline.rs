@@ -17,7 +17,7 @@ use super::nodes::{Node, Nodes};
 use super::rain::{Q_PER_KM2, Rain};
 use super::receivers::{kept_receivers, receivers};
 use super::store::{Blob, Dec, Enc, Work, cached, for_tiles};
-use super::table::Table;
+use super::table::{MILLI, Table};
 use super::watershed::{Below0, Drain, TileGraph, add_below0, drain_with, tile_graph_with};
 use super::{BELOW_SEA_OK, Params};
 use crate::acquisition::{AcquisitionError, Result, ensure};
@@ -62,25 +62,53 @@ impl Setup {
             self.nw_m[1] - (y as f64 + 0.5) * self.spacing_m,
         )
     }
+    /// Each cell's Q in units: its rain, or with a climate its runoff.
     pub fn rain_units(&self, core: Rect) -> Result<Vec<u64>> {
         (0..core.cells())
             .map(|k| {
                 let (x, y) = core.world_xy(k);
                 let (cx, cy) = self.centre(x, y);
-                self.rain.units(cx, cy, self.cell_km2())
+                let p = self.rain.relative(cx, cy)?;
+                let q = self.params.climate.map_or(p, |c| c.runoff(p));
+                Ok((q * self.cell_km2() * Q_PER_KM2).round() as u64)
             })
             .collect()
     }
-    /// Each cell's r in thousandths (class 0 without classes).
+    /// Each cell's lake supply in thousandths of a cell: its class's r (class 0 without
+    /// classes), with a climate times its rain relative to the mean land rain.
     pub fn supply(&self, core: Rect) -> Result<Vec<u64>> {
-        Ok(match &self.classes {
-            Some(c) => c
-                .read(core)?
-                .into_iter()
-                .map(|k| u64::from(self.table.r_milli(k)))
-                .collect(),
-            None => vec![u64::from(self.table.r_milli(0)); core.cells()],
-        })
+        let classes = match &self.classes {
+            Some(c) => c.read(core)?,
+            None => vec![0; core.cells()],
+        };
+        classes
+            .into_iter()
+            .enumerate()
+            .map(|(k, c)| {
+                let r = f64::from(self.table.r_milli(c));
+                Ok(match self.params.climate {
+                    Some(_) => {
+                        let (cx, cy) = self.centre_of(core, k);
+                        (r * self.rain.relative(cx, cy)?).round() as u64
+                    }
+                    None => r as u64,
+                })
+            })
+            .collect()
+    }
+    /// A lake cell's evaporation at world cell (x, y) in thousandths of a humid lake cell's.
+    pub fn evap_milli(&self, x: u64, y: u64) -> u64 {
+        match self.params.climate {
+            Some(c) => {
+                let (cx, cy) = self.centre(x, y);
+                c.evap_milli(self.rain.at(cx, cy))
+            }
+            None => MILLI,
+        }
+    }
+    fn centre_of(&self, core: Rect, k: usize) -> (f64, f64) {
+        let (x, y) = core.world_xy(k);
+        self.centre(x, y)
     }
     /// Provenance over a window (zeros without a layer).
     pub fn flags(&self, r: Rect) -> Result<Vec<u8>> {
@@ -499,6 +527,8 @@ struct Trees<'a> {
     foreign: &'a [(u64, u64)],
     foreign_below0: &'a [(u64, Below0)],
     min_cells: u64,
+    /// A lake cell's evaporation (thousandths) at a world cell.
+    evap: &'a (dyn Fn(u64, u64) -> u64 + Sync),
 }
 
 impl Trees<'_> {
@@ -627,7 +657,7 @@ impl Trees<'_> {
         for &(l, z, x, y) in cells {
             let h0 = holding(&lh, &ltop, l, z);
             ensure(h0 != NONE, "a gathered cell is held by no depression")?;
-            count(&mut t, h0, z, x, y);
+            count(&mut t, h0, z, x, y, (self.evap)(x, y));
             held.push((h0, z));
         }
         let mut lbal = solve_local(
@@ -820,7 +850,7 @@ pub(crate) fn model_on(
                 let z = zw[win.local(x, y).expect("in")];
                 let h0 = holding(&h, &top, resolver.leaf_of(local.remap(d.end[k])), z);
                 if h0 != NONE {
-                    count(&mut t, h0, z, x, y);
+                    count(&mut t, h0, z, x, y, s.evap_milli(x, y));
                 }
             }
             Ok(t)
@@ -837,6 +867,7 @@ pub(crate) fn model_on(
     // the global one) and every pour into it enters there; every other such tree goes to pass
     // L2, which gathers its cells and pours from all tiles (B2). Supply from other tiles'
     // cells is known globally (`foreign`). Exact either way.
+    let evap = |x: u64, y: u64| s.evap_milli(x, y);
     let trees = Trees {
         h: &h,
         resolver: &resolver,
@@ -845,6 +876,7 @@ pub(crate) fn model_on(
         foreign: &foreign,
         foreign_below0: &foreign_b0,
         min_cells: s.lake_min_cells(),
+        evap: &evap,
     };
     let part_l: Vec<PartL> = for_tiles(&tiles, s.threads, &format!("{tag} L"), |i, core| {
         let (local, nodes, remote) = cached(work, &format!("{tag}/l/{i:05}"), || {
@@ -1276,6 +1308,75 @@ mod tests {
         let mut s = setup(world, tile, 1e-5);
         (s.tile, s.contract) = (tile, contract);
         run_on(&s, &Layer::memory(world, z.to_vec()))
+    }
+
+    /// A 2 x 2 moisture field over a 64² world, from desert (0.05) to wet (0.9), weight 3.
+    fn climate_rain() -> Rain {
+        Rain {
+            w: 2,
+            h: 2,
+            spacing_m: 32.0,
+            nw_m: [0.0, 64.0],
+            values: vec![0.05, 0.3, 0.15, 0.9],
+            weight: 3.0,
+            mean_land_mm_h: 2.0,
+            entry: Default::default(),
+        }
+    }
+
+    #[test]
+    fn the_climate_scales_supply_runoff_and_evaporation_with_the_moisture() {
+        let world = World { w: 64, h: 64 };
+        let mut s = setup(world, 64, 1e-5);
+        let c = s.params.climate.expect("1 m has a climate");
+        s.rain = climate_rain();
+        let all = Rect::whole(world);
+        let (supply, rain) = (
+            s.supply(all).expect("supply"),
+            s.rain_units(all).expect("rain"),
+        );
+        let nw = 0; // moisture 0.05: rain 0.15 x mean
+        let se = 64 * 64 - 1; // moisture 0.9: rain 2.7 x mean
+        assert_eq!(rain[nw], 0, "the desert makes no runoff");
+        let q = c.runoff(2.7) * 1e-6 * Q_PER_KM2;
+        assert_eq!(rain[se], q.round() as u64);
+        // Class 18 (r 1) in the north: supply is r times the rain.
+        assert_eq!(supply[nw], (1000.0f64 * 0.15).round() as u64);
+        assert_eq!(
+            (s.evap_milli(0, 0), s.evap_milli(63, 63)),
+            (c.evap_milli(0.05), 1000)
+        );
+        assert!(
+            c.evap_milli(0.05) > 5 * MILLI,
+            "a desert lake evaporates much more"
+        );
+        // Without a climate (coarse levels): r and rain as before.
+        s.params.climate = None;
+        assert_eq!(s.supply(all).expect("supply")[nw], 1000);
+        assert_eq!(s.evap_milli(0, 0), MILLI);
+        assert_eq!(
+            s.rain_units(all).expect("rain")[nw],
+            (0.15 * 1e-6 * Q_PER_KM2).round() as u64
+        );
+    }
+
+    /// Tiles and contraction stay bit-identical when lakes evaporate at varying rates.
+    #[test]
+    fn tilings_agree_under_a_varying_climate() {
+        let world = World { w: 64, h: 64 };
+        let z = terrain(world);
+        let run = |tile: u64, contract: bool| {
+            let mut s = setup(world, tile, 1e-5);
+            (s.rain, s.contract) = (climate_rain(), contract);
+            run_on(&s, &Layer::memory(world, z.clone()))
+        };
+        let whole = run(64, false);
+        for (tile, contract) in [(64, true), (16, true), (13, true), (7, true)] {
+            let got = run(tile, contract);
+            assert_eq!(whole.1, got.1, "levels, tile {tile}");
+            assert_eq!(whole.2, got.2, "labels, tile {tile}");
+            assert_eq!(whole.0.water.nodes, got.0.water.nodes, "nodes, tile {tile}");
+        }
     }
 
     /// Whole vs tiles, and contraction on vs off (review C3): every raster and the node table

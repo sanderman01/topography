@@ -143,6 +143,16 @@ impl Stage {
     /// never a hard link: work rasters are written in place, and a rerun must not change a
     /// published output behind its digest (N17). Then digested.
     pub fn copy(&mut self, name: &str, src: &Path) -> Result<()> {
+        self.copy_edit(name, src, |_| Ok(()))
+    }
+
+    /// As `copy`, with `edit` applied to the staged copy before it is digested.
+    pub fn copy_edit(
+        &mut self,
+        name: &str,
+        src: &Path,
+        edit: impl FnOnce(&Path) -> Result<()>,
+    ) -> Result<()> {
         let dst = self.dir.path().join(name);
         let done = std::process::Command::new("cp")
             .arg("--reflink=auto")
@@ -153,7 +163,18 @@ impl Stage {
             io_context(format!("copy {}", src.display()), done)?.success(),
             format!("copy {} failed", src.display()),
         )?;
-        let mut file = io_context(format!("open {name}"), fs::File::open(&dst))?;
+        edit(&dst)?;
+        self.redigest(name)
+    }
+
+    /// A staged file's path.
+    pub fn path(&self, name: &str) -> PathBuf {
+        self.dir.path().join(name)
+    }
+
+    /// Digest a staged file again after an edit (and sync it).
+    pub fn redigest(&mut self, name: &str) -> Result<()> {
+        let mut file = io_context(format!("open {name}"), fs::File::open(self.path(name)))?;
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; 1 << 22];
         loop {

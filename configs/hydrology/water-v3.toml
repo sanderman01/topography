@@ -3,8 +3,9 @@
 # r ≈ P/E (a depression stands where its lake area equals Σ r over its catchment's cells,
 # with upstream overflow; r >= 1 fills to the spill, r = 0 stays dry) and `hot_dry` (an
 # inland basin below 0 m far from the sea may keep a lake below sea level, owner ruling
-# 2026-11-06). Lake supply ignores the moisture field, which drives only Q. Classes missing
-# here take class 0. Judgment values 2026-11-05 (r) and 2026-11-07 (hot_dry, levels).
+# 2026-11-06). Without a level `climate`, lake supply ignores the moisture field, which
+# drives only Q; with one (1 m), r is P/E at mean rain and scales with the cell's rain.
+# Classes missing here take class 0. Judgment values 2026-11-05 (r) and 2026-11-07 (hot_dry, levels).
 schema_version = 3
 kind = "water_table"
 legend = "topography terrain-v3"
@@ -22,6 +23,17 @@ below_sea_coast_km = 5.0
 river_km2 = 0.05
 breach_cap_m = 2.0
 wall_deg = 40.0
+# Climate from the 128 m moisture field (owner ruling 2026-11-11; judgement values):
+# lake supply = r x rain / mean land rain; Q = runoff, max(rain/mean - runoff_threshold, 0)
+# / (1 - runoff_threshold); a lake cell evaporates evap_dry x a humid one's at moisture <=
+# moist_dry, 1x at >= moist_wet, linear between; standing water on more than ice_share
+# glacier (class 10) cells is ice. Coarse levels keep the plain model.
+[levels.1.climate]
+runoff_threshold = 0.35  # the lee (moisture < 0.11, rain < 0.35 x mean) makes no runoff
+evap_dry = 8.0           # hot desert lake (~2.5 m/yr) against a humid one (~0.3 m/yr)
+moist_dry = 0.1          # desert regions sit at 0.06 to 0.09
+moist_wet = 0.25         # land mean is 0.30; windward regions 0.4 to 0.8
+ice_share = 0.5
 
 [levels.4]
 river_km2 = 0.5

@@ -17,6 +17,7 @@ mod geom;
 pub(crate) mod grid;
 mod hierarchy;
 mod hydraulic;
+mod ice;
 mod layers;
 pub(crate) mod moisture;
 mod nodes;
@@ -84,6 +85,8 @@ pub(crate) struct Params {
     pub wall_deg: f64,
     /// Coarse levels only (B2).
     pub erosion: Option<table::Erosion>,
+    /// The 1 m level only: rain-scaled supply, dry-lake evaporation, runoff, ice.
+    pub climate: Option<table::Climate>,
 }
 
 impl Params {
@@ -103,6 +106,7 @@ pub(crate) fn params(table: &table::Table, spacing_m: f64, river_km2: Option<f64
         channels: spacing_m < 2.0,
         wall_deg: level.wall_deg,
         erosion: level.erosion,
+        climate: level.climate,
     }
 }
 
@@ -1102,6 +1106,23 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         json!({"cells": m2_trickles.len(), "capped": m2_capped,
                "m3_cells": m3_trickles.len(), "m3_capped": m3_capped}),
     );
+    // Standing water mostly on glacier is ice (I1), the checks keep the liquid model.
+    let ice = match (s.params.climate, &s.classes) {
+        (Some(c), Some(classes)) => {
+            let body = layers::Layer::open(s.world, &work.path("water-body.u32"))?;
+            ice::frozen(&s.tiles(), s.threads, &body, classes, &bodies, c.ice_share)?
+        }
+        _ => Default::default(),
+    };
+    ice::relabel(&mut bodies, &ice);
+    let ice_km2: f64 = bodies["bodies"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["kind"] == "ice")
+        .filter_map(|b| b["area_km2"].as_f64())
+        .sum();
+    figures.insert("ice".into(), json!({"bodies": ice.len(), "km2": ice_km2}));
     let extra = checks::CheckExtra {
         // The model refuses flow cycles (an error ends `finish`), so none reach the checks.
         cycles: 0,
@@ -1115,8 +1136,23 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
 
     let mut stage = grid::Stage::new(&o.out)?;
     stage.copy("elevation.f32", &o.ground)?;
-    stage.copy("water-surface.f32", &work.path("water-surface.f32"))?;
+    let clear = |surface: &Path, body: &Path| -> Result<()> {
+        if ice.is_empty() {
+            return Ok(());
+        }
+        let (surface, body) = (
+            layers::Layer::open(s.world, surface)?,
+            layers::Layer::open(s.world, body)?,
+        );
+        ice::clear(&s.tiles(), s.threads, &surface, &body, &ice)
+    };
+    // The body raster is cleared in the staged surface's pass, so its copy goes first.
     stage.copy("water-body.u32", &work.path("water-body.u32"))?;
+    let staged_body = stage.path("water-body.u32");
+    stage.copy_edit("water-surface.f32", &work.path("water-surface.f32"), |p| {
+        clear(p, &staged_body)
+    })?;
+    stage.redigest("water-body.u32")?;
     stage.copy(
         "discharge.f32",
         &work.path(&format!("{m3_tag}-discharge.f32")),
@@ -1474,6 +1510,7 @@ mod tests {
                 channels: false,
                 wall_deg: 35.0,
                 erosion: t.level(32.0).erosion,
+                climate: None,
             }
         );
         assert_eq!(
@@ -1485,6 +1522,7 @@ mod tests {
                 channels: false,
                 wall_deg: 35.0,
                 erosion: t.level(4.0).erosion,
+                climate: None,
             }
         );
         assert_eq!(
@@ -1496,6 +1534,7 @@ mod tests {
                 channels: true,
                 wall_deg: 40.0,
                 erosion: None,
+                climate: t.level(1.0).climate,
             }
         );
         assert_eq!(p(1.0, Some(0.2)).river_km2, 0.2);

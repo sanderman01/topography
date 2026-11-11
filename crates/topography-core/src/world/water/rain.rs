@@ -95,14 +95,14 @@ impl Rain {
         top * (1.0 - ay) + bottom * ay
     }
 
-    /// A cell's rain in Q units (1e-12 km² at mean rain) at its centre (x, y).
-    pub fn units(&self, x: f64, y: f64, cell_km2: f64) -> Result<u64> {
+    /// Rain at (x, y) relative to the mean land rain.
+    pub fn relative(&self, x: f64, y: f64) -> Result<f64> {
         let m = self.at(x, y);
         ensure(
             m.is_finite() && m >= 0.0,
             format!("moisture {m} at ({x}, {y}) is negative or not finite"),
         )?;
-        Ok((m * self.weight * cell_km2 * Q_PER_KM2).round() as u64)
+        Ok(m * self.weight)
     }
 }
 
@@ -111,7 +111,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rain_is_bilinear_and_in_integer_units() {
+    fn rain_is_bilinear_and_relative_to_the_mean() {
         let r = Rain {
             w: 2,
             h: 1,
@@ -125,8 +125,8 @@ mod tests {
         assert_eq!(r.at(64.0, 64.0), 0.0);
         assert_eq!(r.at(128.0, 64.0), 0.5);
         assert_eq!(r.at(500.0, 64.0), 1.0, "clamped past the last centre");
-        // 1 m² cell at moisture 0.5, weight 2: 1e-6 km² = 1e6 units.
-        assert_eq!(r.units(128.0, 64.0, 1e-6).expect("units"), 1_000_000);
+        // Moisture 0.5 at weight 2: the mean land rain.
+        assert_eq!(r.relative(128.0, 64.0).expect("relative"), 1.0);
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
                 mean_land_mm_h: 1.0,
                 entry: Default::default(),
             };
-            assert!(r.units(64.0, 64.0, 1e-6).is_err(), "moisture {bad}");
+            assert!(r.relative(64.0, 64.0).is_err(), "moisture {bad}");
         }
     }
 }

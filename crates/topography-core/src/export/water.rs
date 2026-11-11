@@ -71,7 +71,8 @@ impl Bodies {
                     water.push((id, Kind::Lake, level, parent));
                 }
                 Some("river") => water.push((id, Kind::River, f32::NAN, parent)),
-                Some("dry") => {}
+                // Dry basins and ice (frozen lakes) hold no water cells.
+                Some("dry" | "ice") => {}
                 other => {
                     return Err(AcquisitionError::Invalid(format!(
                         "body {id} has unknown kind {other:?}"

@@ -438,7 +438,7 @@ pub(crate) mod tests {
             let d = holding(h, &top, l, zk);
             if d != NONE {
                 let (x, y) = world.xy(k as u64);
-                count(&mut t, d, zk, x, y);
+                count(&mut t, d, zk, x, y, 1000);
             }
         }
         Counts::dense(h.len(), &[t])
@@ -563,7 +563,7 @@ pub(crate) mod tests {
                 let d = holding(&hs, &ts, l, zk);
                 if d != NONE {
                     let (x, y) = world.xy(k as u64);
-                    count(&mut t, d, zk, x, y);
+                    count(&mut t, d, zk, x, y, 1000);
                 }
             }
             // `f.h.supply` holds this tile's cells only; cells of other tiles drain in across
@@ -752,6 +752,7 @@ pub(crate) mod tests {
             cells: vec![1, 1, 2],
             sum_mm: vec![1000, 2000, 10_000],
             bbox: vec![[0, 0, 6, 4]; 3],
+            evap: vec![],
         };
         let b = solve_local(&frag, &tops, &[(1, 500)], &[], &counts).expect("balance");
         // 12,500 in: A and B hold 1,000 each, the merge 2,000 more, 8,500 leaves.
@@ -765,6 +766,7 @@ pub(crate) mod tests {
             cells: vec![0; 3],
             sum_mm: vec![0; 3],
             bbox: vec![[u64::MAX, u64::MAX, 0, 0]; 3],
+            evap: vec![],
         };
         assert!(solve_local(&frag, &none, &[(0, 1)], &[], &empty).is_err());
         let err =

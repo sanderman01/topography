@@ -46,14 +46,17 @@ pub(crate) fn holding(h: &Hierarchy, top: &[f32], leaf: u32, z: f32) -> u32 {
     d
 }
 
-/// A tile's cells by holding depression: count, Σ ground (mm), bbox [x0, y0, x1, y1].
-pub(crate) type TileCounts = BTreeMap<u32, (u64, i64, [u64; 4])>;
+/// A tile's cells by holding depression: count, Σ ground (mm), bbox [x0, y0, x1, y1] and
+/// Σ lake evaporation (thousandths of a humid cell's).
+pub(crate) type TileCounts = BTreeMap<u32, (u64, i64, [u64; 4], u64)>;
 
-pub(crate) fn count(t: &mut TileCounts, d: u32, z: f32, x: u64, y: u64) {
-    let e = t.entry(d).or_insert((0, 0, [u64::MAX, u64::MAX, 0, 0]));
+/// Count cell (x, y) at ground `z` with lake evaporation `evap` (MILLI: a humid cell).
+pub(crate) fn count(t: &mut TileCounts, d: u32, z: f32, x: u64, y: u64, evap: u64) {
+    let e = t.entry(d).or_insert((0, 0, [u64::MAX, u64::MAX, 0, 0], 0));
     e.0 += 1;
     e.1 += mm(z);
     e.2 = [e.2[0].min(x), e.2[1].min(y), e.2[2].max(x), e.2[3].max(y)];
+    e.3 += evap;
 }
 
 fn union(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
@@ -70,6 +73,8 @@ pub(crate) struct Counts {
     pub cells: Vec<u64>,
     pub sum_mm: Vec<i64>,
     pub bbox: Vec<[u64; 4]>,
+    /// Σ lake evaporation (thousandths); empty: MILLI per cell.
+    pub evap: Vec<u64>,
 }
 
 impl Counts {
@@ -78,13 +83,15 @@ impl Counts {
             cells: vec![0; nd],
             sum_mm: vec![0; nd],
             bbox: vec![[u64::MAX, u64::MAX, 0, 0]; nd],
+            evap: vec![0; nd],
         };
         for t in tiles {
-            for (&d, &(n, s, b)) in t {
+            for (&d, &(n, s, b, e)) in t {
                 let d = d as usize;
                 c.cells[d] += n;
                 c.sum_mm[d] += s;
                 c.bbox[d] = union(c.bbox[d], b);
+                c.evap[d] += e;
             }
         }
         c
@@ -202,6 +209,17 @@ pub(crate) fn coastal_floor(k_balance: u64, sub_zero: u64, bad: u64) -> u64 {
 pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Balance> {
     let nd = h.len();
     let (mut n, mut sum, mut bbox) = (c.cells.clone(), c.sum_mm.clone(), c.bbox.clone());
+    // Lake evaporation sums like the cells, so a parent's capacity is its children's plus
+    // its own cells' and nesting holds whatever the rates.
+    let mut ev = if c.evap.is_empty() {
+        n.iter().map(|&k| MILLI * k).collect()
+    } else {
+        c.evap.clone()
+    };
+    ensure(
+        ev.len() == nd,
+        "evaporation counts do not match the depressions",
+    )?;
     ensure(
         h.below0.len() == h.leaves,
         "below-zero counts do not match the leaves",
@@ -216,6 +234,7 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
         if p != NONE {
             let p = p as usize;
             n[p] += n[d];
+            ev[p] += ev[d];
             sum[p] += sum[d];
             bbox[p] = union(bbox[p], bbox[d]);
             let b = below0[d];
@@ -248,7 +267,7 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
     }
     let mut f = Fsm {
         h,
-        cap: n.iter().map(|&k| MILLI * k).collect(),
+        cap: ev.clone(),
         sea: sea.clone(),
         top_of,
         taken: vec![false; nd],
@@ -304,7 +323,13 @@ pub(crate) fn solve(h: &Hierarchy, c: &Counts, sea_at_zero: bool) -> Result<Bala
             continue;
         }
         let kids = kids_of(d, &n);
-        let more = f.own[d].div_ceil(MILLI);
+        // Cells to cover beyond the children, at the mean rate of d's own cells.
+        let (own_n, own_ev) = (n[d] - kids, ev[d] - kids_of(d, &ev));
+        let more = if own_ev == 0 {
+            0
+        } else {
+            (u128::from(f.own[d]) * u128::from(own_n)).div_ceil(u128::from(own_ev)) as u64
+        };
         let k = kids + more;
         if coastal_floor(k, below0[d].0, below0[d].1) > k {
             // The floor governs: level min(0 m, spill) over the cells below it (with the
@@ -455,6 +480,7 @@ mod tests {
             cells: vec![3, 2, 4],
             sum_mm: vec![6000, 5000, 24000],
             bbox: vec![[0, 0, 1, 1]; 3],
+            evap: vec![],
         };
         (h, c)
     }
@@ -552,6 +578,35 @@ mod tests {
     }
 
     #[test]
+    fn dry_lakes_evaporate_more_and_capacities_still_nest() {
+        // Leaf 0 dry (4x), leaf 1 humid, meta 2's own cells 2x: 12,000, 2,000 and 8,000.
+        let (h, mut c) = handmade([2_500, 0], 7.0);
+        c.evap = vec![12_000, 2_000, 8_000];
+        let b = solve(&h, &c, true).expect("solve");
+        assert_eq!(b.need[0], 1, "2.5 humid cells of supply cover 1 dry cell");
+        let (h, _) = handmade([13_000, 0], 7.0);
+        let b = solve(&h, &c, true).expect("solve");
+        assert!(b.full[0] && !b.full[1]);
+        assert_eq!(
+            (b.own[1], b.need[1]),
+            (1_000, 1),
+            "the overflow stands in leaf 1"
+        );
+        let (h, _) = handmade([20_000, 0], 7.0);
+        let b = solve(&h, &c, true).expect("solve");
+        assert!(b.full[0] && b.full[1] && !b.full[2]);
+        // 6,000 left at 2,000 per own cell: 3 cells over the children's 5.
+        assert_eq!((b.own[2], b.need[2]), (6_000, 8));
+        // A humid rate everywhere is the plain model.
+        let (h, mut c) = handmade([20_000, 0], 7.0);
+        let plain = solve(&h, &c, true).expect("solve");
+        c.evap = vec![3_000, 2_000, 4_000];
+        // Debug text: NaN levels compare unequal.
+        let weighted = solve(&h, &c, true).expect("solve");
+        assert_eq!(format!("{weighted:?}"), format!("{plain:?}"));
+    }
+
+    #[test]
     fn a_flat_with_an_outlet_is_never_a_closed_basin() {
         // Leaf 1 is a flat at 5 m whose spill is its own level: zero depth, no supply (r = 0).
         let (mut h, mut c) = handmade([0, 0], 7.0);
@@ -606,6 +661,7 @@ mod tests {
             cells: vec![2, 4],
             sum_mm: vec![0, 0],
             bbox: vec![[0, 0, 0, 0]; 2],
+            evap: vec![],
         };
         let b = solve(&h, &c, true).expect("solve");
         assert!(b.full[0]);
@@ -667,6 +723,7 @@ mod tests {
             cells: vec![1, 2, 1, 1, 2],
             sum_mm: vec![1_000, 3_000, 1_000, 5_000, 14_000],
             bbox: vec![[0, 0, 1, 1]; 5],
+            evap: vec![],
         };
         let b = solve(&h, &c, true).expect("solve");
         assert_eq!(b.full, vec![true, false, true, false, false]);
@@ -724,6 +781,7 @@ mod tests {
             cells: vec![2, 4],
             sum_mm: vec![0, 0],
             bbox: vec![[0, 0, 0, 0]; 2],
+            evap: vec![],
         };
         assert!(solve(&h, &c, true).is_err());
     }
