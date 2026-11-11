@@ -1,0 +1,24 @@
+training/src/topography_training/diffusion/l4_repair.py
+  s_8c1b40ea9c1e0d::t_53b377402fe8bc 1-93
+training/src/topography_training/diffusion/cascade_l4.py
+  s_8c1b40ea9c1e0d::t_f03c69a4942b1e 337-338
+  s_8c1b40ea9c1e0d::t_b5f84f3652efed 42-55
+  s_8c1b40ea9c1e0d::t_4a3b7b9b54487c 323
+  s_8c1b40ea9c1e0d::t_483b830ba88847 35-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3465501905cf764556c1e8e01ad03236b77fc0bb",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
