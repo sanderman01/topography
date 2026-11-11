@@ -1005,6 +1005,27 @@ an unlabelled pond) and the river-width factor `m3s_per_km2`. Per level (`[level
 `[levels.N.erosion]` table: `routings` (2, 5), `k_dt` (8.75 × 10⁻⁵, 7 × 10⁻⁴), `m` (0.5),
 `diffusion` (0.05), `cap_m` (10, 30 m), `interior_k` (0.05) and `interior_cap_m` (3 m).
 
+The 1 m level also has a `[levels.1.climate]` table (owner ruling 2026-11-11; the coarse
+levels keep the plain model). It drives the water from the 128 m moisture field (rain
+relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
+
+- Lake supply is the cell's class `r` times its relative rain, so `r` reads as P/E at mean
+  rain.
+- Q, and with it the rivers, is runoff: max(relative rain − `runoff_threshold`, 0) /
+  (1 − `runoff_threshold`). Mean rain gives 1. With `runoff_threshold` 0.35, the lee below
+  moisture 0.11 makes none, so desert rivers are only those fed from wetter ground.
+- A lake cell evaporates `evap_dry` (8) times a humid lake cell's at moisture at or below
+  `moist_dry` (0.1), once at or above `moist_wet` (0.25), linear between. Fill-Spill-Merge
+  sums these rates like cells: a depression's capacity is its children's plus its own
+  cells', and a closed lake covers its children and as many own cells as its water needs at
+  their mean rate.
+- Standing water whose cells are more than `ice_share` (0.5) glacier (class 10) is ice.
+  `water-finish` lists it as kind `ice` in `bodies.json` and leaves it out of
+  `water-surface.f32` and `water-body.u32`, so `water.u8`, the game layers' snow and the
+  export see glacier, not lake. Its routing is unchanged: meltwater leaves by the lake's
+  exit. The checks run on the liquid model; `report.json` figures `ice` count the bodies
+  and km².
+
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
 memory cap (`MemoryMax=10G` for 16,384² windows and the world). The work directory takes
 about 49 bytes per cell.
