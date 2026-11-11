@@ -1,0 +1,49 @@
+configs/hydrology/water-v3.toml
+  s_8c1b40ea9c1e0d::t_61e094bebd89e9 6-8,26-36
+crates/topography-core/src/world/water/contract.rs
+  s_8c1b40ea9c1e0d::t_6611623daf6318 441,566,755,769
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_099934f05a359c 20,1110-1124,1139-1149,1151-1155
+  s_8c1b40ea9c1e0d::t_41b3f4ab35dbfc 1109,1125
+  s_8c1b40ea9c1e0d::t_7acdc5219352c2 88-89,109,1513,1525,1537
+crates/topography-core/src/world/water/table.rs
+  s_8c1b40ea9c1e0d::t_343aa7a7a9aa0e 60-105,179-185,267-276
+crates/topography-core/src/world/water/ice.rs
+  s_8c1b40ea9c1e0d::t_fa6c232e1f0392 1-143
+crates/topography-core/src/world/water/pipeline.rs
+  s_8c1b40ea9c1e0d::t_8bdb03b2b9f892 20,530-531,660,853
+  s_8c1b40ea9c1e0d::t_12a8bc6871b190 65,71-73,77-78,80-111
+  s_8c1b40ea9c1e0d::t_a29b6c992b188d 870,879
+  s_8c1b40ea9c1e0d::t_2fea6417f95227 1313-1335,1337-1381
+  s_8c1b40ea9c1e0d::t_d0a44823e2bbe0 1336
+crates/topography-core/src/export/water.rs
+  s_8c1b40ea9c1e0d::t_9fd3eca7c7fc6b 74-75
+crates/topography-core/src/world/water/balance.rs
+  s_8c1b40ea9c1e0d::t_a7ec354c68ba09 581-603,607-608
+  s_8c1b40ea9c1e0d::t_db278d0ffd9f72 604-606
+  s_8c1b40ea9c1e0d::t_7b5fe5ac61949d 49-51,53-55,59,76-77,86,89,94,212-222,237,270,326-332
+  s_8c1b40ea9c1e0d::t_6611623daf6318 483,664,726,784
+  s_8c1b40ea9c1e0d::t_9ae0b5e546bab5 580
+crates/topography-core/src/world/water/grid.rs
+  s_8c1b40ea9c1e0d::t_5158085e90c303 167-177
+  s_8c1b40ea9c1e0d::t_099934f05a359c 146-155,166
+crates/topography-core/src/world/water/rain.rs
+  s_8c1b40ea9c1e0d::t_fa5111b65883d2 98-99,105
+  s_8c1b40ea9c1e0d::t_b75b847b348332 114,128-129,161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4cfbb85b371dea420f7942c3ccf9e3bb40c68428",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
