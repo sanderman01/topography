@@ -461,7 +461,7 @@ impl Tags {
     fn s(m3: &str, c: &str) -> String {
         stage_tag(
             "s",
-            &json!({"after": m3, "channels": c, "lakes_at_label": true, "relevel": 2}),
+            &json!({"after": m3, "channels": c, "lakes_at_label": true, "relevel": 3}),
         )
     }
     /// Every tag, from the settings, the pools on m2 and the carved and pre-channel grounds'
@@ -557,8 +557,9 @@ fn drop_other_finals(work: &store::Work, keep: &str) -> Result<()> {
 }
 
 /// Runs model → breach → model → bodies → channels into `work` (resumable). Returns a
-/// The labelled lakes (`bodies.json` from `label`): body id → their m2 node's level.
-fn lake_labels(bodies: &Value, nodes: &nodes::Nodes) -> Result<BTreeMap<u32, f32>> {
+/// The labelled lakes (`bodies.json` from `label`): body id → their m2 node's level and, when
+/// full, its spill edge.
+fn lake_labels(bodies: &Value, nodes: &nodes::Nodes) -> Result<BTreeMap<u32, channel::Label>> {
     let mut out = BTreeMap::new();
     for b in bodies["bodies"].as_array().into_iter().flatten() {
         if b["kind"] != "lake" {
@@ -572,7 +573,13 @@ fn lake_labels(bodies: &Value, nodes: &nodes::Nodes) -> Result<BTreeMap<u32, f32
         let n = nodes.get(key).ok_or_else(|| {
             AcquisitionError::Invalid(format!("lake {id}: node {key} not in the model"))
         })?;
-        out.insert(id, n.level);
+        out.insert(
+            id,
+            channel::Label {
+                level: n.level,
+                outlet: n.full.then_some(n.outlet),
+            },
+        );
     }
     Ok(out)
 }
@@ -587,9 +594,14 @@ fn read_relevel(work: &store::Work, name: &str) -> Result<Vec<channel::Relevelle
 }
 
 /// `stages.relevelled`: lakes lowered to their spill on the carved ground and its water,
-/// lakes drained, and the 20 largest drops.
-fn relevel_json(r: &[channel::Relevelled]) -> Value {
-    let mut lowered: Vec<&channel::Relevelled> = r.iter().filter(|l| l.to.is_finite()).collect();
+/// lakes raised to a higher m3 basin they lie in (`raised`), lakes drained, the passes and
+/// the 20 largest drops.
+fn relevel_json(r: &[channel::Relevelled], fig: (u64, bool, u64)) -> Value {
+    let raised = r.iter().filter(|l| l.to > l.from).count();
+    let mut lowered: Vec<&channel::Relevelled> = r
+        .iter()
+        .filter(|l| l.to.is_finite() && l.to <= l.from)
+        .collect();
     lowered.sort_by(|a, b| {
         (b.from - b.to)
             .total_cmp(&(a.from - a.to))
@@ -605,12 +617,14 @@ fn relevel_json(r: &[channel::Relevelled]) -> Value {
         .collect();
     json!({
         "lakes": lowered.len(),
-        "drained": r.len() - lowered.len(),
+        "raised": raised,
+        "drained": r.iter().filter(|l| l.to.is_nan()).count(),
+        "passes": fig.0, "converged": fig.1, "outflow_cells": fig.2,
         "confined": lowered.iter().filter(|l| l.basin != 0).count(),
         "drained_ids": r.iter().filter(|l| l.to.is_nan()).map(|l| l.id).collect::<Vec<_>>(),
         "max_drop_m": lowered.iter().map(|l| l.from - l.to).fold(0.0f32, f32::max),
         "cells_dried": r.iter().map(|l| l.dried).sum::<u64>(),
-        "mouth_cells": r.iter().map(|l| l.mouths).sum::<u64>(),
+        "flooded_cells": r.iter().map(|l| l.flooded).sum::<u64>(),
         "largest": drops,
     })
 }
@@ -726,20 +740,23 @@ pub fn run(o: &Options) -> Result<String> {
             ),
         )?;
     }
-    let lakes: HashSet<u32> = labels.keys().copied().collect();
     let relevel_name = format!("{s_tag}/relevel");
-    let settled = work.cached(&format!("{s_tag}/settled"), || {
+    let (settled, passes): channel::Levelled = work.cached(&format!("{s_tag}/settled"), || {
         let finals = pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?;
         let m3 = pipeline::model_on(&s, &carved, Some(&pre), wk, &m3_tag, Some(&finals))?;
-        // Outlet incision first (F1): settle then keeps the lakes at their new levels.
-        work.cached(&relevel_name, || {
-            let n3 = &m3.water.nodes;
-            channel::relevel(&s, &finals, n3, &carved, &out, &labels, wk, &s_tag)
-        })?;
-        drop(m3);
-        channel::settle(&s, &finals, &carved, &out, &lakes, wk, &s_tag)
+        // Outlet incision (F1) and settle, repeated until a pass moves no lake.
+        let n3 = &m3.water.nodes;
+        let (moved, fig) = channel::relevel(&s, &finals, n3, &carved, &out, &labels, wk, &s_tag)?;
+        work.cached(&relevel_name, || Ok(moved))?;
+        Ok(fig)
     })?;
-    stages["relevelled"] = relevel_json(&read_relevel(&work, &relevel_name)?);
+    if !passes.1 {
+        eprintln!(
+            "water: lake re-levelling stopped after {} passes unconverged",
+            passes.0
+        );
+    }
+    stages["relevelled"] = relevel_json(&read_relevel(&work, &relevel_name)?, passes);
     let lift_cell = (settled.3 != u64::MAX).then(|| s.world.xy(settled.3));
     stages["settled"] = json!({"raised_cells": settled.0, "wetted_cells": settled.1,
                                "max_raise_m": settled.2,

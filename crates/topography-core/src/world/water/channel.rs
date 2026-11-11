@@ -730,9 +730,15 @@ pub(crate) fn settle(
             if was.is_finite() {
                 v.0 = d0[k].0;
             }
-            // Only labelled water wets a cell (a pond or dry source has no body).
+            // Only labelled water wets a cell (a pond or dry source has no body). A wet cell a
+            // labelled lake raises keeps its body: a lake grows over dry cells only, so river
+            // water it holds up stays river and goes down with it (`flood`).
             if top.0 > d0[k].0 && top.1 >= 1 {
-                v = top;
+                v = if was.is_finite() && lakes.contains(&top.1) {
+                    (top.0, b[k])
+                } else {
+                    top
+                };
             }
             if v.0 != was && !(v.0.is_nan() && was.is_nan()) {
                 let lift = v.0 - if was.is_finite() { was } else { d0[k].0 };
@@ -774,6 +780,13 @@ pub(crate) fn settle(
     Ok(parts.into_iter().fold(none, more_lift))
 }
 
+/// A labelled lake: its m2 level and, when full, its spill edge [lake cell, outside cell].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Label {
+    pub level: f32,
+    pub outlet: Option<[u64; 2]>,
+}
+
 /// What `relevel` did to a labelled lake whose label stood above its spill (outlet incision, F1).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Relevelled {
@@ -787,20 +800,21 @@ pub(crate) struct Relevelled {
     /// The m3 node (layer value) the lake is confined to when its bulk stayed behind a sill
     /// (`bulk_pocket`); 0 otherwise.
     pub basin: u32,
-    /// Lake cells left at the new level, cells left dry, and river mouth cells lowered with it.
+    /// Lake cells left at the new level, cells left dry, and river cells lowered with it
+    /// (`flood`).
     pub cells: u64,
     pub dried: u64,
-    pub mouths: u64,
+    pub flooded: u64,
 }
 
 impl Blob for Relevelled {
     fn put(&self, e: &mut Enc) {
         (self.id, self.from, self.to, self.outlet, self.basin).put(e);
-        (self.cells, self.dried, self.mouths).put(e);
+        (self.cells, self.dried, self.flooded).put(e);
     }
     fn get(d: &mut Dec) -> Result<Self> {
         let (id, from, to, outlet, basin) = Blob::get(d)?;
-        let (cells, dried, mouths) = Blob::get(d)?;
+        let (cells, dried, flooded) = Blob::get(d)?;
         Ok(Self {
             id,
             from,
@@ -809,10 +823,21 @@ impl Blob for Relevelled {
             basin,
             cells,
             dried,
-            mouths,
+            flooded,
         })
     }
 }
+
+/// Relevel passes before the loop stops unconverged (one more settle then leaves the water
+/// settled; `stages.relevelled.converged` is false).
+pub(crate) const MAX_PASSES: u64 = 16;
+/// Longest outflow path `outflow` lowers (cells); its window is this wide around the outlet.
+const OUTFLOW_CELLS: u64 = 64;
+/// `relevel`'s figures beyond the lakes: settle's over all passes, then (passes run, whether
+/// the last pass planned nothing, outflow cells lowered).
+pub(crate) type Levelled = (Settled, (u64, bool, u64));
+/// Cell changes by world index: (cell, surface, body).
+type Changes = Vec<(u64, f32, u32)>;
 
 /// A lake's spill edge: (value, lake cell, outside cell).
 type Edge = (f32, u64, u64);
@@ -820,7 +845,7 @@ type Edge = (f32, u64, u64);
 type LakeEdges = Vec<(u32, Option<Edge>, u64)>;
 /// Per tile: lake cells by (id, m3 node layer value, count).
 type LakeNodes = Vec<(u32, u32, u64)>;
-/// Per tile: changed cells (core index, surface, body) and (id, kept, dried, mouths) per lake.
+/// Per tile: changed cells (core index, surface, body) and (id, kept, dried, flooded) per lake.
 type Relevel2 = (Vec<(u64, f32, u32)>, Vec<(u32, u64, u64, u64)>);
 
 /// The lower of two spill edges; ties keep the smaller cells (exact under any tile order).
@@ -842,8 +867,15 @@ fn lower_edge(a: Option<Edge>, b: Edge) -> Option<Edge> {
 /// below its spill drains. Its own outflow river, whose water stands at the outlet's height
 /// over its cut bed, keeps it at its label. A lake whose bulk stays behind a sill above its
 /// spill stands at that basin's own spill instead (`bulk_pocket`). Rounds repeat on the rewritten surfaces until no
-/// lake moves (a lake draining through another one). Surfaces and labels only, never the
-/// ground; a tile's changes are cached before they are written, so a killed run resumes.
+/// lake moves (a lake draining through another one).
+///
+/// First a full lake inside a full, higher m3 basin takes that basin's level (`basins`). Then
+/// each pass settles the water (`settle`), lowers lakes' outflows standing above them
+/// (`outflow`) and plans on the result; a pass that plans nothing ends the loop, so the water
+/// left is settled and every lake stands at its spill on it (diagnosis A: settle wets cut
+/// banks as the lake, which the next pass sees). At most MAX_PASSES passes. Surfaces and
+/// labels only, never the ground; every change is cached before it is written, so a killed run
+/// resumes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn relevel(
     s: &Setup,
@@ -851,33 +883,300 @@ pub(crate) fn relevel(
     n3: &Nodes,
     carved: &Layer<f32>,
     out: &Layers,
-    labels: &BTreeMap<u32, f32>,
+    labels: &BTreeMap<u32, Label>,
     work: Option<&Work>,
     tag: &str,
-) -> Result<Vec<Relevelled>> {
+) -> Result<(Vec<Relevelled>, Levelled)> {
     let lakes: HashSet<u32> = labels.keys().copied().collect();
     let mut moved: BTreeMap<u32, Relevelled> = BTreeMap::new();
-    for pass in 0.. {
-        ensure(pass < 64, "lake re-levelling does not settle")?;
+    for r in basins(
+        s,
+        r3,
+        n3,
+        carved,
+        out,
+        labels,
+        work,
+        &format!("{tag}/basins"),
+    )? {
+        moved.insert(r.id, r);
+    }
+    let mut settled: Settled = (0, 0, 0.0, u64::MAX, 0);
+    let (mut passes, mut converged, mut lowered) = (0, false, 0);
+    for pass in 0..=MAX_PASSES {
         let tag = format!("{tag}/rv{pass}");
+        let fig = settle(s, r3, carved, out, &lakes, work, &format!("{tag}/st"))?;
+        settled = more_lift(settled, fig);
+        // Each lake's current level and spill edge.
+        let exits: BTreeMap<u32, (f32, [u64; 2])> = labels
+            .iter()
+            .filter_map(|(&id, l)| match moved.get(&id) {
+                Some(r) => r.to.is_finite().then_some((id, (r.to, r.outlet))),
+                None => l.outlet.map(|o| (id, (l.level, o))),
+            })
+            .collect();
+        lowered += outflow(
+            s,
+            r3,
+            carved,
+            out,
+            &lakes,
+            &exits,
+            work,
+            &format!("{tag}/outflow"),
+        )?;
+        passes = pass + 1;
+        if pass == MAX_PASSES {
+            break;
+        }
         let plan: Vec<Relevelled> = cached(work, &format!("{tag}/plan"), || {
             let paths = Paths::new(s, r3, carved, out, &lakes, work, &tag)?;
             plan_relevel(s, &paths, n3, carved, out, &lakes, &tag)
         })?;
         if plan.is_empty() {
+            converged = true;
             break;
         }
-        let counts = write_relevel(s, r3, carved, out, &plan, work, &tag)?;
-        for (r, (kept, dried, mouths)) in plan.iter().zip(counts) {
+        let counts = write_relevel(s, r3, carved, out, &lakes, &plan, work, &tag)?;
+        for (r, (kept, dried, flooded)) in plan.iter().zip(counts) {
             let m = moved.entry(r.id).or_insert(Relevelled {
-                from: labels[&r.id],
+                from: labels[&r.id].level,
                 ..*r
             });
             (m.to, m.outlet, m.basin, m.cells) = (r.to, r.outlet, r.basin, kept);
-            (m.dried, m.mouths) = (m.dried + dried, m.mouths + mouths);
+            (m.dried, m.flooded) = (m.dried + dried, m.flooded + flooded);
         }
     }
-    Ok(moved.into_values().collect())
+    let moved = moved.into_values().collect();
+    Ok((moved, (settled, (passes, converged, lowered))))
+}
+
+/// Writes cell changes (world index, surface, body), a tile at a time.
+fn apply(s: &Setup, out: &Layers, changes: &[(u64, f32, u32)]) -> Result<()> {
+    let (world, tiles) = (s.world, s.tiles());
+    let mut by_tile: BTreeMap<usize, Vec<(u64, f32, u32)>> = BTreeMap::new();
+    for &c in changes {
+        let (x, y) = world.xy(c.0);
+        by_tile
+            .entry(tile_of(world, s.tile, x, y))
+            .or_default()
+            .push(c);
+    }
+    for (i, cells) in by_tile {
+        let core = tiles[i];
+        let (mut sf, mut b) = (out.surface.read(core)?, out.body.read(core)?);
+        for (c, v, id) in cells {
+            let (x, y) = world.xy(c);
+            let k = core.local(x, y).expect("cell in its tile");
+            (sf[k], b[k]) = (v, id);
+        }
+        out.surface.write(core, &sf)?;
+        out.body.write(core, &b)?;
+    }
+    Ok(())
+}
+
+/// Applies changes cached under `name` (computed by `f` when missing) once: a done marker
+/// keeps a resumed run from writing them over later changes.
+fn apply_once<T: Blob>(
+    s: &Setup,
+    out: &Layers,
+    work: Option<&Work>,
+    name: &str,
+    f: impl FnOnce() -> Result<T>,
+    changes: impl Fn(&T) -> &Changes,
+) -> Result<T> {
+    let v = cached(work, &format!("{name}/changes"), f)?;
+    if !work.is_some_and(|wk| wk.is_done(name)) {
+        apply(s, out, changes(&v))?;
+        if let Some(wk) = work {
+            wk.mark_done(name)?;
+        }
+    }
+    Ok(v)
+}
+
+/// Ruling on diagnosis C (gate 1 for full lakes): a full labelled lake whose cells all lie in
+/// one full node of the routing on the carved ground (`n3`, layer value N) standing higher
+/// than its label, with no other labelled lake in it, takes that node's level, spill edge and
+/// extent (the node's cells below the level). It then stands at its spill on the final
+/// ground. Surfaces and labels only.
+#[allow(clippy::too_many_arguments)]
+fn basins(
+    s: &Setup,
+    r3: &Rasters,
+    n3: &Nodes,
+    carved: &Layer<f32>,
+    out: &Layers,
+    labels: &BTreeMap<u32, Label>,
+    work: Option<&Work>,
+    name: &str,
+) -> Result<Vec<Relevelled>> {
+    let (world, tiles) = (s.world, s.tiles());
+    let compute = || -> Result<(Vec<Relevelled>, Changes)> {
+        // Lake cells by (lake, node layer value).
+        let parts: Vec<Vec<(u32, u32, u64)>> =
+            for_tiles(&tiles, s.threads, "relevel basins", |_, core| {
+                let (sf, b, nd) = (
+                    out.surface.read(core)?,
+                    out.body.read(core)?,
+                    r3.node.read(core)?,
+                );
+                let mut m: BTreeMap<(u32, u32), u64> = BTreeMap::new();
+                for k in 0..core.cells() {
+                    if sf[k].is_finite() && labels.contains_key(&b[k]) {
+                        *m.entry((b[k], nd[k])).or_default() += 1;
+                    }
+                }
+                Ok(m.into_iter().map(|((id, n), c)| (id, n, c)).collect())
+            })?;
+        let mut nodes_of: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+        let mut lakes_in: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+        for &(id, n, _) in parts.iter().flatten() {
+            nodes_of.entry(id).or_default().insert(n);
+            lakes_in.entry(n).or_default().insert(id);
+        }
+        // Node layer value → lake.
+        let take: BTreeMap<u32, u32> = nodes_of
+            .iter()
+            .filter_map(|(&id, ns)| {
+                let &n = ns.iter().next().filter(|_| ns.len() == 1)?;
+                let nd = (n >= 2).then(|| n3.at(n - 2))?;
+                let l = labels[&id];
+                (l.outlet.is_some() && nd.full && nd.level > l.level && lakes_in[&n].len() == 1)
+                    .then_some((n, id))
+            })
+            .collect();
+        if take.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let parts: Vec<(Changes, Vec<(u32, u64)>)> =
+            for_tiles(&tiles, s.threads, "relevel basins write", |_, core| {
+                let nd = r3.node.read(core)?;
+                let (sf, b, z) = (
+                    out.surface.read(core)?,
+                    out.body.read(core)?,
+                    carved.read(core)?,
+                );
+                let (mut changed, mut cells) = (Vec::new(), BTreeMap::new());
+                for k in 0..core.cells() {
+                    let Some(&id) = take.get(&nd[k]) else {
+                        continue;
+                    };
+                    let lv = n3.at(nd[k] - 2).level;
+                    let (x, y) = core.world_xy(k);
+                    if z[k] < lv {
+                        *cells.entry(id).or_default() += 1;
+                        if sf[k] != lv || b[k] != id {
+                            changed.push((world.index(x, y), lv, id));
+                        }
+                    } else if sf[k].is_finite() && b[k] == id {
+                        changed.push((world.index(x, y), f32::NAN, 0));
+                    }
+                }
+                Ok((changed, cells.into_iter().collect()))
+            })?;
+        let mut cells: BTreeMap<u32, u64> = BTreeMap::new();
+        for &(id, c) in parts.iter().flat_map(|p| p.1.iter()) {
+            *cells.entry(id).or_default() += c;
+        }
+        let records = take
+            .iter()
+            .map(|(&n, &id)| {
+                let nd = n3.at(n - 2);
+                Relevelled {
+                    id,
+                    from: labels[&id].level,
+                    to: nd.level,
+                    outlet: nd.outlet,
+                    basin: n,
+                    cells: cells.get(&id).copied().unwrap_or(0),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        Ok((records, parts.into_iter().flat_map(|p| p.0).collect()))
+    };
+    Ok(apply_once(s, out, work, name, compute, |v| &v.1)?.0)
+}
+
+/// Diagnosis D: a lake's outflow does not stand above the lake. From each cell of its spill
+/// edge (`exits`: level and edge per lake), the path along the final routing (`r3`) through
+/// river water standing above the lake, over beds at least MIN_DEPTH_M below it and in no
+/// higher m3 pond, to a cell that drains at or below the lake (or into it) within
+/// OUTFLOW_CELLS is lowered to the lake's level: water settle carried up to the outlet from a
+/// stale section surface downstream. A path meeting anything else stays. The water left is
+/// settled (each lowered cell drains at the lake's level). Returns the cells lowered.
+#[allow(clippy::too_many_arguments)]
+fn outflow(
+    s: &Setup,
+    r3: &Rasters,
+    carved: &Layer<f32>,
+    out: &Layers,
+    lakes: &HashSet<u32>,
+    exits: &BTreeMap<u32, (f32, [u64; 2])>,
+    work: Option<&Work>,
+    name: &str,
+) -> Result<u64> {
+    let world = s.world;
+    let compute = || -> Result<Changes> {
+        let mut low: BTreeMap<u64, (f32, u32)> = BTreeMap::new();
+        for (&id, &(lv, edge)) in exits {
+            let (ox, oy) = world.xy(edge[1]);
+            let one = Rect {
+                x0: ox,
+                y0: oy,
+                w: 1,
+                h: 1,
+            };
+            let win = one.grow(OUTFLOW_CELLS + 1, world);
+            let (sf, b) = (out.surface.read(win)?, out.body.read(win)?);
+            let (z, lv3, flow) = (carved.read(win)?, r3.level.read(win)?, r3.flow.read(win)?);
+            let walk = |start: u64| -> Option<Vec<usize>> {
+                let (x, y) = world.xy(start);
+                let mut c = win.local(x, y)?;
+                let mut path = Vec::new();
+                loop {
+                    let wet = sf[c].is_finite();
+                    if wet && b[c] == id {
+                        return Some(path);
+                    }
+                    // What `settle` values the cell at.
+                    let d = if wet && lakes.contains(&b[c]) {
+                        sf[c]
+                    } else if wet {
+                        sf[c].max(lv3[c])
+                    } else if lv3[c].is_finite() {
+                        lv3[c]
+                    } else {
+                        z[c]
+                    };
+                    if d <= lv {
+                        return Some(path);
+                    }
+                    let river = wet && b[c] > 1 && !lakes.contains(&b[c]);
+                    if !river || lv3[c] > lv || z[c] + MIN_DEPTH_M > lv {
+                        return None;
+                    }
+                    path.push(c);
+                    let f = flow[c] & 15;
+                    if f == 0 || path.len() as u64 > OUTFLOW_CELLS {
+                        return None;
+                    }
+                    let (x, y) = win.world_xy(c);
+                    let (nx, ny) = world.neighbour(x, y, f as usize - 1)?;
+                    c = win.local(nx, ny)?;
+                }
+            };
+            for c in edge.iter().filter_map(|&e| walk(e)).flatten() {
+                let (x, y) = win.world_xy(c);
+                let e = low.entry(world.index(x, y)).or_insert((lv, b[c]));
+                e.0 = e.0.min(lv);
+            }
+        }
+        Ok(low.into_iter().map(|(c, (v, id))| (c, v, id)).collect())
+    };
+    Ok(apply_once(s, out, work, name, compute, |v| v)?.len() as u64)
 }
 
 /// One pass of `relevel`: the lakes that move, from their written surfaces (`from`), with
@@ -1129,16 +1428,161 @@ fn drained(id: u32, from: f32) -> Relevelled {
     }
 }
 
-/// Rewrites the planned lakes' cells: under the new level at it, the others dry. A river cell
-/// beside a lowered lake's old extent that stood at its old level (`mouth_surface`) follows it
-/// down, MIN_DEPTH_M over its bed where that lies above the new level. Every tile's changes are
-/// cached before any is written, so all read the same rasters and a killed run resumes.
-/// Returns (kept, dried, mouth) cells per planned lake, in plan order.
+/// Diagnosis B: water a lowered lake held up goes down with it. From each lowered lake's old
+/// extent (`by_id`: from, to), through 8-connected river water (no labelled lake, no sea)
+/// standing in (to, from], every cell is lowered to max(to, bed + MIN_DEPTH_M), never raised;
+/// the lowest value wins, then the smaller lake id. Returns (cell, surface, lake), by cell.
+/// Exact over tiles: each round floods tile cores from the lakes and the cells reached across
+/// their edges in earlier rounds, until a round reaches nothing new.
+fn flood(
+    s: &Setup,
+    carved: &Layer<f32>,
+    out: &Layers,
+    lakes: &HashSet<u32>,
+    by_id: &HashMap<u32, (f32, f32, u32)>,
+    tag: &str,
+) -> Result<Changes> {
+    let lowered: HashMap<u32, (f32, f32)> = by_id
+        .iter()
+        .filter(|(_, v)| v.1.is_finite() && v.1 < v.0)
+        .map(|(&id, &(from, to, _))| (id, (from, to)))
+        .collect();
+    let (world, tiles) = (s.world, s.tiles());
+    // Cells reached: world index → (lake, value, surface before).
+    let mut reached: HashMap<u64, Vec<(u32, f32, f32)>> = HashMap::new();
+    let mut busy: BTreeSet<usize> = if lowered.is_empty() {
+        BTreeSet::new()
+    } else {
+        (0..tiles.len()).collect()
+    };
+    for round in 0.. {
+        ensure(round < 100_000, "a lowered lake's flood does not end")?;
+        if busy.is_empty() {
+            break;
+        }
+        let rects: Vec<Rect> = busy.iter().map(|&i| tiles[i]).collect();
+        let seen_before = &reached;
+        let parts: Vec<Vec<(u64, u32, f32, f32)>> = for_tiles(
+            &rects,
+            s.threads,
+            &format!("{tag} flood round {round}"),
+            |_, core| {
+                let win = core.grow(1, world);
+                let (sf, b, z) = (
+                    out.surface.read(win)?,
+                    out.body.read(win)?,
+                    carved.read(win)?,
+                );
+                let gi = |j: usize| {
+                    let (x, y) = win.world_xy(j);
+                    world.index(x, y)
+                };
+                let around = |j: usize| {
+                    let (x, y) = win.world_xy(j);
+                    (0..8).filter_map(move |k| {
+                        world
+                            .neighbour(x, y, k)
+                            .and_then(|(nx, ny)| win.local(nx, ny))
+                    })
+                };
+                let in_core = |j: usize| {
+                    let (x, y) = win.world_xy(j);
+                    core.contains(x, y)
+                };
+                let had = |j: usize, id: u32| {
+                    seen_before
+                        .get(&gi(j))
+                        .is_some_and(|v| v.iter().any(|e| e.0 == id))
+                };
+                let takes = |j: usize, id: u32| {
+                    let (from, to) = lowered[&id];
+                    sf[j].is_finite()
+                        && b[j] > 1
+                        && !lakes.contains(&b[j])
+                        && sf[j] > to
+                        && sf[j] <= from
+                        && !had(j, id)
+                };
+                let mut seen: BTreeSet<(usize, u32)> = BTreeSet::new();
+                let mut queue: Vec<(usize, u32)> = Vec::new();
+                for k in 0..core.cells() {
+                    let (x, y) = core.world_xy(k);
+                    let j = win.local(x, y).expect("core in window");
+                    for n in around(j) {
+                        // Seeds: beside a lake's old extent, or beside a cell reached across
+                        // the tile edge.
+                        let mut ids: Vec<u32> = Vec::new();
+                        if sf[n].is_finite() && lowered.contains_key(&b[n]) {
+                            ids.push(b[n]);
+                        }
+                        if !in_core(n) {
+                            ids.extend(seen_before.get(&gi(n)).into_iter().flatten().map(|e| e.0));
+                        }
+                        for id in ids {
+                            if takes(j, id) && seen.insert((j, id)) {
+                                queue.push((j, id));
+                            }
+                        }
+                    }
+                }
+                while let Some((j, id)) = queue.pop() {
+                    for n in around(j).filter(|&n| in_core(n)) {
+                        if takes(n, id) && seen.insert((n, id)) {
+                            queue.push((n, id));
+                        }
+                    }
+                }
+                Ok(seen
+                    .into_iter()
+                    .map(|(j, id)| {
+                        let to = lowered[&id].1;
+                        (gi(j), id, to.max(z[j] + MIN_DEPTH_M).min(sf[j]), sf[j])
+                    })
+                    .collect())
+            },
+        )?;
+        busy.clear();
+        for (c, id, v, was) in parts.into_iter().flatten() {
+            reached.entry(c).or_default().push((id, v, was));
+            // The flood goes on in the tiles across this cell's edges.
+            let (x, y) = world.xy(c);
+            let own = tile_of(world, s.tile, x, y);
+            for k in 0..8 {
+                if let Some((nx, ny)) = world.neighbour(x, y, k) {
+                    let t = tile_of(world, s.tile, nx, ny);
+                    if t != own {
+                        busy.insert(t);
+                    }
+                }
+            }
+        }
+    }
+    let mut changes: Changes = reached
+        .into_iter()
+        .filter_map(|(c, v)| {
+            let was = v[0].2;
+            let (id, low) = v
+                .iter()
+                .map(|e| (e.0, e.1))
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))?;
+            (low < was).then_some((c, low, id))
+        })
+        .collect();
+    changes.sort_unstable_by_key(|c| c.0);
+    Ok(changes)
+}
+
+/// Rewrites the planned lakes' cells: under the new level at it, the others dry; river water
+/// the lake held up goes down with it (`flood`). Every tile's changes are cached before any is
+/// written, so all read the same rasters and a killed run resumes. Returns (kept, dried,
+/// flooded) cells per planned lake, in plan order.
+#[allow(clippy::too_many_arguments)]
 fn write_relevel(
     s: &Setup,
     r3: &Rasters,
     carved: &Layer<f32>,
     out: &Layers,
+    lakes: &HashSet<u32>,
     plan: &[Relevelled],
     work: Option<&Work>,
     tag: &str,
@@ -1148,6 +1592,12 @@ fn write_relevel(
         .map(|r| (r.id, (r.from, r.to, r.basin)))
         .collect();
     let (world, tiles) = (s.world, s.tiles());
+    let flooded: HashMap<u64, (f32, u32)> = cached(work, &format!("{tag}/flood"), || {
+        flood(s, carved, out, lakes, &by_id, tag)
+    })?
+    .into_iter()
+    .map(|(c, v, id)| (c, (v, id)))
+    .collect();
     let parts: Vec<Relevel2> =
         for_tiles(&tiles, s.threads, &format!("{tag} relevel"), |i, core| {
             let mut part = cached(work, &format!("{tag}/r2/{i:05}-changes"), || {
@@ -1183,18 +1633,9 @@ fn write_relevel(
                         }
                         continue;
                     }
-                    // A mouth at a lowered lake's old level.
-                    let mouth = (0..8)
-                        .filter_map(|d| world.neighbour(x, y, d))
-                        .filter_map(|(nx, ny)| win.local(nx, ny))
-                        .filter(|&n| sf[n].is_finite())
-                        .filter_map(|n| by_id.get(&b[n]).map(|&v| (b[n], v)))
-                        .filter(|&(_, (from, to, _))| sf[j] == from && to.is_finite())
-                        .min_by(|a, b| a.1.1.total_cmp(&b.1.1).then(a.0.cmp(&b.0)));
-                    if let Some((id, (_, to, _))) = mouth {
+                    if let Some(&(v, id)) = flooded.get(&world.index(x, y)) {
                         per.entry(id).or_default().2 += 1;
-                        let v = above_bed(to, z[j], false).expect("not a sill");
-                        changed.push((k as u64, v.min(sf[j]), b[j]));
+                        changed.push((k as u64, v, b[j]));
                     }
                 }
                 let per = per
@@ -1247,9 +1688,9 @@ fn write_relevel(
         },
     )?;
     let mut per: HashMap<u32, (u64, u64, u64)> = HashMap::new();
-    for &(id, kept, dried, mouths) in parts.iter().flat_map(|p| p.1.iter()) {
+    for &(id, kept, dried, flooded) in parts.iter().flat_map(|p| p.1.iter()) {
         let e = per.entry(id).or_default();
-        (e.0, e.1, e.2) = (e.0 + kept, e.1 + dried, e.2 + mouths);
+        (e.0, e.1, e.2) = (e.0 + kept, e.1 + dried, e.2 + flooded);
     }
     Ok(plan
         .iter()
@@ -1515,9 +1956,9 @@ mod tests {
         let r3 = Rasters::memory(world);
         let m3 = model_on(s, &carved, Some(&raw), None, "m3", Some(&r3)).expect("m3");
         let labels = lake_labels(&bodies, &m.water.nodes).expect("labels");
+        // Relevel settles the water too.
         relevel(s, &r3, &m3.water.nodes, &carved, &out, &labels, None, "r").expect("relevel");
         let lakes: HashSet<u32> = labels.keys().copied().collect();
-        settle(s, &r3, &carved, &out, &lakes, None, "s").expect("settle");
         (
             raw.to_vec().unwrap(),
             carved.to_vec().unwrap(),
@@ -2009,5 +2450,319 @@ mod tests {
         assert_eq!(bits(&a.1), bits(&b.1));
         assert_eq!(bits(&a.2), bits(&b.2));
         assert_eq!(a.3, b.3);
+    }
+
+    /// A hand-built state after channels, 12 × 3 cells: carved ground (20 m walls by default),
+    /// the routing on it (flow, level, node and its nodes), the written water and the labels.
+    struct Hand {
+        z: Vec<f32>,
+        flow: Vec<u8>,
+        level: Vec<f32>,
+        node: Vec<u32>,
+        nodes: Nodes,
+        sf: Vec<f32>,
+        b: Vec<u32>,
+        labels: BTreeMap<u32, Label>,
+    }
+
+    /// Flow codes: east, west, north; none.
+    const E: u8 = 4;
+    const W: u8 = 3;
+    const N: u8 = 1;
+    const HW: World = World { w: 12, h: 3 };
+
+    fn at(x: usize, y: usize) -> usize {
+        y * 12 + x
+    }
+
+    /// The finished state: surfaces, bodies and the moved lakes' records.
+    type Done = (Vec<f32>, Vec<u32>, Vec<Relevelled>);
+
+    impl Hand {
+        fn new() -> Self {
+            let n = 36;
+            Self {
+                z: vec![20.0; n],
+                flow: vec![0; n],
+                level: vec![f32::NAN; n],
+                node: vec![0; n],
+                nodes: Nodes(Vec::new()),
+                sf: vec![f32::NAN; n],
+                b: vec![0; n],
+                labels: BTreeMap::new(),
+            }
+        }
+        /// Row 1, x = 1..5: lake 9 at 10 m over 9 m ground, draining nowhere (`full`: its
+        /// m2 spill edge is (4, 1) → (5, 1)).
+        fn lake(mut self, full: bool) -> Self {
+            for x in 1..5 {
+                (self.z[at(x, 1)], self.sf[at(x, 1)], self.b[at(x, 1)]) = (9.0, 10.0, 9);
+            }
+            let outlet = full.then_some([at(4, 1) as u64, at(5, 1) as u64]);
+            self.labels.insert(
+                9,
+                Label {
+                    level: 10.0,
+                    outlet,
+                },
+            );
+            self
+        }
+        /// River `id` along row `y` from x0 east: (surface, ground) per cell, the last draining
+        /// nowhere.
+        fn river(mut self, id: u32, y: usize, x0: usize, cells: &[(f32, f32)]) -> Self {
+            for (i, &(s, z)) in cells.iter().enumerate() {
+                let k = at(x0 + i, y);
+                (self.sf[k], self.z[k], self.b[k]) = (s, z, id);
+                self.flow[k] = if i + 1 < cells.len() { E } else { 0 };
+            }
+            self
+        }
+        /// Relevel and settle as `run` does, at `tile`.
+        fn run(&self, tile: u64) -> Done {
+            let s = setup(HW, tile, 1e-5);
+            let whole = Rect::whole(HW);
+            let r3 = Rasters::memory(HW);
+            r3.flow.write(whole, &self.flow).unwrap();
+            r3.level.write(whole, &self.level).unwrap();
+            r3.node.write(whole, &self.node).unwrap();
+            let out = Layers::memory(HW);
+            out.surface.write(whole, &self.sf).unwrap();
+            out.body.write(whole, &self.b).unwrap();
+            let carved = Layer::memory(HW, self.z.clone());
+            let (moved, (_, (passes, converged, _))) =
+                relevel(&s, &r3, &self.nodes, &carved, &out, &self.labels, None, "r")
+                    .expect("relevel");
+            assert!(converged && passes <= 3, "{passes} passes");
+            (
+                out.surface.to_vec().unwrap(),
+                out.body.to_vec().unwrap(),
+                moved,
+            )
+        }
+        /// `run` at one tile and at tiles of 4 (asserted alike).
+        fn done(&self) -> Done {
+            let one = self.run(12);
+            let four = self.run(4);
+            let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!(
+                (bits(&four.0), &four.1),
+                (bits(&one.0), &one.1),
+                "tiles of 4"
+            );
+            assert_eq!(four.2, one.2, "tiles of 4");
+            one
+        }
+        /// What a cell drains at (the checks' `dsurf`).
+        fn dsurf(&self, sf: &[f32], k: usize) -> f32 {
+            if sf[k].is_finite() {
+                sf[k]
+            } else if self.level[k].is_finite() {
+                self.level[k]
+            } else {
+                self.z[k]
+            }
+        }
+        /// `lake_leaks` and the saddle of lake 9 at `lv` with spill edge `outlet`, as the checks
+        /// value them: (leaks, lowest saddle).
+        fn leaks(&self, d: &Done, lv: f32, outlet: [u64; 2]) -> (usize, f32) {
+            let (sf, b) = (&d.0, &d.1);
+            let (mut leaks, mut saddle) = (0, f32::INFINITY);
+            for j in 0..36 {
+                if !(sf[j].is_finite() && b[j] == 9) || self.z[j] >= lv {
+                    continue;
+                }
+                let (x, y) = HW.xy(j as u64);
+                for k in 0..8 {
+                    let Some((nx, ny)) = HW.neighbour(x, y, k) else {
+                        continue;
+                    };
+                    let n = HW.index(nx, ny) as usize;
+                    let same = sf[n].is_finite() && b[n] == 9;
+                    if same && self.z[n] < lv {
+                        continue;
+                    }
+                    let dn = if same { lv } else { self.dsurf(sf, n) };
+                    saddle = saddle.min(lv.max(dn));
+                    if dn.max(self.z[j]) < lv - SILL_M && n as u64 != outlet[1] {
+                        leaks += 1;
+                    }
+                }
+            }
+            (leaks, saddle)
+        }
+        /// `lake_exit_surface`'s gap: the spill edge's higher shown value against the level.
+        fn exit_gap(&self, d: &Done, lv: f32, outlet: [u64; 2]) -> f32 {
+            let shown = |k: u64| {
+                let k = k as usize;
+                if d.0[k].is_finite() {
+                    d.0[k]
+                } else {
+                    self.z[k]
+                }
+            };
+            (shown(outlet[0]).max(shown(outlet[1])) - lv).abs()
+        }
+    }
+
+    /// Diagnosis A (lake 174): a bank cell cut below the lake beside a lower river, dry after
+    /// channels and draining into the lake, is wetted as the lake by settle. The lake then
+    /// spills through it: relevel and settle repeat until a pass plans nothing, so the lake
+    /// stands at that river (9.9 m) and does not leak.
+    #[test]
+    fn a_lake_settle_grows_over_a_cut_bank_drops_to_its_spill() {
+        let mut h = Hand::new().lake(false).river(
+            7,
+            1,
+            6,
+            &[
+                (9.9, 9.5),
+                (9.7, 9.3),
+                (9.5, 9.0),
+                (9.4, 8.9),
+                (9.3, 8.8),
+                (9.2, 8.7),
+            ],
+        );
+        (h.z[at(5, 1)], h.flow[at(5, 1)]) = (9.85, W);
+        let d = h.done();
+        assert_eq!((d.0[at(5, 1)], d.1[at(5, 1)]), (9.9, 9), "the bank is lake");
+        for x in 1..5 {
+            assert_eq!(d.0[at(x, 1)], 9.9, "lake at x = {x}");
+        }
+        let r = d.2.iter().find(|r| r.id == 9).expect("relevelled");
+        assert_eq!((r.from, r.to), (10.0, 9.9));
+        assert_eq!(h.leaks(&d, 9.9, r.outlet).0, 0);
+    }
+
+    /// Diagnosis B (lake 690): a lake lowered to a sill cell at its new level (9.6 m) whose
+    /// receiver is a river standing between the new and the old level (9.8 m, reaching into
+    /// the next tile). The river goes down with the lake (a flood from its old extent), so
+    /// settle does not wet the sill above the lake.
+    #[test]
+    fn water_a_lowered_lake_held_up_goes_down_with_it() {
+        let mut h = Hand::new()
+            .lake(false)
+            .river(
+                7,
+                1,
+                6,
+                &[
+                    (9.5, 9.0),
+                    (9.4, 8.9),
+                    (9.3, 8.8),
+                    (9.2, 8.7),
+                    (9.1, 8.6),
+                    (9.0, 8.5),
+                ],
+            )
+            .river(
+                8,
+                0,
+                5,
+                &[
+                    (9.8, 9.0),
+                    (9.8, 9.0),
+                    (9.8, 9.0),
+                    (9.8, 9.0),
+                    (9.8, 9.0),
+                    (9.3, 8.8),
+                    (9.2, 8.7),
+                ],
+            );
+        // The sill: lake water over 9.6 m ground, draining north into river 8.
+        (h.z[at(5, 1)], h.sf[at(5, 1)], h.b[at(5, 1)]) = (9.6, 10.0, 9);
+        h.flow[at(5, 1)] = N;
+        let d = h.done();
+        let r = d.2.iter().find(|r| r.id == 9).expect("relevelled");
+        assert_eq!((r.to, r.outlet), (9.6, [at(5, 1) as u64, at(6, 1) as u64]));
+        assert!(d.0[at(5, 1)].is_nan(), "the sill stays dry");
+        assert!(h.exit_gap(&d, 9.6, r.outlet) <= SILL_M);
+        // River 8 down to the lake, across the tile edge; below the new level untouched.
+        let row: Vec<f32> = (5..12).map(|x| d.0[at(x, 0)]).collect();
+        assert_eq!(row, [9.6, 9.6, 9.6, 9.6, 9.6, 9.3, 9.2]);
+        assert_eq!(r.flooded, 5);
+        assert_eq!(h.leaks(&d, 9.6, r.outlet).0, 0);
+    }
+
+    /// Diagnosis D (lake 1403): the outlet cell is cut below the lake; the reach below stands
+    /// above the lake (stale section water) before it falls away. Settle carried that water up
+    /// to the outlet; the lake's outflow is lowered to the lake instead, down to where it
+    /// falls below it.
+    #[test]
+    fn a_lakes_outflow_does_not_stand_above_the_lake() {
+        let h = Hand::new().lake(true).river(
+            7,
+            1,
+            5,
+            &[
+                (10.0, 9.8),
+                (10.07, 9.5),
+                (9.9, 9.0),
+                (9.5, 8.9),
+                (9.4, 8.8),
+                (9.3, 8.7),
+                (9.2, 8.6),
+            ],
+        );
+        let d = h.done();
+        assert!(d.2.is_empty(), "the lake keeps its label: {:?}", d.2);
+        let outlet = h.labels[&9].outlet.expect("full");
+        assert!(h.exit_gap(&d, 10.0, outlet) <= SILL_M);
+        let row: Vec<f32> = (5..12).map(|x| d.0[at(x, 1)]).collect();
+        assert_eq!(row, [10.0, 10.0, 9.9, 9.5, 9.4, 9.3, 9.2]);
+        assert_eq!(h.leaks(&d, 10.0, outlet).0, 0);
+    }
+
+    /// Ruling on diagnosis C (lakes 103, 1183): a full labelled lake (10 m) inside a full,
+    /// higher m3 node (10.2 m, its pit included) takes that node's level, exit and extent.
+    /// A lake that is not full keeps its label (gate 1 ruling).
+    #[test]
+    fn a_full_lake_inside_a_higher_full_basin_takes_its_level() {
+        let basin = |full: bool| {
+            let mut h = Hand::new().lake(full);
+            for x in 1..7 {
+                (h.node[at(x, 1)], h.level[at(x, 1)]) = (2, 10.2);
+            }
+            (h.z[at(1, 1)], h.z[at(5, 1)], h.z[at(6, 1)]) = (10.1, 10.05, 10.15);
+            (h.sf[at(1, 1)], h.b[at(1, 1)]) = (f32::NAN, 0);
+            h.z[at(7, 1)] = 10.2;
+            for x in 8..12 {
+                h.z[at(x, 1)] = 9.5 - 0.1 * (x - 8) as f32;
+            }
+            for x in 7..11 {
+                h.flow[at(x, 1)] = E;
+            }
+            h.nodes = Nodes(vec![super::super::nodes::Node {
+                key: 1,
+                level: 10.2,
+                full: true,
+                lake: true,
+                outlet: [at(6, 1) as u64, at(7, 1) as u64],
+                cells: 6,
+                ..Default::default()
+            }]);
+            h
+        };
+        let h = basin(true);
+        let d = h.done();
+        let r = d.2.iter().find(|r| r.id == 9).expect("raised");
+        assert_eq!((r.from, r.to, r.basin), (10.0, 10.2, 2));
+        assert_eq!(r.outlet, [at(6, 1) as u64, at(7, 1) as u64]);
+        assert_eq!(r.cells, 6);
+        for x in 1..7 {
+            assert_eq!((d.0[at(x, 1)], d.1[at(x, 1)]), (10.2, 9), "lake at x = {x}");
+        }
+        assert!(h.exit_gap(&d, 10.2, r.outlet) <= SILL_M);
+        let (leaks, saddle) = h.leaks(&d, 10.2, r.outlet);
+        assert_eq!(leaks, 0);
+        assert!((saddle - 10.2).abs() <= SILL_M, "saddle {saddle}");
+
+        let h = basin(false);
+        let d = h.done();
+        assert!(d.2.is_empty(), "not full: {:?}", d.2);
+        for x in 2..5 {
+            assert_eq!(d.0[at(x, 1)], 10.0, "lake at x = {x}");
+        }
     }
 }
