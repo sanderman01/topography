@@ -32,9 +32,25 @@ from .data import smooth, soft_cover
 
 MARGIN_4M = 16  # 4 m context cells around a band for the smoothing
 WATER_SIGMA_M = 3.0  # rounds 4 m water corners at 1 m
+SHORE_SIGMA_M = 2.0  # soft shore of the residual mask
+RIVER_RESIDUAL_SIGMA_M = 4.0  # under 4 m rivers the residual keeps its features above one 4 m cell
 DISK_BYTES = 6  # raw surface 4 B, snow and vegetation 1 B each
 # The diffused surface: the input of `water.run world`.
 RAW = "elevation-raw.f32"
+
+
+def blend_residual(res: np.ndarray, water: np.ndarray, lakes_sea: np.ndarray | None) -> np.ndarray:
+    """The residual kept per cell: all of it on land, none under lakes and sea (L4 learned land
+    only) and under 4 m rivers only its smooth part. Under its water channel L4 diffuses metre-high
+    white noise; the smooth part keeps the bed's shape. `lakes_sea` None: none under all water."""
+    def soft(mask):  # 1 under the mask, a soft 2 m shore
+        return np.clip(smooth(mask.astype(np.float32), SHORE_SIGMA_M), 0, 1)
+
+    land = 1.0 - soft(water)
+    if lakes_sea is None:
+        return res * land
+    river = np.clip(soft(water) - soft(lakes_sea), 0, 1)
+    return res * land + smooth(res, RIVER_RESIDUAL_SIGMA_M) * river
 
 
 def _rows_4m(a: np.ndarray, r0: int, r1: int, c0: int, c1: int) -> np.ndarray:
@@ -304,6 +320,7 @@ def main(argv=None) -> int:
             # shore; windows of deep water only are not diffused.
             land = 1.0 - np.clip(smooth((lakes_sea if args.keep_river_residual else water).astype(np.float32), 2.0), 0, 1)
             skip = (coarse < cascade.DEEP_SEA_M) & (land < 1e-3)
+            del land
             plan = plan_windows(*coarse.shape, window, args.stride, skip, guide if guide is not False else None)
             stats = progress.setdefault("windows", {"total": 0, "skipped": 0, "guided": 0})
             stats["total"] += len(plan[1])
@@ -317,8 +334,8 @@ def main(argv=None) -> int:
             res = sample_field(model, field, steps=args.steps, window=window, stride=args.stride, batch=args.batch,
                                noise=world_noise(args.seed, wy, wy + g1 - g0, wx, wx + n), guidance=g,
                                plan=plan)[0, 0].numpy()
-            h = (coarse + res * scale * land).astype(np.float32)
-            del res, field, land, skip
+            h = (coarse + scale * blend_residual(res, water, lakes_sea)).astype(np.float32)
+            del res, field, skip
         else:
             progress.setdefault("deep_sea_bands", []).append(k)
 
