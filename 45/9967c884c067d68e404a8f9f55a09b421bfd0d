@@ -1,0 +1,41 @@
+crates/topography-core/src/world/water/table.rs
+  s_8c1b40ea9c1e0d::t_e7475965da16f4 85-86
+  s_8c1b40ea9c1e0d::t_e034e2fea65a1d 201,295-298
+  s_8c1b40ea9c1e0d::t_86a756299d7260 120-121
+configs/hydrology/water-v3.toml
+  s_8c1b40ea9c1e0d::t_f7880f781202fd 32-34
+  s_8c1b40ea9c1e0d::t_9f297824f1ec91 44-46
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_c86f86b48a8b4c 1030-1038
+crates/topography-core/src/world/water/pipeline.rs
+  s_8c1b40ea9c1e0d::t_7157d922f3e299 1320
+  s_8c1b40ea9c1e0d::t_02a437c258c4ab 145
+  s_8c1b40ea9c1e0d::t_553a9917e4defa 128-129
+  s_8c1b40ea9c1e0d::t_3215baf56bfd1f 1483,1485-1487
+  s_8c1b40ea9c1e0d::t_847b033a00dc8d 1521-1530,1532-1536,1538,1541-1545,1549
+  s_8c1b40ea9c1e0d::t_e034e2fea65a1d 118
+  s_8c1b40ea9c1e0d::t_4ac57a1badb08d 67-81,83,86
+crates/topography-core/src/world/water/bodies.rs
+  s_8c1b40ea9c1e0d::t_d0006f184f0e32 603-617
+  s_8c1b40ea9c1e0d::t_fea8c8d8cd4974 669,672
+  s_8c1b40ea9c1e0d::t_048530080c7773 737-743,747-754,766-771
+  s_8c1b40ea9c1e0d::t_1ac72e7988b094 727-736,744-746,755-765,772-784
+  s_8c1b40ea9c1e0d::t_e034e2fea65a1d 541,567
+  s_8c1b40ea9c1e0d::t_6b147b2b005ab8 255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "459967c884c067d68e404a8f9f55a09b421bfd0d",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
