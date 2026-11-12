@@ -1019,27 +1019,30 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   sums these rates like cells: a depression's capacity is its children's plus its own
   cells', and a closed lake covers its children and as many own cells as its water needs at
   their mean rate.
-- Cold cells are snow/ice in the grid's optional `snow-ice.u8` (value 2, at
-  `snow_cell_m`; the driver links the raw world's 1 m layer), glacier (class 10), or any
-  cell of a grid-aligned `cold_block_m` (128 m) block that is at least `cold_share` (0.25)
-  snow/ice. The blocks make the steep rock that sheds its snow cold too: air temperature,
-  not slope, sets whether precipitation falls as snow. Without the blocks, the volcano's
-  bare ribs above 3,500 m (20 to 35% of the ground there) kept full rain runoff and their
-  own streams. Precipitation on cold cells falls as snow, and only meltwater leaves: a
-  cold cell's runoff is `snow_melt` (0.05) × min(runoff, 1), and its lake supply is
-  r × `snow_melt` × min(relative rain, 1). Melt follows warmth, not snowfall, so the wet
-  windward volcano (runoff up to 4 × mean) melts no more than mean ground. A stream needs
-  about 1 km² of snowfield (`river_km2` / `snow_melt`), so few, small streams drain a
-  snowfield, mostly near its lower edge, and none start on it from rain. A share of
-  runoff (0.15 × runoff) was tried first and left 55% of the caldera window's snow-touching
-  stream length.
+- Cold cells are glacier (class 10), snow/ice in the grid's optional `snow-ice.u8` (value
+  2, at `snow_cell_m`; the driver links the raw world's 1 m layer), or cells whose centred
+  `cold_box_m` (128 m) box is at least `cold_share` (0.25) snow/ice. The box share comes
+  from a summed-area table over the tile and a halo, so the mask follows the snow edge
+  without steps and is the same at any tiling. It makes the steep rock that sheds its snow
+  cold too: air temperature, not slope, makes a snowfield. The volcano's bare ribs above
+  3,500 m are 20 to 35% of the ground there.
+- Cold ground passes its full runoff and lake supply on: snow melts, and annual runoff from
+  snowy catchments is about their precipitation. It carries no river cell, though (owner
+  choice 2026-11-12, "full flow, no snow streams"): the m2 and m3 routings keep the flow
+  but set no thalweg bit on cold cells, lake outflows (B16) leave them out, and the
+  channels carve none there. Rivers start at the snow edge or glacier snout at the size
+  their whole catchment gives. A river that crosses a cold patch shows on both sides of it.
+  Two earlier tries cut the water instead: 0.15 × runoff, then 0.05 of the mean runoff.
+  Both starved the valley rivers below the snow, and the frozen lakes dried down.
 - Standing water whose cells, or whose shore ring (the cells 8-adjacent to it), are more
   than `ice_share` (0.5) cold is ice. The ring catches lakes the snow layer leaves bare: it
   carries no snow under the coarser levels' water. `water-finish` lists it as kind `ice` in
-  `bodies.json` and leaves it out of `water-surface.f32` and `water-body.u32`, so
-  `water.u8`, the game layers' snow and the export see glacier, not lake. The ground is
-  kept as is. Its routing is unchanged: meltwater leaves by the lake's exit. The checks run
-  on the liquid model; `report.json` figures `ice` count the bodies and km².
+  `bodies.json` and keeps it in `water-surface.f32` and `water-body.u32`: a flat ice
+  surface at the lake's level (its supply is not cut, so the level is the liquid model's).
+  `water.u8` leaves ice out (it is not liquid). The game layers mark it snow/ice (70, snow
+  cover 255). The export writes it as kind `ice`, a flat surface at `level_m` like a lake.
+  The ground is kept as is. Routing is unchanged: water leaves by the lake's exit. The
+  checks run on the liquid model; `report.json` figures `ice` count the bodies and km².
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
 memory cap (`MemoryMax=10G` for 16,384² windows and the world). The work directory takes
