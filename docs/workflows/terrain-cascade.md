@@ -1019,12 +1019,19 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   sums these rates like cells: a depression's capacity is its children's plus its own
   cells', and a closed lake covers its children and as many own cells as its water needs at
   their mean rate.
-- Standing water whose cells are more than `ice_share` (0.5) glacier (class 10) is ice.
-  `water-finish` lists it as kind `ice` in `bodies.json` and leaves it out of
-  `water-surface.f32` and `water-body.u32`, so `water.u8`, the game layers' snow and the
-  export see glacier, not lake. Its routing is unchanged: meltwater leaves by the lake's
-  exit. The checks run on the liquid model; `report.json` figures `ice` count the bodies
-  and km².
+- Cold cells are snow/ice in the grid's optional `snow-ice.u8` (value 2, at
+  `snow_cell_m`; the driver links the raw world's 1 m layer) or glacier (class 10).
+  Precipitation there falls as snow: a cold cell gives only `snow_melt` (0.15) of its
+  runoff and lake supply, as meltwater. A snowfield needs about 7 times the area of
+  rained-on ground to start a river, so few, small streams drain it and none start on it
+  from rain.
+- Standing water whose cells, or whose shore ring (the cells 8-adjacent to it), are more
+  than `ice_share` (0.5) cold is ice. The ring catches lakes the snow layer leaves bare: it
+  carries no snow under the coarser levels' water. `water-finish` lists it as kind `ice` in
+  `bodies.json` and leaves it out of `water-surface.f32` and `water-body.u32`, so
+  `water.u8`, the game layers' snow and the export see glacier, not lake. The ground is
+  kept as is. Its routing is unchanged: meltwater leaves by the lake's exit. The checks run
+  on the liquid model; `report.json` figures `ice` count the bodies and km².
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
 memory cap (`MemoryMax=10G` for 16,384² windows and the world). The work directory takes
