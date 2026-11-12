@@ -80,6 +80,11 @@ pub(crate) struct Climate {
     /// Share of the runoff and lake supply a cold cell gives: precipitation there falls as
     /// snow and only meltwater leaves.
     pub snow_melt: f64,
+    /// Blocks of this size (m, aligned to the grid) whose snow/ice share is at least
+    /// `cold_share` are cold throughout: air temperature, not slope, sets the precipitation
+    /// phase, so steep rock that sheds its snow is cold too.
+    pub cold_block_m: f64,
+    pub cold_share: f64,
 }
 
 /// The glacier class of legend terrain-v3.
@@ -110,6 +115,10 @@ impl Climate {
             && self.moist_wet <= 1.0
             && (0.0..1.0).contains(&self.ice_share)
             && (0.0..=1.0).contains(&self.snow_melt)
+            && self.cold_block_m.is_finite()
+            && self.cold_block_m > 0.0
+            && self.cold_share > 0.0
+            && self.cold_share <= 1.0
     }
 }
 
@@ -189,7 +198,7 @@ impl Table {
                 format!(
                     "water table level {key}: climate needs 0 <= runoff_threshold < 1, \
                      1 <= evap_dry <= 100, 0 <= moist_dry < moist_wet <= 1, 0 <= ice_share < 1, \
-                     0 <= snow_melt <= 1"
+                     0 <= snow_melt <= 1, cold_block_m > 0, 0 < cold_share <= 1"
                 ),
             )?;
             if let Some(e) = &l.erosion {

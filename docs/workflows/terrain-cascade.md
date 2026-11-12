@@ -1020,8 +1020,12 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   cells', and a closed lake covers its children and as many own cells as its water needs at
   their mean rate.
 - Cold cells are snow/ice in the grid's optional `snow-ice.u8` (value 2, at
-  `snow_cell_m`; the driver links the raw world's 1 m layer) or glacier (class 10).
-  Precipitation there falls as snow: a cold cell gives only `snow_melt` (0.15) of its
+  `snow_cell_m`; the driver links the raw world's 1 m layer), glacier (class 10), or any
+  cell of a grid-aligned `cold_block_m` (128 m) block that is at least `cold_share` (0.25)
+  snow/ice. The blocks make the steep rock that sheds its snow cold too: air temperature,
+  not slope, sets whether precipitation falls as snow. Without the blocks, the volcano's
+  bare ribs above 3,500 m (20 to 35% of the ground there) kept full rain runoff and their
+  own streams. Precipitation on cold cells falls as snow: a cold cell gives only `snow_melt` (0.15) of its
   runoff and lake supply, as meltwater. A snowfield needs about 7 times the area of
   rained-on ground to start a river, so few, small streams drain it and none start on it
   from rain.

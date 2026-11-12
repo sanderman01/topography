@@ -288,6 +288,19 @@ pub(crate) fn setup(
     });
     let table = table::Table::parse(&text)?;
     let params = params(&table, g.spacing_m, river_km2);
+    let cold_zone = match (params.climate, &snow) {
+        (Some(c), Some(snow)) => {
+            let k = (c.cold_block_m / g.spacing_m).round().max(1.0) as u64;
+            Some(pipeline::cold_zone(
+                snow,
+                world,
+                k,
+                c.cold_share,
+                threads.max(1),
+            )?)
+        }
+        _ => None,
+    };
     let s = pipeline::Setup {
         world,
         nw_m: g.nw_m,
@@ -300,6 +313,7 @@ pub(crate) fn setup(
         params,
         provenance,
         snow,
+        cold_zone,
         contract: true,
     };
     Ok((s, raw, stamp))

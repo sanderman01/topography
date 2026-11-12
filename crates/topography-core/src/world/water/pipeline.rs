@@ -28,6 +28,46 @@ fn invalid(msg: impl Into<String>) -> AcquisitionError {
     AcquisitionError::Invalid(msg.into())
 }
 
+/// Per block of `k` x `k` cells (aligned to the world), 1 where at least `share` of the
+/// snow layer's cells are snow/ice; as classes of `world`.
+pub(crate) fn cold_zone(
+    snow: &Classes,
+    world: World,
+    k: u64,
+    share: f64,
+    threads: usize,
+) -> Result<Classes> {
+    let zw = World {
+        w: world.w.div_ceil(k),
+        h: world.h.div_ceil(k),
+    };
+    // Bands of 8 block rows over the whole width.
+    let band = 8 * k;
+    let bands: Vec<Rect> = (0..world.h.div_ceil(band))
+        .map(|b| Rect {
+            x0: 0,
+            y0: b * band,
+            w: world.w as usize,
+            h: band.min(world.h - b * band) as usize,
+        })
+        .collect();
+    let rows = for_tiles(&bands, threads, "cold zone", |_, r| {
+        let v = snow.read(r)?;
+        let rows = (r.h as u64).div_ceil(k) as usize;
+        let mut n = vec![(0u64, 0u64); rows * zw.w as usize];
+        for (i, &s) in v.iter().enumerate() {
+            let (x, y) = ((i % r.w) as u64 / k, (i / r.w) as u64 / k);
+            let b = &mut n[y as usize * zw.w as usize + x as usize];
+            b.0 += 1;
+            b.1 += u64::from(s == SNOW_PRESENT);
+        }
+        Ok(n.into_iter()
+            .map(|(a, c)| u8::from(c as f64 >= share * a as f64))
+            .collect::<Vec<u8>>())
+    })?;
+    Classes::new(Layer::memory(zw, rows.concat()), k, world)
+}
+
 pub(crate) struct Setup {
     pub world: World,
     /// North-west corner of the grid in the layout plane (x east, y north).
@@ -43,6 +83,8 @@ pub(crate) struct Setup {
     pub provenance: Option<Classes>,
     /// The `snow-ice.u8` game layer (2: snow/ice), nearest; read only with a climate.
     pub snow: Option<Classes>,
+    /// Blocks (1) whose snow/ice share makes them cold throughout (`cold_zone`).
+    pub cold_zone: Option<Classes>,
     /// Settle depression trees inside tiles (review C3); exact, so off only in its test.
     pub contract: bool,
 }
@@ -64,13 +106,18 @@ impl Setup {
             self.nw_m[1] - (y as f64 + 0.5) * self.spacing_m,
         )
     }
-    /// Cold cells over a window: snow/ice in the snow layer or glacier class (none without
-    /// either layer).
+    /// Cold cells over a window: snow/ice in the snow layer or its cold zone, or glacier
+    /// class (none without either layer).
     pub fn cold(&self, r: Rect) -> Result<Vec<bool>> {
-        let mut cold = match &self.snow {
+        let mut cold: Vec<bool> = match &self.snow {
             Some(s) => s.read(r)?.into_iter().map(|v| v == SNOW_PRESENT).collect(),
             None => vec![false; r.cells()],
         };
+        if let Some(z) = &self.cold_zone {
+            for (k, v) in cold.iter_mut().zip(z.read(r)?) {
+                *k |= v != 0;
+            }
+        }
         if let Some(c) = &self.classes {
             for (k, v) in cold.iter_mut().zip(c.read(r)?) {
                 *k |= v == GLACIER;
@@ -1443,6 +1490,39 @@ mod tests {
             s.rain_units(all).unwrap()[snow],
             s.rain_units(all).unwrap()[bare]
         );
+    }
+
+    /// A block with enough snow is cold throughout (its bare rock too); one with less keeps
+    /// only its snow cells cold. Partial blocks at the world's edge count their own cells.
+    #[test]
+    fn the_cold_zone_covers_rock_in_snowy_blocks() {
+        let world = World { w: 40, h: 40 };
+        let mut s = setup(world, 16, 1e-5);
+        // Block (0, 0): 64 of 256 cells snow (rows 0 to 3). Block (1, 0): 63. Block (2, 2),
+        // 8 x 8 at the corner: 16 of 64.
+        let snow: Vec<u8> = (0..1600u64)
+            .map(|i| {
+                let (x, y) = (i % 40, i / 40);
+                let on = (x < 16 && y < 4)
+                    || ((16..32).contains(&x) && y < 4 && (x, y) != (31, 3))
+                    || (x >= 32 && (32..34).contains(&y));
+                if on { SNOW_PRESENT } else { 1 }
+            })
+            .collect();
+        let snow = Classes::new(Layer::memory(world, snow), 1, world).unwrap();
+        let zone = cold_zone(&snow, world, 16, 0.25, 2).expect("zone");
+        assert_eq!(
+            zone.layer.to_vec().unwrap(),
+            [1, 0, 0, 0, 0, 0, 0, 0, 1],
+            "blocks row by row"
+        );
+        s.snow = Some(snow);
+        s.cold_zone = Some(zone);
+        let cold = s.cold(Rect::whole(world)).expect("cold");
+        let at = |x: u64, y: u64| cold[(y * 40 + x) as usize];
+        assert!(at(5, 10) && at(15, 15), "rock in a snowy block");
+        assert!(at(20, 0) && !at(20, 10), "a thin block keeps only its snow");
+        assert!(at(39, 39), "the corner block");
     }
 
     /// Tiles and contraction stay bit-identical when lakes evaporate at varying rates.
