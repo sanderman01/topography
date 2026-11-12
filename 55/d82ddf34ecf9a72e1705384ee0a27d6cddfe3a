@@ -1,0 +1,47 @@
+crates/topography-core/src/world/water/mod.rs
+  s_8c1b40ea9c1e0d::t_7ad97e4fd96435 1097-1100,1102-1109
+  s_8c1b40ea9c1e0d::t_9b29a23f9eb6c9 281
+  s_8c1b40ea9c1e0d::t_66c8c76a5098b6 231-235,237,243,250-251,253-257
+  s_8c1b40ea9c1e0d::t_f09219627ee7c1 302
+crates/topography-core/src/world/water/testing.rs
+  s_8c1b40ea9c1e0d::t_ea419611e6df68 82
+crates/topography-core/src/world/water/ice.rs
+  s_8c1b40ea9c1e0d::t_4e6d433f503fac 125-142,152-155
+  s_8c1b40ea9c1e0d::t_8d12f7aafcd76a 175-176,179-181,194
+  s_8c1b40ea9c1e0d::t_f17c5f00674266 158-170,172,177,190-191
+  s_8c1b40ea9c1e0d::t_0480e3ffbc036d 143-151
+  s_8c1b40ea9c1e0d::t_54da848a3b345a 1-5,8,14-19,24,29,31-37,40-56,61,63,65-67,70,72
+crates/topography-core/src/world/water/pipeline.rs
+  s_8c1b40ea9c1e0d::t_b5ce75c82dbb14 44-45
+  s_8c1b40ea9c1e0d::t_d6b64d3dcdc7d0 67-95,97,103-106,112-113,119,125-126,128
+  s_8c1b40ea9c1e0d::t_cd187140382cdc 1426-1428,1434,1438
+  s_8c1b40ea9c1e0d::t_e5752cb2f28960 20
+  s_8c1b40ea9c1e0d::t_42315adb6f09f1 1399-1425,1429,1435-1437,1439-1441,1446-1447
+  s_8c1b40ea9c1e0d::t_0480e3ffbc036d 1430-1433,1442-1445
+configs/hydrology/water-v3.toml
+  s_8c1b40ea9c1e0d::t_4fdd05acdbc648 40
+  s_8c1b40ea9c1e0d::t_1baa2d048ff6af 29-33
+crates/topography-core/src/world/water/table.rs
+  s_8c1b40ea9c1e0d::t_8525d1100063e2 112
+  s_8c1b40ea9c1e0d::t_0480e3ffbc036d 286-289
+  s_8c1b40ea9c1e0d::t_b74b00fe229c15 77-78,80-82,88-89
+  s_8c1b40ea9c1e0d::t_34632ac160ad46 290-291
+  s_8c1b40ea9c1e0d::t_59cd58086f0c1f 191-192
+  s_8c1b40ea9c1e0d::t_3d29082f91d244 90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "55d82ddf34ecf9a72e1705384ee0a27d6cddfe3a",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
