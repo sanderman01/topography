@@ -1,0 +1,23 @@
+training/src/topography_training/water/run.py
+  s_8c1b40ea9c1e0d::t_07164e24cea6fe 139-146
+  s_8c1b40ea9c1e0d::t_c3d2456326b6a2 261-264
+  s_8c1b40ea9c1e0d::t_655ec8f7abd5b7 155-165
+  s_8c1b40ea9c1e0d::t_d0dca303c549f9 127-129,132,134
+  s_8c1b40ea9c1e0d::t_89e04f49d1add2 224-225,230,233,238-239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "948349498e129889e1e538f2320856e4c3c49f5e",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
