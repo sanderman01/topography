@@ -449,14 +449,17 @@ def _reflink(src: Path, dst: Path, replace: bool = False) -> None:
     tmp.replace(dst)
 
 
-def _water_u8(surface: Path, dest: Path, n: int) -> str:
-    """255 where the water surface is finite; returns its sha256."""
+def _water_u8(surface: Path, body: Path, bodies: Path, dest: Path, n: int) -> str:
+    """255 where the water surface is finite and not ice (a frozen lake); returns its sha256."""
     s = np.memmap(surface, "<f4", "r", shape=(n, n))
+    b = np.memmap(body, "<u4", "r", shape=(n, n))
+    ice = np.array([e["id"] for e in _json(bodies)["bodies"] if e.get("kind") == "ice"], np.uint32)
     tmp = dest.with_suffix(".tmp")
     h = hashlib.sha256()
     with tmp.open("wb") as f:
         for y in range(0, n, 1024):
-            rows = np.where(np.isfinite(s[y : y + 1024]), 255, 0).astype(np.uint8)
+            liquid = np.isfinite(s[y : y + 1024]) & ~np.isin(b[y : y + 1024], ice)
+            rows = np.where(liquid, 255, 0).astype(np.uint8)
             f.write(rows.tobytes())
             h.update(rows.tobytes())
     tmp.replace(dest)
@@ -488,7 +491,8 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
     for name in names:
         _reflink(out1m / name, out / name, replace=True)
     digests = {name: published[name] for name in names}
-    digests["water.u8"] = _water_u8(out / "water-surface.f32", out / "water.u8", n)
+    digests["water.u8"] = _water_u8(out / "water-surface.f32", out / "water-body.u32", out / "bodies.json",
+                                    out / "water.u8", n)
     for name in ("snow-ice.u8", "vegetation.u8"):
         _reflink(src / name, out / name)
         digests[name] = (m.get("layers") or {}).get(name) or hydrology.sha256(out / name)

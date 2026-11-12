@@ -238,7 +238,7 @@ WORLD_LAYERS = ("elevation.f32", "water-surface.f32", "water-body.u32")
 # tiny ice basins.
 WORLD_DRY_MIN_KM2 = 0.01
 WATER_FILL = ("ground continues under all water; water-surface.f32 holds the water surface "
-              "(NaN dry, sea 0), water-body.u32 its body (bodies.json)")
+              "(NaN dry, sea 0; a frozen lake's ice at its level), water-body.u32 its body (bodies.json)")
 
 
 def sha256(path: Path) -> str:

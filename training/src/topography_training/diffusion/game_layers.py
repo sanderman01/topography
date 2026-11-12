@@ -27,7 +27,7 @@ from scipy import ndimage
 from . import borders, cover, layout
 
 METHOD = ("game layers v1: cover v2 fields at 2 m, moisture-weighted forest, soft snow (none on land-cover water), "
-          "talus below rock; biome and land cover dithered from smoothed shares and ramps")
+          "snow/ice on frozen lakes, talus below rock; biome and land cover dithered from smoothed shares and ramps")
 MOIST_DRY, MOIST_WET = 0.15, 0.45  # forest density ramps in over this moisture range
 SNOW_SOFT_M = 80.0  # snow cover ramps from 0 to 1 across the bent snow line ± this
 SNOW_SHED_DEG = (40.0, 55.0)  # as cover.SNOW_STEEP_DEG
@@ -99,13 +99,23 @@ def _moisture(world: Path, manifest: dict, origin, rows: np.ndarray, cols: np.nd
     return ndimage.map_coordinates(grid, [fy, fx], order=1, mode="nearest").astype(np.float32)
 
 
-def _fields(sampler, h, wet, moist, y0_m, x0_m, s):
+def _ice_ids(world: Path) -> np.ndarray:
+    """World body ids of frozen lakes (bodies.json kind `ice`)."""
+    path = world / "bodies.json"
+    if not path.exists():
+        return np.zeros(0, np.uint32)
+    bodies = json.loads(path.read_text())["bodies"]
+    return np.array([b["id"] for b in bodies if b.get("kind") == "ice"], np.uint32)
+
+
+def _fields(sampler, h, wet, ice, moist, y0_m, x0_m, s):
     f = sampler.fields(h, y0_m, x0_m, s)
     slope2 = np.degrees(np.arctan(np.hypot(*np.gradient(h, s))))  # local slope for scree
     glacier = f["classes"] == cover.GLACIER  # layout classes, warped as cover reads them
     snow = np.where(glacier, 1.0, cover._ramp(h - f["snowline"], -SNOW_SOFT_M, SNOW_SOFT_M)
                     * (1 - cover._ramp(f["slope"], *SNOW_SHED_DEG)))
     snow *= (h >= 0) & (wet < WATER_WET)  # no snow where land cover is water
+    snow = np.maximum(snow, ice)  # a frozen lake is snow/ice whatever its bed's height
     veg = f["share"] * cover._ramp(moist, MOIST_DRY, MOIST_WET) * (1 - snow) * (1 - wet)
     rock = (slope2 > ROCK_DEG).astype(np.float32)
     near = np.clip(ndimage.gaussian_filter(rock, TALUS_REACH_M / s) / 0.25, 0, 1)
@@ -176,6 +186,8 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     oy, ox = _layout_offset(origin, sampler.extent_m, n * c0)
     ground = np.memmap(world / "elevation.f32", "<f4", "r", shape=(n, n))
     surface = np.memmap(world / "water-surface.f32", "<f4", "r", shape=(n, n))
+    body = np.memmap(world / "water-body.u32", "<u4", "r", shape=(n, n))
+    ice_ids = _ice_ids(world)
     (world / "game").mkdir(exist_ok=True)
     # New files replaced into place: world copies may hard-link the original's layers.
     tmps = {k: world / "game" / f"{k}.u8.tmp" for k in NAMES}
@@ -203,15 +215,19 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         # Fine rows step·g0 - 1 (the row above, at level 1) up to step·g1.
         r0 = max(step * g0 - (step - 1), 0)
         g = np.asarray(ground[r0 : step * g1], np.float32)
-        wet = (np.asarray(surface[r0 : step * g1]) > g).astype(np.float32)
+        frozen = np.isin(np.asarray(body[r0 : step * g1]), ice_ids)
+        # Ice is a frozen lake's surface: snow/ice cover, not land-cover water.
+        wet = ((np.asarray(surface[r0 : step * g1]) > g) & ~frozen).astype(np.float32)
+        ice = frozen.astype(np.float32)
         if level:
             k = step * g0 - r0  # 1 when there is a row above
             h = tent_down(g[k:], g[0] if k else None)
             wet = tent_down(wet[k:], wet[0] if k else None)
+            ice = tent_down(ice[k:], ice[0] if k else None)
         else:
             h = g
         moist = _moisture(world, manifest, origin, np.arange(g0, g1), cols, step, c0)
-        f = _fields(sampler, h, wet, moist, oy + g0 * s, ox, s)
+        f = _fields(sampler, h, wet, ice, moist, oy + g0 * s, ox, s)
         sl = slice(y - g0, b - g0)
         for k in DENSITIES:
             outs[k][y:b] = np.round(255 * np.clip(f[k][sl], 0, 1)).astype(np.uint8)
