@@ -124,12 +124,24 @@ def build_world_grid(src: Path, out: Path) -> Path:
                                grids.provenance_window(p32, col4 * 4.0, row4 * 4.0, c4, 4.0))
         extra["provenance_cell_m"] = 4.0
     _symlink(field.resolve(), grid / "moisture.f32")
+    # The 1 m snow/ice layer: cold cells give only meltwater and freeze standing water.
+    snow = _snow(src, n)
+    _symlink(snow.resolve(), grid / "snow-ice.u8")
     _write_if_changed(grid / "grid.json", {
         "size": [n, n], "spacing_m": 1.0, "origin": _origin(m, n, 1.0), "classes_cell_m": 4.0, **extra,
+        "snow_cell_m": 1.0,
         "moisture": entry | {"file": "moisture.f32"}, "discharge": {"mean_land_mm_h": mean},
-        "inputs": _inputs(classes, field),
+        "inputs": _inputs(classes, field, snow),
     })
     return grid
+
+
+def _snow(src: Path, n: int) -> Path:
+    """The raw world's n² 1 m `snow-ice.u8` (2: snow/ice)."""
+    snow = src / "snow-ice.u8"
+    if not snow.exists() or snow.stat().st_size != n * n:
+        raise Refused(f"{snow} is not the {n}² 1 m snow/ice layer of {src}")
+    return snow
 
 
 def _write_if_bytes_differ(path: Path, a: np.ndarray) -> None:
@@ -140,12 +152,17 @@ def _write_if_bytes_differ(path: Path, a: np.ndarray) -> None:
         tmp.replace(path)
 
 
-def _inputs(classes: Path, moisture: Path) -> dict:
-    """What the grid was built from, so a changed class map or moisture field changes grid.json
-    (and with it the driver's resume key)."""
-    st = classes.stat()
-    return {"classes": {"file": str(classes.resolve()), "bytes": st.st_size, "modified_ns": st.st_mtime_ns},
-            "moisture": {"file": str(moisture.resolve()), "sha256": hydrology.sha256(moisture)}}
+def _inputs(classes: Path, moisture: Path, snow: Path | None = None) -> dict:
+    """What the grid was built from, so a changed class map, moisture field or snow layer
+    changes grid.json (and with it the driver's resume key)."""
+    def ident(p: Path) -> dict:
+        st = p.stat()
+        return {"file": str(p.resolve()), "bytes": st.st_size, "modified_ns": st.st_mtime_ns}
+    out = {"classes": ident(classes),
+           "moisture": {"file": str(moisture.resolve()), "sha256": hydrology.sha256(moisture)}}
+    if snow is not None:
+        out["snow"] = ident(snow)
+    return out
 
 
 def _mode_classes(c4: np.ndarray, k: int) -> np.ndarray:
@@ -204,17 +221,22 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
     if not prov_src.exists():
         print(f"note: no provenance.u8 in {chain}; the window runs without flags "
               "(all below-sea basins floored)", flush=True)
+    # The climate's snow/ice layer exists only at 1 m.
+    snow_src = _snow(src, n) if level == 1 else None
     manifest = {
         "size": [size, size], "spacing_m": spacing, "origin": origin,
         "offset_m": [col * spacing, row * spacing], "classes_cell_m": spacing * k,
         **({"provenance_cell_m": spacing} if prov_src.exists() else {}),
+        **({"snow_cell_m": spacing} if snow_src else {}),
         "moisture": entry | {"file": "moisture.f32"}, "discharge": {"mean_land_mm_h": mean},
         "window": {"source": str(src.resolve()), "level": level, "centre_m": list(centre)},
-        "inputs": _inputs(classes_src, field_m),
+        "inputs": _inputs(classes_src, field_m, snow_src),
     }
     sizes = {"elevation.f32": size * size * 4, "classes.u8": (size // k) ** 2}
     if prov_src.exists():
         sizes["provenance.u8"] = size * size
+    if snow_src:
+        sizes["snow-ice.u8"] = size * size
     if ((dest / "grid.json").exists() and _json(dest / "grid.json") == manifest
             and all((dest / f).exists() and (dest / f).stat().st_size == b for f, b in sizes.items())):
         return dest
@@ -236,6 +258,10 @@ def build_window_grid(src: Path, level: int, centre: tuple[float, float], size: 
         c4 = _read_window(src / "classes.u8", np.uint8, n * 8, row * 8, col * 8, size * 8, size * 8)
         classes = _mode_classes(c4, 8)
     layers = [("elevation.f32", field, "<f4"), ("classes.u8", classes, np.uint8)]
+    if snow_src:
+        layers.append(("snow-ice.u8", _read_window(snow_src, np.uint8, n, row, col, size, size), np.uint8))
+    else:
+        (dest / "snow-ice.u8").unlink(missing_ok=True)
     if prov_src.exists():
         p32 = np.fromfile(prov_src, np.uint8).reshape(n4 // 8, n4 // 8)
         layers.append(("provenance.u8", grids.provenance_window(p32, col4 * 4.0 + col * spacing,
