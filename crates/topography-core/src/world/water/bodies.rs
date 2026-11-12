@@ -208,7 +208,7 @@ const TRICKLE_MAX_M: f64 = 131_072.0;
 /// raster's ordinal) or model thalweg cell, a closed pond's pit or the map edge, through full
 /// ponds. Marked trickle cells carry less than the river start's discharge and are walked
 /// through, so the result is the same before and after `mark_trickles`. Returns the sorted
-/// cells and how many trickles reached `TRICKLE_MAX_M`.
+/// cells off cold ground and how many trickles reached `TRICKLE_MAX_M`.
 pub(crate) fn trickles(
     s: &Setup,
     from: &Nodes,
@@ -251,6 +251,13 @@ pub(crate) fn trickles(
     }
     out.sort_unstable();
     out.dedup();
+    // No river on snow and ice: the outflow runs under it and shows again past its edge.
+    let cold = s.cold_cells(&out)?;
+    let out = out
+        .into_iter()
+        .zip(cold)
+        .filter_map(|(c, cold)| (!cold).then_some(c))
+        .collect();
     Ok((out, capped))
 }
 

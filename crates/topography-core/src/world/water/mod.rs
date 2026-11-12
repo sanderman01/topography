@@ -288,19 +288,6 @@ pub(crate) fn setup(
     });
     let table = table::Table::parse(&text)?;
     let params = params(&table, g.spacing_m, river_km2);
-    let cold_zone = match (params.climate, &snow) {
-        (Some(c), Some(snow)) => {
-            let k = (c.cold_block_m / g.spacing_m).round().max(1.0) as u64;
-            Some(pipeline::cold_zone(
-                snow,
-                world,
-                k,
-                c.cold_share,
-                threads.max(1),
-            )?)
-        }
-        _ => None,
-    };
     let s = pipeline::Setup {
         world,
         nw_m: g.nw_m,
@@ -313,7 +300,6 @@ pub(crate) fn setup(
         params,
         provenance,
         snow,
-        cold_zone,
         contract: true,
     };
     Ok((s, raw, stamp))
@@ -1146,23 +1132,9 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
 
     let mut stage = grid::Stage::new(&o.out)?;
     stage.copy("elevation.f32", &o.ground)?;
-    let clear = |surface: &Path, body: &Path| -> Result<()> {
-        if ice.is_empty() {
-            return Ok(());
-        }
-        let (surface, body) = (
-            layers::Layer::open(s.world, surface)?,
-            layers::Layer::open(s.world, body)?,
-        );
-        ice::clear(&s.tiles(), s.threads, &surface, &body, &ice)
-    };
-    // The body raster is cleared in the staged surface's pass, so its copy goes first.
+    // Ice keeps its cells and flat surface at the lake's level; only its kind changes.
     stage.copy("water-body.u32", &work.path("water-body.u32"))?;
-    let staged_body = stage.path("water-body.u32");
-    stage.copy_edit("water-surface.f32", &work.path("water-surface.f32"), |p| {
-        clear(p, &staged_body)
-    })?;
-    stage.redigest("water-body.u32")?;
+    stage.copy("water-surface.f32", &work.path("water-surface.f32"))?;
     stage.copy(
         "discharge.f32",
         &work.path(&format!("{m3_tag}-discharge.f32")),

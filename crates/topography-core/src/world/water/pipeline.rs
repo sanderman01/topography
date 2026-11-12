@@ -10,14 +10,14 @@ use super::balance::{Balance, Counts, TileCounts, count, holding, solve, top_spi
 use super::contract::{Frag, Tops, contract, min_pits, solve_local, with_spills};
 use super::flats;
 use super::flow::{Next, Report, Solved, accumulate, add_inflows, ends, solve as solve_flow};
-use super::geom::{Rect, World, tiles};
+use super::geom::{Rect, World, tile_of, tiles};
 use super::hierarchy::{Hierarchy, NONE, Resolver, build};
 use super::layers::{Classes, Layer};
 use super::nodes::{Node, Nodes};
 use super::rain::{Q_PER_KM2, Rain};
 use super::receivers::{kept_receivers, receivers};
 use super::store::{Blob, Dec, Enc, Work, cached, for_tiles};
-use super::table::{Climate, GLACIER, MILLI, SNOW_PRESENT, Table};
+use super::table::{GLACIER, MILLI, SNOW_PRESENT, Table};
 use super::watershed::{Below0, Drain, TileGraph, add_below0, drain_with, tile_graph_with};
 use super::{BELOW_SEA_OK, Params};
 use crate::acquisition::{AcquisitionError, Result, ensure};
@@ -26,46 +26,6 @@ use std::path::Path;
 
 fn invalid(msg: impl Into<String>) -> AcquisitionError {
     AcquisitionError::Invalid(msg.into())
-}
-
-/// Per block of `k` x `k` cells (aligned to the world), 1 where at least `share` of the
-/// snow layer's cells are snow/ice; as classes of `world`.
-pub(crate) fn cold_zone(
-    snow: &Classes,
-    world: World,
-    k: u64,
-    share: f64,
-    threads: usize,
-) -> Result<Classes> {
-    let zw = World {
-        w: world.w.div_ceil(k),
-        h: world.h.div_ceil(k),
-    };
-    // Bands of 8 block rows over the whole width.
-    let band = 8 * k;
-    let bands: Vec<Rect> = (0..world.h.div_ceil(band))
-        .map(|b| Rect {
-            x0: 0,
-            y0: b * band,
-            w: world.w as usize,
-            h: band.min(world.h - b * band) as usize,
-        })
-        .collect();
-    let rows = for_tiles(&bands, threads, "cold zone", |_, r| {
-        let v = snow.read(r)?;
-        let rows = (r.h as u64).div_ceil(k) as usize;
-        let mut n = vec![(0u64, 0u64); rows * zw.w as usize];
-        for (i, &s) in v.iter().enumerate() {
-            let (x, y) = ((i % r.w) as u64 / k, (i / r.w) as u64 / k);
-            let b = &mut n[y as usize * zw.w as usize + x as usize];
-            b.0 += 1;
-            b.1 += u64::from(s == SNOW_PRESENT);
-        }
-        Ok(n.into_iter()
-            .map(|(a, c)| u8::from(c as f64 >= share * a as f64))
-            .collect::<Vec<u8>>())
-    })?;
-    Classes::new(Layer::memory(zw, rows.concat()), k, world)
 }
 
 pub(crate) struct Setup {
@@ -83,8 +43,6 @@ pub(crate) struct Setup {
     pub provenance: Option<Classes>,
     /// The `snow-ice.u8` game layer (2: snow/ice), nearest; read only with a climate.
     pub snow: Option<Classes>,
-    /// Blocks (1) whose snow/ice share makes them cold throughout (`cold_zone`).
-    pub cold_zone: Option<Classes>,
     /// Settle depression trees inside tiles (review C3); exact, so off only in its test.
     pub contract: bool,
 }
@@ -106,67 +64,108 @@ impl Setup {
             self.nw_m[1] - (y as f64 + 0.5) * self.spacing_m,
         )
     }
-    /// Cold cells over a window: snow/ice in the snow layer or its cold zone, or glacier
-    /// class (none without either layer).
+    /// Cold cells over a window, with a climate (none without): glacier class, snow/ice in
+    /// the snow layer, or a snow/ice share of at least `cold_share` in the `cold_box_m` box
+    /// centred on the cell (clipped to the world). The box reads a halo, so any tiling gives
+    /// the same cells.
     pub fn cold(&self, r: Rect) -> Result<Vec<bool>> {
-        let mut cold: Vec<bool> = match &self.snow {
-            Some(s) => s.read(r)?.into_iter().map(|v| v == SNOW_PRESENT).collect(),
-            None => vec![false; r.cells()],
+        let mut cold = vec![false; r.cells()];
+        let Some(c) = self.params.climate else {
+            return Ok(cold);
         };
-        if let Some(z) = &self.cold_zone {
-            for (k, v) in cold.iter_mut().zip(z.read(r)?) {
-                *k |= v != 0;
+        if let Some(snow) = &self.snow {
+            let h = (c.cold_box_m / self.spacing_m / 2.0).round() as u64;
+            let g = r.grow(h, self.world);
+            let v = snow.read(g)?;
+            // Summed-area table of snow cells over the halo window, (g.w + 1) wide.
+            let sw = g.w + 1;
+            let mut sat = vec![0u32; sw * (g.h + 1)];
+            for y in 0..g.h {
+                let mut run = 0u32;
+                for x in 0..g.w {
+                    run += u32::from(v[y * g.w + x] == SNOW_PRESENT);
+                    sat[(y + 1) * sw + x + 1] = sat[y * sw + x + 1] + run;
+                }
+            }
+            for (k, cold) in cold.iter_mut().enumerate() {
+                let (x, y) = r.world_xy(k);
+                let lx = (x - g.x0) as usize;
+                let ly = (y - g.y0) as usize;
+                let (x0, y0) = (
+                    (x.saturating_sub(h) - g.x0) as usize,
+                    (y.saturating_sub(h) - g.y0) as usize,
+                );
+                let x1 = ((x + h + 1).min(self.world.w) - g.x0) as usize;
+                let y1 = ((y + h + 1).min(self.world.h) - g.y0) as usize;
+                let n =
+                    sat[y1 * sw + x1] + sat[y0 * sw + x0] - sat[y0 * sw + x1] - sat[y1 * sw + x0];
+                let area = (x1 - x0) * (y1 - y0);
+                *cold =
+                    v[ly * g.w + lx] == SNOW_PRESENT || f64::from(n) >= c.cold_share * area as f64;
             }
         }
-        if let Some(c) = &self.classes {
-            for (k, v) in cold.iter_mut().zip(c.read(r)?) {
+        if let Some(classes) = &self.classes {
+            for (k, v) in cold.iter_mut().zip(classes.read(r)?) {
                 *k |= v == GLACIER;
             }
         }
         Ok(cold)
     }
-    /// With a climate, the climate and the window's cold cells.
-    fn climate_cold(&self, core: Rect) -> Result<Option<(Climate, Vec<bool>)>> {
-        match self.params.climate {
-            Some(c) => Ok(Some((c, self.cold(core)?))),
-            None => Ok(None),
+    /// `cold` at world cells, a tile's cold cells computed once for all its cells.
+    pub fn cold_cells(&self, cells: &[u64]) -> Result<Vec<bool>> {
+        let mut out = vec![false; cells.len()];
+        if self.params.climate.is_none() {
+            return Ok(out);
         }
+        let all = self.tiles();
+        let mut by_tile: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (i, &c) in cells.iter().enumerate() {
+            let (x, y) = self.world.xy(c);
+            by_tile
+                .entry(tile_of(self.world, self.tile, x, y))
+                .or_default()
+                .push(i);
+        }
+        for (t, idx) in by_tile {
+            let core = all[t];
+            let cold = self.cold(core)?;
+            for i in idx {
+                let (x, y) = self.world.xy(cells[i]);
+                out[i] = cold[core.local(x, y).expect("cell in its tile")];
+            }
+        }
+        Ok(out)
     }
-    /// Each cell's Q in units: its rain, or with a climate its runoff (meltwater on cold
-    /// cells).
+    /// Each cell's Q in units: its rain, or with a climate its runoff. Snow and ice pass their
+    /// full runoff on: it melts downstream (owner choice 2026-11-12).
     pub fn rain_units(&self, core: Rect) -> Result<Vec<u64>> {
-        let climate = self.climate_cold(core)?;
         (0..core.cells())
             .map(|k| {
                 let (x, y) = core.world_xy(k);
                 let (cx, cy) = self.centre(x, y);
                 let p = self.rain.relative(cx, cy)?;
-                let q = match &climate {
-                    Some((c, cold)) => c.melt(c.runoff(p), cold[k]),
-                    None => p,
-                };
+                let q = self.params.climate.map_or(p, |c| c.runoff(p));
                 Ok((q * self.cell_km2() * Q_PER_KM2).round() as u64)
             })
             .collect()
     }
     /// Each cell's lake supply in thousandths of a cell: its class's r (class 0 without
-    /// classes), with a climate times its rain relative to the mean land rain (meltwater on
-    /// cold cells).
+    /// classes), with a climate times its rain relative to the mean land rain. Cold cells are
+    /// not cut: a frozen lake keeps its liquid level.
     pub fn supply(&self, core: Rect) -> Result<Vec<u64>> {
         let classes = match &self.classes {
             Some(c) => c.read(core)?,
             None => vec![0; core.cells()],
         };
-        let climate = self.climate_cold(core)?;
         classes
             .into_iter()
             .enumerate()
             .map(|(k, c)| {
                 let r = f64::from(self.table.r_milli(c));
-                Ok(match &climate {
-                    Some((cl, cold)) => {
+                Ok(match self.params.climate {
+                    Some(_) => {
                         let (cx, cy) = self.centre_of(core, k);
-                        (r * cl.melt(self.rain.relative(cx, cy)?, cold[k])).round() as u64
+                        (r * self.rain.relative(cx, cy)?).round() as u64
                     }
                     None => r as u64,
                 })
@@ -1303,6 +1302,8 @@ pub(crate) fn model_on(
                 .collect();
             add_inflows(&mut q, &ports, next)?;
             let n = core.cells();
+            // No river on snow and ice: the water runs under it and surfaces at its edge.
+            let cold = s.cold(core)?;
             let (mut node, mut disch, mut fl) = (vec![0u32; n], vec![0f32; n], vec![0u8; n]);
             for k in 0..n {
                 let qk = match next(k) {
@@ -1320,7 +1321,7 @@ pub(crate) fn model_on(
                 };
                 let b = byte_of(w, &st, &flat, k);
                 let mut f = b;
-                if b != 0 && disch[k] >= thr {
+                if b != 0 && disch[k] >= thr && !cold[k] {
                     f |= 16;
                 }
                 match st.wet[k] {
@@ -1351,7 +1352,6 @@ pub(crate) fn model_on(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::water::geom::tile_of;
     use crate::world::water::testing::{setup, terrain};
 
     type Out = (Model, Vec<u32>, Vec<u32>, Vec<u32>, Vec<u8>);
@@ -1437,87 +1437,94 @@ mod tests {
         );
     }
 
-    /// Precipitation on snow/ice or glacier falls as snow: those cells give only the
-    /// meltwater share of their runoff and lake supply.
+    /// Snow, ice and glacier pass their full runoff and lake supply on, but no river cell
+    /// lies on them: the discharge is that of a run without snow, the thalwegs are its
+    /// thalwegs off cold ground.
     #[test]
-    fn snow_and_glacier_cells_give_only_meltwater() {
+    fn cold_ground_keeps_its_water_but_carries_no_river() {
         let world = World { w: 64, h: 64 };
-        let mut s = setup(world, 64, 1e-5);
-        let c = s.params.climate.expect("1 m has a climate");
+        let z = terrain(world);
+        let mut s = setup(world, 16, 1e-5);
         s.rain = climate_rain();
-        let all = Rect::whole(world);
-        let (supply, rain) = (
-            s.supply(all).expect("supply"),
-            s.rain_units(all).expect("rain"),
-        );
-        // In the wet south-east: a snow cell, a glacier cell and bare rock (class 18).
-        let (snow, glacier, bare) = (64 * 64 - 1, 64 * 64 - 2, 64 * 64 - 3);
-        let mut flags = vec![1u8; 64 * 64];
-        flags[snow] = SNOW_PRESENT;
+        // A 5-cell box: the world is smaller than the real 128 m one.
+        let mut c = s.params.climate.expect("climate");
+        c.cold_box_m = 4.0;
+        s.params.climate = Some(c);
+        let warm = run_on(&s, &Layer::memory(world, z.clone()));
+        // Snow on the western third, glacier on a row in the east.
+        let snow: Vec<u8> = (0..64 * 64)
+            .map(|k| if k % 64 < 20 { SNOW_PRESENT } else { 1 })
+            .collect();
+        let warm_classes = s.classes.clone();
         let mut class = s.classes.as_ref().unwrap().layer.to_vec().unwrap();
-        class[glacier] = GLACIER;
-        s.snow = Some(Classes::new(Layer::memory(world, flags), 1, world).unwrap());
+        for v in &mut class[40 * 64..41 * 64] {
+            *v = GLACIER;
+        }
+        s.snow = Some(Classes::new(Layer::memory(world, snow), 1, world).unwrap());
         s.classes = Some(Classes::new(Layer::memory(world, class), 1, world).unwrap());
+        let all = Rect::whole(world);
+        assert!(s.cold(all).expect("cold")[40 * 64 + 50], "glacier is cold");
+        // The glacier's own r would change the lakes; compare on the snow alone.
+        s.classes = warm_classes;
         let cold = s.cold(all).expect("cold");
-        assert!(cold[snow] && cold[glacier] && !cold[bare]);
-        let (supply2, rain2) = (
-            s.supply(all).expect("supply"),
-            s.rain_units(all).expect("rain"),
-        );
-        // Rain 2.7 x mean here: the meltwater is snow_melt x the mean, not x the snowfall.
-        let melt = (c.snow_melt * 1e-6 * Q_PER_KM2).round() as u64;
-        assert_eq!((rain2[snow], rain2[glacier]), (melt, melt));
-        assert_eq!(rain2[bare], rain[bare]);
+        assert!(cold[5] && !cold[10 * 64 + 50]);
+        let snowy = run_on(&s, &Layer::memory(world, z));
+        assert_eq!(warm.3, snowy.3, "discharge unchanged");
+        assert_eq!(warm.1, snowy.1, "lake levels unchanged");
+        let (mut kept, mut dropped) = (0, 0);
+        for (k, &cold) in cold.iter().enumerate() {
+            let (a, b) = (warm.4[k] & 16 != 0, snowy.4[k] & 16 != 0);
+            assert_eq!(b, a && !cold, "cell {k}");
+            assert_eq!(warm.4[k] & !16, snowy.4[k] & !16, "routing of cell {k}");
+            kept += usize::from(b);
+            dropped += usize::from(a && cold);
+        }
         assert!(
-            rain2[snow] > 0 && rain2[snow] < rain[snow] / 20,
-            "a little meltwater"
-        );
-        let r18 = f64::from(s.table.r_milli(18));
-        assert_eq!(supply2[snow], (r18 * c.snow_melt).round() as u64);
-        assert!(supply2[snow] < supply[snow] / 20);
-        assert_eq!(supply2[bare], supply[bare]);
-        // The glacier's own r applies, then the meltwater.
-        let r10 = f64::from(s.table.r_milli(GLACIER));
-        assert_eq!(supply2[glacier], (r10 * c.snow_melt).round() as u64);
-        // Without a climate (coarse levels) snow changes nothing.
-        s.params.climate = None;
-        assert_eq!(
-            s.rain_units(all).unwrap()[snow],
-            s.rain_units(all).unwrap()[bare]
+            kept > 0 && dropped > 0,
+            "rivers on both, {kept} kept, {dropped} dropped"
         );
     }
 
-    /// A block with enough snow is cold throughout (its bare rock too); one with less keeps
-    /// only its snow cells cold. Partial blocks at the world's edge count their own cells.
+    /// A cell is cold where the box centred on it is at least `cold_share` snow: the mask
+    /// follows the snow edge without steps and is the same at any tiling.
     #[test]
-    fn the_cold_zone_covers_rock_in_snowy_blocks() {
-        let world = World { w: 40, h: 40 };
-        let mut s = setup(world, 16, 1e-5);
-        // Block (0, 0): 64 of 256 cells snow (rows 0 to 3). Block (1, 0): 63. Block (2, 2),
-        // 8 x 8 at the corner: 16 of 64.
-        let snow: Vec<u8> = (0..1600u64)
+    fn the_cold_box_follows_the_snow_share_at_any_tiling() {
+        let world = World { w: 40, h: 37 };
+        let mut s = setup(world, 40, 1e-5);
+        let mut c = s.params.climate.expect("climate");
+        (c.cold_box_m, c.cold_share) = (8.0, 0.25);
+        s.params.climate = Some(c);
+        // A snowfield with a bare rib, and scattered snow.
+        let on = |x: u64, y: u64| (x < 15 && x != 6 && x != 7) || (x * 7 + y * 3) % 11 == 0;
+        let snow: Vec<u8> = (0..world.w * world.h)
+            .map(|i| if on(i % 40, i / 40) { SNOW_PRESENT } else { 1 })
+            .collect();
+        s.snow = Some(Classes::new(Layer::memory(world, snow), 1, world).unwrap());
+        // Brute force: the 9 x 9 box, clipped to the world.
+        let want: Vec<bool> = (0..world.w * world.h)
             .map(|i| {
                 let (x, y) = (i % 40, i / 40);
-                let on = (x < 16 && y < 4)
-                    || ((16..32).contains(&x) && y < 4 && (x, y) != (31, 3))
-                    || (x >= 32 && (32..34).contains(&y));
-                if on { SNOW_PRESENT } else { 1 }
+                let (mut n, mut a) = (0, 0);
+                for by in y.saturating_sub(4)..(y + 5).min(world.h) {
+                    for bx in x.saturating_sub(4)..(x + 5).min(world.w) {
+                        a += 1;
+                        n += u32::from(on(bx, by));
+                    }
+                }
+                on(x, y) || f64::from(n) >= 0.25 * f64::from(a)
             })
             .collect();
-        let snow = Classes::new(Layer::memory(world, snow), 1, world).unwrap();
-        let zone = cold_zone(&snow, world, 16, 0.25, 2).expect("zone");
-        assert_eq!(
-            zone.layer.to_vec().unwrap(),
-            [1, 0, 0, 0, 0, 0, 0, 0, 1],
-            "blocks row by row"
+        assert!(
+            want[6] && want[20 * 40 + 7],
+            "the rib in the snowfield is cold"
         );
-        s.snow = Some(snow);
-        s.cold_zone = Some(zone);
-        let cold = s.cold(Rect::whole(world)).expect("cold");
-        let at = |x: u64, y: u64| cold[(y * 40 + x) as usize];
-        assert!(at(5, 10) && at(15, 15), "rock in a snowy block");
-        assert!(at(20, 0) && !at(20, 10), "a thin block keeps only its snow");
-        assert!(at(39, 39), "the corner block");
+        assert!(!want[20 * 40 + 30], "scattered snow is not");
+        assert_eq!(s.cold(Rect::whole(world)).unwrap(), want);
+        for tile in [16, 7] {
+            s.tile = tile;
+            let cells: Vec<u64> = (0..world.w * world.h).collect();
+            assert_eq!(s.cold_cells(&cells).unwrap(), want, "tile {tile}");
+        }
     }
 
     /// Tiles and contraction stay bit-identical when lakes evaporate at varying rates.

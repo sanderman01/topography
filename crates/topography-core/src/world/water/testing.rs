@@ -80,7 +80,6 @@ pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
         params,
         provenance: None,
         snow: None,
-        cold_zone: None,
         contract: true,
     }
 }

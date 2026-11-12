@@ -77,14 +77,10 @@ pub(crate) struct Climate {
     /// Standing water whose cells, or whose shore ring, are more than this share cold
     /// (snow/ice or glacier class 10) is ice.
     pub ice_share: f64,
-    /// Meltwater from a cold cell, relative to the mean land runoff (or lake supply), and no
-    /// more than this share of its own: precipitation there falls as snow, and melt is set
-    /// by warmth, not by how much snow fell.
-    pub snow_melt: f64,
-    /// Blocks of this size (m, aligned to the grid) whose snow/ice share is at least
-    /// `cold_share` are cold throughout: air temperature, not slope, sets the precipitation
-    /// phase, so steep rock that sheds its snow is cold too.
-    pub cold_block_m: f64,
+    /// A cell is cold (no river on it, ice on its standing water) where the box of this side
+    /// (m) centred on it is at least `cold_share` snow/ice: air temperature, not slope, makes
+    /// a snowfield, so steep rock that sheds its snow is cold too.
+    pub cold_box_m: f64,
     pub cold_share: f64,
 }
 
@@ -101,16 +97,6 @@ impl Climate {
         (rain - self.runoff_threshold).max(0.0) / (1.0 - self.runoff_threshold)
     }
 
-    /// Water (runoff or rain, relative to the mean land's) a cell gives: all of it, or on a
-    /// cold cell `snow_melt` × min(it, 1), the meltwater.
-    pub fn melt(&self, water: f64, cold: bool) -> f64 {
-        if cold {
-            self.snow_melt * water.min(1.0)
-        } else {
-            water
-        }
-    }
-
     /// Lake evaporation in thousandths of a humid lake cell's, at a moisture.
     pub fn evap_milli(&self, moisture: f64) -> u64 {
         let t = ((moisture - self.moist_dry) / (self.moist_wet - self.moist_dry)).clamp(0.0, 1.0);
@@ -125,9 +111,8 @@ impl Climate {
             && self.moist_dry < self.moist_wet
             && self.moist_wet <= 1.0
             && (0.0..1.0).contains(&self.ice_share)
-            && (0.0..=1.0).contains(&self.snow_melt)
-            && self.cold_block_m.is_finite()
-            && self.cold_block_m > 0.0
+            && self.cold_box_m.is_finite()
+            && self.cold_box_m >= 0.0
             && self.cold_share > 0.0
             && self.cold_share <= 1.0
     }
@@ -209,7 +194,7 @@ impl Table {
                 format!(
                     "water table level {key}: climate needs 0 <= runoff_threshold < 1, \
                      1 <= evap_dry <= 100, 0 <= moist_dry < moist_wet <= 1, 0 <= ice_share < 1, \
-                     0 <= snow_melt <= 1, cold_block_m > 0, 0 < cold_share <= 1"
+                     cold_box_m >= 0, 0 < cold_share <= 1"
                 ),
             )?;
             if let Some(e) = &l.erosion {
@@ -303,16 +288,9 @@ mod tests {
         assert_eq!(c.evap_milli(0.0), (c.evap_dry * 1000.0).round() as u64);
         assert_eq!(c.evap_milli(c.moist_wet), 1000);
         assert_eq!(c.evap_milli(1.0), 1000);
-        assert!(
-            c.snow_melt > 0.0 && c.snow_melt < 0.5,
-            "snow gives a little meltwater"
-        );
-        // Meltwater does not grow with the snowfall past mean, nor exceeds its own water.
-        assert_eq!(c.melt(4.0, true), c.snow_melt);
-        assert_eq!(c.melt(0.5, true), 0.5 * c.snow_melt);
-        assert_eq!(c.melt(4.0, false), 4.0);
-        let bad = DEFAULT.replace("snow_melt = 0.05", "snow_melt = 1.5");
-        assert!(Table::parse(&bad).is_err(), "snow_melt is a share");
+        assert_eq!((c.cold_box_m, c.cold_share), (128.0, 0.25));
+        let bad = DEFAULT.replace("cold_box_m = 128.0", "cold_box_m = -1.0");
+        assert!(Table::parse(&bad).is_err(), "cold_box_m is a size");
         let bad = DEFAULT.replace("cold_share = 0.25", "cold_share = 0.0");
         assert!(Table::parse(&bad).is_err(), "cold_share is positive");
         let e4 = t.level(4.0).erosion.expect("4 m erodes");

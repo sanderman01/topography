@@ -1,8 +1,9 @@
 //! Ice as a phase of standing water (owner ruling 2026-11-11, I1): a lake mostly on cold
-//! cells (snow/ice or glacier), or mostly ringed by them, is kind `ice` in bodies.json and
-//! leaves the water surface and body rasters. The ring catches lakes the snow layer leaves
-//! bare (it has no snow on coarser-level water). Routing is unchanged: its meltwater still
-//! leaves by the lake's exit, and the ground is kept as is.
+//! cells (snow/ice or glacier), or mostly ringed by them, is kind `ice` in bodies.json. It
+//! keeps its cells in the body raster and its flat surface at the lake's level, so the game
+//! gets an ice sheet, not a dry bed. The ring catches lakes the snow layer leaves bare (it
+//! has no snow on coarser-level water). Routing is unchanged: its water still leaves by the
+//! lake's exit, and the ground is kept as is.
 
 use super::geom::Rect;
 use super::layers::Layer;
@@ -84,31 +85,6 @@ pub(crate) fn relabel(bodies: &mut Value, ice: &BTreeSet<u32>) {
     }
 }
 
-/// Clear ice cells from a water surface (NaN) and body raster (0), in place.
-pub(crate) fn clear(
-    tiles: &[Rect],
-    threads: usize,
-    surface: &Layer<f32>,
-    body: &Layer<u32>,
-    ice: &BTreeSet<u32>,
-) -> Result<()> {
-    for_tiles(tiles, threads, "ice clear", |_, core| {
-        let mut b = body.read(core)?;
-        if !b.iter().any(|id| ice.contains(id)) {
-            return Ok(());
-        }
-        let mut s = surface.read(core)?;
-        for (id, z) in b.iter_mut().zip(s.iter_mut()) {
-            if ice.contains(id) {
-                (*id, *z) = (0, f32::NAN);
-            }
-        }
-        body.write(core, &b)?;
-        surface.write(core, &s)
-    })?;
-    Ok(())
-}
-
 fn listed<'a>(bodies: &'a Value, kind: &'a str) -> impl Iterator<Item = u32> + 'a {
     bodies["bodies"]
         .as_array()
@@ -122,6 +98,7 @@ fn listed<'a>(bodies: &'a Value, kind: &'a str) -> impl Iterator<Item = u32> + '
 mod tests {
     use super::*;
     use crate::world::water::geom::{World, tiles};
+    use serde_json::json;
 
     /// A bare lake (2 x 2) in a snowfield is ice by its shore ring; split over four tiles,
     /// each ring cell counts once.
@@ -153,7 +130,6 @@ mod tests {
             }
         }
     }
-    use serde_json::json;
 
     /// Cold cells of a window from a whole-world mask.
     fn mask(world: World, cold: Vec<bool>) -> impl Fn(Rect) -> Result<Vec<bool>> + Sync {
@@ -169,7 +145,7 @@ mod tests {
 
     /// A 4 x 4 world with lake 2 on the left half (cold) and lake 3 on the right (rock).
     #[test]
-    fn a_lake_mostly_on_snow_or_glacier_becomes_ice_and_leaves_the_water_rasters() {
+    fn a_lake_mostly_on_snow_or_glacier_becomes_ice() {
         let world = World { w: 4, h: 4 };
         let ids: Vec<u32> = (0..16).map(|k| if k % 4 < 2 { 2 } else { 3 }).collect();
         // Lake 2: 3 of its 8 cells are not cold; lake 3: 2 of 8 are. Each shore ring (the
@@ -182,7 +158,6 @@ mod tests {
             })
             .collect();
         let body = Layer::memory(world, ids);
-        let surface = Layer::memory(world, vec![5.0f32; 16]);
         let mut bodies = json!({"bodies": [
             {"id": 1, "kind": "sea"}, {"id": 2, "kind": "lake"}, {"id": 3, "kind": "lake"},
             {"id": 4, "kind": "river"}]});
@@ -203,14 +178,5 @@ mod tests {
             .map(|b| b["kind"].as_str().unwrap())
             .collect();
         assert_eq!(kinds, ["sea", "ice", "lake", "river"]);
-        clear(&all, 2, &surface, &body, &ice).expect("clear");
-        let (b, s) = (body.to_vec().unwrap(), surface.to_vec().unwrap());
-        for k in 0..16 {
-            if k % 4 < 2 {
-                assert!(b[k] == 0 && s[k].is_nan(), "cell {k} is ice");
-            } else {
-                assert!(b[k] == 3 && s[k] == 5.0, "cell {k} stays water");
-            }
-        }
     }
 }
