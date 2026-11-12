@@ -17,7 +17,7 @@ use super::nodes::{Node, Nodes};
 use super::rain::{Q_PER_KM2, Rain};
 use super::receivers::{kept_receivers, receivers};
 use super::store::{Blob, Dec, Enc, Work, cached, for_tiles};
-use super::table::{MILLI, Table};
+use super::table::{GLACIER, MILLI, SNOW_PRESENT, Table};
 use super::watershed::{Below0, Drain, TileGraph, add_below0, drain_with, tile_graph_with};
 use super::{BELOW_SEA_OK, Params};
 use crate::acquisition::{AcquisitionError, Result, ensure};
@@ -41,6 +41,8 @@ pub(crate) struct Setup {
     pub params: Params,
     /// Collage provenance (kind and flags), nearest; None: every cell 0.
     pub provenance: Option<Classes>,
+    /// The `snow-ice.u8` game layer (2: snow/ice), nearest; read only with a climate.
+    pub snow: Option<Classes>,
     /// Settle depression trees inside tiles (review C3); exact, so off only in its test.
     pub contract: bool,
 }
@@ -62,34 +64,68 @@ impl Setup {
             self.nw_m[1] - (y as f64 + 0.5) * self.spacing_m,
         )
     }
-    /// Each cell's Q in units: its rain, or with a climate its runoff.
+    /// Cold cells over a window: snow/ice in the snow layer or glacier class (none without
+    /// either layer).
+    pub fn cold(&self, r: Rect) -> Result<Vec<bool>> {
+        let mut cold = match &self.snow {
+            Some(s) => s.read(r)?.into_iter().map(|v| v == SNOW_PRESENT).collect(),
+            None => vec![false; r.cells()],
+        };
+        if let Some(c) = &self.classes {
+            for (k, v) in cold.iter_mut().zip(c.read(r)?) {
+                *k |= v == GLACIER;
+            }
+        }
+        Ok(cold)
+    }
+    /// With a climate, each cell's share of its precipitation that leaves as water: 1, or
+    /// `snow_melt` on cold cells. None without a climate.
+    fn melt(&self, core: Rect) -> Result<Option<Vec<f64>>> {
+        let Some(c) = self.params.climate else {
+            return Ok(None);
+        };
+        let cold = self.cold(core)?;
+        Ok(Some(
+            cold.into_iter()
+                .map(|k| if k { c.snow_melt } else { 1.0 })
+                .collect(),
+        ))
+    }
+    /// Each cell's Q in units: its rain, or with a climate its runoff (meltwater on cold
+    /// cells).
     pub fn rain_units(&self, core: Rect) -> Result<Vec<u64>> {
+        let melt = self.melt(core)?;
         (0..core.cells())
             .map(|k| {
                 let (x, y) = core.world_xy(k);
                 let (cx, cy) = self.centre(x, y);
                 let p = self.rain.relative(cx, cy)?;
-                let q = self.params.climate.map_or(p, |c| c.runoff(p));
+                let q = match (self.params.climate, &melt) {
+                    (Some(c), Some(m)) => c.runoff(p) * m[k],
+                    _ => p,
+                };
                 Ok((q * self.cell_km2() * Q_PER_KM2).round() as u64)
             })
             .collect()
     }
     /// Each cell's lake supply in thousandths of a cell: its class's r (class 0 without
-    /// classes), with a climate times its rain relative to the mean land rain.
+    /// classes), with a climate times its rain relative to the mean land rain (and the
+    /// meltwater share on cold cells).
     pub fn supply(&self, core: Rect) -> Result<Vec<u64>> {
         let classes = match &self.classes {
             Some(c) => c.read(core)?,
             None => vec![0; core.cells()],
         };
+        let melt = self.melt(core)?;
         classes
             .into_iter()
             .enumerate()
             .map(|(k, c)| {
                 let r = f64::from(self.table.r_milli(c));
-                Ok(match self.params.climate {
-                    Some(_) => {
+                Ok(match &melt {
+                    Some(m) => {
                         let (cx, cy) = self.centre_of(core, k);
-                        (r * self.rain.relative(cx, cy)?).round() as u64
+                        (r * self.rain.relative(cx, cy)? * m[k]).round() as u64
                     }
                     None => r as u64,
                 })
@@ -1357,6 +1393,55 @@ mod tests {
         assert_eq!(
             s.rain_units(all).expect("rain")[nw],
             (0.15 * 1e-6 * Q_PER_KM2).round() as u64
+        );
+    }
+
+    /// Precipitation on snow/ice or glacier falls as snow: those cells give only the
+    /// meltwater share of their runoff and lake supply.
+    #[test]
+    fn snow_and_glacier_cells_give_only_meltwater() {
+        let world = World { w: 64, h: 64 };
+        let mut s = setup(world, 64, 1e-5);
+        let c = s.params.climate.expect("1 m has a climate");
+        s.rain = climate_rain();
+        let all = Rect::whole(world);
+        let (supply, rain) = (
+            s.supply(all).expect("supply"),
+            s.rain_units(all).expect("rain"),
+        );
+        // In the wet south-east: a snow cell, a glacier cell and bare rock (class 18).
+        let (snow, glacier, bare) = (64 * 64 - 1, 64 * 64 - 2, 64 * 64 - 3);
+        let mut flags = vec![1u8; 64 * 64];
+        flags[snow] = SNOW_PRESENT;
+        let mut class = s.classes.as_ref().unwrap().layer.to_vec().unwrap();
+        class[glacier] = GLACIER;
+        s.snow = Some(Classes::new(Layer::memory(world, flags), 1, world).unwrap());
+        s.classes = Some(Classes::new(Layer::memory(world, class), 1, world).unwrap());
+        let cold = s.cold(all).expect("cold");
+        assert!(cold[snow] && cold[glacier] && !cold[bare]);
+        let (supply2, rain2) = (
+            s.supply(all).expect("supply"),
+            s.rain_units(all).expect("rain"),
+        );
+        // Up to one unit apart: the plain values were rounded before the share.
+        let melt = |a: u64, v: u64| a.abs_diff((v as f64 * c.snow_melt).round() as u64) <= 1;
+        assert!(melt(rain2[snow], rain[snow]) && melt(rain2[glacier], rain[glacier]));
+        assert_eq!(rain2[bare], rain[bare]);
+        assert!(
+            rain2[snow] > 0 && rain2[snow] < rain[snow] / 4,
+            "a little meltwater"
+        );
+        assert!(melt(supply2[snow], supply[snow]));
+        assert_eq!(supply2[bare], supply[bare]);
+        // The glacier's own r applies, then the meltwater share.
+        let r10 = f64::from(s.table.r_milli(GLACIER));
+        let p = s.rain.relative(62.5, 0.5).unwrap();
+        assert_eq!(supply2[glacier], (r10 * p * c.snow_melt).round() as u64);
+        // Without a climate (coarse levels) snow changes nothing.
+        s.params.climate = None;
+        assert_eq!(
+            s.rain_units(all).unwrap()[snow],
+            s.rain_units(all).unwrap()[bare]
         );
     }
 

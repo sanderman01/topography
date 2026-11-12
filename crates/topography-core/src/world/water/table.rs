@@ -74,12 +74,19 @@ pub(crate) struct Climate {
     pub moist_dry: f64,
     /// ... and at or above which they evaporate 1; linear between.
     pub moist_wet: f64,
-    /// Standing water whose cells are more than this share glacier (class 10) is ice.
+    /// Standing water whose cells, or whose shore ring, are more than this share cold
+    /// (snow/ice or glacier class 10) is ice.
     pub ice_share: f64,
+    /// Share of the runoff and lake supply a cold cell gives: precipitation there falls as
+    /// snow and only meltwater leaves.
+    pub snow_melt: f64,
 }
 
 /// The glacier class of legend terrain-v3.
 pub(crate) const GLACIER: u8 = 10;
+
+/// `snow-ice.u8` value for snow/ice present (1: absent).
+pub(crate) const SNOW_PRESENT: u8 = 2;
 
 impl Climate {
     /// Runoff relative to the mean land rain's: rain above the threshold, scaled so mean
@@ -102,6 +109,7 @@ impl Climate {
             && self.moist_dry < self.moist_wet
             && self.moist_wet <= 1.0
             && (0.0..1.0).contains(&self.ice_share)
+            && (0.0..=1.0).contains(&self.snow_melt)
     }
 }
 
@@ -180,7 +188,8 @@ impl Table {
                 l.climate.is_none_or(|c| c.valid()),
                 format!(
                     "water table level {key}: climate needs 0 <= runoff_threshold < 1, \
-                     1 <= evap_dry <= 100, 0 <= moist_dry < moist_wet <= 1, 0 <= ice_share < 1"
+                     1 <= evap_dry <= 100, 0 <= moist_dry < moist_wet <= 1, 0 <= ice_share < 1, \
+                     0 <= snow_melt <= 1"
                 ),
             )?;
             if let Some(e) = &l.erosion {
@@ -274,6 +283,12 @@ mod tests {
         assert_eq!(c.evap_milli(0.0), (c.evap_dry * 1000.0).round() as u64);
         assert_eq!(c.evap_milli(c.moist_wet), 1000);
         assert_eq!(c.evap_milli(1.0), 1000);
+        assert!(
+            c.snow_melt > 0.0 && c.snow_melt < 0.5,
+            "snow gives a little meltwater"
+        );
+        let bad = DEFAULT.replace("snow_melt = 0.15", "snow_melt = 1.5");
+        assert!(Table::parse(&bad).is_err(), "snow_melt is a share");
         let e4 = t.level(4.0).erosion.expect("4 m erodes");
         assert_eq!((e4.routings, e4.cap_m, e4.interior_cap_m), (2, 10.0, 3.0));
         assert_eq!(t.level(4.0).wall_deg, 35.0);

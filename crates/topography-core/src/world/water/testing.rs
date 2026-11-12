@@ -79,6 +79,7 @@ pub(crate) fn setup(world: World, tile: u64, river_km2: f64) -> Setup {
         rain: Rain::uniform(2.0),
         params,
         provenance: None,
+        snow: None,
         contract: true,
     }
 }

@@ -228,47 +228,33 @@ pub(crate) fn setup(
         "grid size out of range",
     )?;
     let raw = layers::Layer::open(world, &grid.join("elevation.f32"))?;
-    let classes = if grid.join("classes.u8").exists() {
+    // An optional u8 layer, nearest at its own cell size (`<key>_cell_m`, default the grid's).
+    let coarse = |file: &str, key: &str| -> Result<Option<layers::Classes>> {
+        if !grid.join(file).exists() {
+            return Ok(None);
+        }
         let cell_m = manifest
-            .get("classes_cell_m")
+            .get(&format!("{key}_cell_m"))
             .and_then(Value::as_f64)
             .unwrap_or(g.spacing_m);
         let k = cell_m / g.spacing_m;
         ensure(
             k >= 1.0 && k.fract() == 0.0,
-            "classes_cell_m must be a whole multiple of spacing_m",
+            format!("{key}_cell_m must be a whole multiple of spacing_m"),
         )?;
         let k = k as u64;
         let cw = geom::World {
             w: world.w.div_ceil(k),
             h: world.h.div_ceil(k),
         };
-        let layer = layers::Layer::open(cw, &grid.join("classes.u8"))?;
-        Some(layers::Classes::new(layer, k, world)?)
-    } else {
-        None
+        let layer = layers::Layer::open(cw, &grid.join(file))?;
+        Ok(Some(layers::Classes::new(layer, k, world)?))
     };
-    // Collage provenance (B10, B13), nearest at its own cell size; absent: every cell 0.
-    let provenance = if grid.join("provenance.u8").exists() {
-        let cell_m = manifest
-            .get("provenance_cell_m")
-            .and_then(Value::as_f64)
-            .unwrap_or(g.spacing_m);
-        let k = cell_m / g.spacing_m;
-        ensure(
-            k >= 1.0 && k.fract() == 0.0,
-            "provenance_cell_m must be a whole multiple of spacing_m",
-        )?;
-        let k = k as u64;
-        let pw = geom::World {
-            w: world.w.div_ceil(k),
-            h: world.h.div_ceil(k),
-        };
-        let layer = layers::Layer::open(pw, &grid.join("provenance.u8"))?;
-        Some(layers::Classes::new(layer, k, world)?)
-    } else {
-        None
-    };
+    let classes = coarse("classes.u8", "classes")?;
+    // Collage provenance (B10, B13); absent: every cell 0.
+    let provenance = coarse("provenance.u8", "provenance")?;
+    // The snow/ice game layer for the climate's cold cells; absent: only glacier is cold.
+    let snow = coarse("snow-ice.u8", "snow")?;
     let (text, source) = match water {
         Some(p) => (
             io_context(format!("read {}", p.display()), fs::read_to_string(p))?,
@@ -292,6 +278,7 @@ pub(crate) fn setup(
         "elevation.f32": identity("elevation.f32")?,
         "classes.u8": identity("classes.u8")?,
         "provenance.u8": identity("provenance.u8")?,
+        "snow-ice.u8": identity("snow-ice.u8")?,
         "moisture": {"file": moisture, "sha256": crate::acquisition::hash_file(&grid.join(moisture))?.0},
         "tile": tile,
         "water_table": {"source": source, "sha256": digest(text.as_bytes())},
@@ -312,6 +299,7 @@ pub(crate) fn setup(
         rain,
         params,
         provenance,
+        snow,
         contract: true,
     };
     Ok((s, raw, stamp))
@@ -1106,11 +1094,19 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         json!({"cells": m2_trickles.len(), "capped": m2_capped,
                "m3_cells": m3_trickles.len(), "m3_capped": m3_capped}),
     );
-    // Standing water mostly on glacier is ice (I1), the checks keep the liquid model.
-    let ice = match (s.params.climate, &s.classes) {
-        (Some(c), Some(classes)) => {
+    // Standing water mostly on or ringed by snow/ice or glacier is ice (I1), the checks keep
+    // the liquid model.
+    let ice = match s.params.climate {
+        Some(c) if s.classes.is_some() || s.snow.is_some() => {
             let body = layers::Layer::open(s.world, &work.path("water-body.u32"))?;
-            ice::frozen(&s.tiles(), s.threads, &body, classes, &bodies, c.ice_share)?
+            ice::frozen(
+                &s.tiles(),
+                s.threads,
+                &body,
+                |r| s.cold(r),
+                &bodies,
+                c.ice_share,
+            )?
         }
         _ => Default::default(),
     };
