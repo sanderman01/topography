@@ -82,6 +82,8 @@ pub(crate) struct Climate {
     /// a snowfield, so steep rock that sheds its snow is cold too.
     pub cold_box_m: f64,
     pub cold_share: f64,
+    /// The box share from which a cell carries no river label (snow and glacier always).
+    pub river_cold_share: f64,
 }
 
 /// The glacier class of legend terrain-v3.
@@ -115,6 +117,8 @@ impl Climate {
             && self.cold_box_m >= 0.0
             && self.cold_share > 0.0
             && self.cold_share <= 1.0
+            && self.river_cold_share > 0.0
+            && self.river_cold_share <= 1.0
     }
 }
 
@@ -194,7 +198,7 @@ impl Table {
                 format!(
                     "water table level {key}: climate needs 0 <= runoff_threshold < 1, \
                      1 <= evap_dry <= 100, 0 <= moist_dry < moist_wet <= 1, 0 <= ice_share < 1, \
-                     cold_box_m >= 0, 0 < cold_share <= 1"
+                     cold_box_m >= 0, 0 < cold_share <= 1, 0 < river_cold_share <= 1"
                 ),
             )?;
             if let Some(e) = &l.erosion {
@@ -288,7 +292,10 @@ mod tests {
         assert_eq!(c.evap_milli(0.0), (c.evap_dry * 1000.0).round() as u64);
         assert_eq!(c.evap_milli(c.moist_wet), 1000);
         assert_eq!(c.evap_milli(1.0), 1000);
-        assert_eq!((c.cold_box_m, c.cold_share), (128.0, 0.25));
+        assert_eq!(
+            (c.cold_box_m, c.cold_share, c.river_cold_share),
+            (128.0, 0.25, 0.5)
+        );
         let bad = DEFAULT.replace("cold_box_m = 128.0", "cold_box_m = -1.0");
         assert!(Table::parse(&bad).is_err(), "cold_box_m is a size");
         let bad = DEFAULT.replace("cold_share = 0.25", "cold_share = 0.0");

@@ -29,9 +29,9 @@ wall_deg = 40.0
 # / (1 - runoff_threshold); a lake cell evaporates evap_dry x a humid one's at moisture <=
 # moist_dry, 1x at >= moist_wet, linear between. Cold cells: snow-ice.u8 snow/ice, glacier
 # class 10, or a cell whose centred cold_box_m box is at least cold_share snow/ice (steep
-# rock sheds its snow but is just as cold). Cold ground passes its full runoff on (it
-# melts) but carries no river cell: rivers start at the snow edge or glacier snout
-# (owner choice 2026-11-12). Standing water whose cells, or whose shore ring, are more
+# rock sheds its snow but is just as cold). All ground passes its full runoff on (snow
+# melts), but snow, glacier and cells with a box share of river_cold_share or more carry
+# no river cell: rivers start at the snow edge or glacier snout (owner choice 2026-11-12). Standing water whose cells, or whose shore ring, are more
 # than ice_share cold is ice: a flat ice surface at the lake's level. Coarse levels keep
 # the plain model.
 [levels.1.climate]
@@ -41,7 +41,9 @@ moist_dry = 0.1          # desert regions sit at 0.06 to 0.09
 moist_wet = 0.25         # land mean is 0.30; windward regions 0.4 to 0.8
 ice_share = 0.5
 cold_box_m = 128.0       # rock ribs and cliffs in a snowfield are tens of metres across
-cold_share = 0.25        # patchy snow still means a cold climate
+cold_share = 0.25        # patchy snow still means a cold climate (ice)
+river_cold_share = 0.5   # no river label from here: a straight snow edge is 0.5, so the bare
+                         # fringe outside it keeps its rivers and rock ribs inside stay cold
 
 [levels.4]
 river_km2 = 0.5

@@ -1027,11 +1027,15 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   cold too: air temperature, not slope, makes a snowfield. The volcano's bare ribs above
   3,500 m are 20 to 35% of the ground there.
 - Cold ground passes its full runoff and lake supply on: snow melts, and annual runoff from
-  snowy catchments is about their precipitation. It carries no river cell, though (owner
-  choice 2026-11-12, "full flow, no snow streams"): the m2 and m3 routings keep the flow
-  but set no thalweg bit on cold cells, lake outflows (B16) leave them out, and the
-  channels carve none there. Rivers start at the snow edge or glacier snout at the size
-  their whole catchment gives. A river that crosses a cold patch shows on both sides of it.
+  snowy catchments is about their precipitation. Snow, glacier and cells whose box share
+  is at least `river_cold_share` (0.5) carry no river cell, though (owner choice
+  2026-11-12, "full flow, no snow streams"). The m2 and m3 routings keep the flow but set no
+  thalweg bit there, lake outflows (B16) leave those cells out, and the channels carve none.
+  At a straight snow edge the share is 0.5, so the bare fringe outside it keeps its rivers,
+  while rock ribs inside a snowfield stay hidden. Rivers start at the snow edge or glacier
+  snout at the size their whole catchment gives. A river that crosses a snowfield shows on
+  both sides of it. The upper part's `parent` is the first body down its receivers, as for
+  a lake's outflow.
   Two earlier tries cut the water instead: 0.15 × runoff, then 0.05 of the mean runoff.
   Both starved the valley rivers below the snow, and the frozen lakes dried down.
 - Standing water whose cells, or whose shore ring (the cells 8-adjacent to it), are more

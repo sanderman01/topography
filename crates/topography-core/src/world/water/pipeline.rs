@@ -64,11 +64,26 @@ impl Setup {
             self.nw_m[1] - (y as f64 + 0.5) * self.spacing_m,
         )
     }
+    /// Cold cells over a window for standing water (ice): `cold_with` at `cold_share`.
+    pub fn cold(&self, r: Rect) -> Result<Vec<bool>> {
+        match self.params.climate {
+            Some(c) => self.cold_with(r, c.cold_share),
+            None => Ok(vec![false; r.cells()]),
+        }
+    }
+    /// Cells that carry no river label: `cold_with` at `river_cold_share`. The higher share
+    /// keeps the bare fringe outside a snow edge warm, and rock ribs inside a snowfield cold.
+    pub fn no_river(&self, r: Rect) -> Result<Vec<bool>> {
+        match self.params.climate {
+            Some(c) => self.cold_with(r, c.river_cold_share),
+            None => Ok(vec![false; r.cells()]),
+        }
+    }
     /// Cold cells over a window, with a climate (none without): glacier class, snow/ice in
-    /// the snow layer, or a snow/ice share of at least `cold_share` in the `cold_box_m` box
+    /// the snow layer, or a snow/ice share of at least `share` in the `cold_box_m` box
     /// centred on the cell (clipped to the world). The box reads a halo, so any tiling gives
     /// the same cells.
-    pub fn cold(&self, r: Rect) -> Result<Vec<bool>> {
+    fn cold_with(&self, r: Rect, share: f64) -> Result<Vec<bool>> {
         let mut cold = vec![false; r.cells()];
         let Some(c) = self.params.climate else {
             return Ok(cold);
@@ -100,8 +115,7 @@ impl Setup {
                 let n =
                     sat[y1 * sw + x1] + sat[y0 * sw + x0] - sat[y0 * sw + x1] - sat[y1 * sw + x0];
                 let area = (x1 - x0) * (y1 - y0);
-                *cold =
-                    v[ly * g.w + lx] == SNOW_PRESENT || f64::from(n) >= c.cold_share * area as f64;
+                *cold = v[ly * g.w + lx] == SNOW_PRESENT || f64::from(n) >= share * area as f64;
             }
         }
         if let Some(classes) = &self.classes {
@@ -111,8 +125,8 @@ impl Setup {
         }
         Ok(cold)
     }
-    /// `cold` at world cells, a tile's cold cells computed once for all its cells.
-    pub fn cold_cells(&self, cells: &[u64]) -> Result<Vec<bool>> {
+    /// `no_river` at world cells, computed once per tile for all its cells.
+    pub fn no_river_cells(&self, cells: &[u64]) -> Result<Vec<bool>> {
         let mut out = vec![false; cells.len()];
         if self.params.climate.is_none() {
             return Ok(out);
@@ -128,7 +142,7 @@ impl Setup {
         }
         for (t, idx) in by_tile {
             let core = all[t];
-            let cold = self.cold(core)?;
+            let cold = self.no_river(core)?;
             for i in idx {
                 let (x, y) = self.world.xy(cells[i]);
                 out[i] = cold[core.local(x, y).expect("cell in its tile")];
@@ -1303,7 +1317,7 @@ pub(crate) fn model_on(
             add_inflows(&mut q, &ports, next)?;
             let n = core.cells();
             // No river on snow and ice: the water runs under it and surfaces at its edge.
-            let cold = s.cold(core)?;
+            let cold = s.no_river(core)?;
             let (mut node, mut disch, mut fl) = (vec![0u32; n], vec![0f32; n], vec![0u8; n]);
             for k in 0..n {
                 let qk = match next(k) {
@@ -1466,8 +1480,11 @@ mod tests {
         assert!(s.cold(all).expect("cold")[40 * 64 + 50], "glacier is cold");
         // The glacier's own r would change the lakes; compare on the snow alone.
         s.classes = warm_classes;
-        let cold = s.cold(all).expect("cold");
+        let cold = s.no_river(all).expect("no river");
         assert!(cold[5] && !cold[10 * 64 + 50]);
+        // The bare fringe beside the snow (x = 20) is cold for ice but keeps its rivers.
+        let ice = s.cold(all).expect("cold");
+        assert!(ice[10 * 64 + 20] && !cold[10 * 64 + 20]);
         let snowy = run_on(&s, &Layer::memory(world, z));
         assert_eq!(warm.3, snowy.3, "discharge unchanged");
         assert_eq!(warm.1, snowy.1, "lake levels unchanged");
@@ -1501,29 +1518,35 @@ mod tests {
             .collect();
         s.snow = Some(Classes::new(Layer::memory(world, snow), 1, world).unwrap());
         // Brute force: the 9 x 9 box, clipped to the world.
-        let want: Vec<bool> = (0..world.w * world.h)
-            .map(|i| {
-                let (x, y) = (i % 40, i / 40);
-                let (mut n, mut a) = (0, 0);
-                for by in y.saturating_sub(4)..(y + 5).min(world.h) {
-                    for bx in x.saturating_sub(4)..(x + 5).min(world.w) {
-                        a += 1;
-                        n += u32::from(on(bx, by));
+        let want = |share: f64| -> Vec<bool> {
+            (0..world.w * world.h)
+                .map(|i| {
+                    let (x, y) = (i % 40, i / 40);
+                    let (mut n, mut a) = (0, 0);
+                    for by in y.saturating_sub(4)..(y + 5).min(world.h) {
+                        for bx in x.saturating_sub(4)..(x + 5).min(world.w) {
+                            a += 1;
+                            n += u32::from(on(bx, by));
+                        }
                     }
-                }
-                on(x, y) || f64::from(n) >= 0.25 * f64::from(a)
-            })
-            .collect();
+                    on(x, y) || f64::from(n) >= share * f64::from(a)
+                })
+                .collect()
+        };
+        let (ice, hide) = (want(0.25), want(c.river_cold_share));
         assert!(
-            want[6] && want[20 * 40 + 7],
+            hide[6] && hide[20 * 40 + 7],
             "the rib in the snowfield is cold"
         );
-        assert!(!want[20 * 40 + 30], "scattered snow is not");
-        assert_eq!(s.cold(Rect::whole(world)).unwrap(), want);
+        assert!(!ice[20 * 40 + 30], "scattered snow is not");
+        // Just outside the snowfield's edge (x = 15): cold for ice, still a river's.
+        assert!(ice[20 * 40 + 16] && !hide[20 * 40 + 16]);
+        assert_eq!(s.cold(Rect::whole(world)).unwrap(), ice);
+        assert_eq!(s.no_river(Rect::whole(world)).unwrap(), hide);
         for tile in [16, 7] {
             s.tile = tile;
             let cells: Vec<u64> = (0..world.w * world.h).collect();
-            assert_eq!(s.cold_cells(&cells).unwrap(), want, "tile {tile}");
+            assert_eq!(s.no_river_cells(&cells).unwrap(), hide, "tile {tile}");
         }
     }
 

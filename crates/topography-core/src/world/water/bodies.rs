@@ -252,7 +252,7 @@ pub(crate) fn trickles(
     out.sort_unstable();
     out.dedup();
     // No river on snow and ice: the outflow runs under it and shows again past its edge.
-    let cold = s.cold_cells(&out)?;
+    let cold = s.no_river_cells(&out)?;
     let out = out
         .into_iter()
         .zip(cold)
@@ -538,7 +538,7 @@ pub(crate) fn label(
             *lakes.entry(id).or_insert(0u64) += n;
         }
     }
-    // A lake's parent: the first body down its outlet's receivers (as v2).
+    // A lake's (or gapped river's) parent: the first body down the receivers (as v2).
     let one = |c: u64| {
         let (x, y) = world.xy(c);
         Rect {
@@ -564,7 +564,7 @@ pub(crate) fn label(
                 .ok_or_else(|| invalid("a receiver lies outside the world"))?;
             c = world.index(nx, ny);
         }
-        Err(invalid("a lake's outflow runs in a cycle"))
+        Err(invalid("an outflow runs in a cycle"))
     };
     let cell = |c: u64| {
         let (x, y) = world.xy(c);
@@ -600,6 +600,21 @@ pub(crate) fn label(
             )));
         };
         let km = (axial as f64 + diagonal as f64 * std::f64::consts::SQRT_2) * s.spacing_m / 1000.0;
+        // A river ending on unlabelled ground (a snow gap, a full pond) drains into the first
+        // body down its receivers, as a lake's outflow does.
+        let parent = match parent {
+            0 => match r.flow.read(one(mouth))?[0] & 15 {
+                0 => 0,
+                d => {
+                    let (x, y) = world.xy(mouth);
+                    let (nx, ny) = world
+                        .neighbour(x, y, d as usize - 1)
+                        .ok_or_else(|| invalid("a receiver lies outside the world"))?;
+                    parent_below(world.index(nx, ny))?
+                }
+            },
+            p => p,
+        };
         list.push(json!({
             "id": id, "kind": "river", "length_km": round(km, 3),
             "drainage_km2": round(f64::from(q), 6), "mouth_cell": cell(mouth), "parent": parent,
@@ -651,8 +666,10 @@ fn dry_basins(w: &Water, min_cells: u64) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::water::layers::Classes;
     use crate::world::water::nodes::{Node, Nodes};
     use crate::world::water::pipeline::model;
+    use crate::world::water::table::SNOW_PRESENT;
     use crate::world::water::testing::{setup, terrain};
 
     fn run_pools(
@@ -705,6 +722,64 @@ mod tests {
         q[3] = 3.5;
         assert_eq!(main_up(world, win, &flow, &q, 1, 1), Some(3));
         assert_eq!(main_up(world, win, &flow, &q, 0, 0), None, "a head");
+    }
+
+    /// A river cut by a snow band (no river cells on it) keeps a link: its parent is the
+    /// first body down its receivers, the river below the band.
+    #[test]
+    fn a_river_ending_at_a_snow_gap_drains_into_the_body_below() {
+        let world = World { w: 64, h: 64 };
+        let mut s = setup(world, 16, 1e-5);
+        let mut c = s.params.climate.expect("climate");
+        c.cold_box_m = 0.0;
+        s.params.climate = Some(c);
+        let snow: Vec<u8> = (0..64 * 64)
+            .map(|k| {
+                if (30..34).contains(&(k % 64)) {
+                    SNOW_PRESENT
+                } else {
+                    1
+                }
+            })
+            .collect();
+        s.snow = Some(Classes::new(Layer::memory(world, snow), 1, world).unwrap());
+        let r = Rasters::memory(world);
+        let m = model(
+            &s,
+            &Layer::memory(world, terrain(world)),
+            None,
+            "m",
+            Some(&r),
+        )
+        .expect("model");
+        let body = Layer::filled(world, 0u32);
+        let json = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
+        let (body, flow) = (body.to_vec().unwrap(), r.flow.to_vec().unwrap());
+        let down = |k: usize| -> Option<usize> {
+            let d = flow[k] & 15;
+            (d != 0).then(|| {
+                let (dy, dx) = OFFSETS[d as usize - 1];
+                ((k / 64) as i64 + dy) as usize * 64 + ((k % 64) as i64 + dx) as usize
+            })
+        };
+        let mut gapped = 0;
+        for river in json["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["kind"] == "river")
+        {
+            let [x, y] = [0, 1].map(|i| river["mouth_cell"][i].as_u64().unwrap() as usize);
+            let mut c = down(y * 64 + x);
+            let snowy = c.is_some_and(|c| (30..34).contains(&(c % 64)));
+            while let Some(k) = c.filter(|&k| body[k] == 0) {
+                c = down(k);
+            }
+            let want = c.map_or(0, |k| u64::from(body[k]));
+            assert_eq!(river["parent"].as_u64().unwrap(), want, "{river}");
+            gapped += usize::from(snowy && want > 1);
+        }
+        assert!(gapped > 0, "a river ends at the snow and drains on");
     }
 
     #[test]
