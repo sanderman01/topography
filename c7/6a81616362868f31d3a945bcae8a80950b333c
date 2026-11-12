@@ -1,0 +1,38 @@
+schemas/heightmap-export-v2.md
+  s_8c1b40ea9c1e0d::t_7d3847fec8938f 106-107
+  s_8c1b40ea9c1e0d::t_1be9819127b8fe 101,105
+schemas/world-description-v1.md
+  s_8c1b40ea9c1e0d::t_1be9819127b8fe 25,27
+crates/topography-core/src/export/water.rs
+  s_8c1b40ea9c1e0d::t_e32ee90502f84e 463-485
+  s_8c1b40ea9c1e0d::t_bcaa9b71e8ec8d 75-78,80-81
+  s_8c1b40ea9c1e0d::t_cd795337ea89a2 28,197,253
+  s_8c1b40ea9c1e0d::t_72b95c43befae7 20-21
+  s_8c1b40ea9c1e0d::t_771e5a2341844e 462
+  s_8c1b40ea9c1e0d::t_9c383b91f397d8 486-487
+crates/topography-core/src/export/description.rs
+  s_8c1b40ea9c1e0d::t_70f0fb2d239ddf 530-532,536
+  s_8c1b40ea9c1e0d::t_8c70f0afc07b98 568,571,573
+  s_8c1b40ea9c1e0d::t_305fc33bfbf6c5 55
+  s_8c1b40ea9c1e0d::t_53899bb01c4140 480
+  s_8c1b40ea9c1e0d::t_292a076e61ccfa 381
+crates/topography-core/src/export/testworld.rs
+  s_8c1b40ea9c1e0d::t_ef9d49dfd116dc 63-66
+  s_8c1b40ea9c1e0d::t_8a073467e0b7ec 29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c76a81616362868f31d3a945bcae8a80950b333c",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
