@@ -77,8 +77,9 @@ pub(crate) struct Climate {
     /// Standing water whose cells, or whose shore ring, are more than this share cold
     /// (snow/ice or glacier class 10) is ice.
     pub ice_share: f64,
-    /// Share of the runoff and lake supply a cold cell gives: precipitation there falls as
-    /// snow and only meltwater leaves.
+    /// Meltwater from a cold cell, relative to the mean land runoff (or lake supply), and no
+    /// more than this share of its own: precipitation there falls as snow, and melt is set
+    /// by warmth, not by how much snow fell.
     pub snow_melt: f64,
     /// Blocks of this size (m, aligned to the grid) whose snow/ice share is at least
     /// `cold_share` are cold throughout: air temperature, not slope, sets the precipitation
@@ -98,6 +99,16 @@ impl Climate {
     /// rain gives 1.
     pub fn runoff(&self, rain: f64) -> f64 {
         (rain - self.runoff_threshold).max(0.0) / (1.0 - self.runoff_threshold)
+    }
+
+    /// Water (runoff or rain, relative to the mean land's) a cell gives: all of it, or on a
+    /// cold cell `snow_melt` × min(it, 1), the meltwater.
+    pub fn melt(&self, water: f64, cold: bool) -> f64 {
+        if cold {
+            self.snow_melt * water.min(1.0)
+        } else {
+            water
+        }
     }
 
     /// Lake evaporation in thousandths of a humid lake cell's, at a moisture.
@@ -296,8 +307,14 @@ mod tests {
             c.snow_melt > 0.0 && c.snow_melt < 0.5,
             "snow gives a little meltwater"
         );
-        let bad = DEFAULT.replace("snow_melt = 0.15", "snow_melt = 1.5");
+        // Meltwater does not grow with the snowfall past mean, nor exceeds its own water.
+        assert_eq!(c.melt(4.0, true), c.snow_melt);
+        assert_eq!(c.melt(0.5, true), 0.5 * c.snow_melt);
+        assert_eq!(c.melt(4.0, false), 4.0);
+        let bad = DEFAULT.replace("snow_melt = 0.05", "snow_melt = 1.5");
         assert!(Table::parse(&bad).is_err(), "snow_melt is a share");
+        let bad = DEFAULT.replace("cold_share = 0.25", "cold_share = 0.0");
+        assert!(Table::parse(&bad).is_err(), "cold_share is positive");
         let e4 = t.level(4.0).erosion.expect("4 m erodes");
         assert_eq!((e4.routings, e4.cap_m, e4.interior_cap_m), (2, 10.0, 3.0));
         assert_eq!(t.level(4.0).wall_deg, 35.0);

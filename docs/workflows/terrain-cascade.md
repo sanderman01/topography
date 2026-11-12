@@ -1025,10 +1025,14 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   snow/ice. The blocks make the steep rock that sheds its snow cold too: air temperature,
   not slope, sets whether precipitation falls as snow. Without the blocks, the volcano's
   bare ribs above 3,500 m (20 to 35% of the ground there) kept full rain runoff and their
-  own streams. Precipitation on cold cells falls as snow: a cold cell gives only `snow_melt` (0.15) of its
-  runoff and lake supply, as meltwater. A snowfield needs about 7 times the area of
-  rained-on ground to start a river, so few, small streams drain it and none start on it
-  from rain.
+  own streams. Precipitation on cold cells falls as snow, and only meltwater leaves: a
+  cold cell's runoff is `snow_melt` (0.05) × min(runoff, 1), and its lake supply is
+  r × `snow_melt` × min(relative rain, 1). Melt follows warmth, not snowfall, so the wet
+  windward volcano (runoff up to 4 × mean) melts no more than mean ground. A stream needs
+  about 1 km² of snowfield (`river_km2` / `snow_melt`), so few, small streams drain a
+  snowfield, mostly near its lower edge, and none start on it from rain. A share of
+  runoff (0.15 × runoff) was tried first and left 55% of the caldera window's snow-touching
+  stream length.
 - Standing water whose cells, or whose shore ring (the cells 8-adjacent to it), are more
   than `ice_share` (0.5) cold is ice. The ring catches lakes the snow layer leaves bare: it
   carries no snow under the coarser levels' water. `water-finish` lists it as kind `ice` in

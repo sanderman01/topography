@@ -29,8 +29,8 @@ wall_deg = 40.0
 # moist_dry, 1x at >= moist_wet, linear between. Cold cells (snow-ice.u8 snow/ice, glacier
 # class 10, or anywhere in a cold_block_m block with at least cold_share snow/ice: steep
 # rock sheds its snow but is just as cold) get precipitation as snow: they give only
-# snow_melt x their runoff and lake supply (meltwater), so snowfields start few, small
-# streams. Standing water whose cells, or whose shore ring, are more than ice_share cold
+# meltwater, snow_melt x min(runoff, 1) and likewise for lake supply (melt follows warmth,
+# not snowfall), so snowfields start few, small streams. Standing water whose cells, or whose shore ring, are more than ice_share cold
 # is ice. Coarse levels keep the plain model.
 [levels.1.climate]
 runoff_threshold = 0.35  # the lee (moisture < 0.11, rain < 0.35 x mean) makes no runoff
@@ -38,7 +38,7 @@ evap_dry = 8.0           # hot desert lake (~2.5 m/yr) against a humid one (~0.3
 moist_dry = 0.1          # desert regions sit at 0.06 to 0.09
 moist_wet = 0.25         # land mean is 0.30; windward regions 0.4 to 0.8
 ice_share = 0.5
-snow_melt = 0.15         # a snowfield needs ~7x the area of rained-on ground for a stream
+snow_melt = 0.05         # a stream needs ~1 km² of snowfield (river_km2 / snow_melt)
 cold_block_m = 128.0     # rock ribs and cliffs in a snowfield are tens of metres across
 cold_share = 0.25        # patchy snow still means a cold climate
 
