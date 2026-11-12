@@ -22,9 +22,9 @@ description is planned ([fujix v1](../docs/plans/fujix-v1.md), sub-project 5).
 | `features[]` | `id`, `kind`, `name`, `at_m` or `path_m`, `target` (the layout's fields), `measured` (volcano: `summit_m`, `caldera_floor_m`, `caldera_rim_m`, `caldera_breach_m`, `caldera_diameter_m`, `caldera_at_m`; paths: `min_m`, `max_m`) |
 | `finer[]` | Optional. Values on a finer level's window: `level`, `cell_m`, `window_m` [x, y, width, height], `passes` (id: `ground_m`) and `features` (id: `measured` as above) for points inside the window; `partial: true` where a feature's summit or caldera window, or part of its path, lies outside. No band reach, which needs the whole map |
 | `measured_level` | Export only: the `level` of the description it copied (`collage`, `l2`, `l3`), null when none was copied |
-| `water_bodies[]` | Export only. One row per export id of the `water-body` tiles, 1 to *n*: `id`, `world_id` (the world's `bodies.json` id), `kind` (`sea`, `lake`, `river`), `area_km2` (wet level-0 cells in the export), `bounds_m` [x0, y0, x1, y1] or null, `parent` (export id of the body it drains into, 0 none), `level_m` (sea and lakes) |
+| `water_bodies[]` | Export only. One row per export id of the `water-body` tiles, 1 to *n*: `id`, `world_id` (the world's `bodies.json` id), `kind` (`sea`, `lake`, `river`, `ice`: a frozen lake, a flat ice surface at its level), `area_km2` (wet level-0 cells in the export), `bounds_m` [x0, y0, x1, y1] or null, `parent` (export id of the body it drains into, 0 none), `level_m` (sea, lakes and ice) |
 | `rivers[]` | Export only. One per river body with a 4 m centreline in the export: `body` (export id), `length_km` (the whole river's, from the 4 m hydrology), `source_m` (head of its longest path), `mouth_m` (null when off the map), `paths_m` (polylines of nodes [x, y, width_m, surface_m, discharge_km2], every fourth 4 m node plus the ends) |
-| `lakes[]` | Export only. One per lake with 4 m cells in the export: `body` (export id), `level_m`, `area_km2`, `outline_m` (closed rings of [x, y], cell edges simplified by one 4 m cell) |
+| `lakes[]` | Export only. One per lake or ice body with 4 m cells in the export: `body` (export id), `kind` (`lake` or `ice`), `level_m`, `area_km2`, `outline_m` (closed rings of [x, y], cell edges simplified by one 4 m cell) |
 
 Notes on the fields:
 

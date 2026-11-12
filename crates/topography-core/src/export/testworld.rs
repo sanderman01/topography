@@ -26,7 +26,7 @@ fn save(world: &Path, manifest: &Value) {
 /// Writes an `n`² world at `spacing` m into `dir/world` and returns that directory.
 /// `cell(x, y)` gives (ground, surface, body); body 1 is sea at level 0, 2..=9 lakes at the
 /// ground maximum of their cells + 1 (both set their surface; a finite lake surface is kept),
-/// others rivers. Body 0 is dry.
+/// 9 of them frozen (kind `ice`), others rivers. Body 0 is dry.
 pub(crate) fn write(
     dir: &Path,
     n: usize,
@@ -60,7 +60,10 @@ pub(crate) fn write(
     ids.dedup();
     let mut bodies = vec![json!({"id": 1, "kind": "sea", "level_m": 0.0})];
     bodies.extend(ids.iter().map(|&id| match lake_level.get(&id) {
-        Some(level) => json!({"id": id, "kind": "lake", "level_m": level, "parent": 0}),
+        Some(level) => {
+            let kind = if id == 9 { "ice" } else { "lake" };
+            json!({"id": id, "kind": kind, "level_m": level, "parent": 0})
+        }
         None => json!({"id": id, "kind": "river", "parent": 0}),
     }));
     let bodies = json!({"schema_version": 1, "kind": "water_bodies", "bodies": bodies});

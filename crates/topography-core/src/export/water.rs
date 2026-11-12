@@ -17,13 +17,15 @@ pub(super) enum Kind {
     Sea,
     Lake,
     River,
+    /// A frozen lake: a flat ice surface at its level.
+    Ice,
 }
 
 /// Water bodies by export id (index 0 unused): sea first, then lakes and rivers by world id.
 pub(super) struct Bodies {
     pub world_id: Vec<u32>,
     pub kind: Vec<Kind>,
-    /// Lakes and sea; NaN for rivers.
+    /// Lakes, ice and sea; NaN for rivers.
     pub level_m: Vec<f32>,
     /// Export id of the body the water flows into, 0 for none or a dry basin.
     pub parent: Vec<u16>,
@@ -70,9 +72,13 @@ impl Bodies {
                     ensure(level.is_finite(), format!("lake {id} without level_m"))?;
                     water.push((id, Kind::Lake, level, parent));
                 }
+                Some("ice") => {
+                    ensure(level.is_finite(), format!("ice {id} without level_m"))?;
+                    water.push((id, Kind::Ice, level, parent));
+                }
                 Some("river") => water.push((id, Kind::River, f32::NAN, parent)),
-                // Dry basins and ice (frozen lakes) hold no water cells.
-                Some("dry" | "ice") => {}
+                // Dry basins hold no water cells.
+                Some("dry") => {}
                 other => {
                     return Err(AcquisitionError::Invalid(format!(
                         "body {id} has unknown kind {other:?}"
@@ -188,7 +194,7 @@ impl Reduce for Terrain<'_> {
                 f32::NAN
             } else {
                 match self.bodies.kind[id] {
-                    Kind::Sea | Kind::Lake => self.bodies.level_m[id],
+                    Kind::Sea | Kind::Lake | Kind::Ice => self.bodies.level_m[id],
                     Kind::River => {
                         let (mut sum, mut weight) = (0.0, 0.0);
                         for (r, x, w) in samples().filter(|(r, x, _)| r.body[*x] == body) {
@@ -244,7 +250,7 @@ pub(super) fn level0(
         })?;
         let i = usize::from(id);
         let s = match bodies.kind[i] {
-            Kind::Sea | Kind::Lake if s.is_finite() => {
+            Kind::Sea | Kind::Lake | Kind::Ice if s.is_finite() => {
                 let level = bodies.level_m[i];
                 if code(s) != code(level) {
                     checks.lake_levels_off += 1;
@@ -451,6 +457,32 @@ mod tests {
         assert!((h_min + f64::from(code) * step - 12.0).abs() <= step);
         assert!(m["water_files"].is_string());
         assert_eq!(m["layers"]["water-surface"]["scale"].as_f64(), Some(step));
+    }
+
+    #[test]
+    fn ice_is_a_flat_surface_at_its_level() {
+        // A frozen lake (world id 9, export id 2) over an uneven bed.
+        let dir = tempfile::tempdir().unwrap();
+        let world = testworld::write(dir.path(), 256, 1.0, |x, y| {
+            let ice = (64..128).contains(&x) && (64..128).contains(&y);
+            let g = if ice { 5.0 + (x % 7) as f32 } else { 20.0 };
+            (g, f32::NAN, if ice { 9 } else { 0 })
+        });
+        let bodies = Bodies::load(&world).unwrap();
+        assert!(bodies.kind[2] == Kind::Ice && bodies.level_m[2] == 12.0);
+        let out = dir.path().join("x");
+        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        for level in 0..=4 {
+            assert_eq!(lake_codes(&out, level).len(), 1, "level {level}");
+        }
+        let m: Value =
+            serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        let (h_min, step) = (
+            m["encoding"]["h_min_m"].as_f64().unwrap(),
+            m["encoding"]["step_m"].as_f64().unwrap(),
+        );
+        let code = *lake_codes(&out, 0).first().unwrap();
+        assert!((h_min + f64::from(code) * step - 12.0).abs() <= step);
     }
 
     #[test]

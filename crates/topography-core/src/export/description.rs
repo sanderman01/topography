@@ -52,6 +52,7 @@ fn kind_name(kind: Kind) -> &'static str {
         Kind::Sea => "sea",
         Kind::Lake => "lake",
         Kind::River => "river",
+        Kind::Ice => "ice",
     }
 }
 
@@ -377,7 +378,7 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
                     };
                     centre.insert(r * w + c, cell);
                 }
-                Kind::Lake => {
+                Kind::Lake | Kind::Ice => {
                     let e = lake_bounds
                         .entry(id)
                         .or_insert([usize::MAX, usize::MAX, 0, 0]);
@@ -476,6 +477,7 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
         let i = usize::from(id);
         lakes.push(json!({
             "body": id,
+            "kind": kind_name(bodies.kind[i]),
             "level_m": round(f64::from(bodies.level_m[i]), 3),
             "area_km2": round(area_km2(stats, i, frame), 6),
             "outline_m": rings,
@@ -525,11 +527,13 @@ fn water_markdown(d: &Map<String, Value>, bodies: &Bodies, stats: &WaterStats) -
             .count()
     };
     let mut md = format!(
-        "## Water\n\nBodies in the export by kind: sea {}, lake {}, river {}. Ids are export ids, as in \
-         the `water-body` tiles; `description.json` maps them to world bodies.\n",
+        "## Water\n\nBodies in the export by kind: sea {}, lake {}, river {}, ice {}. Ids are export \
+         ids, as in the `water-body` tiles; `description.json` maps them to world bodies. Ice is \
+         a frozen lake: a flat ice surface at its level.\n",
         count(Kind::Sea),
         count(Kind::Lake),
         count(Kind::River),
+        count(Kind::Ice),
     );
     let label = |id: &Value| {
         let i = id.as_u64().unwrap_or(0) as usize;
@@ -561,11 +565,12 @@ fn water_markdown(d: &Map<String, Value>, bodies: &Bodies, stats: &WaterStats) -
     }
     let lakes = list("lakes");
     if !lakes.is_empty() {
-        md += "\n### Lakes\n\n| Body | Level m | Area km² |\n| --- | ---: | ---: |\n";
+        md += "\n### Lakes\n\n| Body | Kind | Level m | Area km² |\n| --- | --- | ---: | ---: |\n";
         for l in &lakes {
             md += &format!(
-                "| {} | {:.1} | {:.3} |\n",
+                "| {} | {} | {:.1} | {:.3} |\n",
                 label(&l["body"]),
+                l["kind"].as_str().unwrap_or("lake"),
                 l["level_m"].as_f64().unwrap_or(f64::NAN),
                 l["area_km2"].as_f64().unwrap_or(0.0),
             );

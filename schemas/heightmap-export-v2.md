@@ -98,12 +98,13 @@ them). Level *k* has spacing 2^*k* times level 0, and its texel *i* sits at leve
 
 ## Water
 
-- **Ids.** `water-body` holds dense export ids: 0 dry, 1 always the sea, then lakes and
+- **Ids.** `water-body` holds dense export ids: 0 dry, 1 always the sea, then lakes, ice and
   rivers in world-id order. `description.json` maps them to world bodies (`world_id`). More
   than 65,535 bodies fails the export.
 - **Finest level.** Coverage is 255 where a cell has a body and its surface encodes at or
-  above the ground, else 0. Lakes and the sea take their `bodies.json` level, so their code is
-  the same at every level; rivers keep their raster surface.
+  above the ground, else 0. Lakes, ice (frozen lakes) and the sea take their `bodies.json`
+  level, so their code is the same at every level; rivers keep their raster surface. Ice
+  counts as coverage; its `description.json` kind `ice` tells the game to draw ice, not water.
 - **Coarser levels.** Coverage is the area mean. `water-body` is sampled: the centre sample's
   body when that sample is wet, else the wet body with the largest footprint weight, 0 only
   when the footprint is dry. Ids are never averaged, and coverage above 0 always has a body.
