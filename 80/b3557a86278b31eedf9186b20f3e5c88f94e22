@@ -1,0 +1,37 @@
+docs/workflows/terrain-diffusion.md
+  s_8c1b40ea9c1e0d::t_cd16de46d217cf 100
+schemas/heightmap-export-v2.md
+  s_8c1b40ea9c1e0d::t_700959d2de63be 187-195
+  s_8c1b40ea9c1e0d::t_9b0026f266bff9 181
+  s_8c1b40ea9c1e0d::t_5d8b1fd399cb1e 34
+  s_8c1b40ea9c1e0d::t_cc7b45a635ad2f 100-114,116-139
+  s_8c1b40ea9c1e0d::t_54ecb0c7339b7e 115
+  s_8c1b40ea9c1e0d::t_1cc21457bc8df0 185-186
+  s_8c1b40ea9c1e0d::t_e3cdc0fc052086 4-5
+docs/best-practices/terrain-export.md
+  s_8c1b40ea9c1e0d::t_e8b8aac6e92f75 48-50
+  s_8c1b40ea9c1e0d::t_fe008312c92b38 42-47,51-54
+examples/manifests/heightmap-export-v2.json
+  s_8c1b40ea9c1e0d::t_b6cf74b6d3171c 337,340
+  s_8c1b40ea9c1e0d::t_466204c2011024 79-134
+  s_8c1b40ea9c1e0d::t_f8d8870a2b4427 351-366
+docs/workflows/terrain-cascade.md
+  s_8c1b40ea9c1e0d::t_4aa85bbec569fc 1167-1168
+  s_8c1b40ea9c1e0d::t_81c02002cc4f46 1162-1166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "80b3557a86278b31eedf9186b20f3e5c88f94e22",
+  "prompts": {},
+  "sessions": {
+    "s_8c1b40ea9c1e0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06f2a939-2bb4-4c62-b2b1-6b4c304fe718",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
