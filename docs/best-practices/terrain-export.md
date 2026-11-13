@@ -48,6 +48,10 @@ defines these requirements; the game's Bevy quadtree renderer remains outside sc
   max angle per level, roughness error) and fail only on gross errors (above 30°
   or 0.25). Real 1 m mountains measured p99 2 to 3.6° and max about 20° on a few
   steep high-contrast blocks, where z rebuilt from x and y amplifies BC steps.
+  The full Fujix export (v6c) measured p99 2.1 to 5.6° and max 27.1°, close to the
+  30° limit. Kept for now (2026-11-13, owner's call): if cliffs shade wrongly or
+  a world fails the limit, consider a hemi-octahedral encoding inside BC5. It has
+  even precision at every angle but changes the shader decode.
 - Bake normals as cell-centred texels from the finest ground: one normal per
   1 m cell, then the box mean over each coarser texel's cells, normalized. The
   mean's shortening is the slope spread under the texel (Toksvig roughness), so
