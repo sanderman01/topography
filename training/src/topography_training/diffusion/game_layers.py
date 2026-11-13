@@ -26,7 +26,7 @@ from scipy import ndimage
 
 from . import borders, cover, layout
 
-METHOD = ("game layers v1: cover v2 fields at 2 m, moisture-weighted forest, soft snow (none on land-cover water), "
+METHOD = ("game layers v1: cover v2 fields at 2 m, moisture-weighted forest, soft snow and glacier edges (none on land-cover water), "
           "snow/ice on frozen lakes, talus below rock; biome and land cover dithered from smoothed shares and ramps")
 MOIST_DRY, MOIST_WET = 0.15, 0.45  # forest density ramps in over this moisture range
 SNOW_SOFT_M = 80.0  # snow cover ramps from 0 to 1 across the bent snow line ± this
@@ -35,6 +35,7 @@ ROCK_DEG = 40.0  # cliff faces that shed scree
 TALUS_DEG = ((22.0, 30.0), (38.0, 45.0))  # scree lies on slopes rising over the first band, gone by the second
 TALUS_REACH_M = 20.0  # gaussian sigma of rock share spreading onto the slopes below
 BIOME_MIX_M = 64.0  # gaussian sigma of each class's share across biome borders
+GLACIER_SHARE = (0.2, 0.8)  # glacier snow ramps in over this smoothed glacier share (~±55 m of the border)
 ALPINE_BAND_M = 400.0  # grass gives way to bare ground over this band above the tree line
 TREELINE_EDGE_M = 100.0  # open cover turns alpine over ± this around the tree line (ecotone)
 ROCK_RAMP_DEG = (30.0, 40.0)  # bare rock ramps in around 35 degrees
@@ -109,12 +110,13 @@ def _ice_ids(world: Path) -> np.ndarray:
     return np.array([b["id"] for b in bodies if b.get("kind") == "ice"], np.uint32)
 
 
-def _fields(sampler, h, wet, ice, moist, y0_m, x0_m, s):
+def _fields(sampler, h, wet, ice, moist, glacier, y0_m, x0_m, s):
+    """`glacier` is the smoothed glacier share at the texels (as the biome dither reads it)."""
     f = sampler.fields(h, y0_m, x0_m, s)
     slope2 = np.degrees(np.arctan(np.hypot(*np.gradient(h, s))))  # local slope for scree
-    glacier = f["classes"] == cover.GLACIER  # layout classes, warped as cover reads them
-    snow = np.where(glacier, 1.0, cover._ramp(h - f["snowline"], -SNOW_SOFT_M, SNOW_SOFT_M)
-                    * (1 - cover._ramp(f["slope"], *SNOW_SHED_DEG)))
+    snow = np.maximum(cover._ramp(glacier, *GLACIER_SHARE),
+                      cover._ramp(h - f["snowline"], -SNOW_SOFT_M, SNOW_SOFT_M)
+                      * (1 - cover._ramp(f["slope"], *SNOW_SHED_DEG)))
     snow *= (h >= 0) & (wet < WATER_WET)  # no snow where land cover is water
     snow = np.maximum(snow, ice)  # a frozen lake is snow/ice whatever its bed's height
     veg = f["share"] * cover._ramp(moist, MOIST_DRY, MOIST_WET) * (1 - snow) * (1 - wet)
@@ -147,6 +149,14 @@ def _lerp_index(pos: np.ndarray, n: int):
     pos = np.clip(pos, 0, n - 1)
     i0 = np.minimum(np.floor(pos).astype(np.intp), n - 1)
     return i0, np.minimum(i0 + 1, n - 1), (pos - i0).astype(np.float32)
+
+
+def _share_at(share: np.ndarray, rows: np.ndarray, cols) -> np.ndarray:
+    """A 32 m share read bilinearly at game texel rows (as `_biome` reads them)."""
+    r0, r1, tr = _lerp_index(rows, share.shape[0])
+    c0, c1, tc = cols
+    s = share[r0] * (1 - tr)[:, None] + share[r1] * tr[:, None]
+    return s[:, c0] * (1 - tc) + s[:, c1] * tc
 
 
 def _biome(shares, rows: np.ndarray, cols, u: np.ndarray) -> np.ndarray:
@@ -205,6 +215,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     shares = [(int(k), ndimage.gaussian_filter((c32 == k).astype(np.float32), BIOME_MIX_M / 32.0))
               for k in np.unique(c32)]
     del c32
+    glacier32 = dict(shares).get(cover.GLACIER, np.zeros((n32, n32), np.float32))
 
     def to32(i):  # texel index to 32 m grid position (cell centre i at i)
         return (i * step + 0.5) * c0 / 32.0 - 0.5
@@ -229,7 +240,8 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         else:
             h = g
         moist = _moisture(world, manifest, origin, np.arange(g0, g1), cols, step, c0)
-        f = _fields(sampler, h, wet, ice, moist, oy + g0 * s, ox, s)
+        glacier = _share_at(glacier32, to32(np.arange(g0, g1)), lerp_cols)
+        f = _fields(sampler, h, wet, ice, moist, glacier, oy + g0 * s, ox, s)
         sl = slice(y - g0, b - g0)
         for k in DENSITIES:
             outs[k][y:b] = np.round(255 * np.clip(f[k][sl], 0, 1)).astype(np.uint8)
@@ -249,7 +261,8 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         "params": {"layout": str(Path(layout_dir).resolve()), "moist_dry": MOIST_DRY, "moist_wet": MOIST_WET,
                    "snow_soft_m": SNOW_SOFT_M, "snow_shed_deg": list(SNOW_SHED_DEG), "rock_deg": ROCK_DEG,
                    "talus_deg": [list(t) for t in TALUS_DEG], "talus_reach_m": TALUS_REACH_M,
-                   "biome_mix_m": BIOME_MIX_M, "alpine_band_m": ALPINE_BAND_M,
+                   "biome_mix_m": BIOME_MIX_M, "glacier_share": list(GLACIER_SHARE),
+                   "alpine_band_m": ALPINE_BAND_M,
                    "treeline_edge_m": TREELINE_EDGE_M,
                    "rock_ramp_deg": list(ROCK_RAMP_DEG), "bare_class_deg": list(BARE_CLASS_DEG),
                    "water_wet": WATER_WET, "blue_noise_seeds": {"biome": BIOME_SEED, "land-cover": LANDCOVER_SEED},

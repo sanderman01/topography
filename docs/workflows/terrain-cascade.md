@@ -472,6 +472,9 @@ and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
   the paint settings) and in gullies and sheds from faces steeper than 40–55°; trees reach
   higher in gullies and on sun-facing slopes and thin out near their limit and on steep
   ground.
+- Glacier ground (class 10) is snow whatever its height. Its `snow-cover` ramps from 0 to 1
+  over the glacier's smoothed biome share 0.2 to 0.8 (`GLACIER_SHARE`, about ±55 m of the
+  painted border), so glacier snow dithers in with the biome instead of ending at a hard line.
 - `vegetation-density` is the layout's forest share times a moisture ramp (`MOIST_DRY` 0.15
   to `MOIST_WET` 0.45), a tree-line fade, a steep-slope fade, (1 − snow) and (1 − wet). The
   cover's `patchy` noise is not folded in.
