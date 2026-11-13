@@ -44,6 +44,8 @@ cold_box_m = 128.0       # rock ribs and cliffs in a snowfield are tens of metre
 cold_share = 0.25        # patchy snow still means a cold climate (ice)
 river_cold_share = 0.5   # no river label from here: a straight snow edge is 0.5, so the bare
                          # fringe outside it keeps its rivers and rock ribs inside stay cold
+snow_stub_m = 300.0      # rivers that surface in a bare hole and flow back under snow show
+                         # only when their longest source-to-mouth path is this long
 
 [levels.4]
 river_km2 = 0.5

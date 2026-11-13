@@ -289,7 +289,11 @@ pub(crate) fn channels(
                 carved[a] = g[j];
                 ids[a] = bw[j];
                 if node[j] == 1 || is_lake(j) {
-                    // Ground at or above the level is dry shore.
+                    // Ground at or above the level is dry shore; a pool of a dropped snow stub
+                    // (body 0) is dry.
+                    if bw[j] == 0 && node[j] != 1 {
+                        continue;
+                    }
                     if g[j] < level[j] {
                         surface[a] = level[j];
                     } else {

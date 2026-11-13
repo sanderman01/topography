@@ -538,6 +538,38 @@ pub(crate) fn label(
             *lakes.entry(id).or_insert(0u64) += n;
         }
     }
+    // Rivers: (id, length km, mouth, discharge, the body its mouth drains into).
+    let mut recs: Vec<(u32, f64, u64, f32, u32)> = Vec::with_capacity(heads.len());
+    for h in &heads {
+        let id = head_id[h];
+        let (axial, diagonal, mouths) = rivers.remove(&id).unwrap_or_default();
+        let [(mouth, q, below)] = mouths[..] else {
+            return Err(invalid(format!(
+                "river {id} (head {h}) has {} mouths",
+                mouths.len()
+            )));
+        };
+        let km = (axial as f64 + diagonal as f64 * std::f64::consts::SQRT_2) * s.spacing_m / 1000.0;
+        recs.push((id, km, mouth, q, below));
+    }
+    let dropped = snow_stubs(s, r, &recs)?;
+    if !dropped.is_empty() {
+        // Dropped stubs carry no body and no thalweg bit, like cold cells.
+        for_tiles(&tiles, s.threads, &format!("{tag} S"), |_, core| {
+            let (mut ids, mut fl) = (body.read(core)?, r.flow.read(core)?);
+            let mut hit = false;
+            for (id, f) in ids.iter_mut().zip(fl.iter_mut()) {
+                if dropped.contains(id) {
+                    (*id, *f, hit) = (0, *f & !16, true);
+                }
+            }
+            if hit {
+                body.write(core, &ids)?;
+                r.flow.write(core, &fl)?;
+            }
+            Ok(())
+        })?;
+    }
     // A lake's (or gapped river's) parent: the first body down the receivers (as v2).
     let one = |c: u64| {
         let (x, y) = world.xy(c);
@@ -590,16 +622,10 @@ pub(crate) fn label(
             "endorheic": !n.full, "parent": parent,
         }));
     }
-    for h in &heads {
-        let id = head_id[h];
-        let (axial, diagonal, mouths) = rivers.remove(&id).unwrap_or_default();
-        let [(mouth, q, parent)] = mouths[..] else {
-            return Err(invalid(format!(
-                "river {id} (head {h}) has {} mouths",
-                mouths.len()
-            )));
-        };
-        let km = (axial as f64 + diagonal as f64 * std::f64::consts::SQRT_2) * s.spacing_m / 1000.0;
+    for &(id, km, mouth, q, parent) in &recs {
+        if dropped.contains(&id) {
+            continue;
+        }
         // A river ending on unlabelled ground (a snow gap, a full pond) drains into the first
         // body down its receivers, as a lake's outflow does.
         let parent = match parent {
@@ -635,8 +661,75 @@ pub(crate) fn label(
         "note": "hydrology v3: lakes by node (smallest pit), rivers as main stems (larger \
             discharge keeps the body; a full lake or pool competes at its outlet), river pools \
             labelled as their river",
-        "dry_min_km2": DRY_MIN_KM2, "bodies": list,
+        "dry_min_km2": DRY_MIN_KM2, "snow_stubs_dropped": dropped.len(), "bodies": list,
     }))
+}
+
+/// River ids to drop (N3): whole trees of rivers (tributaries by the body their mouth drains
+/// into) whose root drains into an unlabelled `no_river` cell, so back under snow, and whose
+/// longest source-to-mouth path (lengths summed along the chain) is below `snow_stub_m`.
+/// `recs`: (id, length km, mouth, discharge, the body the mouth drains into).
+fn snow_stubs(s: &Setup, r: &Rasters, recs: &[(u32, f64, u64, f32, u32)]) -> Result<HashSet<u32>> {
+    let Some(c) = s.params.climate else {
+        return Ok(HashSet::new());
+    };
+    let world = s.world;
+    let at: HashMap<u32, usize> = recs.iter().enumerate().map(|(i, e)| (e.0, i)).collect();
+    // Roots: mouths draining into unlabelled ground, by their receiver cell.
+    let mut gaps: Vec<(usize, u64)> = Vec::new();
+    for (i, &(_, _, mouth, _, below)) in recs.iter().enumerate() {
+        let (x, y) = world.xy(mouth);
+        let d = r.flow.read(Rect {
+            x0: x,
+            y0: y,
+            w: 1,
+            h: 1,
+        })?[0]
+            & 15;
+        if below == 0 && d != 0 {
+            let (nx, ny) = world
+                .neighbour(x, y, d as usize - 1)
+                .ok_or_else(|| invalid("a receiver lies outside the world"))?;
+            gaps.push((i, world.index(nx, ny)));
+        }
+    }
+    let cold = s.no_river_cells(&gaps.iter().map(|g| g.1).collect::<Vec<_>>())?;
+    // Longest path to each mouth, leaves first.
+    let mut kids: Vec<Vec<usize>> = vec![Vec::new(); recs.len()];
+    let mut parent: Vec<Option<usize>> = vec![None; recs.len()];
+    for (i, e) in recs.iter().enumerate() {
+        if let Some(&p) = at.get(&e.4) {
+            kids[p].push(i);
+            parent[i] = Some(p);
+        }
+    }
+    let mut pending: Vec<usize> = kids.iter().map(Vec::len).collect();
+    let mut longest: Vec<f64> = recs.iter().map(|e| e.1).collect();
+    let mut ready: Vec<usize> = (0..recs.len()).filter(|&i| pending[i] == 0).collect();
+    let mut done = 0;
+    while let Some(i) = ready.pop() {
+        done += 1;
+        if let Some(p) = parent[i] {
+            longest[p] = longest[p].max(recs[p].1 + longest[i]);
+            pending[p] -= 1;
+            if pending[p] == 0 {
+                ready.push(p);
+            }
+        }
+    }
+    ensure(done == recs.len(), "river tributaries run in a cycle")?;
+    let mut out = HashSet::new();
+    for (&(i, _), cold) in gaps.iter().zip(cold) {
+        if !cold || longest[i] * 1000.0 >= c.snow_stub_m {
+            continue;
+        }
+        let mut stack = vec![i];
+        while let Some(j) = stack.pop() {
+            out.insert(recs[j].0);
+            stack.extend(&kids[j]);
+        }
+    }
+    Ok(out)
 }
 
 /// Dry basins: top-level depressions with no water anywhere in their tree, off the sea, of at
@@ -724,25 +817,22 @@ mod tests {
         assert_eq!(main_up(world, win, &flow, &q, 0, 0), None, "a head");
     }
 
-    /// A river cut by a snow band (no river cells on it) keeps a link: its parent is the
-    /// first body down its receivers, the river below the band.
-    #[test]
-    fn a_river_ending_at_a_snow_gap_drains_into_the_body_below() {
+    /// The synthetic world with snow on the columns `snow` names (no box), labelled with
+    /// `snow_stub_m`: body, bodies.json, flow.
+    fn snow_run(
+        tile: u64,
+        snow: impl Fn(u64) -> bool,
+        snow_stub_m: f64,
+    ) -> (Vec<u32>, Value, Vec<u8>) {
         let world = World { w: 64, h: 64 };
-        let mut s = setup(world, 16, 1e-5);
+        let mut s = setup(world, tile, 1e-5);
         let mut c = s.params.climate.expect("climate");
-        c.cold_box_m = 0.0;
+        (c.cold_box_m, c.snow_stub_m) = (0.0, snow_stub_m);
         s.params.climate = Some(c);
-        let snow: Vec<u8> = (0..64 * 64)
-            .map(|k| {
-                if (30..34).contains(&(k % 64)) {
-                    SNOW_PRESENT
-                } else {
-                    1
-                }
-            })
+        let layer: Vec<u8> = (0..64 * 64)
+            .map(|k| if snow(k % 64) { SNOW_PRESENT } else { 1 })
             .collect();
-        s.snow = Some(Classes::new(Layer::memory(world, snow), 1, world).unwrap());
+        s.snow = Some(Classes::new(Layer::memory(world, layer), 1, world).unwrap());
         let r = Rasters::memory(world);
         let m = model(
             &s,
@@ -754,14 +844,114 @@ mod tests {
         .expect("model");
         let body = Layer::filled(world, 0u32);
         let json = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
-        let (body, flow) = (body.to_vec().unwrap(), r.flow.to_vec().unwrap());
-        let down = |k: usize| -> Option<usize> {
-            let d = flow[k] & 15;
-            (d != 0).then(|| {
-                let (dy, dx) = OFFSETS[d as usize - 1];
-                ((k / 64) as i64 + dy) as usize * 64 + ((k % 64) as i64 + dx) as usize
-            })
+        (body.to_vec().unwrap(), json, r.flow.to_vec().unwrap())
+    }
+
+    fn down64(flow: &[u8], k: usize) -> Option<usize> {
+        let d = flow[k] & 15;
+        (d != 0).then(|| {
+            let (dy, dx) = OFFSETS[d as usize - 1];
+            ((k / 64) as i64 + dy) as usize * 64 + ((k % 64) as i64 + dx) as usize
+        })
+    }
+
+    /// N3: a river tree that surfaces between two snow bands and flows back under snow is
+    /// dropped when its longest path is short; a long river ending at the snow and rivers
+    /// ending on warm unlabelled ground keep their labels; any tiling drops the same.
+    #[test]
+    fn a_short_stub_between_snow_bands_is_dropped() {
+        let snow = |x: u64| (40..44).contains(&x) || (48..52).contains(&x);
+        let stub_m = 8.0;
+        let (b0, j0, f0) = snow_run(16, snow, 0.0);
+        let (b1, j1, f1) = snow_run(16, snow, stub_m);
+        let (b64, j64, _) = snow_run(64, snow, stub_m);
+        assert_eq!((&b1, &j1), (&b64, &j64), "tilings");
+        let rivers: Vec<&Value> = j0["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["kind"] == "river")
+            .collect();
+        let id = |b: &Value| b["id"].as_u64().unwrap() as u32;
+        // Per river (before): the body its mouth drains into and whether that is snow.
+        let mut below = HashMap::new();
+        let mut into_snow = HashMap::new();
+        for r in &rivers {
+            let [x, y] = [0, 1].map(|i| r["mouth_cell"][i].as_u64().unwrap() as usize);
+            let c = down64(&f0, y * 64 + x);
+            below.insert(id(r), c.map_or(0, |c| b0[c]));
+            into_snow.insert(
+                id(r),
+                c.is_some_and(|c| b0[c] == 0 && snow((c % 64) as u64)),
+            );
+        }
+        let len: HashMap<u32, f64> = rivers
+            .iter()
+            .map(|r| (id(r), r["length_km"].as_f64().unwrap() * 1000.0))
+            .collect();
+        fn longest(i: u32, len: &HashMap<u32, f64>, below: &HashMap<u32, u32>) -> f64 {
+            len[&i]
+                + below
+                    .iter()
+                    .filter(|e| *e.1 == i)
+                    .map(|e| longest(*e.0, len, below))
+                    .fold(0.0, f64::max)
+        }
+        let root = |mut i: u32| {
+            while let Some(&p) = below.get(&i).filter(|p| len.contains_key(p)) {
+                i = p;
+            }
+            i
         };
+        // The tree's longest path from the rounded lengths (whole metres): only paths clear of
+        // the threshold decide.
+        let path = |i: u32| {
+            let r = root(i);
+            into_snow[&r].then(|| longest(r, &len, &below))
+        };
+        let gone = |i: u32| path(i).is_some_and(|p| p < stub_m);
+        let near = |i: u32| path(i).is_some_and(|p| (p - stub_m).abs() < 2.0);
+        let after: HashSet<u32> = j1["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["kind"] == "river")
+            .map(id)
+            .collect();
+        let (mut stubs, mut long, mut warm) = (0, 0, 0);
+        for r in &rivers {
+            let i = id(r);
+            if near(i) {
+                continue;
+            }
+            assert_eq!(after.contains(&i), !gone(i), "{r}");
+            let x = r["mouth_cell"][0].as_u64().unwrap();
+            stubs += usize::from(gone(i) && (44..48).contains(&x));
+            long += usize::from(!gone(i) && into_snow[&i]);
+            warm += usize::from(below[&i] == 0 && !into_snow[&i]);
+        }
+        assert!(stubs > 0 && long > 0 && warm > 0, "{stubs} {long} {warm}");
+        assert_eq!(j1["snow_stubs_dropped"], rivers.len() - after.len());
+        // Dropped cells carry no body and no thalweg bit; the rest is as before.
+        for k in 0..64 * 64 {
+            if b0[k] >= 2 && !after.contains(&b0[k]) && len.contains_key(&b0[k]) {
+                assert_eq!((b1[k], f1[k] & 16), (0, 0), "cell {k}");
+            } else {
+                assert_eq!((b1[k], f1[k]), (b0[k], f0[k]), "cell {k}");
+            }
+        }
+        for b in j1["bodies"].as_array().unwrap() {
+            let p = b["parent"].as_u64().unwrap() as u32;
+            assert!(p < 2 || !len.contains_key(&p) || after.contains(&p), "{b}");
+        }
+    }
+
+    /// A river cut by a snow band (no river cells on it) keeps a link: its parent is the
+    /// first body down its receivers, the river below the band.
+    #[test]
+    fn a_river_ending_at_a_snow_gap_drains_into_the_body_below() {
+        let (body, json, flow) = snow_run(16, |x| (30..34).contains(&x), 0.0);
+        let down = |k: usize| down64(&flow, k);
         let mut gapped = 0;
         for river in json["bodies"]
             .as_array()

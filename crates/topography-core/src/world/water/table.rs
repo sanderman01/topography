@@ -84,6 +84,9 @@ pub(crate) struct Climate {
     pub cold_share: f64,
     /// The box share from which a cell carries no river label (snow and glacier always).
     pub river_cold_share: f64,
+    /// A river tree that flows back under snow (its root's mouth drains into a no-river cell)
+    /// keeps its labels only if its longest source-to-mouth path is at least this long (m).
+    pub snow_stub_m: f64,
 }
 
 /// The glacier class of legend terrain-v3.
@@ -119,6 +122,8 @@ impl Climate {
             && self.cold_share <= 1.0
             && self.river_cold_share > 0.0
             && self.river_cold_share <= 1.0
+            && self.snow_stub_m.is_finite()
+            && self.snow_stub_m >= 0.0
     }
 }
 
@@ -198,7 +203,7 @@ impl Table {
                 format!(
                     "water table level {key}: climate needs 0 <= runoff_threshold < 1, \
                      1 <= evap_dry <= 100, 0 <= moist_dry < moist_wet <= 1, 0 <= ice_share < 1, \
-                     cold_box_m >= 0, 0 < cold_share <= 1, 0 < river_cold_share <= 1"
+                     cold_box_m >= 0, 0 < cold_share <= 1, 0 < river_cold_share <= 1, snow_stub_m >= 0"
                 ),
             )?;
             if let Some(e) = &l.erosion {
@@ -300,6 +305,9 @@ mod tests {
         assert!(Table::parse(&bad).is_err(), "cold_box_m is a size");
         let bad = DEFAULT.replace("cold_share = 0.25", "cold_share = 0.0");
         assert!(Table::parse(&bad).is_err(), "cold_share is positive");
+        assert_eq!(c.snow_stub_m, 300.0);
+        let bad = DEFAULT.replace("snow_stub_m = 300.0", "snow_stub_m = -1.0");
+        assert!(Table::parse(&bad).is_err(), "snow_stub_m is a length");
         let e4 = t.level(4.0).erosion.expect("4 m erodes");
         assert_eq!((e4.routings, e4.cap_m, e4.interior_cap_m), (2, 10.0, 3.0));
         assert_eq!(t.level(4.0).wall_deg, 35.0);

@@ -1036,7 +1036,12 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   while rock ribs inside a snowfield stay hidden. Rivers start at the snow edge or glacier
   snout at the size their whole catchment gives. A river that crosses a snowfield shows on
   both sides of it. The upper part's `parent` is the first body down its receivers, as for
-  a lake's outflow.
+  a lake's outflow. A river tree (tributaries by the body their mouth joins, lake outflows
+  included) whose root drains back into such a no-river cell is dropped when its longest
+  source-to-mouth path is under `snow_stub_m` (300 m): bare holes and ribs in a snowfield
+  show no dotted stubs. Its cells, and its R26 pools, lose body and thalweg bit like cold
+  cells (flow and discharge are unchanged; as on cold ground, no channel is cut), and `bodies.json` counts them in
+  `snow_stubs_dropped`.
   Two earlier tries cut the water instead: 0.15 × runoff, then 0.05 of the mean runoff.
   Both starved the valley rivers below the snow, and the frozen lakes dried down.
 - Standing water whose cells, or whose shore ring (the cells 8-adjacent to it), are more
