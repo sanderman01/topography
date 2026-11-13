@@ -46,7 +46,7 @@ Usage: topography [--help | --version]
        topography world rain --grid <grid-dir> [--wind-deg 225]
        topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
        topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05] [--spots E,N;E,N]
-       topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters]
+       topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters] [--no-normals] [--no-roughness] [--normals-level 2] [--normals-apron 0]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
@@ -275,11 +275,30 @@ fn main() -> ExitCode {
                 .map(|p| p.display().to_string()),
             );
         }
-        [command, action, world, output, rest @ ..]
-            if command == "export" && action == "heightmap" && rest.len() <= 3 =>
+        [command, action, world, output, args @ ..]
+            if command == "export" && action == "heightmap" =>
         {
-            let masters = rest.iter().any(|v| v == "--masters");
-            let rest: Vec<_> = rest.iter().filter(|v| *v != "--masters").collect();
+            let mut masters = false;
+            let mut normals = topography_core::export::NormalOptions::default();
+            let mut rest = Vec::new();
+            let mut args = args.iter();
+            while let Some(arg) = args.next() {
+                let mut value = || args.next().and_then(|v| v.to_str()?.parse().ok());
+                match arg.to_str() {
+                    Some("--masters") => masters = true,
+                    Some("--no-normals") => normals.enabled = false,
+                    Some("--no-roughness") => normals.roughness = false,
+                    Some("--normals-level") => match value() {
+                        Some(v) => normals.start_level = v,
+                        None => return usage_error(),
+                    },
+                    Some("--normals-apron") => match value() {
+                        Some(v) => normals.apron = v as usize,
+                        None => return usage_error(),
+                    },
+                    _ => rest.push(arg),
+                }
+            }
             if rest.len() > 2 {
                 return usage_error();
             }
@@ -306,6 +325,7 @@ fn main() -> ExitCode {
                     intervals,
                     layout,
                     masters,
+                    normals,
                 )
                 .map(|p| p.display().to_string()),
             );

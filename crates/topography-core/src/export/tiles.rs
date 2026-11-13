@@ -109,6 +109,18 @@ struct EdgeMemo {
     bottom: HashMap<usize, (usize, Vec<u8>)>,
 }
 
+/// A tile's identity and shape for the neighbour comparison.
+pub(super) struct Edges {
+    pub layer: &'static str,
+    pub level: u32,
+    pub tile: (usize, usize),
+    /// Width and height in texels, including the apron.
+    pub size: (usize, usize),
+    pub bytes: usize,
+    /// Texels repeated by neighbours: both aprons plus a shared column.
+    pub overlap: usize,
+}
+
 /// Writes PNG tiles into the stage, keeps checksums.txt lines and compares shared edges
 /// and aprons with each tile's west and north neighbours.
 pub(super) struct TileWriter {
@@ -148,8 +160,34 @@ impl TileWriter {
         self.checksums.push_str(&format!("{hash}  {path}\n"));
 
         // Neighbours overlap by both aprons plus the shared column.
-        let k = (2 * spec.apron + usize::from(self.shared)).min(w).min(h);
-        let memo = self.edges.entry((spec.name, level)).or_default();
+        let k = 2 * spec.apron + usize::from(self.shared);
+        let edges = Edges {
+            layer: spec.name,
+            level,
+            tile: (tx, ty),
+            size: (w, h),
+            bytes,
+            overlap: k,
+        };
+        self.compare_edges(&edges, texels, &path, checks);
+        Ok(())
+    }
+
+    /// Writes an already encoded tile file below the stage and records its checksum.
+    pub fn write_file(&mut self, path: &str, data: &[u8]) -> Result<()> {
+        write_new(&self.stage.join(path), data)?;
+        self.checksums
+            .push_str(&format!("{}  {path}\n", digest(data)));
+        Ok(())
+    }
+
+    /// Compares the `overlap` border columns and rows of `texels` (row-major, `bytes` per
+    /// texel) with those kept from the tile's west and north neighbours, then keeps its own.
+    pub fn compare_edges(&mut self, e: &Edges, texels: &[u8], path: &str, checks: &mut Checks) {
+        let (tx, ty) = e.tile;
+        let (w, h, bytes) = (e.size.0, e.size.1, e.bytes);
+        let k = e.overlap.min(w).min(h);
+        let memo = self.edges.entry((e.layer, e.level)).or_default();
         let (kb, rb) = (k * bytes, w * bytes);
         let left: Vec<u8> = texels.chunks(rb).flat_map(|r| &r[..kb]).copied().collect();
         let right: Vec<u8> = texels
@@ -187,7 +225,6 @@ impl TileWriter {
         memo.right = Some((tx, ty, right));
         memo.bottom
             .insert(tx, (ty, texels[(h - k) * rb..].to_vec()));
-        Ok(())
     }
 
     /// Writes checksums.txt.

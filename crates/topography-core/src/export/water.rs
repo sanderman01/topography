@@ -389,7 +389,7 @@ impl WaterStats {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Layout, heightmap, testworld, tile_path, view::read_png};
+    use super::super::{Layout, NormalOptions, heightmap, testworld, tile_path, view::read_png};
     use super::*;
     use std::collections::BTreeSet;
 
@@ -443,7 +443,15 @@ mod tests {
             }
         });
         let out = dir.path().join("x");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         for level in 0..=4 {
             assert_eq!(lake_codes(&out, level).len(), 1, "level {level}");
         }
@@ -471,7 +479,15 @@ mod tests {
         let bodies = Bodies::load(&world).unwrap();
         assert!(bodies.kind[2] == Kind::Ice && bodies.level_m[2] == 12.0);
         let out = dir.path().join("x");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         for level in 0..=4 {
             assert_eq!(lake_codes(&out, level).len(), 1, "level {level}");
         }
@@ -497,7 +513,15 @@ mod tests {
             }
         });
         let out = dir.path().join("x");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         // L1 texel 16 is column 0 of tile 1 (plus the apron of 4).
         let (w, _, c) = read_png(&out.join(tile_path("water-coverage", 1, 1, 2))).unwrap();
         let (_, _, b) = read_png(&out.join(tile_path("water-body", 1, 1, 2))).unwrap();
@@ -531,7 +555,15 @@ mod tests {
             }
         });
         let out = dir.path().join("x");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         // Columns 96..113 of L0 are tile 6; row 5.
         let (side, s) = codes(&out, "water-surface", 0, 6, 3);
         let (_, g) = codes(&out, "height", 0, 6, 3);
@@ -557,7 +589,15 @@ mod tests {
             }
         });
         let out = dir.path().join("x");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         let (side, s) = codes(&out, "water-surface", 0, 0, 0);
         let (_, g) = codes(&out, "height", 0, 0, 0);
         assert_eq!((g[0], s[0]), (0, 1));
@@ -576,7 +616,15 @@ mod tests {
             }
         });
         let out = dir.path().join("x");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         for layer in ["water-surface", "water-coverage", "water-body"] {
             let mut names: Vec<String> = fs::read_dir(out.join(format!("{layer}/L0")))
                 .unwrap()

@@ -21,6 +21,10 @@ pub(super) struct Checks {
     pub shared_edge_mismatches: u64,
     /// Index level − 1: texels with coverage ≥ 0.5 and surface below the mean ground.
     pub coarse_wet_below_ground: Vec<u64>,
+    /// Baked normal texels off by more than 30° after BC5, or roughness by more than 0.25.
+    pub bc_gross_errors: u64,
+    /// Measured BC5/BC4 error per level, when normals are exported.
+    pub bc_budget: Option<Value>,
     examples: BTreeMap<&'static str, Vec<String>>,
 }
 
@@ -52,7 +56,7 @@ impl Checks {
         self.lake_levels.iter().filter(|(_, (lo, hi))| lo != hi)
     }
 
-    fn hard(&self) -> [(&'static str, u64); 7] {
+    fn hard(&self) -> [(&'static str, u64); 8] {
         [
             ("wet_not_above_ground", self.wet_not_above_ground),
             ("wet_without_surface", self.wet_without_surface),
@@ -62,6 +66,7 @@ impl Checks {
             ("lake_levels", self.split_lakes().count() as u64),
             ("coverage_mismatch", self.coverage_mismatch),
             ("shared_edge_mismatches", self.shared_edge_mismatches),
+            ("bc_gross_errors", self.bc_gross_errors),
         ]
     }
 
@@ -107,12 +112,16 @@ impl Checks {
             .enumerate()
             .map(|(i, n)| (format!("L{}", i + 1), json!(n)))
             .collect();
+        let mut figures = json!({
+            "coarse_wet_below_ground": coarse,
+            "lake_levels_checked": self.lake_levels.len(),
+        });
+        if let Some(budget) = &self.bc_budget {
+            figures["bc_error_budget"] = budget.clone();
+        }
         json!({
             "checks": checks,
-            "figures": {
-                "coarse_wet_below_ground": coarse,
-                "lake_levels_checked": self.lake_levels.len(),
-            },
+            "figures": figures,
             "examples": examples,
             "passed": self.passed(),
         })
@@ -122,7 +131,7 @@ impl Checks {
 #[cfg(test)]
 mod tests {
     use super::super::tiles::TileWriter;
-    use super::super::{Layout, heightmap, testworld};
+    use super::super::{Layout, NormalOptions, heightmap, testworld};
     use super::*;
     use std::fs;
 
@@ -136,9 +145,16 @@ mod tests {
                 (20.0, f32::NAN, 0)
             }
         });
-        let err = heightmap(&world, &dir.path().join("x"), 16, Layout::SharedEdge, false)
-            .unwrap_err()
-            .to_string();
+        let err = heightmap(
+            &world,
+            &dir.path().join("x"),
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
         // Caught by the range scan, before any tile is written.
         assert!(
             err.contains("world checks failed: wet_not_above_ground 1 (at (5, 5)"),
@@ -155,9 +171,16 @@ mod tests {
             (10..=19, 10..=19) => (10.0, if x < 15 { 13.0 } else { 13.5 }, 2),
             _ => (20.0, f32::NAN, 0),
         });
-        let err = heightmap(&world, &dir.path().join("x"), 16, Layout::SharedEdge, false)
-            .unwrap_err()
-            .to_string();
+        let err = heightmap(
+            &world,
+            &dir.path().join("x"),
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains(
                 "lake_levels_off 100 (at (10, 10): world body 2 surface 13 m, level 11 m;"
@@ -227,7 +250,15 @@ mod tests {
             }
         });
         let out = dir.path().join("x");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         let m: Value =
             serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
         let v = &m["validation"];

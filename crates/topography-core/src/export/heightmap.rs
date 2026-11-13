@@ -8,6 +8,7 @@ use super::layers::{
     WATER_COVERAGE, WATER_SURFACE, metadata,
 };
 use super::legends::legends;
+use super::normals::{Baker, NormalOptions};
 use super::pyramid::{Mean, Mode, Pyramid, Reduce};
 use super::tiles::{Geometry, RowWindow, TileWriter, cut};
 use super::water::{
@@ -511,13 +512,15 @@ fn world_readable(dir: &Path) -> Result<()> {
 }
 
 /// Export a generated world as 16-bit height tiles, game layer and moisture tiles with
-/// aprons (manifest v2); with `masters`, also a Float32 elevation COG.
+/// aprons (manifest v2), and baked normal and roughness KTX2 tiles per `normals`; with
+/// `masters`, also a Float32 elevation COG.
 pub fn heightmap(
     world: &Path,
     output: &Path,
     intervals: usize,
     layout: Layout,
     masters: bool,
+    normals: NormalOptions,
 ) -> Result<PathBuf> {
     ensure(!output.exists(), "export output already exists")?;
     ensure(
@@ -556,6 +559,7 @@ pub fn heightmap(
     while (w >> last) > intervals {
         last += 1;
     }
+    normals.validate(intervals, last)?;
     if let Some(game) = &game {
         ensure(
             game.level <= last,
@@ -699,6 +703,9 @@ pub fn heightmap(
         None => (0, Vec::new(), Vec::new()),
     };
 
+    let mut baker = normals
+        .enabled
+        .then(|| Baker::new(normals, intervals, w, spacing, last));
     let mut game_buf = Vec::new();
     for y0 in (0..h).step_by(CHUNK_ROWS) {
         let count = CHUNK_ROWS.min(h - y0);
@@ -728,6 +735,9 @@ pub fn heightmap(
                 y,
             )?;
             stats.add(&row, y);
+            if let Some(b) = &mut baker {
+                b.push(&ground, &mut ctx.writer, &mut ctx.checks)?;
+            }
             let (p, out) = &mut terrain;
             p.push(row, &mut |l, y, row| out.row(&mut ctx, l, y, row))?;
             // A level-1 game row is complete once its level-0 rows 2i-1..2i+1 are.
@@ -754,6 +764,9 @@ pub fn heightmap(
     }
 
     let mut layer_meta = Map::new();
+    if let Some(b) = baker {
+        layer_meta.extend(b.finish(&mut ctx.checks, spacing));
+    }
     for spec in std::iter::once(&height_spec).chain(&terrain.1.water) {
         layer_meta.insert(spec.name.into(), metadata(spec, spacing, last));
     }
@@ -852,7 +865,7 @@ pub fn heightmap(
         "layers": layer_meta,
         "legends": legends,
         "water_files": "water-surface, water-coverage and water-body tiles exist only where a tile or its apron holds water; a missing file means coverage 0, body 0 and no surface (code 0)",
-        "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix in layers.{layer}.prefix; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), aprons beyond the world edge repeat the edge texel",
+        "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.{ext}; prefix and file_extension (default png) in layers.{layer}; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), or cell (x·intervals, y·intervals) for the cell-centred normal and roughness layers; aprons beyond the world edge repeat the edge texel",
         "levels": levels,
         "masters": master_files,
         "validation": validation,
@@ -884,7 +897,15 @@ mod tests {
             [(x / 40 + 1) as u8, 30, (y % 256) as u8, 0, 0]
         });
         let out = dir.path().join("export");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         let m: Value =
             serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
         assert_eq!(m["schema_version"], 2);
@@ -933,7 +954,15 @@ mod tests {
             (if x == 64 { 4.0 } else { 0.0 }, f32::NAN, 0)
         });
         let out = dir.path().join("export");
-        heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            &world,
+            &out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         let m: Value =
             serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
         let (h_min, step) = (

@@ -691,11 +691,19 @@ pub(super) fn write(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Layout, heightmap, testworld, tile_path, view::read_png};
+    use super::super::{Layout, NormalOptions, heightmap, testworld, tile_path, view::read_png};
     use super::*;
 
     fn export(world: &Path, out: &Path) -> (Value, Value) {
-        heightmap(world, out, 16, Layout::SharedEdge, false).unwrap();
+        heightmap(
+            world,
+            out,
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap();
         let read = |name: &str| -> Value {
             serde_json::from_slice(&fs::read(out.join(name)).unwrap()).unwrap()
         };
@@ -776,7 +784,15 @@ mod tests {
         fs::write(&path, m.to_string()).unwrap();
         let fail = |out: &str| {
             let out = dir.path().join(out);
-            let err = heightmap(&world, &out, 16, Layout::SharedEdge, false).unwrap_err();
+            let err = heightmap(
+                &world,
+                &out,
+                16,
+                Layout::SharedEdge,
+                false,
+                NormalOptions::default(),
+            )
+            .unwrap_err();
             assert!(!out.exists());
             err.to_string()
         };
