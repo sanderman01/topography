@@ -553,23 +553,52 @@ pub(crate) fn label(
         recs.push((id, km, mouth, q, below));
     }
     let dropped = snow_stubs(s, r, &recs)?;
+    // A dropped stub's pools stay standing water: lakes of their own, as a pool whose outlet
+    // carries no river (by ordinal, after the rivers' ids).
+    let mut stub_pools: BTreeMap<u32, u32> = BTreeMap::new();
+    for (&o, id) in &pool_id {
+        if dropped.contains(id) {
+            stub_pools.insert(o, 0);
+        }
+    }
+    for (o, id) in stub_pools.iter_mut() {
+        ensure(
+            w.nodes.at(*o).level.is_finite(),
+            format!("pool {} has no level", w.nodes.at(*o).key),
+        )?;
+        *id = next_id;
+        next_id += 1;
+    }
     if !dropped.is_empty() {
         // Dropped stubs carry no body and no thalweg bit, like cold cells.
-        for_tiles(&tiles, s.threads, &format!("{tag} S"), |_, core| {
-            let (mut ids, mut fl) = (body.read(core)?, r.flow.read(core)?);
-            let mut hit = false;
-            for (id, f) in ids.iter_mut().zip(fl.iter_mut()) {
-                if dropped.contains(id) {
-                    (*id, *f, hit) = (0, *f & !16, true);
+        let parts: Vec<BTreeMap<u32, u64>> =
+            for_tiles(&tiles, s.threads, &format!("{tag} S"), |_, core| {
+                let (mut ids, mut fl) = (body.read(core)?, r.flow.read(core)?);
+                let node = r.node.read(core)?;
+                let (mut hit, mut cells) = (false, BTreeMap::new());
+                for k in 0..core.cells() {
+                    if !dropped.contains(&ids[k]) {
+                        continue;
+                    }
+                    let lake = (node[k] >= 2)
+                        .then(|| stub_pools.get(&(node[k] - 2)))
+                        .flatten();
+                    (ids[k], fl[k], hit) = (lake.copied().unwrap_or(0), fl[k] & !16, true);
+                    if let Some(&id) = lake {
+                        *cells.entry(id).or_insert(0u64) += 1;
+                    }
                 }
-            }
-            if hit {
-                body.write(core, &ids)?;
-                r.flow.write(core, &fl)?;
-            }
-            Ok(())
-        })?;
+                if hit {
+                    body.write(core, &ids)?;
+                    r.flow.write(core, &fl)?;
+                }
+                Ok(cells)
+            })?;
+        for (id, n) in parts.into_iter().flatten() {
+            *lakes.entry(id).or_insert(0u64) += n;
+        }
     }
+    lake_id.extend(&stub_pools);
     // A lake's (or gapped river's) parent: the first body down the receivers (as v2).
     let one = |c: u64| {
         let (x, y) = world.xy(c);
@@ -823,7 +852,8 @@ mod tests {
         tile: u64,
         snow: impl Fn(u64) -> bool,
         snow_stub_m: f64,
-    ) -> (Vec<u32>, Value, Vec<u8>) {
+        with_pools: bool,
+    ) -> (Vec<u32>, Value, Vec<u8>, Vec<u32>) {
         let world = World { w: 64, h: 64 };
         let mut s = setup(world, tile, 1e-5);
         let mut c = s.params.climate.expect("climate");
@@ -843,8 +873,24 @@ mod tests {
         )
         .expect("model");
         let body = Layer::filled(world, 0u32);
-        let json = label(&s, &m.water, &r, &body, &BTreeMap::new(), None, "m").expect("bodies");
-        (body.to_vec().unwrap(), json, r.flow.to_vec().unwrap())
+        // With pools: every full lake is listed (those whose outlet carries no river stay lakes).
+        let pools: BTreeMap<u64, u64> = m
+            .water
+            .nodes
+            .0
+            .iter()
+            .filter(|n| with_pools && n.lake && n.full)
+            .map(|n| (n.key, n.outlet[1]))
+            .collect();
+        let json = label(&s, &m.water, &r, &body, &pools, None, "m").expect("bodies");
+        // The node raster kept on listed pools only.
+        let listed = |n: u32| n >= 2 && pools.contains_key(&m.water.nodes.at(n - 2).key);
+        let node = r.node.to_vec().unwrap();
+        let pool = node
+            .iter()
+            .map(|&n| if listed(n) { n } else { 0 })
+            .collect();
+        (body.to_vec().unwrap(), json, r.flow.to_vec().unwrap(), pool)
     }
 
     fn down64(flow: &[u8], k: usize) -> Option<usize> {
@@ -860,11 +906,23 @@ mod tests {
     /// ending on warm unlabelled ground keep their labels; any tiling drops the same.
     #[test]
     fn a_short_stub_between_snow_bands_is_dropped() {
+        let (stubs, long, warm, _) = stub_check(8.0);
+        assert!(stubs > 0 && long > 0 && warm > 0, "{stubs} {long} {warm}");
+        let (stubs, .., pool_cells) = stub_check(1000.0);
+        assert!(
+            stubs > 0 && pool_cells > 0,
+            "a dropped stub's pool stays water"
+        );
+    }
+
+    /// Snow bands at columns 40-43 and 48-51 with every full lake listed as a pool, labelled
+    /// with `stub_m` against no stubs dropped: dropped stubs in the gap, kept rivers ending
+    /// at snow, kept rivers ending on warm unlabelled ground, and dropped pool cells.
+    fn stub_check(stub_m: f64) -> (usize, usize, usize, usize) {
         let snow = |x: u64| (40..44).contains(&x) || (48..52).contains(&x);
-        let stub_m = 8.0;
-        let (b0, j0, f0) = snow_run(16, snow, 0.0);
-        let (b1, j1, f1) = snow_run(16, snow, stub_m);
-        let (b64, j64, _) = snow_run(64, snow, stub_m);
+        let (b0, j0, f0, pool) = snow_run(16, snow, 0.0, true);
+        let (b1, j1, f1, _) = snow_run(16, snow, stub_m, true);
+        let (b64, j64, ..) = snow_run(64, snow, stub_m, true);
         assert_eq!((&b1, &j1), (&b64, &j64), "tilings");
         let rivers: Vec<&Value> = j0["bodies"]
             .as_array()
@@ -930,12 +988,27 @@ mod tests {
             long += usize::from(!gone(i) && into_snow[&i]);
             warm += usize::from(below[&i] == 0 && !into_snow[&i]);
         }
-        assert!(stubs > 0 && long > 0 && warm > 0, "{stubs} {long} {warm}");
         assert_eq!(j1["snow_stubs_dropped"], rivers.len() - after.len());
-        // Dropped cells carry no body and no thalweg bit; the rest is as before.
+        // Dropped cells carry no body and no thalweg bit, except their pools: those stay
+        // standing water as lakes of their own. The rest is as before.
+        let lakes: HashSet<u32> = j1["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["kind"] == "lake")
+            .map(id)
+            .collect();
+        let mut pool_cells = 0;
         for k in 0..64 * 64 {
             if b0[k] >= 2 && !after.contains(&b0[k]) && len.contains_key(&b0[k]) {
-                assert_eq!((b1[k], f1[k] & 16), (0, 0), "cell {k}");
+                if pool[k] >= 2 {
+                    assert!(lakes.contains(&b1[k]), "pool cell {k} is a lake");
+                    assert!(!len.contains_key(&b1[k]), "a new id");
+                    pool_cells += 1;
+                } else {
+                    assert_eq!(b1[k], 0, "cell {k}");
+                }
+                assert_eq!(f1[k] & 16, 0, "cell {k}");
             } else {
                 assert_eq!((b1[k], f1[k]), (b0[k], f0[k]), "cell {k}");
             }
@@ -944,13 +1017,14 @@ mod tests {
             let p = b["parent"].as_u64().unwrap() as u32;
             assert!(p < 2 || !len.contains_key(&p) || after.contains(&p), "{b}");
         }
+        (stubs, long, warm, pool_cells)
     }
 
     /// A river cut by a snow band (no river cells on it) keeps a link: its parent is the
     /// first body down its receivers, the river below the band.
     #[test]
     fn a_river_ending_at_a_snow_gap_drains_into_the_body_below() {
-        let (body, json, flow) = snow_run(16, |x| (30..34).contains(&x), 0.0);
+        let (body, json, flow, _) = snow_run(16, |x| (30..34).contains(&x), 0.0, false);
         let down = |k: usize| down64(&flow, k);
         let mut gapped = 0;
         for river in json["bodies"]
