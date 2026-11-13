@@ -7,7 +7,7 @@ Biome is the layout's terrain class (warped as cover reads it), each class's sha
 over about 64 m and dithered with blue noise. Land cover holds ESA WorldCover codes, a
 recorded judgment call, not observed cover: water 80, snow/ice 70 and forest 10 follow the
 water, snow and vegetation densities; bare rock (60) ramps in around 35 degrees; above the
-tree line grassland (30) gives way to bare ground over 400 m; dunes, badlands, glacier
+tree line (blended in over ± 100 m) grassland (30) gives way to bare ground over 400 m; dunes, badlands, glacier
 ground, volcanoes and lava are bare from gentle slopes up and stay bare above the tree line;
 other open land takes its class's typical cover. One blue-noise value per texel turns each ramp
 into that share of texels, so edges read as a fine mix.
@@ -36,6 +36,7 @@ TALUS_DEG = ((22.0, 30.0), (38.0, 45.0))  # scree lies on slopes rising over the
 TALUS_REACH_M = 20.0  # gaussian sigma of rock share spreading onto the slopes below
 BIOME_MIX_M = 64.0  # gaussian sigma of each class's share across biome borders
 ALPINE_BAND_M = 400.0  # grass gives way to bare ground over this band above the tree line
+TREELINE_EDGE_M = 100.0  # open cover turns alpine over ± this around the tree line (ecotone)
 ROCK_RAMP_DEG = (30.0, 40.0)  # bare rock ramps in around 35 degrees
 BARE_CLASS_DEG = (10.0, 20.0)  # bare classes are bare from gentle slopes up
 WATER_WET = 0.25  # land-cover water (and no snow) at this wet share, undithered: keeps 1 m rivers whole at 2 m
@@ -132,7 +133,8 @@ def land_cover(biome, h, slope, treeline, veg, snow, wet, u):
     bare_class = np.isin(biome, BARE_CLASSES)
     out = np.where(bare_class & (ramp(slope, *BARE_CLASS_DEG) > u), BARE, out)
     alpine = np.where(ramp(h - treeline, 0.0, ALPINE_BAND_M) > u, BARE, GRASS)
-    out = np.where(~bare_class & (h > treeline), alpine, out)
+    # Same noise: bare texels stay inside the alpine ones, which dither in across the ecotone.
+    out = np.where(~bare_class & (ramp(h - treeline, -TREELINE_EDGE_M, TREELINE_EDGE_M) > u), alpine, out)
     out = np.where(ramp(slope, *ROCK_RAMP_DEG) > u, BARE, out)
     # Trees from the top of the noise and snow from the bottom: veg <= 1 - snow keeps them disjoint.
     out = np.where(veg > 1 - u, TREE, out)
@@ -248,6 +250,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
                    "snow_soft_m": SNOW_SOFT_M, "snow_shed_deg": list(SNOW_SHED_DEG), "rock_deg": ROCK_DEG,
                    "talus_deg": [list(t) for t in TALUS_DEG], "talus_reach_m": TALUS_REACH_M,
                    "biome_mix_m": BIOME_MIX_M, "alpine_band_m": ALPINE_BAND_M,
+                   "treeline_edge_m": TREELINE_EDGE_M,
                    "rock_ramp_deg": list(ROCK_RAMP_DEG), "bare_class_deg": list(BARE_CLASS_DEG),
                    "water_wet": WATER_WET, "blue_noise_seeds": {"biome": BIOME_SEED, "land-cover": LANDCOVER_SEED},
                    "rows": rows},

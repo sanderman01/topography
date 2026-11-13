@@ -482,7 +482,8 @@ and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
   Each rule is a ramp: trees (10) take the top of a shared blue-noise value by
   `vegetation-density` and snow/ice (70) the bottom by `snow-cover`, so the two never
   overlap and keep their exact shares; bare rock (60) ramps in around 35°; above the tree
-  line grassland (30) gives way to bare ground over 400 m; dunes, badlands, glacier ground,
+  line grassland (30) gives way to bare ground over 400 m (open cover turns alpine over
+  ± 100 m around the tree line, `TREELINE_EDGE_M`, dithered like the other ramps); dunes, badlands, glacier ground,
   volcanoes and lava are bare from gentle slopes up; other open land takes its class's
   typical cover. Water (80) is a hard rule at a wet share of at least 0.25 (`WATER_WET`),
   not dithered, so 1 m rivers stay whole at 2 m; `snow-cover` is 0 on those texels. The blue-noise tile is 256 texels (512 m
