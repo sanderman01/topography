@@ -97,7 +97,7 @@ export v2 refuses it.
 ## 5. Export and viewing
 
 ```sh
-topography export heightmap <world-output-dir> <new-export-dir> [256] [shared_edge]
+topography export heightmap <world-output-dir> <new-export-dir> [256] [shared_edge] [--no-normals]
 topography export view <export-dir> [port]
 ```
 

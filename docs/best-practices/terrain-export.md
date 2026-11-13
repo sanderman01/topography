@@ -39,10 +39,19 @@ defines these requirements; the game's Bevy quadtree renderer remains outside sc
   and extents rather than silently padding or changing world scale. GDAL's
   [raster data model](https://gdal.org/en/stable/user/raster_data_model.html)
   explains pixel-corner geotransforms and pixel-center positions.
-- GPU block compression is optional and derived. BC4 keeps roughly 8-bit
-  precision per block and BC6H is half-float, both far coarser than 16-bit
-  heights over a kilometre range. Keep lossless 16-bit textures as the delivered
-  truth; add a compressed variant only with a measured error budget.
+- GPU block compression is derived and never replaces heights. BC4 keeps roughly
+  8-bit precision per block and BC6H is half-float, both far coarser than 16-bit
+  heights over a kilometre range, so heights stay lossless 16-bit PNG. Block
+  compression suits data that tolerates it: baked normals (BC5, x and y with z
+  rebuilt in the shader) and Toksvig roughness (BC4), in KTX2 from a start level
+  (default 4 m). Measure every export's error against the Float32 values (p99 and
+  max angle per level, roughness error) and fail only on gross errors (above 30°
+  or 0.25). Real 1 m mountains measured p99 2 to 3.6° and max about 20° on a few
+  steep high-contrast blocks, where z rebuilt from x and y amplifies BC steps.
+- Bake normals as cell-centred texels from the finest ground: one normal per
+  1 m cell, then the box mean over each coarser texel's cells, normalized. The
+  mean's shortening is the slope spread under the texel (Toksvig roughness), so
+  distant terrain keeps its lighting texture instead of looking smooth.
 
 ## Use one documented height encoding
 

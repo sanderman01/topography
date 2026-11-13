@@ -1,7 +1,8 @@
 # Heightmap export v2
 
 Producer: `topography export heightmap <world> <new-output-dir> [intervals]
-[shared_edge|power_of_two] [--masters]`. Consumers: the game and `topography export view`.
+[shared_edge|power_of_two] [--masters] [--no-normals] [--no-roughness] [--normals-level L]
+[--normals-apron A]`. Consumers: the game and `topography export view`.
 The spec is [fujix v1](../docs/plans/fujix-v1.md) §4. The export is a conversion of a world
 output (`world_preview` or `diffusion_world_output`, square, power-of-two side, spacing at
 least 1 m); it computes no terrain. It is written to a stage and published only when every
@@ -30,7 +31,7 @@ and legends cut short).
 | `row_order` | North to south; texel (0, 0) is the north-west cell centre |
 | `intervals`, `layout` | Intervals per tile side, a power of two from 16 to 4096 (default 256); `shared_edge` (default) or `power_of_two` |
 | `apron_texels` | 4: the apron of every non-height layer |
-| `tile_path` | `{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png`, the prefix from `layers.{layer}.prefix` |
+| `tile_path` | `{layer}/L{level}/{prefix}_L{level}_{x}_{y}.{ext}`, the prefix from `layers.{layer}.prefix`; `ext` is `png`, or `ktx2` for `normal` and `roughness` (`layers.{layer}.file_extension`) |
 | `levels[]` | Per level: `level`, `spacing_m`, `samples_per_side`, `tiles_per_side`, `tile_texels` (full tile side without apron), `last_tile_texels` (the last column and row of tiles) |
 | `lod` | The pyramid rule (below) |
 | `encoding` | Height encoding: `h_min_m`, `h_max_m`, `step_m`, `decode`, `max_quantization_error_m`, `range_from` |
@@ -96,6 +97,46 @@ them). Level *k* has spacing 2^*k* times level 0, and its texel *i* sits at leve
   grid. A world without a `moisture` entry exports without the layer (the exporter prints a
   line).
 
+## Normals and roughness
+
+Baked lighting layers for the coarse levels, on by default (`--no-normals` drops both,
+`--no-roughness` only roughness). They were added to v2 without a version change: readers
+that ignore unknown layers are unaffected.
+
+| Layer | File | Content |
+| --- | --- | --- |
+| `normal` | KTX2, `VK_FORMAT_BC5_UNORM_BLOCK` (141) | Unit world-space normal: x east, y north, z up |
+| `roughness` | KTX2, `VK_FORMAT_BC4_UNORM_BLOCK` (139) | Toksvig slope deviation σ, 0 for a plane |
+
+- **Files.** KTX 2.0, one 2D image, one mip level, no supercompression, a basic data format
+  descriptor (BC4/BC5 colour model, BT.709 primaries, linear transfer) and the keys
+  `KTXorientation` = `rd` (row 0 is the north edge, column 0 the west edge) and `KTXwriter`.
+  Bevy loads them with its `ktx2` feature; BC4/BC5 need a GPU with BC texture support
+  (desktop DX12 and Vulkan; Metal on macOS, not iOS).
+- **Levels.** From `--normals-level` (default 2, 4 m on a 1 m world) to the last level;
+  `layers.{layer}.levels` gives [first, last]. Finer levels have no tiles: the game derives
+  normals from the height tiles there.
+- **Lattice.** Cell-centred: texel *i* of level *k* covers the level-*k* cell between height
+  samples *i* and *i*+1, so sampling at (*i* + 0.5)/*N* lands on the cell centre. Level *k*
+  has 2^(*m*−*k*) − 1 cells per side on a 2^*m* world. Tile (x, y) texel (A, A) is cell
+  (x·N, y·N), with N = `intervals` and A = `--normals-apron` (default 0, must be even so a
+  tile is whole 4×4 blocks). A full tile is N + 2A texels per side (256², or 260² with
+  apron 2), aprons repeat the neighbours' texels and past the world edge the edge texel.
+  The last tile of each row and column holds one cell fewer than N; it is padded to a
+  multiple of 4 by repeating its edge texel. `layers.{layer}.tile_levels[]` gives per level
+  `cells_per_side`, `tiles_per_side`, `tile_texels`, `last_tile_valid_texels` and
+  `last_tile_texels` (padded).
+- **Source.** Every level-0 cell gets the unit normal of the gradient across it from its
+  four corner ground samples (the Float32 ground the height tiles encode; water has its own
+  surface layer). A level-*k* texel is the box mean **M** of the 2^*k* × 2^*k* cell normals
+  it covers, from one global pyramid, so tiles agree across seams.
+- **Decode.** Normal: `x = 2R − 1`, `y = 2G − 1`, `z = sqrt(max(0, 1 − x² − y²))`, then
+  normalize. Stored is **M**/|**M**|. Roughness: `σ = R`, with m = |**M**| and
+  σ = min(sqrt((1 − m)/m), 1) (Toksvig): 0 on a plane, growing with the spread of the slopes
+  under the texel.
+- **Encoder.** Deterministic BC4 (BC5 = two BC4 blocks), 8-value mode, endpoints fitted by a
+  small search and least-squares refinement.
+
 ## Water
 
 - **Ids.** `water-body` holds dense export ids: 0 dry, 1 always the sea, then lakes, ice and
@@ -137,11 +178,21 @@ count fails the export:
 | `lake_levels` | A lake or sea with more than one surface code at one level (any level) |
 | `coverage_mismatch` | Coverage that does not match surface at or above ground |
 | `shared_edge_mismatches` | Duplicated border or apron texels that differ between neighbours (any layer, any level) |
+| `bc_gross_errors` | A baked texel whose BC5 normal is more than 30° off its Float32 normal or whose BC4 roughness is off by more than 0.25 |
 
 `examples` keeps up to three per failing check, naming "world body N" or "export id N".
 `figures` reports `coarse_wet_below_ground` per level (texels with coverage ≥ 0.5 whose
-surface is below the mean ground, expected on mixed shore texels and not a failure) and
-`lake_levels_checked`.
+surface is below the mean ground, expected on mixed shore texels and not a failure),
+`lake_levels_checked` and, with normals, `bc_error_budget`: per level `texels`,
+`angle_p99_deg`, `angle_max_deg` and `angle_over_10_deg` (decoded BC5 normal against the
+Float32 normal) and `roughness_p99_abs` and `roughness_max_abs` (decoded BC4 against
+Float32), measured over every valid texel, plus the `fail_above` limits. Percentiles are
+upper bin edges (0.001°, 0.0001).
+
+Measured on an 8 km crop of fujix-55-l4v6 (1 m, 1,751 to 4,975 m, 2026-11-13): angle p99
+1.96° at L2 rising to 3.6° at L5, max 21.6° (32 of 4.2 M L2 texels above 10°, all on steep
+blocks whose x and y span much of the range, where the rebuilt z amplifies the 3-bit
+steps); roughness p99 0.008 to 0.013, max 0.058.
 
 ## Not exported
 

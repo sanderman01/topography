@@ -1159,7 +1159,13 @@ layer name unless noted):
   `water-surface` is code 0 (no surface);
 - `biome`, `land-cover` (prefix `landcover`), `vegetation-density`, `snow-cover`,
   `talus-density`: from 2 m, from the world's `game/`;
-- `moisture`: from about 128 m (on small test worlds the coarsest level only).
+- `moisture`: from about 128 m (on small test worlds the coarsest level only);
+- `normal` (BC5) and `roughness` (BC4): KTX2 tiles (`normal/L2/normal_L2_0_0.ktx2`) from
+  level 2 (4 m), cell-centred, 256² per tile with no apron by default. Options:
+  `--no-normals`, `--no-roughness`, `--normals-level L`, `--normals-apron A` (even). The
+  manifest records the measured BC error per level (`validation.figures.bc_error_budget`);
+  a texel more than 30° off fails the export. Normals add about 4% to the export time
+  and 0.13 B per level-0 sample (about 540 MB at 64 km).
 
 Every level comes from a global area-mean pyramid (mode for classes), and every layer but
 height has a 4-texel apron. The last tile of a row or column is one sample short (256²

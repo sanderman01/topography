@@ -76,6 +76,62 @@
       "source": "procedural",
       "unit": "WorldCover code"
     },
+    "normal": {
+      "apron_texels": 0,
+      "decode": "x = 2·R − 1, y = 2·G − 1, z = sqrt(max(0, 1 − x² − y²)); normalize(x, y, z)",
+      "file_extension": "ktx2",
+      "filter": "normalized box mean of the level-0 cell normals under the texel; a cell normal is the gradient across the cell from its four corner ground samples",
+      "finest_spacing_m": 4.0,
+      "format": "KTX2 VK_FORMAT_BC5_UNORM_BLOCK",
+      "levels": [
+        2,
+        4
+      ],
+      "mip_levels": 1,
+      "missing": "never missing",
+      "prefix": "normal",
+      "row_order": "KTXorientation rd: row 0 is the north edge, column 0 the west edge",
+      "source": "generated",
+      "supercompression": "none",
+      "texel_lattice": "cell-centred: texel (i, j) of level k covers the level-k cell between height samples i and i+1 (columns) and j and j+1 (rows), i.e. level-0 samples [i·2^k, (i+1)·2^k]; sample it at ((i + 0.5) / N) to hit the cell centre. Tile (x, y) texel (A, A) is cell (x·N, y·N), N = intervals, A = apron_texels",
+      "tile_levels": [
+        {
+          "cells_per_side": 1023,
+          "last_tile_texels": 256,
+          "last_tile_valid_texels": 255,
+          "level": 2,
+          "spacing_m": 4.0,
+          "tile_texels": 256,
+          "tiles_per_side": 4
+        }
+      ],
+      "tile_size": "N + 2·A texels per side; the last tile of each row and column holds last_tile_valid_texels cells plus aprons, padded to a multiple of 4 by repeating the edge texel",
+      "unit": "unit world-space normal: x east, y north, z up",
+      "vk_format": 141
+    },
+    "roughness": {
+      "apron_texels": 0,
+      "decode": "sigma = R",
+      "file_extension": "ktx2",
+      "filter": "m = |box mean of the level-0 cell normals|; sigma = min(sqrt((1 − m) / m), 1)",
+      "finest_spacing_m": 4.0,
+      "format": "KTX2 VK_FORMAT_BC4_UNORM_BLOCK",
+      "levels": [
+        2,
+        4
+      ],
+      "mip_levels": 1,
+      "missing": "never missing",
+      "prefix": "roughness",
+      "row_order": "KTXorientation rd: row 0 is the north edge, column 0 the west edge",
+      "source": "generated",
+      "supercompression": "none",
+      "texel_lattice": "as normal",
+      "tile_levels": [],
+      "tile_size": "as normal",
+      "unit": "Toksvig slope deviation, 0 for a plane",
+      "vk_format": 139
+    },
     "moisture": {
       "apron_texels": 4,
       "decode": "value = offset + code · scale",
@@ -278,9 +334,10 @@
     4096
   ],
   "spacing_m": 1.0,
-  "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.png; prefix in layers.{layer}.prefix; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), aprons beyond the world edge repeat the edge texel",
+  "tile_path": "{layer}/L{level}/{prefix}_L{level}_{x}_{y}.{ext}; prefix and file_extension (default png) in layers.{layer}; tile texel (A, A) of a layer with apron A is level sample (x·intervals, y·intervals), or cell (x·intervals, y·intervals) for the cell-centred normal and roughness layers; aprons beyond the world edge repeat the edge texel",
   "validation": {
     "checks": {
+      "bc_gross_errors": 0,
       "coverage_mismatch": 0,
       "lake_levels": 0,
       "lake_levels_off": 0,
@@ -291,6 +348,22 @@
     },
     "examples": {},
     "figures": {
+      "bc_error_budget": {
+        "fail_above": {
+          "angle_deg": 30.0,
+          "roughness_abs": 0.25
+        },
+        "levels": {
+          "L2": {
+            "angle_max_deg": 21.5645,
+            "angle_over_10_deg": 32,
+            "angle_p99_deg": 1.962,
+            "roughness_max_abs": 0.0584,
+            "roughness_p99_abs": 0.0082,
+            "texels": 4190209
+          }
+        }
+      },
       "coarse_wet_below_ground": {
         "L1": 1911,
         "L2": 56,
