@@ -1,7 +1,8 @@
 //! 1 m channels. Each thalweg cell's section (width and depth from its discharge, hydraulic
-//! geometry) is cut below the river's surface, which is the routing surface R: the ground on
-//! dry thalweg cells, the pond level inside ponds. R never rises along a path, so neither does
-//! the river. The section is the thalweg's centre cut (down to surface − depth) tapered by
+//! geometry) is cut below the river's surface: the routing surface R (the ground on dry
+//! thalweg cells, the pond level inside ponds), averaged along the river's stem on dry cells
+//! (STEM_CELLS each way, within STEM_DEV_M of R) and swept between neighbouring stem cells,
+//! so steep reaches get smooth banks. R never rises along a path, so neither does the river. The section is the thalweg's centre cut (down to surface − depth) tapered by
 //! 1 − (r/R)² across the half-width R, so no cell loses more than its centre (no wall is cut
 //! by its height above a line). A cell within several rivers' half-widths belongs to the
 //! river with the larger discharge (its body's largest), then the nearest cell, then the
@@ -42,6 +43,10 @@ const MAX_RADIUS: f64 = (HALO - BACKWATER) as f64;
 /// The area's margin beyond the core: the backwater (16) and one cell, so every tiling agrees.
 /// Owner rule (2026-11-08): no wall, grade or pit rounds undo a cut, so none need a margin.
 const MARGIN: u64 = BACKWATER + 1;
+/// A thalweg's river surface is the mean routing level over this many stem cells each way.
+const STEM_CELLS: usize = 4;
+/// ... and at most this far (m) from its own routing level.
+const STEM_DEV_M: f32 = CHANNEL_CAP_M / 2.0;
 
 pub(crate) struct Layers {
     pub carved: Layer<f32>,
@@ -108,6 +113,15 @@ fn offer(slots: &mut [(f32, u32, u32); 2], cand: (f32, u32, u32), body: impl Fn(
     } else if less(cand, slots[1]) {
         slots[1] = cand;
     }
+}
+
+/// Point `p` projected on the segment from the origin to `b`: (fraction along it in 0..=1,
+/// distance²).
+fn project(p: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    let len2 = b.0 * b.0 + b.1 * b.1;
+    let f = ((p.0 * b.0 + p.1 * b.1) / len2).clamp(0.0, 1.0);
+    let (dx, dy) = (p.0 - b.0 * f, p.1 - b.1 * f);
+    (f, dx * dx + dy * dy)
 }
 
 /// A river cell beside a lake below its river's surface `rs`, cut below that lake's level
@@ -218,8 +232,9 @@ pub(crate) fn channels(
                     });
                 }
             }
-            // Every section reaching the area lies in the window (MAX_RADIUS + BACKWATER = HALO).
-            let win = core.grow(HALO + MARGIN - BACKWATER, world);
+            // Every section reaching the area lies in the window (MAX_RADIUS + BACKWATER = HALO),
+            // with its thalweg's stem out to STEM_CELLS and their neighbours (+2), and 2 spare.
+            let win = core.grow(HALO + MARGIN - BACKWATER + STEM_CELLS as u64 + 4, world);
             let area = core.grow(MARGIN, world);
             let (g, rw) = (ground.read(win)?, raw.read(win)?);
             let (level, node, flow) = (r.level.read(win)?, r.node.read(win)?, r.flow.read(win)?);
@@ -233,7 +248,71 @@ pub(crate) fn channels(
                     0.0
                 }
             };
-            let river = |t: usize| if level[t].is_finite() { level[t] } else { g[t] };
+            let routing = |t: usize| if level[t].is_finite() { level[t] } else { g[t] };
+            // A thalweg's D8 neighbour `j` on its own stem (a body is one main stem).
+            let same_stem = |t: usize, j: usize| thalweg(j) && bw[j] == bw[t];
+            let down = |t: usize| {
+                let d = flow[t] & 15;
+                let (x, y) = win.world_xy(t);
+                (d != 0)
+                    .then(|| world.neighbour(x, y, d as usize - 1))
+                    .flatten()
+                    .and_then(|(nx, ny)| win.local(nx, ny))
+                    .filter(|&j| same_stem(t, j))
+            };
+            // Its upstream stem cell: the most discharge, then the smaller index.
+            let up = |t: usize| {
+                let (x, y) = win.world_xy(t);
+                (0..8)
+                    .filter_map(|k| {
+                        world
+                            .neighbour(x, y, k)
+                            .and_then(|(nx, ny)| win.local(nx, ny))
+                    })
+                    .filter(|&j| same_stem(t, j) && down(j) == Some(t))
+                    .min_by(|&a, &b| q[b].total_cmp(&q[a]).then(a.cmp(&b)))
+            };
+            // The river's surface at a dry thalweg: the mean routing level over its stem's dry
+            // cells, the same number each way, at most STEM_CELLS (fewer near a pond, lake or
+            // the stem's ends, which keep their level). A thalweg following 1 m ground noise
+            // steps 0.04–0.9 m per cell; a section taking those steps gives jagged banks. A
+            // mean of a level that never rises downstream never rises either.
+            let mut stem = vec![f32::NAN; win.cells()];
+            for t in 0..win.cells() {
+                if !thalweg(t) || level[t].is_finite() {
+                    continue;
+                }
+                let walk = |step: &dyn Fn(usize) -> Option<usize>| {
+                    let mut cells = Vec::with_capacity(STEM_CELLS);
+                    let mut c = t;
+                    while cells.len() < STEM_CELLS {
+                        let Some(o) = step(c).filter(|&o| level[o].is_nan()) else {
+                            break;
+                        };
+                        cells.push(o);
+                        c = o;
+                    }
+                    cells
+                };
+                let (below, above) = (walk(&down), walk(&up));
+                let m = below.len().min(above.len());
+                let sum: f64 = below[..m]
+                    .iter()
+                    .chain(&above[..m])
+                    .fold(f64::from(routing(t)), |s, &o| s + f64::from(routing(o)));
+                let n = (2 * m + 1) as f64;
+                // Within STEM_DEV_M of its own level, so a cut within the cap still reaches it
+                // below a fall (a clamp of non-rising levels does not rise).
+                let r = routing(t);
+                stem[t] = ((sum / n) as f32).clamp(r - STEM_DEV_M, r + STEM_DEV_M);
+            }
+            let river = |t: usize| {
+                if stem[t].is_finite() {
+                    stem[t]
+                } else {
+                    routing(t)
+                }
+            };
             // The centre cut: down to the surface − depth, within the raw − cap clamp.
             let centre = |t: usize| {
                 if !s.params.channels {
@@ -241,6 +320,30 @@ pub(crate) fn channels(
                 }
                 let floor = (river(t) - geo.depth_m(f64::from(q[t]))).max(rw[t] - CHANNEL_CAP_M);
                 (g[t] - floor).max(0.0)
+            };
+            // The section of thalweg `t` at cell (x, y), swept along its stem: surface, centre
+            // cut and radius interpolated on the nearer of the segments to its upstream and
+            // downstream stem cells, and the distance² to that segment.
+            let section = |t: usize, x: u64, y: u64| {
+                let (tx, ty) = win.world_xy(t);
+                let p = (x as f64 - tx as f64, y as f64 - ty as f64);
+                let mut best = (river(t), centre(t), radius(t), p.0 * p.0 + p.1 * p.1);
+                // Ties (inside bends) go to the downstream segment.
+                for o in [down(t), up(t)].into_iter().flatten() {
+                    let (ox, oy) = win.world_xy(o);
+                    let b = (ox as f64 - tx as f64, oy as f64 - ty as f64);
+                    let (f, d2) = project(p, b);
+                    if d2 < best.3 {
+                        let lerp = |a: f64, c: f64| a + (c - a) * f;
+                        best = (
+                            lerp(f64::from(river(t)), f64::from(river(o))) as f32,
+                            lerp(f64::from(centre(t)), f64::from(centre(o))) as f32,
+                            lerp(radius(t), radius(o)),
+                            d2,
+                        );
+                    }
+                }
+                best
             };
 
             // The two best thalwegs of distinct rivers for every area cell: (−body size,
@@ -320,17 +423,16 @@ pub(crate) fn channels(
                         .map(|&j2| level[j2])
                         .reduce(f32::min)
                 };
-                for (t, d2) in ranked.into_iter().chain(own) {
-                    let rs = river(t);
-                    let rad = radius(t);
-                    let taper = if d2 == 0 {
+                for (t, _) in ranked.into_iter().chain(own) {
+                    let (rs, mid, rad, d2) = section(t, x, y);
+                    let taper = if d2 == 0.0 {
                         1.0
+                    } else if rad > 0.0 {
+                        (1.0 - d2 / (rad * rad)).max(0.0) as f32
                     } else {
-                        1.0 - (f64::from(d2) / (rad * rad)) as f32
+                        0.0
                     };
-                    let cut = (g[j] - centre(t) * taper)
-                        .max(rw[j] - CHANNEL_CAP_M)
-                        .min(g[j]);
+                    let cut = (g[j] - mid * taper).max(rw[j] - CHANNEL_CAP_M).min(g[j]);
                     if cut < rs || t == j {
                         lowered[a] = cut < g[j];
                         carved[a] = cut;

@@ -979,6 +979,12 @@ keeps an m2 receiver that is not higher on the carved ground (ties included), so
 flat does not send the river off its labelled line. A one-cell pit a cut deepens stays (a
 scour pool; `carve_pits` counts them as a figure).
 
+1 m sections (2026-11-14): a dry thalweg's river surface is the mean routing level over its
+stem's dry cells, the same number each way up to 4, within 1 m of its own level; ponds, lakes
+and stem ends keep theirs. Each section cell interpolates surface, cut and radius along the
+nearer stem segment. A thalweg following 1 m ground noise steps up to 0.9 m per cell, and a
+section taking one cell's level whole left a comb of 1-row teeth on steep reaches' banks.
+
 Breach: each path cell's taper reaches max(half-width + 1, 2·cut / (tan 35° · spacing)) cells,
 at 32 m and 4 m at least 2.5 cells, and cuts steep raw ground like any other. Owner rule
 (2026-11-08): no gorge is refused for walls or `handoff_narrow`; a depression keeps its water
