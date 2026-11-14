@@ -1,8 +1,11 @@
 //! 1 m channels. Each thalweg cell's section (width and depth from its discharge, hydraulic
 //! geometry) is cut below the river's surface: the routing surface R (the ground on dry
 //! thalweg cells, the pond level inside ponds), averaged along the river's stem on dry cells
-//! (STEM_CELLS each way, within STEM_DEV_M of R) and swept between neighbouring stem cells,
-//! so steep reaches get smooth banks. R never rises along a path, so neither does the river. The section is the thalweg's centre cut (down to surface − depth) tapered by
+//! (STEM_CELLS each way, within STEM_DEV_M of R) and swept between neighbouring stem cells
+//! along the stem smoothed over SMOOTH_CELLS (a D8 stem zigzags; sweeping its corners leaves
+//! flat wedges and comb banks). R never rises along a path, so neither does the river. A
+//! thalweg is cut at least to the swept surface − depth. The section is the thalweg's centre
+//! cut (down to surface − depth) tapered by
 //! 1 − (r/R)² across the half-width R, so no cell loses more than its centre (no wall is cut
 //! by its height above a line). A cell within several rivers' half-widths belongs to the
 //! river with the larger discharge (its body's largest), then the nearest cell, then the
@@ -47,6 +50,9 @@ const MARGIN: u64 = BACKWATER + 1;
 const STEM_CELLS: usize = 4;
 /// ... and at most this far (m) from its own routing level.
 const STEM_DEV_M: f32 = CHANNEL_CAP_M / 2.0;
+/// A section sweeps along the stem smoothed over this many cells each way (< STEM_CELLS,
+/// so the window holds every walk).
+const SMOOTH_CELLS: usize = 3;
 
 pub(crate) struct Layers {
     pub carved: Layer<f32>,
@@ -306,6 +312,38 @@ pub(crate) fn channels(
                 let r = routing(t);
                 stem[t] = ((sum / n) as f32).clamp(r - STEM_DEV_M, r + STEM_DEV_M);
             }
+            // A thalweg's smoothed position: the mean of its own and its stem's cells, up to
+            // SMOOTH_CELLS each way, the same number each way (through ponds; ends keep their
+            // own; pond cells stay put). A D8 stem zigzags, so every cell is a bend whose outer wedge would take its
+            // level flat (steps of a whole stem drop at the banks).
+            let at = |t: usize| {
+                let (x, y) = win.world_xy(t);
+                (x as f64, y as f64)
+            };
+            let walk_all = |t: usize, step: &dyn Fn(usize) -> Option<usize>| {
+                let mut cells = Vec::with_capacity(SMOOTH_CELLS);
+                let mut c = t;
+                while cells.len() < SMOOTH_CELLS {
+                    let Some(o) = step(c) else { break };
+                    cells.push(o);
+                    c = o;
+                }
+                cells
+            };
+            let smooth = |t: usize| {
+                // Pond cells keep their position as they keep their level.
+                if level[t].is_finite() {
+                    return at(t);
+                }
+                let (below, above) = (walk_all(t, &down), walk_all(t, &up));
+                let m = below.len().min(above.len());
+                let n = (2 * m + 1) as f64;
+                let s = below[..m]
+                    .iter()
+                    .chain(&above[..m])
+                    .fold(at(t), |s, &o| (s.0 + at(o).0, s.1 + at(o).1));
+                (s.0 / n, s.1 / n)
+            };
             let river = |t: usize| {
                 if stem[t].is_finite() {
                     stem[t]
@@ -321,17 +359,20 @@ pub(crate) fn channels(
                 let floor = (river(t) - geo.depth_m(f64::from(q[t]))).max(rw[t] - CHANNEL_CAP_M);
                 (g[t] - floor).max(0.0)
             };
-            // The section of thalweg `t` at cell (x, y), swept along its stem: surface, centre
-            // cut and radius interpolated on the nearer of the segments to its upstream and
-            // downstream stem cells, and the distance² to that segment.
+            // The section of thalweg `t` at cell (x, y), swept along its smoothed stem: surface,
+            // centre cut and radius interpolated on the nearer of the segments to its upstream
+            // and downstream stem cells' smoothed positions, and the distance² to that segment.
             let section = |t: usize, x: u64, y: u64| {
-                let (tx, ty) = win.world_xy(t);
-                let p = (x as f64 - tx as f64, y as f64 - ty as f64);
+                let c = smooth(t);
+                let p = (x as f64 - c.0, y as f64 - c.1);
                 let mut best = (river(t), centre(t), radius(t), p.0 * p.0 + p.1 * p.1);
                 // Ties (inside bends) go to the downstream segment.
                 for o in [down(t), up(t)].into_iter().flatten() {
-                    let (ox, oy) = win.world_xy(o);
-                    let b = (ox as f64 - tx as f64, oy as f64 - ty as f64);
+                    let co = smooth(o);
+                    let b = (co.0 - c.0, co.1 - c.1);
+                    if b.0 == 0.0 && b.1 == 0.0 {
+                        continue;
+                    }
                     let (f, d2) = project(p, b);
                     if d2 < best.3 {
                         let lerp = |a: f64, c: f64| a + (c - a) * f;
@@ -432,7 +473,13 @@ pub(crate) fn channels(
                     } else {
                         0.0
                     };
-                    let cut = (g[j] - mid * taper).max(rw[j] - CHANNEL_CAP_M).min(g[j]);
+                    let mut cut = (g[j] - mid * taper).max(rw[j] - CHANNEL_CAP_M).min(g[j]);
+                    // A thalweg off its smoothed stem: down to the swept surface − depth, at
+                    // least (its own full centre cut would leave a groove under the surface).
+                    if t == j && s.params.channels {
+                        let floor = (rs - geo.depth_m(f64::from(q[t]))).max(rw[j] - CHANNEL_CAP_M);
+                        cut = cut.min(floor.min(g[j]));
+                    }
                     if cut < rs || t == j {
                         lowered[a] = cut < g[j];
                         carved[a] = cut;

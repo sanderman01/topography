@@ -1203,6 +1203,54 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
 mod tests {
     use super::*;
 
+    /// Real-data probe: reruns the channels of a finished `world water` run (its cached
+    /// models) into `scratch/banks/channels`, before settle. TOPO_PROBE_WORLD names the world.
+    #[test]
+    #[ignore]
+    fn probe_channels_before_settle() {
+        let world = std::env::var("TOPO_PROBE_WORLD").expect("TOPO_PROBE_WORLD");
+        let h = PathBuf::from(format!("../../{world}/hydrology"));
+        let (s, raw, _) = setup(&h.join("grid"), 2048, 4, None, None).expect("setup");
+        // The run's own stamp: this test binary's code hash differs from the pinned one.
+        let stamp: Value =
+            serde_json::from_slice(&fs::read(h.join("work/stamp.json")).expect("stamp"))
+                .expect("stamp json");
+        let work = store::Work::open(&h.join("work"), &stamp).expect("work");
+        let wk = Some(&work);
+        let geo = hydraulic::Geometry::new(s.table.m3s_per_km2);
+        let p = &s.params;
+        let m1_tag = Tags::m1(p, s.contract);
+        let b_tag = Tags::b(&m1_tag, p, geo.m3s_per_km2);
+        let m1 = pipeline::model(&s, &raw, wk, &m1_tag, None).expect("m1");
+        let breached = layers::Layer::open(s.world, &work.path("breached.f32")).expect("b");
+        breach::breach(&s, &m1, &raw, &breached, &geo, wk, &b_tag).expect("breach");
+        drop(m1);
+        let (pre_tag, pre) = match p.erosion {
+            Some(e) => {
+                let e_tag = Tags::e(&b_tag, &e, p.wall_deg);
+                let (path, _, _) = erosion::erode(&s, &breached, &work, &e_tag, &e).expect("e");
+                (e_tag, layers::Layer::open(s.world, &path).expect("pre"))
+            }
+            None => (b_tag.clone(), breached.clone()),
+        };
+        let m2_tag = Tags::m2(&pre_tag);
+        let rasters = pipeline::Rasters::files(s.world, &work.path(""), "m2").expect("r");
+        let m2 = pipeline::model(&s, &pre, wk, &m2_tag, Some(&rasters)).expect("m2");
+        let body = layers::Layer::open(s.world, &work.path("body.u32")).expect("body");
+        let pools = bodies::pools(&s, &m2, &geo);
+        let c_tag = Tags::c(&Tags::l(&m2_tag, &pools), geo.m3s_per_km2);
+        let dir = PathBuf::from(
+            std::env::var("TOPO_PROBE_OUT").unwrap_or("../../scratch/banks/channels".into()),
+        );
+        fs::create_dir_all(&dir).expect("dir");
+        let out = channel::Layers::files(s.world, &dir).expect("out");
+        let fig = channel::channels(
+            &s, &m2.water, &raw, &pre, &rasters, &body, &out, &geo, None, &c_tag,
+        )
+        .expect("channels");
+        eprintln!("{fig}");
+    }
+
     #[test]
     fn rain_writes_the_moisture_field_once() {
         let dir = tempfile::tempdir().expect("temp");
