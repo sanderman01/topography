@@ -1,0 +1,19 @@
+docs/export-data-flaws.md
+  s_c65cb7123ac781::t_fdc1940cb03b62 254-345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70227db490cdecc937b29c9af310a2ccb8e08e8e",
+  "prompts": {},
+  "sessions": {
+    "s_c65cb7123ac781": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e4d268c-cf2e-46f0-8639-1cb66e7b7c2c",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
