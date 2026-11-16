@@ -25,8 +25,9 @@ impl Default for NormalOptions {
         Self {
             enabled: true,
             start_level: 2,
-            apron: 0,
-            roughness: true,
+            // Two texels keep tiles whole 4×4 BC blocks and let filtering cross tile borders.
+            apron: 2,
+            roughness: false,
         }
     }
 }
@@ -660,7 +661,7 @@ mod tests {
     fn tilted_world_exports_its_normal_at_every_level() {
         let options = NormalOptions {
             start_level: 1,
-            apron: 2,
+            roughness: true,
             ..NormalOptions::default()
         };
         let (_dir, out, m) = export(128, options, |x, y| 0.5 * x as f32 - 0.25 * y as f32);
@@ -704,7 +705,7 @@ mod tests {
     fn aprons_repeat_the_neighbours_texels() {
         let options = NormalOptions {
             start_level: 0,
-            apron: 2,
+            roughness: true,
             ..NormalOptions::default()
         };
         let z = |x: usize, y: usize| 3.0 * (x as f32 / 5.0).sin() + 2.0 * (y as f32 / 7.0).cos();
@@ -735,7 +736,12 @@ mod tests {
 
     #[test]
     fn coarse_texels_of_a_ridged_world_are_rough() {
-        let (_dir, out, _) = export(64, NormalOptions::default(), |x, _| (x % 2) as f32);
+        let options = NormalOptions {
+            roughness: true,
+            ..NormalOptions::default()
+        };
+        let (_dir, out, m) = export(64, options, |x, _| (x % 2) as f32);
+        assert_eq!(m["layers"]["normal"]["apron_texels"], 2);
         let p = out.join(super::super::tile_file("roughness", 2, 0, 0, "ktx2"));
         let (_, _, rough) = read_tile(&p);
         assert!(rough[0].iter().all(|&v| v > 0.5), "{:?}", &rough[0][..4]);
