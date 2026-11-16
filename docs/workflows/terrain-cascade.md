@@ -457,12 +457,17 @@ $P -m topography_training.diffusion.game_layers --world data/worlds/fujion-v3-ch
 ```
 
 `game_layers` writes `game/` at 2 m (at the world's spacing when coarser): vegetation, snow
-and talus densities (0 to 1) and dithered biome and land cover, and records them in the
-world manifest's `game` entry; rerunning replaces them. `--layout` defaults to the layout
+and talus densities (0 to 1), `temperature` (°C = code / 4 − 30), `moisture` (0 to 1) and
+biome and land cover as top-2 blends (`<class>-a`, `<class>-b`, `<class>-weight`: the two
+largest shares and a's share of the two × 255), and records them with their encodings in the
+world manifest's `game` entry; rerunning replaces them and removes the dithered v1
+`biome.u8`/`land-cover.u8`. It needs `hydrology/1m/discharge.f32` and reads `glacier.u8`
+(1 m mask) when the world has one. `--layout` defaults to the layout
 the world records. The world's place on the layout comes from its `world-input/world.json`
 origin, so off-centre squares (`--centre`, `--l3-centre`) get their own cover. It refuses
 worlds without a `moisture` entry or that leave the layout. `--rows` (default 256)
-bounds memory, about 3.7 GB at 64 km (extrapolated); `--png out.png` also writes area-mean
+bounds memory, about 5 GB at 64 km (extrapolated from 4 and 8 km crops: 1.8 and 2.0 GB,
+26 s and 101 s; so roughly 1.8 h for the whole map); `--png out.png` also writes area-mean
 previews (snow, vegetation, talus as RGB, and `out-landcover.png`). On the 8 km chain test
 and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
 
@@ -479,18 +484,34 @@ and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
   to `MOIST_WET` 0.45), a tree-line fade, a steep-slope fade, (1 − snow) and (1 − wet). The
   cover's `patchy` noise is not folded in.
 - `biome` is the layout's terrain class as the cover reads it (warped by about 150 m), each
-  class's share smoothed over about 64 m and dithered with blue noise. It does not come
-  from the model's `classes.u8`.
-- `land-cover` holds ESA WorldCover codes, a recorded judgment call, not observed cover.
-  Each rule is a ramp: trees (10) take the top of a shared blue-noise value by
-  `vegetation-density` and snow/ice (70) the bottom by `snow-cover`, so the two never
-  overlap and keep their exact shares; bare rock (60) ramps in around 35°; above the tree
+  class's share smoothed over about 64 m; a texel keeps the two largest shares. It does not
+  come from the model's `classes.u8`.
+- `land-cover` holds ESA WorldCover codes plus extension code 21 `riparian`, a recorded
+  judgment call, not observed cover. Each rule claims an interval of one uniform value and
+  a class's share is its interval's length, mixed over the texel's two biomes: snow/ice (70)
+  takes `snow-cover` and trees (10) the forest part of `vegetation-density`, exactly;
+  riparian the band below the trees; bare rock (60) ramps in around 35°; above the tree
   line grassland (30) gives way to bare ground over 400 m (open cover turns alpine over
-  ± 100 m around the tree line, `TREELINE_EDGE_M`, dithered like the other ramps); dunes, badlands, glacier ground,
+  ± 100 m around the tree line, `TREELINE_EDGE_M`); dunes, badlands, glacier ground,
   volcanoes and lava are bare from gentle slopes up; other open land takes its class's
-  typical cover. Water (80) is a hard rule at a wet share of at least 0.25 (`WATER_WET`),
-  not dithered, so 1 m rivers stay whole at 2 m; `snow-cover` is 0 on those texels. The blue-noise tile is 256 texels (512 m
-  at 2 m); no lattice shows in the 8 km test pictures.
+  typical cover. Water (80) is the whole texel at a wet share of at least 0.25
+  (`WATER_WET`), so 1 m rivers stay whole at 2 m; `snow-cover` is 0 there.
+- `talus-density` comes from a source and a sink: rock steeper than 35–45° sheds debris that
+  settles 3–20 m below the nearby rock height (40 m gaussian), on slopes under the angle of
+  repose (33–40°), most in hollows and gullies (discharge 0.001–0.03 km²), none in channels
+  (0.5–2 km²) or on crests.
+- A riparian band 10 to 40 m wide (by river discharge from 2 km², or lake area) lines lakes
+  (not ice, glacier, dry or sea) and rivers, fading out 2 to 6 m above the nearest water
+  surface and on banks steeper than 20–35°. It sets `vegetation-density` to at least 0.25
+  and land cover 21 where the forest is thinner, which matters in the dry biomes.
+- `temperature` is the region's sea-level `temperature_c` (layout region key, default 12 °C;
+  read from the collage's source layout when the snapshot lacks it), blended over 1.5 km
+  across region borders, minus 6.5 °C per km of height, plus up to 1 °C at the coast fading
+  over 5 km. `moisture` is the 128 m hydrology field times a local wetness of 0.7 to 1.3
+  from ln(catchment / tan slope), ± 0.1 by aspect, at least 0.6 in the riparian band and 1
+  on water.
+- Frozen lakes (kind `ice`), glacier bodies (kind `glacier`) and the world's `glacier.u8`
+  are snow/ice cover and never land-cover water.
 - Known tuning point: hydrology moisture sits low (Fujion median 0.11 to 0.14,
   `fujix-55-chain` 0.20 over the whole map, about 40% of it below 0.15), so forest below the
   tree line may be thin. Lower `MOIST_DRY` if the owner wants more trees.
