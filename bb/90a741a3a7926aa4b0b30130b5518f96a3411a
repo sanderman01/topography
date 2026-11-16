@@ -1,0 +1,33 @@
+configs/layouts/fujix/layout.toml
+  s_dd823cc4be7cf6::t_204efa071517bb 203
+  s_dd823cc4be7cf6::t_7ea8d909aaf6ce 138
+  s_dd823cc4be7cf6::t_675a9fcf01d780 250
+  s_dd823cc4be7cf6::t_1620d349fc39aa 183
+  s_dd823cc4be7cf6::t_088f2a53e3da7d 28
+  s_dd823cc4be7cf6::t_902bc0ce620f83 368
+  s_dd823cc4be7cf6::t_13037b0802bb71 299
+  s_dd823cc4be7cf6::t_b413163a30abe3 342
+  s_dd823cc4be7cf6::t_2856ffe6c94d65 48
+  s_dd823cc4be7cf6::t_585fb26c1f23ff 167
+  s_dd823cc4be7cf6::t_9f329a6e7ba2a5 101
+  s_dd823cc4be7cf6::t_bdeb6ea2ed3a68 76
+  s_dd823cc4be7cf6::t_87bfa1c4b418f5 231
+  s_dd823cc4be7cf6::t_91a9438335b50a 271
+  s_dd823cc4be7cf6::t_38e771fed8afbf 320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb90a741a3a7926aa4b0b30130b5518f96a3411a",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
