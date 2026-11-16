@@ -898,7 +898,8 @@ pub(crate) fn check_tile(
         // Glaciers hold no water, lie on their bed, and leave other ground as it was.
         if l.glacier.is_some() {
             if gmask[j] != 0 {
-                if node[j] >= 2 {
+                // Depth over SILL_M: f32 rounding leaves zero-depth flats.
+                if node[j] >= 2 && level[j] - z[j] > SILL_M {
                     t.fail("glacier_pits", x, y);
                 }
                 if body[j] != 0 || surf[j].is_finite() {

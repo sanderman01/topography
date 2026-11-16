@@ -1117,7 +1117,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         )?;
         if built.iter().any(|b| b.skipped.is_none()) {
             let iced = layers::Layer::open(s.world, &dir.join("ground.f32"))?;
-            final_tag = Tags::m3(&m1_tag, &gtag, &pre_sha);
+            // Keyed on the iced ground's content, like any other final ground.
+            final_tag = Tags::m3(&m1_tag, &sha256(&dir.join("ground.f32"))?, &pre_sha);
             let m3 = pipeline::model_on(
                 &s,
                 &iced,

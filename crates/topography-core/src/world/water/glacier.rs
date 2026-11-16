@@ -15,17 +15,24 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::path::Path;
 
 /// Bump on any change to the construction: it keys the cached glacier ground.
-pub(crate) const VERSION: &str = "glacier v1";
-/// Basal yield stress of plastic ice (kPa), ice density, gravity.
+pub(crate) const VERSION: &str = "glacier v2";
+/// Basal yield stress of plastic ice (kPa; 50 over 90 by hillshade: a steadier slope with
+/// crevasses across the ice, where 90 flattens the interior), ice density, gravity.
 const YIELD_KPA: f64 = 50.0;
 const ICE_DENSITY: f64 = 900.0;
 const GRAVITY: f64 = 9.81;
 /// The terminus lies this far down the outlet path from the exit.
 const TONGUE_M: f64 = 40.0;
-/// Ceiling above the terminus: this times √(lake area), clamped.
-const RISE_PER_M: f64 = 0.05;
+/// Ice may rise this far above the Nye profile from its source (plastic ice creeping up
+/// walls stops there), and is at least this thick.
+const ENVELOPE_M: f64 = 10.0;
+/// The surface flattens (tanh) toward this rise above the spill: this times √(lake area),
+/// clamped, and at least 1.5 times the joined lakes' rise above it plus ENVELOPE_M (so
+/// their ice still slopes).
+const RISE_PER_M: f64 = 0.1;
 const RISE_MIN_M: f64 = 10.0;
-const RISE_MAX_M: f64 = 40.0;
+const RISE_MAX_M: f64 = 80.0;
+const ICE_MIN_M: f64 = 1.0;
 /// Crevasse spacing along flow, the largest crevasse relief, the thickness over which it
 /// fades in, and the share of `slope · spacing` it may reach (keeps the surface descending
 /// along flow; the profile's back slope is 1.25 / spacing).
@@ -43,7 +50,8 @@ pub(crate) const FILLED_MAX_SHARE: f64 = 0.01;
 /// The judgment values, for the cache tag and the report.
 pub(crate) fn params() -> Value {
     json!({"version": VERSION, "yield_kpa": YIELD_KPA, "tongue_m": TONGUE_M,
-           "rise": [RISE_PER_M, RISE_MIN_M, RISE_MAX_M], "crevasse_m": CREVASSE_M,
+           "envelope_m": ENVELOPE_M, "ice_min_m": ICE_MIN_M, "crevasse_m": CREVASSE_M,
+           "rise": [RISE_PER_M, RISE_MIN_M, RISE_MAX_M],
            "rough_max_m": ROUGH_MAX_M, "rough_fade_m": ROUGH_FADE_M,
            "rough_slope_share": ROUGH_SLOPE_SHARE, "patch_m": PATCH_M, "window_m": WINDOW_M})
 }
@@ -134,6 +142,9 @@ pub(crate) struct Outputs {
     pub body: Layer<u32>,
     pub surface: Layer<f32>,
     pub mask: Layer<u8>,
+    /// Cells a built glacier owns (its catchment and the ring around it): later glaciers
+    /// leave them as they are, so each glacier's drainage stays valid.
+    pub claimed: Layer<u8>,
 }
 
 /// A built (or skipped) glacier: its lakes (the lowest first) and figures.
@@ -178,6 +189,7 @@ struct Win {
     surf: Vec<f32>,
     flow: Vec<u8>,
     mask: Vec<u8>,
+    claimed: Vec<u8>,
 }
 
 impl Win {
@@ -190,6 +202,7 @@ impl Win {
             surf: out.surface.read(r)?,
             flow: inp.flow.read(r)?.into_iter().map(|f| f & 15).collect(),
             mask: out.mask.read(r)?,
+            claimed: out.claimed.read(r)?,
         })
     }
     fn local(&self, world: World, i: u64) -> Option<usize> {
@@ -212,6 +225,28 @@ impl Win {
     fn world_edge(&self, j: usize) -> bool {
         let (x, y) = self.r.world_xy(j);
         self.world.is_edge(x, y)
+    }
+    /// Neighbours of `j` in a 16-cell stencil (8 plus knight moves), for path lengths with
+    /// less grid bias: (local index, step in cells).
+    fn around16(&self, j: usize) -> impl Iterator<Item = (usize, f64)> + '_ {
+        const KNIGHT: [(i64, i64); 8] = [
+            (-2, -1),
+            (-2, 1),
+            (2, -1),
+            (2, 1),
+            (-1, -2),
+            (-1, 2),
+            (1, -2),
+            (1, 2),
+        ];
+        let (w, h) = (self.r.w as i64, self.r.h as i64);
+        let (x, y) = ((j % self.r.w) as i64, (j / self.r.w) as i64);
+        self.around(j)
+            .chain(KNIGHT.iter().filter_map(move |&(dy, dx)| {
+                let (nx, ny) = (x + dx, y + dy);
+                (nx >= 0 && ny >= 0 && nx < w && ny < h)
+                    .then(|| ((ny * w + nx) as usize, 5f64.sqrt()))
+            }))
     }
     fn on_ring(&self, j: usize) -> bool {
         let (x, y) = (j % self.r.w, j / self.r.w);
@@ -398,8 +433,9 @@ pub(crate) fn build(inp: &Inputs, cands: &[Candidate], out: &Outputs) -> Result<
     Ok(built)
 }
 
-/// A surface label: (S, cell, source height, path length, allowed root, parent).
-type Label = (Key, usize, Key, Key, bool, u32);
+/// A surface label: (S, cell, source height, path length, allowed root, parent, raw
+/// plastic height before flattening).
+type Label = (Key, usize, Key, Key, bool, u32, Key);
 
 enum Grown {
     Join(Vec<Candidate>),
@@ -447,7 +483,7 @@ fn one(
     };
     let foreign = |j: usize| {
         let b = win.body[j];
-        (b != 0 && !member(b) && !inp.rivers.contains(&b)) || win.mask[j] != 0
+        (b != 0 && !member(b) && !inp.rivers.contains(&b)) || win.claimed[j] != 0
     };
     let mut path = vec![start[0]];
     let mut length = 0.0;
@@ -507,9 +543,35 @@ fn one(
         return Ok(Grown::Join(joins));
     }
     let lake_cells: u64 = group.iter().map(|c| c.cells).sum();
-    let rise = (RISE_PER_M * (lake_cells as f64 * sp * sp).sqrt()).clamp(RISE_MIN_M, RISE_MAX_M);
+    let k_m = 2.0 * YIELD_KPA * 1e3 / (ICE_DENSITY * GRAVITY);
     let zt = win.top(terminus);
-    let ceiling = zt + rise;
+    // The surface flattens toward `ceiling`, `rise` above the seed's spill (its exit, or a
+    // closed lake's col), high enough to cover every joined lake.
+    let base = zt.max(win.top(start[0]));
+    let span = group
+        .iter()
+        .map(|c| f64::from(c.level) - base)
+        .fold(0.0, f64::max);
+    let rise = (RISE_PER_M * (lake_cells as f64 * sp * sp).sqrt())
+        .clamp(RISE_MIN_M, RISE_MAX_M)
+        .max(1.5 * (span + ENVELOPE_M));
+    let ceiling = base + rise;
+    // A label's surface from its raw plastic height: flattening above max(base, source).
+    let flatten = |zs: f64, v: f64| {
+        let b = base.max(zs);
+        let room = (ceiling - b).max(ICE_MIN_M);
+        if v <= b {
+            v
+        } else {
+            b + room * ((v - b) / room).tanh()
+        }
+    };
+    // The pit fill reaches the joined lakes' levels too: an upper lake of a chain above the
+    // ceiling fills flat to its spill rather than staying a pit.
+    let fill_cap = group
+        .iter()
+        .map(|c| f64::from(c.level))
+        .fold(ceiling, f64::max);
     // Pits draining into the catchment between the terminus and the ceiling join it (they
     // fill with ice).
     for _ in 0..8 {
@@ -572,12 +634,14 @@ fn one(
         }
         v
     };
-    // The plastic surface: label-setting from the sources (T and the cells around the
-    // catchment below the ceiling); each carries its height and path length.
-    let k_m = 2.0 * YIELD_KPA * 1e3 / (ICE_DENSITY * GRAVITY);
-    let law = |zs: f64, d: f64| {
-        let room = ceiling - zs;
-        zs + room * ((k_m * d).sqrt() / room).tanh()
+    // The plastic surface (perfectly plastic ice: slope × thickness = τ/ρg), label-setting
+    // from the sources (T and the cells around the catchment), each step solving
+    // (S − S_parent)(S − z) = (τ/ρg)·step. Over a flat bed this is Nye's √(2τ/ρg · d); up a
+    // wall the ice thins to (τ/ρg)/slope. A label carries its source height and path length:
+    // the ice stays under the Nye envelope from its source plus ENVELOPE_M.
+    let a_m = k_m / 2.0;
+    let step_up = |sp_: f64, z: f64, l: f64| {
+        0.5 * ((sp_ + z) + ((sp_ - z) * (sp_ - z) + 4.0 * a_m * l).sqrt())
     };
     let mut best = vec![f64::INFINITY; n];
     let mut s_at = vec![f64::NAN; n];
@@ -590,39 +654,42 @@ fn one(
         let src = j == terminus || (!omega[j] && win.around(j).any(|(k, _)| omega[k]));
         if src && win.top(j) < ceiling {
             let a = j == terminus || reaches_below(j);
-            heap.push(Reverse((
-                Key(win.top(j)),
-                j,
-                Key(win.top(j)),
-                Key(0.0),
-                a,
-                u32::MAX,
-            )));
+            let h = win.top(j);
+            heap.push(Reverse((Key(h), j, Key(h), Key(0.0), a, u32::MAX, Key(h))));
         }
     }
-    while let Some(Reverse((Key(s), j, Key(zs), Key(d), a, p))) = heap.pop() {
+    while let Some(Reverse((Key(s), j, Key(zs), Key(d), a, p, Key(raw)))) = heap.pop() {
         if fixed[j] {
             continue;
         }
         fixed[j] = true;
         let is_source = !omega[j];
         if !is_source {
-            if s <= win.z[j] {
-                continue; // rock above the ice
-            }
             ice[j] = true;
         }
         s_at[j] = s;
         parent[j] = p;
         allowed[j] = a;
-        for (k, step) in win.around(j) {
-            if omega[k] && !fixed[k] {
-                let dd = d + step * sp;
-                let sk = law(zs, dd);
-                if sk < best[k] {
-                    best[k] = sk;
-                    heap.push(Reverse((Key(sk), k, Key(zs), Key(dd), a, j as u32)));
-                }
+        for (k, step) in win.around16(j) {
+            // Ice flows down to a source, never up from it.
+            if !omega[k] || fixed[k] || (is_source && win.z[k] < s) {
+                continue;
+            }
+            let dd = d + step * sp;
+            let rk = step_up(raw, win.z[k], step * sp);
+            let sk = flatten(zs, rk);
+            let ok = sk - win.z[k] >= ICE_MIN_M && rk <= zs + (k_m * dd).sqrt() + ENVELOPE_M;
+            if ok && sk < best[k] {
+                best[k] = sk;
+                heap.push(Reverse((
+                    Key(sk),
+                    k,
+                    Key(zs),
+                    Key(dd),
+                    a,
+                    j as u32,
+                    Key(rk),
+                )));
             }
         }
     }
@@ -639,7 +706,7 @@ fn one(
         if d > dist[j] {
             continue;
         }
-        for (k, step) in win.around(j) {
+        for (k, step) in win.around16(j) {
             let dk = d + step * sp;
             if ice[k] && dk < dist[k] {
                 dist[k] = dk;
@@ -661,21 +728,19 @@ fn one(
             1.0
         } else {
             let (px, py) = win.r.world_xy(p);
-            if px != jx && py != jy {
-                std::f64::consts::SQRT_2
-            } else {
-                1.0
-            }
+            (px as f64 - jx as f64).hypot(py as f64 - jy as f64)
         } * sp;
         let slope = ((s - ps) / step).max(0.0);
         let (xm, ym) = (jx as f64 * sp, jy as f64 * sp);
         let thick = s - win.z[j];
         let t = (thick / ROUGH_FADE_M).clamp(0.0, 1.0);
         let fade = t * t * (3.0 - 2.0 * t);
-        let patch = 0.5 + 0.5 * noise(xm, ym, PATCH_M, seed_noise);
+        // Crevasse fields in patches, not everywhere.
+        let u = ((noise(xm, ym, PATCH_M, seed_noise) - 0.4) / 0.3).clamp(0.0, 1.0);
+        let patch = u * u * (3.0 - 2.0 * u);
         let a = (ROUGH_SLOPE_SHARE * slope * CREVASSE_M).min(ROUGH_MAX_M) * fade * patch;
         let rough = if dist[j].is_finite() {
-            let phase = 0.5 * noise(xm, ym, PATCH_M, seed_noise ^ 0xA5A5);
+            let phase = noise(xm, ym, PATCH_M / 2.0, seed_noise ^ 0xA5A5);
             a * profile(dist[j] / CREVASSE_M + phase)
         } else {
             0.0
@@ -703,15 +768,21 @@ fn one(
             if omega[k] && !seen[k] {
                 seen[k] = true;
                 if elev[k] < h {
-                    elev[k] = h;
-                    if before[k] {
-                        filled_ice += 1;
-                    } else {
-                        filled_other += 1;
-                        ice[k] = true;
+                    // A pit off the ice whose spill lies above the fill cap keeps no ice: it
+                    // stays as it was (a whole depression shares its spill).
+                    if before[k] || h <= fill_cap + 1e-3 {
+                        elev[k] = h;
+                        if before[k] {
+                            filled_ice += 1;
+                        } else {
+                            filled_other += 1;
+                            ice[k] = true;
+                        }
                     }
+                    h3.push(Reverse((Key(h), k)));
+                } else {
+                    h3.push(Reverse((Key(elev[k]), k)));
                 }
-                h3.push(Reverse((Key(elev[k]), k)));
             }
         }
     }
@@ -789,6 +860,16 @@ fn one(
     out.body.write(r, &body)?;
     out.surface.write(r, &surf)?;
     out.mask.write(r, &mask)?;
+    let mut claimed = win.claimed.clone();
+    for j in 0..n {
+        if omega[j] {
+            claimed[j] = 1;
+            for (k, _) in win.around(j) {
+                claimed[k] = 1;
+            }
+        }
+    }
+    out.claimed.write(r, &claimed)?;
     let km2 = sp * sp / 1e6;
     let round = |v: f64, k: f64| (v * k).round() / k;
     let tw = win.r.world_xy(terminus);
@@ -970,11 +1051,13 @@ pub(crate) fn cached(
         }
         let w = inp.world;
         zeros(&tmp.join("mask.u8"), w.w * w.h)?;
+        zeros(&tmp.join("claimed.u8"), w.w * w.h)?;
         let out = Outputs {
             ground: Layer::open(w, &tmp.join("ground.f32"))?,
             body: Layer::open(w, &tmp.join("body.u32"))?,
             surface: Layer::open(w, &tmp.join("surface.f32"))?,
             mask: Layer::open(w, &tmp.join("mask.u8"))?,
+            claimed: Layer::open(w, &tmp.join("claimed.u8"))?,
         };
         let built = build(inp, cands, &out)?;
         let v: Vec<Value> = built.iter().map(Built::to_json).collect();
@@ -1168,6 +1251,7 @@ mod tests {
                 body: Layer::memory(w, self.body.clone()),
                 surface: Layer::memory(w, self.surf.clone()),
                 mask: Layer::memory(w, vec![0; (w.w * w.h) as usize]),
+                claimed: Layer::memory(w, vec![0; (w.w * w.h) as usize]),
             };
             (build(&inp, cands, &out).expect("build"), out)
         }

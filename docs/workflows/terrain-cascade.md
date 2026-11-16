@@ -1090,9 +1090,10 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   checks run on the liquid model; `report.json` figures `ice` count the bodies and km².
 - With `--layout`, an ice lake at or above the layout snowline (at its centroid) becomes a
   glacier (`world/water/glacier.rs`, PLAN-export-v10 item 16). From a terminus 40 m down
-  its outlet (a closed lake: past its spill col), a plastic ice surface (Nye,
-  √(2τ/ρg · d)) rises toward a ceiling over the cells that drain to the lake; lakes that
-  drain into each other form one glacier. Crevasses are capped by the local slope; a pit
+  its outlet (a closed lake: past its spill col), perfectly plastic ice (slope × thickness =
+  τ/ρg, 50 kPa: Nye's profile over a flat bed, a thin apron on walls) rises over the cells
+  that drain to the lake and flattens toward a rise set by the lake's size; lakes that drain
+  into each other form one glacier. Crevasse fields are capped by the local slope; a pit
   fill guarantees the ice holds no water. `elevation.f32` is the ice surface, the lakes and
   covered river ends lose their water, `glacier.u8` (255) marks the ice, and `bodies.json`
   lists the lakes as kind `glacier` (no `level_m`; `lake_level_m`, figures on the lowest).
