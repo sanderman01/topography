@@ -25,7 +25,6 @@ bands = [
 id = "volcano"
 name = "Fujix volcano"
 class_id = 11
-temperature_c = 11  # sea-level mean annual °C, game layers only (lapsed with height)
 terrain = "Stratovolcano with an ice-filled summit caldera, glaciers and flank cones"
 outline = [[41500, 33500], [40160, 38500], [36500, 42160], [31500, 43500], [26500, 42160], [22840, 38500],
   [21500, 33500], [22840, 28500], [28000, 26600], [31500, 23500], [36500, 24840], [40160, 28500]]
@@ -45,7 +44,6 @@ remap = [1800, 5895, 300, 5000]
 id = "ne-rift"
 name = "North-east rift"
 class_id = 17
-temperature_c = 16
 terrain = "Cinder cones and lava fields running from the volcano into the desert"
 outline = [[38500, 25500], [44000, 21000], [52000, 14500], [55500, 17500], [48000, 25500], [42000, 30000]]
 border_m = 2000
@@ -73,7 +71,6 @@ remap = [400, 1500, 250, 1350]
 id = "canyon-plateau"
 name = "Grand Canyon plateau"
 class_id = 19  # Grand Canyon; L1 and L2 run it as 13
-temperature_c = 20
 terrain = "Plateau cut by a Grand Canyon section; the river runs north-east from the volcano to the sea"
 # A diagonal from the volcano's north-west flank to the north coast, where the canyon opens into the sea.
 outline = [[23400, 23600], [24200, 25600], [26600, 26700], [28000, 26600], [31500, 23500], [36500, 24840], [38500, 25500],
@@ -98,7 +95,6 @@ tilt_m_per_km = [-22.8, 22.8]  # 32 m/km down the canyon, so the river reaches t
 id = "north-coast"
 name = "North coast mesas"
 class_id = 7
-temperature_c = 17
 terrain = "Badlands and mesas stepping down from the plateau to the sea"
 # Between the north-west arm and the canyon plateau's north-west rim, open to the north.
 outline = [[17500, 11500], [20500, 10000], [21500, 7500], [23000, 7000], [27000, 6000], [31500, 6800], [35500, 6400],
@@ -135,7 +131,6 @@ tilt_m_per_km = [0, 30]  # falling north, toward the sea
 id = "nw-arm"
 name = "North-west knife ridges"
 class_id = 6
-temperature_c = 10
 terrain = "Knife ridges inland, sea cliffs on the coast"
 # A peninsula: Na Pali's own cliffs on its west coast, a sound to the north (skerries offshore), Milford's fjord to the south.
 outline = [[7000, 16000], [11500, 15500], [15000, 13500], [17500, 11500], [17000, 16000], [19500, 18000],
@@ -164,7 +159,6 @@ class_id = 12
 id = "nw-skerries"
 name = "North-west skerries"
 class_id = 5
-temperature_c = 9
 terrain = "Skerries and a small archipelago"
 # An offshore archipelago; the sound to the arm is wider than the 4 km gap closing.
 outline = [[6000, 6000], [12500, 6000], [11500, 7500], [9000, 9000], [6000, 9500]]
@@ -180,7 +174,6 @@ offset_m = [-3000, 1500]  # a cluster of rocky islands in open sea
 id = "w-fjords"
 name = "Western fjords"
 class_id = 3
-temperature_c = 9
 terrain = "Fjords between the arms, with steep walls"
 # Milford's own sea makes the fjord mouths; the sound to the south is its own region.
 outline = [[16500, 29500], [20000, 30500], [22000, 37000], [18000, 41000], [17500, 42000], [12500, 40000],
@@ -200,7 +193,6 @@ remap = [0, 2400, 0, 2900]  # walls toward the design's 2,500 m
 id = "sw-arm"
 name = "South-west alpine arm"
 class_id = 6
-temperature_c = 9
 terrain = "Alpine ridges, cirques, glaciers and horn peaks"
 outline = [[11000, 49000], [13000, 46500], [16000, 44500], [17500, 42000], [18000, 41000], [22500, 40500], [26000, 46500],
   [22000, 52500], [19000, 53500], [16500, 55000], [15000, 57500], [12000, 58500], [10000, 54500]]
@@ -228,7 +220,6 @@ remap = [300, 3655, 0, 3000]
 id = "w-sound"
 name = "Western sound"
 class_id = 3
-temperature_c = 10
 terrain = "A branching sound between the fjord peninsula and the alpine arm"
 outline = [[8000, 38500], [12500, 40000], [17500, 42000], [16000, 44500], [13000, 46500], [8500, 48500], [7500, 43500]]
 border_m = 2000
@@ -247,7 +238,6 @@ remap = [0, 1850, 0, 2400]
 id = "sw-sounds"
 name = "South-west sounds"
 class_id = 3
-temperature_c = 11
 terrain = "Sounds and headlands on the alpine arm's outer coast"
 # Vertices stay 7.5 km from the map edge; the piece's own sea makes the coast inside them.
 outline = [[7500, 51000], [8500, 48500], [13000, 46500], [11000, 49000], [10000, 54500], [12000, 58000],
@@ -268,7 +258,6 @@ tilt_m_per_km = [80, 0]  # deepens the sea off the sounds, so the coast is the p
 id = "s-karst"
 name = "Southern drowned karst"
 class_id = 15
-temperature_c = 23
 terrain = "Drowned tower karst in a bay, cone karst inland"
 # The south edge lies past the towers, so they fade into open sea.
 outline = [[25000, 47000], [29000, 44500], [34000, 43500], [38500, 44500], [40500, 48000], [40000, 54000],
@@ -296,7 +285,6 @@ class_id = 14
 id = "se-range"
 name = "South-east limestone range"
 class_id = 6
-temperature_c = 15
 terrain = "Limestone towers and walls"
 # Its east end is a headland between the desert coast and the lowland bay.
 outline = [[40500, 39000], [48000, 35500], [57000, 38000], [59000, 41500], [58000, 44500], [55000, 46500], [52500, 49500],
@@ -317,7 +305,6 @@ tilt_m_per_km = [-50, 0]  # the valleys drown toward the east coast as rias
 id = "se-lowland"
 name = "South-east river lowland"
 class_id = 9
-temperature_c = 15
 terrain = "Braided river from the volcano to a small delta, between rough hills"
 # The shared border lies south of the Dolomites' last cliff, so the cliff stays in the range.
 # A peninsula pointing south, with a bay to the east below the range.
@@ -339,7 +326,6 @@ tilt_m_per_km = [12, -12]  # low toward the karst bay and the south coast
 id = "e-desert"
 name = "Eastern desert basin"
 class_id = 8
-temperature_c = 21
 terrain = "Desert basin with dunes and pans, open to the coast"
 # The basin opens to the sea: the dunes' own flooded corridors make the coast inside the outline.
 outline = [[46000, 25500], [52000, 27000], [58500, 28500], [60000, 31500], [58000, 34000], [59500, 37000],
@@ -365,7 +351,6 @@ tilt_m_per_km = [-60, 0]  # interdune hollows flood, so the dunes make the coast
 id = "ne-dunes"
 name = "North-east dune field"
 class_id = 8
-temperature_c = 24
 terrain = "Star dunes banked against the rift's end, crest dunes toward the coast"
 # Headlands and bays wider than the 4 km gap closing, so the east coast is not one line.
 outline = [[47000, 8500], [47500, 7000], [52000, 6200], [56500, 6500], [59500, 9000], [52500, 12500], [59500, 16500],

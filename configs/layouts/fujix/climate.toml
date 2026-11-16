@@ -1,0 +1,19 @@
+# Fujix climate for game layers only (game_layers.py), kept out of layout.toml so the
+# collage's layout hash stays valid. Sea-level mean annual temperature (°C) by region id;
+# game layers lapse it with height. Regions not listed take the default (12 °C).
+[temperature_c]
+volcano = 11
+ne-rift = 16
+canyon-plateau = 20
+north-coast = 17
+nw-arm = 10
+nw-skerries = 9
+w-fjords = 9
+sw-arm = 9
+w-sound = 10
+sw-sounds = 11
+s-karst = 23
+se-range = 15
+se-lowland = 15
+e-desert = 21
+ne-dunes = 24
