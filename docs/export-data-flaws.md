@@ -343,3 +343,23 @@ way, by up to 0.042 m.
 - **Class levels and distance.** With mode-filtered class levels the game reads L1 classes up to
   L2 tiles; from L3 (about 3 km) the class mix shifts: 5.7 % mean luminance on dunes and cinder,
   25 % of a border band changes by over 10 %. Class fractions per level remove it.
+
+### Found while tuning biomes and land cover (same export, 2026-11-16)
+
+- **`talus-density` is a slope band, not deposition.** Measured at L4 over the whole map: mean
+  density by 10° slope bin is 0.001, 0.004, 0.043, 0.35, 0.205, 0.012, 0.001 (0° to 70°). Within
+  the 25° to 40° band, ridges (top 10 % of height minus the 112 m local mean) carry 0.42, valley
+  floors 0.39 and mid-slopes 0.20; footslopes at 10° to 25° carry 0.003. In the game this puts
+  rubble and boulders along ridge crests and almost none in gullies or at the foot of cliffs.
+  Talus should come from a source and a sink: debris sheds from steep or exposed rock (cliffs,
+  crests) and collects downslope where the grade drops below the angle of repose, in gullies,
+  on fans and on valley floors. Crests and convex ground should be near zero.
+- **No vegetation along water in the dry biomes.** `vegetation-density` is exactly 0 in
+  `badlands`, `star_dunes`, `crest_dunes` and `grand_canyon`, including within 16 m of rivers and
+  lakes (about 86 000 bank texels at L3). Add a narrow riparian band, 10 to 40 m wide, of modest
+  density (0.1 to 0.3) around lakes and perennial rivers there, and a `land-cover` class to
+  match. The game adds its own band from the water fields for now.
+- **No temperature layer, and `moisture` only at L7 and L8 (128 m).** The game picks plant
+  species by biome alone, so southern karst and western fjords differ only by biome palette. A
+  `temperature` layer (latitude, altitude, coast) and `moisture` down to about L4 would let it
+  pick species by climate: tropical in the warm wet south, conifers on cold slopes.
