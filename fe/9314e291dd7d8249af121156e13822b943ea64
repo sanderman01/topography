@@ -1,0 +1,22 @@
+crates/topography-core/src/export/normals.rs
+  s_dd823cc4be7cf6::t_9330a7cf6bfa32 664
+  s_dd823cc4be7cf6::t_7f57f133f76412 28-30
+  s_dd823cc4be7cf6::t_3feb497438ca45 739-744
+  s_dd823cc4be7cf6::t_aa4387eca1ac32 708
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe9314e291dd7d8249af121156e13822b943ea64",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
