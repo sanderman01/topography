@@ -1,0 +1,52 @@
+docs/workflows/terrain-cascade.md
+  s_dd823cc4be7cf6::t_7bf4a5cb41770f 1092-1102
+crates/topography-core/src/world/water/glacier.rs
+  s_dd823cc4be7cf6::t_b2ca2ff4b033b4 350-351,368,653-663,666-672,678,684-687,694-696,698,704,760,774-788,791-792,794-798,812-825,827-831,866,889,923,930-932,936-937,939-940,951,959-960,963-966,979,983,986-989,1008-1009,1016,1019,1036-1037,1040-1041,1043-1046,1051-1054,1059-1065,1279
+  s_dd823cc4be7cf6::t_6969bb0a5d8dc1 39-40,1177-1181
+  s_dd823cc4be7cf6::t_234c10294fd0d6 521
+  s_dd823cc4be7cf6::t_4f71c100e00e9a 441-444,665,801-804,875-876,878-887,897-906,908,941-950,1012-1015,1738-1742,1772-1782
+  s_dd823cc4be7cf6::t_6d6b372cc38715 1760-1763
+  s_dd823cc4be7cf6::t_c8f39750bee406 36-37,72,516-520,522-527,546-547,799-800,805-811
+  s_dd823cc4be7cf6::t_34215408557c8d 34-35,718-745
+  s_dd823cc4be7cf6::t_321da9fb68c0de 1126-1134,1280
+  s_dd823cc4be7cf6::t_7ef297f4ab1829 60,396-411,414-437,985,1039,1042,1055-1058,1070-1073,1075-1076
+  s_dd823cc4be7cf6::t_84a1bcf4bda525 839-859,933-935,938
+  s_dd823cc4be7cf6::t_5cefebcabca9c9 45,48-52,981-982
+  s_dd823cc4be7cf6::t_b580f0eb6893fa 59
+  s_dd823cc4be7cf6::t_3afbb77a03ff8a 747-748,1082-1086,1088,1090,1092-1093,1095-1097,1101-1108,1110-1117,1119-1125,1135-1148,1195
+  s_dd823cc4be7cf6::t_6f0c82c76f54e8 53,1182-1194
+  s_dd823cc4be7cf6::t_ab5d14b4d40843 993-997,999-1000
+  s_dd823cc4be7cf6::t_7e9606e3c2a391 1737,1743-1745
+  s_dd823cc4be7cf6::t_d72d3e9f86f48a 18,29-33,38,41,43,46-47,74,438-440,445-466,1222
+  s_dd823cc4be7cf6::t_09f70c3c8b3dc8 673,1066-1069,1077
+  s_dd823cc4be7cf6::t_dbb5d1bd81c320 42,44,73,990-992,998,1020-1035
+  s_dd823cc4be7cf6::t_6a3b4130e9a1bb 789-790
+  s_dd823cc4be7cf6::t_2068bea2c9a6cb 832-838
+  s_dd823cc4be7cf6::t_cd68aaa14835b0 1078-1080,1087,1089,1094,1109,1118
+  s_dd823cc4be7cf6::t_a7b6be66f79a94 1770-1771
+  s_dd823cc4be7cf6::t_ab821da8dffd91 674-676,699,793,924-928
+  s_dd823cc4be7cf6::t_d88bc3b38d471f 1270-1272
+  s_dd823cc4be7cf6::t_7affb728c5df04 540-542,868-874,877,888,890-895,909-919,921-922,929
+  s_dd823cc4be7cf6::t_eeced9c15faa57 746,896,1204,1223-1232,1282
+  s_dd823cc4be7cf6::t_b30a5bee0ab25b 412-413
+crates/topography-core/src/world/water/mod.rs
+  s_dd823cc4be7cf6::t_f855f820f707cc 1292-1295
+crates/topography-core/src/world/water/checks.rs
+  s_dd823cc4be7cf6::t_f855f820f707cc 1602-1603,1783,2299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b4ef4bb34e57b1c50f8ede2ae224d093e82abf5",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
