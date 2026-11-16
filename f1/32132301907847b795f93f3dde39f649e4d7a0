@@ -1,0 +1,38 @@
+docs/workflows/terrain-cascade.md
+  s_dd823cc4be7cf6::t_ec6d25494e0b98 511
+  s_dd823cc4be7cf6::t_5dcc9028f39382 503-506
+  s_dd823cc4be7cf6::t_ab9d9d455cc95a 1177-1197
+  s_dd823cc4be7cf6::t_cb6cec20cbd7e5 1204-1222
+  s_dd823cc4be7cf6::t_ae0b30ca265124 1225-1229
+training/src/topography_training/diffusion/game_layers.py
+  s_dd823cc4be7cf6::t_2720f6e6a9a12f 460-462,464,466,468-470,476
+  s_dd823cc4be7cf6::t_db268086ea913b 483,486-493,496,502-503
+  s_dd823cc4be7cf6::t_7cf52d8f82b353 506-508
+  s_dd823cc4be7cf6::t_6035612a2e8c8f 58,60
+  s_dd823cc4be7cf6::t_588d378d50ebb1 539-540
+  s_dd823cc4be7cf6::t_0f44a5a5c58c40 65
+  s_dd823cc4be7cf6::t_08f082b7df89c1 217-223
+  s_dd823cc4be7cf6::t_873a2136c61006 172-173,179,182-183
+  s_dd823cc4be7cf6::t_a5a46974a9492f 85
+  s_dd823cc4be7cf6::t_45c2ddc9dd5741 274
+  s_dd823cc4be7cf6::t_30079a1bbe77f7 284-286
+  s_dd823cc4be7cf6::t_31670d299084d5 350,352-357
+  s_dd823cc4be7cf6::t_192afffd470097 377
+  s_dd823cc4be7cf6::t_ef0214bfbc41d2 419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f132132301907847b795f93f3dde39f649e4d7a0",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
