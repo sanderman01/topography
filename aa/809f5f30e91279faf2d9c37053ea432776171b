@@ -1,0 +1,38 @@
+README.md
+  s_dd823cc4be7cf6::t_1b1044076b9c09 38-42
+schemas/world-description-v1.md
+  s_dd823cc4be7cf6::t_a55ba1e040887a 59-66
+  s_dd823cc4be7cf6::t_15a98f76c77f7e 9
+  s_dd823cc4be7cf6::t_9dbcaed2935889 25-29
+docs/plans/fujix-v1.md
+  s_dd823cc4be7cf6::t_45736a33b32a6a 10
+  s_dd823cc4be7cf6::t_9c8078ff890dd9 195-200,204-210,212-222
+docs/workflows/terrain-diffusion.md
+  s_dd823cc4be7cf6::t_8de9254ccb39d5 100
+  s_dd823cc4be7cf6::t_01807294eff205 95
+  s_dd823cc4be7cf6::t_0ca8bcf2c8d062 108-109
+schemas/README.md
+  s_dd823cc4be7cf6::t_2021de91a706a4 23
+docs/best-practices/terrain-export.md
+  s_dd823cc4be7cf6::t_ff45919f0083b3 4
+  s_dd823cc4be7cf6::t_2f61245c9921c0 32-33
+schemas/heightmap-export-v3.md
+  s_dd823cc4be7cf6::t_057feb59bf2dc9 245-247
+  s_dd823cc4be7cf6::t_1daaca03b2b738 1-244,259-289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aa809f5f30e91279faf2d9c37053ea432776171b",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
