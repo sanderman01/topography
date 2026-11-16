@@ -1,0 +1,24 @@
+docs/plans/fujix-v1.md
+  s_dd823cc4be7cf6::t_469fba68684d8e 196-197
+docs/game-vegetation-data-requests.md
+  s_dd823cc4be7cf6::t_72fd6d0e061737 6
+docs/export-data-flaws.md
+  s_dd823cc4be7cf6::t_a0adabe9a8f326 3-7
+  s_dd823cc4be7cf6::t_4562e6c337c0b6 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6bc022a9ee64e9a648ce8f596b9b3ce88d27dfa9",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
