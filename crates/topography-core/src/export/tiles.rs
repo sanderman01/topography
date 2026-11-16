@@ -153,10 +153,16 @@ impl TileWriter {
         texels: &[u8],
         checks: &mut Checks,
     ) -> Result<()> {
-        let bytes = if spec.sixteen_bit { 2 } else { 1 };
+        let bytes = spec.channels * if spec.sixteen_bit { 2 } else { 1 };
         debug_assert_eq!(texels.len(), w * h * bytes);
         let path = super::tile_path(spec.name, level, tx, ty);
-        let hash = png(&self.stage.join(&path), w, h, spec.sixteen_bit, texels)?;
+        let hash = png(
+            &self.stage.join(&path),
+            (w, h),
+            spec.channels,
+            spec.sixteen_bit,
+            texels,
+        )?;
         self.checksums.push_str(&format!("{hash}  {path}\n"));
 
         // Neighbours overlap by both aprons plus the shared column.
@@ -227,17 +233,32 @@ impl TileWriter {
             .insert(tx, (ty, texels[(h - k) * rb..].to_vec()));
     }
 
+    /// Adds checksum lines of files written elsewhere (reused layers).
+    pub fn add_checksums(&mut self, lines: &str) {
+        self.checksums.push_str(lines);
+    }
+
     /// Writes checksums.txt.
     pub fn finish(self) -> Result<()> {
         write_new(&self.stage.join("checksums.txt"), self.checksums.as_bytes())
     }
 }
 
-fn png(path: &Path, width: usize, height: usize, sixteen: bool, data: &[u8]) -> Result<String> {
+fn png(
+    path: &Path,
+    (width, height): (usize, usize),
+    channels: usize,
+    sixteen: bool,
+    data: &[u8],
+) -> Result<String> {
     let mut out = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut out, width as u32, height as u32);
-        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_color(if channels == 3 {
+            png::ColorType::Rgb
+        } else {
+            png::ColorType::Grayscale
+        });
         encoder.set_depth(if sixteen {
             png::BitDepth::Sixteen
         } else {
@@ -284,7 +305,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut writer = TileWriter::new(dir.path(), true);
         let mut checks = Checks::default();
-        let spec = super::super::layers::BIOME;
+        let spec = super::super::layers::SNOW_COVER;
         // Side 3 + 2 * 4 = 11; the 9 overlap columns of 11 rows must match.
         let west: Vec<u8> = (0..121).map(|i| (i % 11) as u8).collect();
         let east: Vec<u8> = (0..121).map(|i| (i % 11 + 2) as u8).collect();

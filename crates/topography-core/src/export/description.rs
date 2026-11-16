@@ -1,9 +1,9 @@
 //! The export's `description.json` and `description.md`: the world's description (kept on
-//! full-map exports), the body table in export ids, and river lines and lake outlines traced
-//! on the 4 m hydrology.
+//! full-map exports), the body table in export ids, river lines traced on the world's own
+//! 1 m hydrology and lake outlines traced on its `water-body` raster.
 
 use super::water::{Bodies, Kind, WaterStats};
-use crate::acquisition::{Result, digest, ensure, read_small, write_new};
+use crate::acquisition::{AcquisitionError, Result, digest, ensure, read_small, write_new};
 use crate::world::water::grid;
 use serde_json::{Map, Value, json};
 use std::{
@@ -28,10 +28,15 @@ impl Frame {
 /// River width W = 2.5 · Q^0.5 m from discharge Q in km²: v2's rule, kept for the
 /// description; v3 channels use `hydraulic::Geometry`.
 const RIVER_WIDTH_A: f64 = 2.5;
-/// River polylines keep every fourth 4 m node plus the ends.
-const NODE_STRIDE: usize = 4;
-/// Rows per read of the 4 m rasters.
-const CHUNK_ROWS: usize = 256;
+/// River polylines keep a node about every this many metres, plus the ends.
+const NODE_SPACING_M: f64 = 16.0;
+/// A river whose longest path falls at least this much per metre is `steep` (rills and
+/// torrents on faces).
+const STEEP_GRADIENT: f64 = 0.1;
+/// A river with a node-to-node reach at least this steep has `falls`.
+const FALLS_GRADIENT: f64 = 0.3;
+/// Rows per read of the hydrology rasters.
+const CHUNK_ROWS: usize = 64;
 /// `flow.u8` centreline bit; the low 4 bits are the D8 receiver.
 const FLOW_CENTRE: u8 = 16;
 /// (dy, dx) of D8 receivers 1..=8: N, S, W, E, NW, NE, SW, SE.
@@ -103,14 +108,20 @@ fn read_description(path: &Path) -> Option<Map<String, Value>> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// The 4 m hydrology directory: the world's `hydrology.4m`, else its source world's.
+/// The world's own hydrology directory: the folder of `water.report` (`hydrology/1m`).
+/// Never a source world's: its body ids differ.
 fn hydrology_dir(world: &Path, manifest: &Value) -> Option<PathBuf> {
-    if let Some(dir) = path_in(world, &manifest["hydrology"]["4m"]) {
-        return Some(dir);
-    }
-    let source = path_in(world, &manifest["source_world"])?;
-    let m = manifest_at(&source)?;
-    path_in(&source, &m["hydrology"]["4m"])
+    let report = path_in(world, &manifest["water"]["report"])?;
+    report.parent().map(Path::to_path_buf)
+}
+
+/// Inputs of the description beyond the world's water layers, for the partial-export guard:
+/// the hydrology's `grid.json` (which lists its outputs' digests) and the base description.
+pub(super) fn inputs(world: &Path, manifest: &Value) -> Value {
+    let sha = |p: &Path| fs::read(p).ok().map(|b| digest(&b));
+    let grid = hydrology_dir(world, manifest).and_then(|d| sha(&d.join("grid.json")));
+    let base = find_base(world, manifest).and_then(|(_, p)| sha(&p));
+    json!({"hydrology_grid": grid, "base_description": base})
 }
 
 /// A 4 m centreline cell.
@@ -308,26 +319,75 @@ fn simplify_ring(ring: &[[f64; 2]], eps: f64) -> Vec<[f64; 2]> {
     if out.len() < 5 { closed(ring) } else { out }
 }
 
-/// Rivers and lakes of the export from the 4 m hydrology in `dir`.
-struct Water {
-    rivers: Vec<Value>,
-    lakes: Vec<Value>,
+/// River gradients per export id: the longest path's mean fall per metre and the steepest
+/// node-to-node reach.
+#[derive(Clone, Copy)]
+struct Gradient {
+    mean: f64,
+    max: f64,
 }
 
-fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Result<Water> {
+/// Fails unless every point lies within `bounds` (with `tol`): a line from another body.
+fn check_inside(
+    what: &str,
+    id: u16,
+    bodies: &Bodies,
+    bounds: Option<[f64; 4]>,
+    points: &[[f64; 2]],
+    tol: f64,
+) -> Result<()> {
+    let world_id = bodies.world_id[usize::from(id)];
+    let Some([x0, y0, x1, y1]) = bounds else {
+        return Err(AcquisitionError::Invalid(format!(
+            "description: {what} of export id {id} (world body {world_id}) has no cells in the export"
+        )));
+    };
+    match points
+        .iter()
+        .find(|p| p[0] < x0 - tol || p[0] > x1 + tol || p[1] < y0 - tol || p[1] > y1 + tol)
+    {
+        Some(p) => Err(AcquisitionError::Invalid(format!(
+            "description: {what} of export id {id} (world body {world_id}) at ({:.1}, {:.1}) lies outside its bounds_m [{x0}, {y0}, {x1}, {y1}]",
+            p[0], p[1]
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// `bounds_m` of an export id, None without cells.
+fn bounds_m(stats: &WaterStats, i: usize, frame: &Frame) -> Option<[f64; 4]> {
+    (stats.cells[i] > 0).then(|| stats.bounds[i].map(|v| v as f64 * frame.spacing_m))
+}
+
+/// River lines from the hydrology in `dir`, whose `bodies.json` must be the world's.
+fn rivers(
+    dir: &Path,
+    world_manifest: &Value,
+    frame: &Frame,
+    bodies: &Bodies,
+    stats: &WaterStats,
+) -> Result<(Vec<Value>, HashMap<u16, Gradient>)> {
+    let listed = grid::read_bodies(&dir.join("bodies.json"))?;
+    ensure(
+        world_manifest["layers"]["bodies.json"].as_str() == Some(digest(&listed).as_str()),
+        format!(
+            "hydrology {} has another bodies.json than the world: its body ids would not match",
+            dir.display()
+        ),
+    )?;
     let m: Map<String, Value> = serde_json::from_slice(&read_small(&dir.join("grid.json"))?)?;
     let g = grid::shape(&m)?;
     let (w, s, nw) = (g.w, g.spacing_m, g.nw_m);
     let size = [g.w, g.h];
     let extent = frame.extent_m();
-    // Map metres of a cell corner (c, r) of the 4 m grid.
+    // Map metres of a cell corner (c, r) of the hydrology grid.
     let map_m = |c: f64, r: f64| {
         [
             nw[0] + c * s - frame.origin[0],
             frame.origin[1] - nw[1] + r * s,
         ]
     };
-    // 4 m cells whose centre lies in the export: [first, end) per axis.
+    // Cells whose centre lies in the export: [first, end) per axis.
     let span = |offset: f64, n: usize| {
         let first = (offset / s - 0.5).ceil().max(0.0) as usize;
         let end = ((offset + extent) / s - 0.5).ceil().clamp(0.0, n as f64) as usize;
@@ -335,26 +395,25 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
     };
     let [c0, c1] = span(frame.origin[0] - nw[0], g.w);
     let [r0, r1] = span(nw[1] - frame.origin[1], g.h);
+    ensure(
+        c0 < c1 && r0 < r1,
+        format!("hydrology {} does not overlap the export", dir.display()),
+    )?;
     let present = |b: u32| {
         bodies
             .export_id(b)
             .filter(|&id| stats.cells[usize::from(id)] > 0)
     };
     let mut centre = HashMap::new();
-    let mut lake_bounds: BTreeMap<u16, [usize; 4]> = BTreeMap::new();
     let f32le = f32::from_le_bytes;
-    ensure(
-        c0 < c1 && r0 < r1,
-        format!(
-            "4 m hydrology {} does not overlap the export",
-            dir.display()
-        ),
-    )?;
     for y0 in (r0..r1).step_by(CHUNK_ROWS) {
         let rows = [y0, (y0 + CHUNK_ROWS).min(r1)];
         let flow = grid::read_window(&dir.join("flow.u8"), size, [c0, c1], rows, |b: [u8; 1]| {
             b[0]
         })?;
+        if !flow.iter().any(|f| f & FLOW_CENTRE != 0) {
+            continue;
+        }
         let body = grid::read_window(
             &dir.join("water-body.u32"),
             size,
@@ -366,30 +425,25 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
             grid::read_window(&dir.join("water-surface.f32"), size, [c0, c1], rows, f32le)?;
         let discharge = grid::read_window(&dir.join("discharge.f32"), size, [c0, c1], rows, f32le)?;
         for (k, (&f, &b)) in flow.iter().zip(&body).enumerate() {
-            let Some(id) = present(b) else { continue };
-            let (c, r) = (c0 + k % (c1 - c0), y0 + k / (c1 - c0));
-            match bodies.kind[usize::from(id)] {
-                Kind::River if f & FLOW_CENTRE != 0 => {
-                    let cell = Cell {
-                        flow: f,
-                        body: b,
-                        surface: surface[k],
-                        discharge: discharge[k],
-                    };
-                    centre.insert(r * w + c, cell);
-                }
-                Kind::Lake | Kind::Ice => {
-                    let e = lake_bounds
-                        .entry(id)
-                        .or_insert([usize::MAX, usize::MAX, 0, 0]);
-                    *e = [e[0].min(c), e[1].min(r), e[2].max(c + 1), e[3].max(r + 1)];
-                }
-                _ => {}
+            if f & FLOW_CENTRE == 0 {
+                continue;
             }
+            let Some(id) = present(b) else { continue };
+            if bodies.kind[usize::from(id)] != Kind::River {
+                continue;
+            }
+            let (c, r) = (c0 + k % (c1 - c0), y0 + k / (c1 - c0));
+            let cell = Cell {
+                flow: f,
+                body: b,
+                surface: surface[k],
+                discharge: discharge[k],
+            };
+            centre.insert(r * w + c, cell);
         }
     }
 
-    let listed: Value = serde_json::from_slice(&grid::read_bodies(&dir.join("bodies.json"))?)?;
+    let listed: Value = serde_json::from_slice(&listed)?;
     let info: HashMap<u64, &Value> = listed["bodies"]
         .as_array()
         .into_iter()
@@ -405,40 +459,79 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
             by_body.entry(id).or_default().push(path);
         }
     }
+    let stride = ((NODE_SPACING_M / s).round() as usize).max(1);
     let mut rivers = Vec::new();
+    let mut gradients = HashMap::new();
     for (id, list) in by_body {
         let world_id = bodies.world_id[usize::from(id)];
-        let length = |p: &Vec<usize>| {
-            p.windows(2)
-                .map(|n| step_cells(centre[&n[0]].flow))
+        // Metres along a path from node k to node j.
+        let along = |p: &[usize], k: usize, j: usize| {
+            p[k..j]
+                .iter()
+                .map(|i| step_cells(centre[i].flow))
                 .sum::<f64>()
+                * s
         };
         let longest = list
             .iter()
-            .max_by(|a, b| length(a).total_cmp(&length(b)))
-            .map(|p| point(centre_m(p[0])));
-        let lines: Vec<Value> = list
-            .iter()
-            .map(|path| {
-                let n = path.len();
-                let nodes: Vec<Value> = (0..n)
-                    .filter(|k| k % NODE_STRIDE == 0 || k + 1 == n)
-                    .map(|k| {
-                        let c = centre[&path[k]];
-                        let [x, y] = point(centre_m(path[k]));
-                        let q = f64::from(c.discharge.max(0.0));
-                        json!([
-                            x,
-                            y,
-                            round(RIVER_WIDTH_A * q.sqrt(), 2),
-                            round(f64::from(c.surface), 3),
-                            round(q, 4),
-                        ])
-                    })
-                    .collect();
-                Value::Array(nodes)
-            })
-            .collect();
+            .max_by(|a, b| along(a, 0, a.len() - 1).total_cmp(&along(b, 0, b.len() - 1)))
+            .expect("a body has a path");
+        let fall = |p: &[usize], k: usize, j: usize| {
+            f64::from(centre[&p[k]].surface) - f64::from(centre[&p[j]].surface)
+        };
+        let n = longest.len();
+        let length = along(longest, 0, n - 1);
+        let mut gradient = Gradient {
+            mean: if length > 0.0 {
+                fall(longest, 0, n - 1) / length
+            } else {
+                0.0
+            },
+            max: 0.0,
+        };
+        let mut all_points = Vec::new();
+        let mut lines = Vec::new();
+        for path in &list {
+            let n = path.len();
+            let kept: Vec<usize> = (0..n).filter(|k| k % stride == 0 || k + 1 == n).collect();
+            let mut nodes = Vec::with_capacity(kept.len());
+            for (j, &k) in kept.iter().enumerate() {
+                let c = centre[&path[k]];
+                let p = point(centre_m(path[k]));
+                all_points.push(p);
+                let q = f64::from(c.discharge.max(0.0));
+                // Fall per metre to the next node; 0 at the last.
+                let reach = match kept.get(j + 1) {
+                    Some(&next) => {
+                        let d = along(path, k, next);
+                        if d > 0.0 {
+                            fall(path, k, next) / d
+                        } else {
+                            0.0
+                        }
+                    }
+                    None => 0.0,
+                };
+                gradient.max = gradient.max.max(reach);
+                nodes.push(json!([
+                    p[0],
+                    p[1],
+                    round(RIVER_WIDTH_A * q.sqrt(), 2),
+                    round(f64::from(c.surface), 3),
+                    round(q, 4),
+                    round(reach, 4),
+                ]));
+            }
+            lines.push(Value::Array(nodes));
+        }
+        check_inside(
+            "river path",
+            id,
+            bodies,
+            bounds_m(stats, usize::from(id), frame),
+            &all_points,
+            s,
+        )?;
         let entry = info.get(&u64::from(world_id));
         let mouth = entry
             .and_then(|e| serde_json::from_value::<[f64; 2]>(e["mouth_cell"].clone()).ok())
@@ -448,33 +541,57 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
         rivers.push(json!({
             "body": id,
             "length_km": entry.and_then(|e| e["length_km"].as_f64()).map(|v| round(v, 3)),
-            "source_m": longest,
+            "source_m": point(centre_m(longest[0])),
             "mouth_m": mouth,
             "paths_m": lines,
         }));
+        gradients.insert(id, gradient);
     }
+    Ok((rivers, gradients))
+}
 
+/// Lake and ice outlines traced on the world's `water-body.u32` within each body's bounds.
+fn lakes(world: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Result<Vec<Value>> {
+    let s = frame.spacing_m;
+    let size = [frame.size, frame.size];
     let mut lakes = Vec::new();
-    for (id, [x0, y0, x1, y1]) in lake_bounds {
-        let world_id = bodies.world_id[usize::from(id)];
-        let cells =
-            grid::read_window(&dir.join("water-body.u32"), size, [x0, x1], [y0, y1], |b| {
-                u32::from_le_bytes(b) == world_id
-            })?;
+    for i in 1..bodies.len() {
+        if !matches!(bodies.kind[i], Kind::Lake | Kind::Ice) || stats.cells[i] == 0 {
+            continue;
+        }
+        let [x0, y0, x1, y1] = stats.bounds[i];
+        let world_id = bodies.world_id[i];
+        let cells = grid::read_window(
+            &world.join("water-body.u32"),
+            size,
+            [x0, x1],
+            [y0, y1],
+            |b| u32::from_le_bytes(b) == world_id,
+        )?;
+        let mut points = Vec::new();
         let rings: Vec<Value> = trace(&cells, x1 - x0)
             .into_iter()
             .map(|ring| {
                 let pts: Vec<[f64; 2]> = ring
                     .into_iter()
-                    .map(|[i, j]| {
-                        let [x, y] = map_m(x0 as f64 + i, y0 as f64 + j);
-                        point([x.clamp(0.0, extent), y.clamp(0.0, extent)])
+                    .map(|[c, r]| {
+                        let p = [(x0 as f64 + c) * s, (y0 as f64 + r) * s];
+                        [round(p[0], 2), round(p[1], 2)]
                     })
                     .collect();
+                points.extend_from_slice(&pts);
                 json!(pts)
             })
             .collect();
-        let i = usize::from(id);
+        let id = i as u16;
+        check_inside(
+            "lake outline",
+            id,
+            bodies,
+            bounds_m(stats, i, frame),
+            &points,
+            0.0,
+        )?;
         lakes.push(json!({
             "body": id,
             "kind": kind_name(bodies.kind[i]),
@@ -483,7 +600,7 @@ fn water(dir: &Path, frame: &Frame, bodies: &Bodies, stats: &WaterStats) -> Resu
             "outline_m": rings,
         }));
     }
-    Ok(Water { rivers, lakes })
+    Ok(lakes)
 }
 
 fn area_km2(stats: &WaterStats, i: usize, frame: &Frame) -> f64 {
@@ -491,23 +608,50 @@ fn area_km2(stats: &WaterStats, i: usize, frame: &Frame) -> f64 {
 }
 
 /// The body table in export ids: every id of the `water-body` tiles.
-fn body_table(bodies: &Bodies, stats: &WaterStats, frame: &Frame) -> Vec<Value> {
+fn body_table(
+    bodies: &Bodies,
+    stats: &WaterStats,
+    frame: &Frame,
+    gradients: &HashMap<u16, Gradient>,
+) -> Vec<Value> {
     (1..bodies.len())
         .map(|i| {
-            let s = frame.spacing_m;
-            let bounds = (stats.cells[i] > 0).then(|| stats.bounds[i].map(|v| v as f64 * s));
             let mut e = json!({
                 "id": i,
                 "world_id": bodies.world_id[i],
                 "kind": kind_name(bodies.kind[i]),
                 "area_km2": round(area_km2(stats, i, frame), 6),
-                "bounds_m": bounds,
+                "bounds_m": bounds_m(stats, i, frame),
                 "parent": bodies.parent[i],
             });
             if bodies.level_m[i].is_finite() {
                 e["level_m"] = json!(round(f64::from(bodies.level_m[i]), 3));
             }
+            if bodies.kind[i] == Kind::River {
+                let d = f64::from(bodies.drainage_km2[i]);
+                e["drainage_km2"] = json!(d.is_finite().then(|| round(d, 6)));
+                let g = gradients.get(&(i as u16));
+                e["gradient_mean"] = json!(g.map(|g| round(g.mean, 4)));
+                e["gradient_max"] = json!(g.map(|g| round(g.max, 4)));
+                e["steep"] = json!(g.map(|g| g.mean >= STEEP_GRADIENT));
+                e["falls"] = json!(g.map(|g| g.max >= FALLS_GRADIENT));
+            }
             e
+        })
+        .collect()
+}
+
+/// Glaciers of `bodies.json`: no water cells, listed for the game with their bounds.
+fn glacier_table(bodies: &Bodies, frame: &Frame) -> Vec<Value> {
+    bodies
+        .glaciers
+        .iter()
+        .map(|g| {
+            json!({
+                "world_id": g.world_id,
+                "area_km2": g.area_km2,
+                "bounds_m": g.bounds_cell.map(|b| b.map(|v| v * frame.spacing_m)),
+            })
         })
         .collect()
 }
@@ -527,13 +671,15 @@ fn water_markdown(d: &Map<String, Value>, bodies: &Bodies, stats: &WaterStats) -
             .count()
     };
     let mut md = format!(
-        "## Water\n\nBodies in the export by kind: sea {}, lake {}, river {}, ice {}. Ids are export \
-         ids, as in the `water-body` tiles; `description.json` maps them to world bodies. Ice is \
-         a frozen lake: a flat ice surface at its level.\n",
+        "## Water\n\nBodies in the export by kind: sea {}, lake {}, river {}, ice {}; glaciers {}. \
+         Ids are export ids, as in the `water-body` tiles; `description.json` maps them to world \
+         bodies. Ice is a frozen lake: a flat ice surface at its level. Glaciers have no water \
+         cells.\n",
         count(Kind::Sea),
         count(Kind::Lake),
         count(Kind::River),
         count(Kind::Ice),
+        bodies.glaciers.len(),
     );
     let label = |id: &Value| {
         let i = id.as_u64().unwrap_or(0) as usize;
@@ -637,19 +783,21 @@ pub(super) fn write(
     if let Some(dir) = &hydrology {
         ensure(
             dir.join("grid.json").is_file(),
-            format!("4 m hydrology {} has no grid.json", dir.display()),
+            format!("hydrology {} has no grid.json", dir.display()),
         )?;
     }
-    let water = match &hydrology {
-        Some(dir) => water(dir, frame, bodies, stats)?,
+    let (rivers, gradients) = match &hydrology {
+        Some(dir) => rivers(dir, manifest, frame, bodies, stats)?,
         None => {
-            notes.push("no 4 m hydrology: rivers and lakes have no lines".to_owned());
-            Water {
-                rivers: Vec::new(),
-                lakes: Vec::new(),
-            }
+            notes.push("no 1 m hydrology: rivers have no lines".to_owned());
+            (Vec::new(), HashMap::new())
         }
     };
+    let lakes = lakes(world, frame, bodies, stats)?;
+    let flags = json!({
+        "steep": format!("gradient_mean (fall per metre along the longest path) ≥ {STEEP_GRADIENT}"),
+        "falls": format!("a node-to-node reach (about {NODE_SPACING_M} m) falls ≥ {FALLS_GRADIENT} per metre"),
+    });
     for (key, value) in [
         ("kind", json!("world_description")),
         ("schema_version", json!(1)),
@@ -658,9 +806,14 @@ pub(super) fn write(
         ("cell_m", json!(frame.spacing_m)),
         ("extent_m", json!(extent)),
         ("coordinates", json!(COORDINATES)),
-        ("water_bodies", json!(body_table(bodies, stats, frame))),
-        ("rivers", json!(water.rivers)),
-        ("lakes", json!(water.lakes)),
+        (
+            "water_bodies",
+            json!(body_table(bodies, stats, frame, &gradients)),
+        ),
+        ("river_flags", flags),
+        ("rivers", json!(rivers)),
+        ("lakes", json!(lakes)),
+        ("glaciers", json!(glacier_table(bodies, frame))),
     ] {
         d.insert(key.into(), value);
     }
@@ -729,8 +882,24 @@ mod tests {
         assert_eq!(table[1]["bounds_m"], json!([100.0, 100.0, 140.0, 140.0]));
         assert_eq!(table[1]["level_m"], json!(11.0));
         assert!(table[2].get("level_m").is_none());
+        // No hydrology: river flags are null, drainage from bodies.json.
+        assert_eq!(table[2]["drainage_km2"], json!(0.5));
+        assert!(table[2]["steep"].is_null());
         assert_eq!(d["level"], "export");
-        assert!(d["note"].as_str().unwrap().contains("no 4 m hydrology"));
+        assert!(d["note"].as_str().unwrap().contains("no 1 m hydrology"));
+        // Lake outlines come from the world raster, inside the body's bounds.
+        let lake = &d["lakes"][0];
+        assert_eq!(lake["body"], 2);
+        assert_eq!(
+            lake["outline_m"],
+            json!([[
+                [100.0, 100.0],
+                [140.0, 100.0],
+                [140.0, 140.0],
+                [100.0, 140.0],
+                [100.0, 100.0]
+            ]])
+        );
         // L0 sample (120, 120) is texel (8, 8) of tile (7, 7), plus the apron of 4.
         let (w, _, px) = read_png(&out.join(tile_path("water-body", 0, 7, 7))).unwrap();
         let i = 12 * w + 12;
@@ -774,13 +943,160 @@ mod tests {
         }
     }
 
+    /// Points the world at a 1 m hydrology in `hydrology/1m` built from its own rasters:
+    /// a centreline down column `x` (flow S) for river `body`.
+    fn hydrology(world: &Path, n: usize, x: usize) {
+        let dir = world.join("hydrology/1m");
+        fs::create_dir_all(&dir).unwrap();
+        for name in ["water-body.u32", "water-surface.f32", "bodies.json"] {
+            fs::copy(world.join(name), dir.join(name)).unwrap();
+        }
+        let flow: Vec<u8> = (0..n * n)
+            .map(|i| if i % n == x { FLOW_CENTRE | 2 } else { 0 })
+            .collect();
+        fs::write(dir.join("flow.u8"), flow).unwrap();
+        let q: Vec<u8> = (0..n * n).flat_map(|_| 4.0f32.to_le_bytes()).collect();
+        fs::write(dir.join("discharge.f32"), q).unwrap();
+        let shape = json!({"size": [n, n], "spacing_m": 1.0, "origin": [0.0, n as f64]});
+        fs::write(dir.join("grid.json"), shape.to_string()).unwrap();
+        fs::write(dir.join("report.json"), "{}").unwrap();
+        let path = world.join("manifest.json");
+        let mut m: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        m["water"] = json!({"report": "hydrology/1m/report.json"});
+        fs::write(&path, m.to_string()).unwrap();
+    }
+
+    #[test]
+    fn rivers_come_from_the_worlds_own_hydrology_with_gradients() {
+        // River 10 down column 50, falling 0.5 m per metre for its first 64 m, then 0.01.
+        let n = 256;
+        let dir = tempfile::tempdir().unwrap();
+        let world = testworld::write(dir.path(), n, 1.0, |x, y| {
+            let s = if y < 64 {
+                200.0 - 0.5 * y as f32
+            } else {
+                168.0 - 0.01 * (y - 64) as f32
+            };
+            if x == 50 {
+                (s - 0.5, s, 10)
+            } else {
+                (250.0, f32::NAN, 0)
+            }
+        });
+        hydrology(&world, n, 50);
+        let out = dir.path().join("x");
+        let (_, d) = export(&world, &out);
+        assert!(
+            d.get("note")
+                .is_none_or(|n| !n.as_str().unwrap().contains("hydrology"))
+        );
+        let river = &d["rivers"][0];
+        assert_eq!(river["body"], 2);
+        let nodes = river["paths_m"][0].as_array().unwrap();
+        // A node every 16 m plus the end: 0, 16, ..., 240, 255.
+        assert_eq!(nodes.len(), 17);
+        assert_eq!(nodes[1][1], json!(16.5));
+        assert_eq!(nodes[0][5], json!(0.5));
+        let row = &d["water_bodies"][1];
+        assert_eq!(
+            (row["steep"].as_bool(), row["falls"].as_bool()),
+            (Some(true), Some(true))
+        );
+        assert!((row["gradient_max"].as_f64().unwrap() - 0.5).abs() < 1e-3);
+        let mean = (32.0 + 0.01 * 191.0) / 255.0;
+        assert!((row["gradient_mean"].as_f64().unwrap() - mean).abs() < 1e-3);
+
+        // A hydrology with another body table fails the export.
+        let other = world.join("hydrology/1m/bodies.json");
+        let mut b: Value = serde_json::from_slice(&fs::read(&other).unwrap()).unwrap();
+        b["bodies"][1]["id"] = json!(11);
+        fs::write(&other, b.to_string()).unwrap();
+        let err = heightmap(
+            &world,
+            &dir.path().join("y"),
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("another bodies.json"), "{err}");
+    }
+
+    #[test]
+    fn a_river_line_outside_its_body_fails_the_export() {
+        // The hydrology's centreline runs down column 60, the world's river down column 50.
+        let n = 256;
+        let dir = tempfile::tempdir().unwrap();
+        let world = testworld::write(dir.path(), n, 1.0, |x, _| {
+            if x == 50 {
+                (9.0, 10.0, 10)
+            } else {
+                (20.0, f32::NAN, 0)
+            }
+        });
+        hydrology(&world, n, 60);
+        let body: Vec<u8> = (0..n * n)
+            .flat_map(|i| {
+                u32::from(i % n == 60 || i % n == 50)
+                    .wrapping_mul(10)
+                    .to_le_bytes()
+            })
+            .collect();
+        fs::write(world.join("hydrology/1m/water-body.u32"), body).unwrap();
+        let err = heightmap(
+            &world,
+            &dir.path().join("x"),
+            16,
+            Layout::SharedEdge,
+            false,
+            NormalOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("river path of export id 2 (world body 10)"),
+            "{err}"
+        );
+        assert!(
+            err.contains("outside its bounds_m [50, 0, 51, 256]"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn glaciers_are_listed_not_water() {
+        let dir = tempfile::tempdir().unwrap();
+        let world = testworld::write(dir.path(), 64, 1.0, |x, _| (x as f32, f32::NAN, 0));
+        let path = world.join("bodies.json");
+        let mut b: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        b["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": 459, "kind": "glacier",
+            "area_km2": 0.25, "bounds_cell": [10, 12, 30, 40], "parent": 0}));
+        let bytes = serde_json::to_vec(&b).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let mpath = world.join("manifest.json");
+        let mut m: Value = serde_json::from_slice(&fs::read(&mpath).unwrap()).unwrap();
+        m["layers"]["bodies.json"] = json!(digest(&bytes));
+        fs::write(&mpath, m.to_string()).unwrap();
+        let (_, d) = export(&world, &dir.path().join("x"));
+        assert_eq!(d["water_bodies"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            d["glaciers"],
+            json!([{"world_id": 459, "area_km2": 0.25, "bounds_m": [10.0, 12.0, 30.0, 40.0]}])
+        );
+    }
+
     #[test]
     fn a_named_but_missing_or_disjoint_hydrology_fails_the_export() {
         let dir = tempfile::tempdir().unwrap();
         let world = testworld::write(dir.path(), 256, 1.0, |x, _| (x as f32, f32::NAN, 0));
         let path = world.join("manifest.json");
         let mut m: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        m["hydrology"] = json!({"4m": "hydrology/4m"});
+        m["water"] = json!({"report": "hydrology/1m/report.json"});
         fs::write(&path, m.to_string()).unwrap();
         let fail = |out: &str| {
             let out = dir.path().join(out);
@@ -797,8 +1113,9 @@ mod tests {
             err.to_string()
         };
         assert!(fail("a").contains("has no grid.json"));
-        let grid = world.join("hydrology/4m");
+        let grid = world.join("hydrology/1m");
         fs::create_dir_all(&grid).unwrap();
+        fs::copy(world.join("bodies.json"), grid.join("bodies.json")).unwrap();
         let shape = json!({"size": [8, 8], "spacing_m": 4.0, "origin": [10000.0, 10000.0]});
         fs::write(grid.join("grid.json"), shape.to_string()).unwrap();
         assert!(fail("b").contains("does not overlap the export"));

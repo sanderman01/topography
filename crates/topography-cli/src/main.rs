@@ -45,8 +45,8 @@ Usage: topography [--help | --version]
        topography world preview <world-input-dir> <new-output-dir> [spacing-m]
        topography world rain --grid <grid-dir> [--wind-deg 225]
        topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
-       topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05] [--spots E,N;E,N]
-       topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters] [--no-normals] [--no-roughness] [--normals-level 2] [--normals-apron 0]
+       topography world water-finish --grid <grid-dir> --work <work-dir> --ground <ground.f32> --out <new-output-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05] [--spots E,N;E,N] [--layout <layout-dir>]
+       topography export heightmap <world-output-dir> <new-output-dir> [intervals] [shared_edge|power_of_two] [--masters] [--no-normals] [--roughness] [--normals-level 2] [--normals-apron 2] [--from <previous-export> --layers <group,...>]
        topography export view <export-dir> [port]
        topography evaluate numeric <runtime.toml> <dataset-manifest.json> <python> <new-output-dir>
 
@@ -280,20 +280,29 @@ fn main() -> ExitCode {
         {
             let mut masters = false;
             let mut normals = topography_core::export::NormalOptions::default();
+            let (mut from, mut layers) = (None, None);
             let mut rest = Vec::new();
             let mut args = args.iter();
             while let Some(arg) = args.next() {
-                let mut value = || args.next().and_then(|v| v.to_str()?.parse().ok());
+                let mut text = || args.next().and_then(|v| v.to_str()).map(str::to_owned);
                 match arg.to_str() {
                     Some("--masters") => masters = true,
                     Some("--no-normals") => normals.enabled = false,
-                    Some("--no-roughness") => normals.roughness = false,
-                    Some("--normals-level") => match value() {
+                    Some("--roughness") => normals.roughness = true,
+                    Some("--normals-level") => match text().and_then(|v| v.parse().ok()) {
                         Some(v) => normals.start_level = v,
                         None => return usage_error(),
                     },
-                    Some("--normals-apron") => match value() {
-                        Some(v) => normals.apron = v as usize,
+                    Some("--normals-apron") => match text().and_then(|v| v.parse().ok()) {
+                        Some(v) => normals.apron = v,
+                        None => return usage_error(),
+                    },
+                    Some("--from") => match text() {
+                        Some(v) => from = Some(std::path::PathBuf::from(v)),
+                        None => return usage_error(),
+                    },
+                    Some("--layers") => match text() {
+                        Some(v) => layers = Some(v.split(',').map(str::to_owned).collect()),
                         None => return usage_error(),
                     },
                     _ => rest.push(arg),
@@ -318,17 +327,23 @@ fn main() -> ExitCode {
                 Some(Some(l)) => l,
                 Some(None) => return usage_error(),
             };
-            return workflow_result(
-                topography_core::export::heightmap(
-                    Path::new(world),
-                    Path::new(output),
+            let (world, output) = (Path::new(world), Path::new(output));
+            let result = match (from, layers) {
+                (None, None) => topography_core::export::heightmap(
+                    world, output, intervals, layout, masters, normals,
+                ),
+                (Some(from), Some(layers)) => topography_core::export::heightmap_from(
+                    world,
+                    output,
                     intervals,
                     layout,
                     masters,
                     normals,
-                )
-                .map(|p| p.display().to_string()),
-            );
+                    &topography_core::export::Partial { from, layers },
+                ),
+                _ => return usage_error(),
+            };
+            return workflow_result(result.map(|p| p.display().to_string()));
         }
         [command, action, export, rest @ ..]
             if command == "export" && action == "view" && rest.len() <= 1 =>
@@ -634,7 +649,7 @@ fn spots(value: &std::ffi::OsStr) -> Option<Vec<[f64; 2]>> {
 }
 
 /// `world water-finish --grid DIR --work DIR --ground FILE --out DIR [--tile N] [--threads N]
-/// [--water FILE] [--river-km2 A] [--spots E,N;E,N...]`
+/// [--water FILE] [--river-km2 A] [--spots E,N;E,N...] [--layout DIR]`
 fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
     use topography_core::world::water;
     let mut o = water::FinishOptions {
@@ -647,6 +662,7 @@ fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
         water: None,
         river_km2: None,
         spots: Vec::new(),
+        layout: None,
     };
     for pair in args.chunks(2) {
         let [flag, value] = pair else {
@@ -655,6 +671,7 @@ fn water_finish(args: &[std::ffi::OsString]) -> ExitCode {
         match flag.to_str() {
             Some("--ground") => o.ground = value.into(),
             Some("--out") => o.out = value.into(),
+            Some("--layout") => o.layout = Some(value.into()),
             Some("--spots") => match spots(value) {
                 Some(v) => o.spots = v,
                 None => return usage_error(),

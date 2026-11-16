@@ -16,8 +16,16 @@ pub(super) struct Checks {
     pub lake_levels_off: u64,
     /// (level, export id) → min and max surface code written for that lake or sea.
     pub lake_levels: BTreeMap<(u32, u16), (u16, u16)>,
-    /// Level 0: coverage texel ≠ 255·(body > 0 and surface code ≥ ground code).
+    /// Coverage texel ≠ 255 where wet and 0 where dry at level 0, or coverage > 0 without a
+    /// body at any level.
     pub coverage_mismatch: u64,
+    /// Wet or extension texels whose surface is `WATER_UNWRAP_LIMIT_M` or more from the
+    /// ground: the wrapped water encoding could not be unwrapped.
+    pub surface_far_from_ground: u64,
+    /// Index level − 1: wet texels as far from the mean ground, [lakes and sea, rivers].
+    pub coarse_far_from_ground: Vec<[u64; 2]>,
+    /// Level 0: dry corners filled between diagonal river texels.
+    pub diagonal_fills: u64,
     pub shared_edge_mismatches: u64,
     /// Index level − 1: texels with coverage ≥ 0.5 and surface below the mean ground.
     pub coarse_wet_below_ground: Vec<u64>,
@@ -33,6 +41,7 @@ impl Checks {
     pub fn new(last: u32) -> Self {
         Self {
             coarse_wet_below_ground: vec![0; last as usize],
+            coarse_far_from_ground: vec![[0; 2]; last as usize],
             ..Self::default()
         }
     }
@@ -56,7 +65,7 @@ impl Checks {
         self.lake_levels.iter().filter(|(_, (lo, hi))| lo != hi)
     }
 
-    fn hard(&self) -> [(&'static str, u64); 8] {
+    fn hard(&self) -> [(&'static str, u64); 9] {
         [
             ("wet_not_above_ground", self.wet_not_above_ground),
             ("wet_without_surface", self.wet_without_surface),
@@ -65,6 +74,7 @@ impl Checks {
             // Guard: the reducer writes level_m for every lake texel, so this stays 0 today.
             ("lake_levels", self.split_lakes().count() as u64),
             ("coverage_mismatch", self.coverage_mismatch),
+            ("surface_far_from_ground", self.surface_far_from_ground),
             ("shared_edge_mismatches", self.shared_edge_mismatches),
             ("bc_gross_errors", self.bc_gross_errors),
         ]
@@ -112,9 +122,19 @@ impl Checks {
             .enumerate()
             .map(|(i, n)| (format!("L{}", i + 1), json!(n)))
             .collect();
+        let far: Map<String, Value> = self
+            .coarse_far_from_ground
+            .iter()
+            .enumerate()
+            .map(|(i, [flat, river])| {
+                (format!("L{}", i + 1), json!({"flat": flat, "river": river}))
+            })
+            .collect();
         let mut figures = json!({
             "coarse_wet_below_ground": coarse,
+            "coarse_surface_far_from_ground": far,
             "lake_levels_checked": self.lake_levels.len(),
+            "diagonal_fills": self.diagonal_fills,
         });
         if let Some(budget) = &self.bc_budget {
             figures["bc_error_budget"] = budget.clone();
@@ -213,7 +233,7 @@ mod tests {
         for i in 0..3 {
             checks.example("wet_not_above_ground", || format!("at ({i}, 0)"));
         }
-        let spec = super::super::layers::BIOME;
+        let spec = super::super::layers::SNOW_COVER;
         let west: Vec<u8> = (0..121).map(|i| (i % 11) as u8).collect();
         let mut east: Vec<u8> = (0..121).map(|i| (i % 11 + 2) as u8).collect();
         east[11] = 0;
@@ -229,7 +249,7 @@ mod tests {
         assert_eq!(report["passed"], false);
         assert_eq!(
             report["examples"]["shared_edge_mismatches"],
-            json!(["biome/L1/biome_L1_1_0.png: 1 texels differ from the west tile"])
+            json!(["snow-cover/L1/snow-cover_L1_1_0.png: 1 texels differ from the west tile"])
         );
     }
 

@@ -14,7 +14,7 @@ pub(crate) mod testworld;
 mod tiles;
 mod view;
 mod water;
-pub use heightmap::{Layout, heightmap};
+pub use heightmap::{Layout, Partial, heightmap, heightmap_from};
 pub use normals::NormalOptions;
 pub use view::view;
 

@@ -2,6 +2,7 @@
 //! water-surface extension past the shore.
 
 use super::checks::Checks;
+use super::layers::WATER_STEP_M;
 use super::pyramid::{Reduce, W, mean_at, taps};
 use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
 use serde_json::Value;
@@ -21,14 +22,25 @@ pub(super) enum Kind {
     Ice,
 }
 
+/// A glacier of `bodies.json`: ice on raised ground, no water cells and no export id.
+pub(super) struct Glacier {
+    pub world_id: u32,
+    pub area_km2: Option<f64>,
+    /// World cells [x0, y0, x1, y1), x1 and y1 exclusive, when `bodies.json` gives them.
+    pub bounds_cell: Option<[f64; 4]>,
+}
+
 /// Water bodies by export id (index 0 unused): sea first, then lakes and rivers by world id.
 pub(super) struct Bodies {
     pub world_id: Vec<u32>,
     pub kind: Vec<Kind>,
     /// Lakes, ice and sea; NaN for rivers.
     pub level_m: Vec<f32>,
-    /// Export id of the body the water flows into, 0 for none or a dry basin.
+    /// Export id of the body the water flows into, 0 for none, a dry basin or a glacier.
     pub parent: Vec<u16>,
+    /// Rivers: drainage area from `bodies.json`; NaN otherwise or when missing.
+    pub drainage_km2: Vec<f32>,
+    pub glaciers: Vec<Glacier>,
     by_world: HashMap<u32, u16>,
 }
 
@@ -54,8 +66,9 @@ impl Bodies {
             .as_array()
             .ok_or_else(|| AcquisitionError::Invalid("bodies.json has no bodies".into()))?;
         // The sea is world id 1 even when a world without coast leaves it out.
-        let (mut sea, mut seas) = ((1u32, 0.0f32, 0u32), 0);
+        let (mut sea, mut seas) = ((1u32, Kind::Sea, 0.0f32, 0u32, f32::NAN), 0);
         let mut water = Vec::new();
+        let mut glaciers = Vec::new();
         for e in entries {
             let id = e["id"].as_u64().and_then(|v| u32::try_from(v).ok());
             let id = id.ok_or_else(|| AcquisitionError::Invalid("body without an id".into()))?;
@@ -66,17 +79,29 @@ impl Bodies {
                     ensure(level.is_finite(), "sea without level_m")?;
                     seas += 1;
                     ensure(seas == 1, "bodies.json lists more than one sea")?;
-                    sea = (id, level, parent);
+                    sea = (id, Kind::Sea, level, parent, f32::NAN);
                 }
                 Some("lake") => {
                     ensure(level.is_finite(), format!("lake {id} without level_m"))?;
-                    water.push((id, Kind::Lake, level, parent));
+                    water.push((id, Kind::Lake, level, parent, f32::NAN));
                 }
                 Some("ice") => {
                     ensure(level.is_finite(), format!("ice {id} without level_m"))?;
-                    water.push((id, Kind::Ice, level, parent));
+                    water.push((id, Kind::Ice, level, parent, f32::NAN));
                 }
-                Some("river") => water.push((id, Kind::River, f32::NAN, parent)),
+                Some("river") => {
+                    let drainage = e["drainage_km2"].as_f64().map_or(f32::NAN, |v| v as f32);
+                    water.push((id, Kind::River, f32::NAN, parent, drainage));
+                }
+                // Glaciers are ice on raised ground: no water cells, listed in the description.
+                Some("glacier") => glaciers.push(Glacier {
+                    world_id: id,
+                    area_km2: e["area_km2"].as_f64(),
+                    // [x0, y0, x1, y1) world cells, as `bbox` (water finish) or `bounds_cell`.
+                    bounds_cell: ["bbox", "bounds_cell"]
+                        .iter()
+                        .find_map(|k| serde_json::from_value(e[*k].clone()).ok()),
+                }),
                 // Dry basins hold no water cells.
                 Some("dry") => {}
                 other => {
@@ -91,10 +116,7 @@ impl Bodies {
             water.len() < usize::from(u16::MAX),
             "more than 65,535 water bodies",
         )?;
-        let mut all = vec![
-            (0, Kind::Sea, f32::NAN, 0),
-            (sea.0, Kind::Sea, sea.1, sea.2),
-        ];
+        let mut all = vec![(0, Kind::Sea, f32::NAN, 0, f32::NAN), sea];
         all.extend(water);
         let mut by_world = HashMap::with_capacity(all.len());
         for (i, b) in all.iter().enumerate().skip(1) {
@@ -112,6 +134,8 @@ impl Bodies {
             kind: all.iter().map(|b| b.1).collect(),
             level_m: all.iter().map(|b| b.2).collect(),
             parent,
+            drainage_km2: all.iter().map(|b| b.4).collect(),
+            glaciers,
             by_world,
         })
     }
@@ -213,14 +237,13 @@ impl Reduce for Terrain<'_> {
 }
 
 /// Level-0 row; counts world inconsistencies into `checks`, which fail the export.
-/// Inconsistent cells are dry. `code` is the height encoding, used to compare lake and sea
-/// surfaces with their level.
+/// Inconsistent cells are dry. Lake and sea surfaces must lie within half a water step of
+/// their level.
 pub(super) fn level0(
     ground: &[f32],
     surface: &[f32],
     body: &[u32],
     bodies: &Bodies,
-    code: &dyn Fn(f32) -> u16,
     checks: &mut Checks,
     y: usize,
 ) -> Result<TerrainRow> {
@@ -252,7 +275,7 @@ pub(super) fn level0(
         let s = match bodies.kind[i] {
             Kind::Sea | Kind::Lake | Kind::Ice if s.is_finite() => {
                 let level = bodies.level_m[i];
-                if code(s) != code(level) {
+                if f64::from((s - level).abs()) > WATER_STEP_M / 2.0 {
                     checks.lake_levels_off += 1;
                     checks.example("lake_levels_off", || {
                         format!("at ({x}, {y}): world body {b} surface {s} m, level {level} m")
@@ -281,10 +304,45 @@ pub(super) fn level0(
     Ok(row)
 }
 
-/// Output surface for a window of rows (rows y0..y0+n): wet texels keep theirs; dry texels
-/// take the nearest wet texel's within `reach` (Chebyshev rings, then smallest squared
-/// distance, then scan order), else NaN (no surface).
-pub(super) fn extended_surface(rows: &[&TerrainRow], reach: usize) -> Vec<Vec<f32>> {
+/// Fills the dry corner between two texels of one river that touch only diagonally (rows
+/// `upper` and `lower` = y, y + 1), so streams are 4-connected: the corner with the lower
+/// ground takes the body, coverage 1 and the mean of the two surfaces; ground is unchanged.
+/// Returns the number of filled texels.
+pub(super) fn fill_diagonals(
+    upper: &mut TerrainRow,
+    lower: &mut TerrainRow,
+    bodies: &Bodies,
+) -> u64 {
+    let n = upper.body.len();
+    let river = |b: u16| b > 0 && bodies.kind[usize::from(b)] == Kind::River;
+    let mut filled = 0;
+    for x in 0..n.saturating_sub(1) {
+        // (upper x, lower x) of the diagonal pair; the corners are the other two.
+        for (ux, lx) in [(x, x + 1), (x + 1, x)] {
+            let b = upper.body[ux];
+            if !river(b) || lower.body[lx] != b || upper.body[lx] != 0 || lower.body[ux] != 0 {
+                continue;
+            }
+            let surface = 0.5 * (upper.surface[ux] + lower.surface[lx]);
+            let (row, c) = if upper.ground[lx] <= lower.ground[ux] {
+                (&mut *upper, lx)
+            } else {
+                (&mut *lower, ux)
+            };
+            row.body[c] = b;
+            row.coverage[c] = 1.0;
+            row.surface[c] = surface;
+            filled += 1;
+        }
+    }
+    filled
+}
+
+/// Extension of a window of rows (rows y0..y0+n): wet texels keep their surface and body; a
+/// dry texel within `reach` (Chebyshev) of water takes the body of the nearest wet texel
+/// (Chebyshev rings, then smallest squared distance, then scan order) and the 1/d² weighted
+/// mean surface of that body's wet texels within `reach`; else NaN and body 0.
+pub(super) fn extended_surface(rows: &[&TerrainRow], reach: usize) -> Vec<(Vec<f32>, Vec<u16>)> {
     let n = rows.len();
     let w = rows.first().map_or(0, |r| r.body.len());
     // Wet texels per column within `reach` rows, slid down the window.
@@ -312,28 +370,31 @@ pub(super) fn extended_surface(rows: &[&TerrainRow], reach: usize) -> Vec<Vec<f3
             prefix[x + 1] = prefix[x] + column[x];
         }
         let row = rows[y];
-        let surface = (0..w)
+        let (surface, body) = (0..w)
             .map(|x| {
                 if row.body[x] > 0 {
-                    return row.surface[x];
+                    return (row.surface[x], row.body[x]);
                 }
                 if prefix[(x + reach + 1).min(w)] == prefix[x.saturating_sub(reach)] {
-                    return f32::NAN;
+                    return (f32::NAN, 0);
                 }
-                nearest(rows, x, y, reach).unwrap_or(f32::NAN)
+                match nearest(rows, x, y, reach) {
+                    Some(b) => (body_mean(rows, x, y, reach, b), b),
+                    None => (f32::NAN, 0),
+                }
             })
-            .collect();
-        out.push(surface);
+            .unzip();
+        out.push((surface, body));
     }
     out
 }
 
-/// Surface of the nearest wet texel within `reach` rings of (x, y).
-fn nearest(rows: &[&TerrainRow], x: usize, y: usize, reach: usize) -> Option<f32> {
+/// Body of the nearest wet texel within `reach` rings of (x, y).
+fn nearest(rows: &[&TerrainRow], x: usize, y: usize, reach: usize) -> Option<u16> {
     let (w, n) = (rows[0].body.len() as isize, rows.len() as isize);
     let (x, y) = (x as isize, y as isize);
     for d in 1..=reach as isize {
-        let mut best: Option<(isize, f32)> = None;
+        let mut best: Option<(isize, u16)> = None;
         for dy in -d..=d {
             let yy = y + dy;
             if !(0..n).contains(&yy) {
@@ -348,15 +409,37 @@ fn nearest(rows: &[&TerrainRow], x: usize, y: usize, reach: usize) -> Option<f32
                 }
                 let d2 = dx * dx + dy * dy;
                 if best.is_none_or(|(b, _)| d2 < b) {
-                    best = Some((d2, r.surface[xx as usize]));
+                    best = Some((d2, r.body[xx as usize]));
                 }
             }
         }
-        if let Some((_, s)) = best {
-            return Some(s);
+        if let Some((_, b)) = best {
+            return Some(b);
         }
     }
     None
+}
+
+/// 1/d² weighted mean surface of body `b`'s wet texels within `reach` (Chebyshev) of (x, y).
+fn body_mean(rows: &[&TerrainRow], x: usize, y: usize, reach: usize, b: u16) -> f32 {
+    let w = rows[0].body.len();
+    let (mut sum, mut weight) = (0f64, 0f64);
+    // Lakes and the sea: one level, kept exact.
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    let y0 = y.saturating_sub(reach);
+    for (yy, r) in rows.iter().enumerate().take(y + reach + 1).skip(y0) {
+        for xx in x.saturating_sub(reach)..(x + reach + 1).min(w) {
+            if r.body[xx] == b {
+                let (dx, dy) = (xx.abs_diff(x) as f64, yy.abs_diff(y) as f64);
+                let k = 1.0 / (dx * dx + dy * dy);
+                let s = r.surface[xx];
+                sum += k * f64::from(s);
+                weight += k;
+                (lo, hi) = (lo.min(s), hi.max(s));
+            }
+        }
+    }
+    if lo == hi { lo } else { (sum / weight) as f32 }
 }
 
 /// Per export id at level 0: texel count and [x0, y0, x1, y1] sample bounds (x1 and y1
@@ -457,14 +540,12 @@ mod tests {
         }
         let m: Value =
             serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
-        let (h_min, step) = (
-            m["encoding"]["h_min_m"].as_f64().unwrap(),
-            m["encoding"]["step_m"].as_f64().unwrap(),
-        );
-        let code = *lake_codes(&out, 0).first().unwrap();
-        assert!((h_min + f64::from(code) * step - 12.0).abs() <= step);
+        // Level 12 m is code 600 of the 2 cm water encoding.
+        assert_eq!(*lake_codes(&out, 0).first().unwrap(), 600);
         assert!(m["water_files"].is_string());
-        assert_eq!(m["layers"]["water-surface"]["scale"].as_f64(), Some(step));
+        let surface = &m["layers"]["water-surface"];
+        assert_eq!(surface["scale"].as_f64(), Some(0.02));
+        assert_eq!(surface["wrap_m"].as_f64(), Some(1310.72));
     }
 
     #[test]
@@ -491,14 +572,7 @@ mod tests {
         for level in 0..=4 {
             assert_eq!(lake_codes(&out, level).len(), 1, "level {level}");
         }
-        let m: Value =
-            serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
-        let (h_min, step) = (
-            m["encoding"]["h_min_m"].as_f64().unwrap(),
-            m["encoding"]["step_m"].as_f64().unwrap(),
-        );
-        let code = *lake_codes(&out, 0).first().unwrap();
-        assert!((h_min + f64::from(code) * step - 12.0).abs() <= step);
+        assert_eq!(*lake_codes(&out, 0).first().unwrap(), 600);
     }
 
     #[test]
@@ -528,8 +602,9 @@ mod tests {
         let row = 9 * w;
         let body = |i: usize| u16::from_be_bytes([b[2 * (row + i)], b[2 * (row + i) + 1]]);
         assert_eq!(&c[row + 3..row + 7], [0, 64, 64, 0]);
-        assert_eq!([body(3), body(4), body(5), body(6)], [0, 2, 2, 0]);
-        // Coverage > 0 exactly where body > 0, in every written tile.
+        // The extension carries the body past the water.
+        assert_eq!([body(3), body(4), body(5), body(6)], [2, 2, 2, 2]);
+        // Coverage > 0 always has a body, in every written tile.
         for level in 0..=4 {
             for entry in fs::read_dir(out.join(format!("water-coverage/L{level}"))).unwrap() {
                 let p = entry.unwrap().path();
@@ -537,7 +612,7 @@ mod tests {
                 let q = p.to_str().unwrap().replace("water-coverage", "water-body");
                 let (_, _, b) = read_png(Path::new(&q)).unwrap();
                 for (i, &v) in c.iter().enumerate() {
-                    assert_eq!(v > 0, b[2 * i] != 0 || b[2 * i + 1] != 0, "{q}");
+                    assert!(v == 0 || b[2 * i] != 0 || b[2 * i + 1] != 0, "{q}");
                 }
             }
         }
@@ -566,27 +641,82 @@ mod tests {
         .unwrap();
         // Columns 96..113 of L0 are tile 6; row 5.
         let (side, s) = codes(&out, "water-surface", 0, 6, 3);
-        let (_, g) = codes(&out, "height", 0, 6, 3);
+        let (_, b) = codes(&out, "water-body", 0, 6, 3);
         let at = |v: &[u16], x: usize| v[5 * side + x - 96];
         let water = at(&s, 99);
-        assert_ne!(water, at(&g, 104));
+        assert_eq!(water, 300);
         for x in 100..=103 {
-            assert_eq!(at(&s, x), water, "column {x}");
+            assert_eq!((at(&s, x), at(&b, x)), (water, 2), "column {x}");
         }
-        assert_eq!(at(&s, 104), 0);
+        assert_eq!((at(&s, 104), at(&b, 104)), (0, 0));
         assert_eq!(at(&s, 110), 0);
     }
 
     #[test]
-    fn surface_at_the_range_minimum_never_encodes_as_no_surface() {
-        // A river 0.1 mm above the lowest ground (5 m): its height code would round to 0.
+    fn extension_surface_is_the_bodys_weighted_mean() {
+        // A river down column 2 whose surface rises 1 m a row; texel (4, 5) sees rows 1..=9.
+        let rows: Vec<TerrainRow> = (0..12)
+            .map(|y| TerrainRow {
+                ground: vec![0.0; 8],
+                coverage: (0..8).map(|x| f32::from(x == 2)).collect(),
+                surface: (0..8)
+                    .map(|x| if x == 2 { y as f32 } else { f32::NAN })
+                    .collect(),
+                body: (0..8).map(|x| u16::from(x == 2) * 3).collect(),
+            })
+            .collect();
+        let refs: Vec<&TerrainRow> = rows.iter().collect();
+        let s = extended_surface(&refs, 4);
+        // Symmetric weights around row 5 give its own surface; the body is carried.
+        assert!((s[5].0[4] - 5.0).abs() < 1e-5);
+        assert_eq!(s[5].1[4], 3);
+        // Row 1 sees one row above and four below, so its mean lies above its own surface.
+        assert!(s[1].0[4] < 1.9 && s[1].0[4] > 1.0, "{}", s[1].0[4]);
+        assert_eq!((s[5].1[7], s[5].0[7].is_nan()), (0, true));
+    }
+
+    #[test]
+    fn diagonal_river_texels_get_a_corner() {
+        let bodies_world = |dir: &Path| {
+            testworld::write(dir, 16, 1.0, |x, y| match (x, y) {
+                (3, 3) => (9.0, 10.0, 10),
+                (4, 4) => (8.0, 9.0, 10),
+                _ => (20.0, f32::NAN, 0),
+            })
+        };
         let dir = tempfile::tempdir().unwrap();
-        let world = testworld::write(dir.path(), 256, 1.0, |x, _| {
-            if x == 0 {
-                (5.0, 5.0001, 10)
-            } else {
-                (20.0, f32::NAN, 0)
-            }
+        let bodies = Bodies::load(&bodies_world(dir.path())).unwrap();
+        let row = |wet: usize, s: f32, ground: [f32; 2]| TerrainRow {
+            ground: (0..8)
+                .map(|x| match x {
+                    3 => ground[0],
+                    4 => ground[1],
+                    _ => 20.0,
+                })
+                .collect(),
+            coverage: (0..8).map(|x| f32::from(x == wet)).collect(),
+            surface: (0..8)
+                .map(|x| if x == wet { s } else { f32::NAN })
+                .collect(),
+            body: (0..8).map(|x| if x == wet { 2 } else { 0 }).collect(),
+        };
+        // (3, 0) and (4, 1): corner (4, 0) has ground 12, corner (3, 1) ground 11.
+        let (mut a, mut b) = (row(3, 10.0, [9.0, 12.0]), row(4, 9.0, [11.0, 8.0]));
+        assert_eq!(fill_diagonals(&mut a, &mut b, &bodies), 1);
+        assert_eq!((b.body[3], b.coverage[3], b.surface[3]), (2, 1.0, 9.5));
+        assert_eq!((a.body[4], b.ground[3]), (0, 11.0));
+        // Already 4-connected: nothing to fill.
+        assert_eq!(fill_diagonals(&mut a, &mut b, &bodies), 0);
+    }
+
+    #[test]
+    fn water_surface_wraps_and_unwraps_against_the_ground() {
+        // A river at 1400 m over 1399 m ground, the sea at 0 m below a 1500 m cliff.
+        let dir = tempfile::tempdir().unwrap();
+        let world = testworld::write(dir.path(), 256, 1.0, |x, _| match x {
+            100 => (1399.0, 1400.0, 10),
+            0..20 => (-4.0, f32::NAN, 1),
+            _ => (1500.0, f32::NAN, 0),
         });
         let out = dir.path().join("x");
         heightmap(
@@ -598,10 +728,30 @@ mod tests {
             NormalOptions::default(),
         )
         .unwrap();
-        let (side, s) = codes(&out, "water-surface", 0, 0, 0);
-        let (_, g) = codes(&out, "height", 0, 0, 0);
-        assert_eq!((g[0], s[0]), (0, 1));
-        assert_eq!(s[side - 1], 0);
+        let m: Value =
+            serde_json::from_slice(&fs::read(out.join("manifest.json")).unwrap()).unwrap();
+        let e = &m["encoding"];
+        let (h_min, step) = (
+            e["h_min_m"].as_f64().unwrap(),
+            e["step_m"].as_f64().unwrap(),
+        );
+        let wrap = m["layers"]["water-surface"]["wrap_m"].as_f64().unwrap();
+        // Columns 96..113 of L0 are tile 6.
+        let (side, s) = codes(&out, "water-surface", 0, 6, 0);
+        let (_, g) = codes(&out, "height", 0, 6, 0);
+        let i = 5 * side + 4;
+        assert_eq!(s[i], (70_000 - 65_536) as u16);
+        let ground = h_min + f64::from(g[i]) * step;
+        let s0 = f64::from(s[i]) * 0.02;
+        let surface = s0 + ((ground - s0) / wrap).round() * wrap;
+        assert!((surface - 1400.0).abs() < 1e-6, "{surface}");
+        // The sea is code 0; its extension onto the cliff is dropped: 1500 m above it.
+        let (_, s) = codes(&out, "water-surface", 0, 1, 0);
+        let (_, b) = codes(&out, "water-body", 0, 1, 0);
+        assert_eq!((s[0], b[0]), (0, 1));
+        assert_eq!(b[5], 0);
+        // 0 m is a height code.
+        assert!(((-h_min / step) - (-h_min / step).round()).abs() < 1e-6);
     }
 
     #[test]
@@ -609,7 +759,8 @@ mod tests {
         // A lake in L0 tile (0, 0) whose east end lies in the apron of tile (1, 0).
         let dir = tempfile::tempdir().unwrap();
         let world = testworld::write(dir.path(), 256, 1.0, |x, y| {
-            if (4..=13).contains(&x) && (4..=8).contains(&y) {
+            // Rows 4..=7: the extension (4 rows) stays out of tile (0, 1)'s apron.
+            if (4..=13).contains(&x) && (4..=7).contains(&y) {
                 (5.0, f32::NAN, 2)
             } else {
                 (20.0, f32::NAN, 0)
@@ -656,13 +807,13 @@ mod tests {
             vec![f32::NAN, f32::NAN, f32::NAN, 7.0, f32::NAN],
         );
         let s = extended_surface(&[&a, &b], 4);
-        // (3, 0) has (4, 0) and (3, 1) at distance 1: scan order takes (4, 0).
-        assert_eq!(s[0][3], 3.0);
+        // (3, 0) has (4, 0) and (3, 1) at distance 1: scan order takes (4, 0)'s body.
+        assert_eq!((s[0].0[3], s[0].1[3]), (3.0, 1));
         // (2, 0): ring 1 holds (3, 1); (4, 0) is ring 2.
-        assert_eq!(s[0][2], 7.0);
+        assert_eq!((s[0].0[2], s[0].1[2]), (7.0, 2));
         // (0, 0): ring 3 holds (3, 1) at distance² 10, ring 4 is not reached.
-        assert_eq!(s[0][0], 7.0);
+        assert_eq!(s[0].0[0], 7.0);
         let s = extended_surface(&[&a, &b], 2);
-        assert!(s[0][0].is_nan());
+        assert!(s[0].0[0].is_nan() && s[0].1[0] == 0);
     }
 }

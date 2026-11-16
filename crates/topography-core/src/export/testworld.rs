@@ -64,7 +64,7 @@ pub(crate) fn write(
             let kind = if id == 9 { "ice" } else { "lake" };
             json!({"id": id, "kind": kind, "level_m": level, "parent": 0})
         }
-        None => json!({"id": id, "kind": "river", "parent": 0}),
+        None => json!({"id": id, "kind": "river", "parent": 0, "drainage_km2": 0.5}),
     }));
     let bodies = json!({"schema_version": 1, "kind": "water_bodies", "bodies": bodies});
 
@@ -101,23 +101,43 @@ pub(crate) fn write(
     world
 }
 
-/// Game layer names in the order `game` takes their values.
-const GAME: [&str; 5] = [
-    "biome",
-    "land-cover",
+/// One game texel: biome and land cover as [a, b, weight], then vegetation, snow, talus,
+/// temperature and moisture codes.
+pub(crate) struct Game {
+    pub biome: [u8; 3],
+    pub land_cover: [u8; 3],
+    pub densities: [u8; 5],
+}
+
+/// Game layer names in the order of `Game`'s values.
+const GAME: [&str; 11] = [
+    "biome-a",
+    "biome-b",
+    "biome-weight",
+    "land-cover-a",
+    "land-cover-b",
+    "land-cover-weight",
     "vegetation-density",
     "snow-cover",
     "talus-density",
+    "temperature",
+    "moisture",
 ];
 
-/// Adds the `game/` layers at `level` (size `n >> level`) and their manifest entry.
-pub(crate) fn game(world: &Path, level: u32, f: impl Fn(usize, usize) -> [u8; 5]) {
+/// Adds (or replaces) the `game/` layers at `level` (size `n >> level`) and their manifest
+/// entry.
+pub(crate) fn game(world: &Path, level: u32, f: impl Fn(usize, usize) -> Game) {
     let mut manifest: Value =
         serde_json::from_slice(&fs::read(world.join("manifest.json")).unwrap()).unwrap();
     let n = manifest["size"][0].as_u64().unwrap() as usize;
     let spacing = manifest["spacing_m"].as_f64().unwrap();
     let m = n >> level;
-    let values: Vec<[u8; 5]> = (0..m * m).map(|i| f(i % m, i / m)).collect();
+    let values: Vec<Vec<u8>> = (0..m * m)
+        .map(|i| {
+            let g = f(i % m, i / m);
+            [g.biome.as_slice(), &g.land_cover, &g.densities].concat()
+        })
+        .collect();
     for (k, name) in GAME.iter().enumerate() {
         let bytes: Vec<u8> = values.iter().map(|v| v[k]).collect();
         put(world, &mut manifest, &format!("game/{name}.u8"), &bytes);
@@ -148,10 +168,14 @@ mod tests {
             (2, 0) => (8.0, 9.5, 10),
             _ => (10.0, f32::NAN, 0),
         });
-        game(&world, 1, |x, y| [(x + 2 * y) as u8, 30, 0, 0, 0]);
+        game(&world, 1, |x, y| Game {
+            biome: [(x + 2 * y) as u8, 0, 255],
+            land_cover: [30, 30, 255],
+            densities: [0; 5],
+        });
         let m: Value =
             serde_json::from_slice(&fs::read(world.join("manifest.json")).unwrap()).unwrap();
-        assert_eq!(m["layers"].as_object().unwrap().len(), 9);
+        assert_eq!(m["layers"].as_object().unwrap().len(), 15);
         for (name, sha) in m["layers"].as_object().unwrap() {
             assert_eq!(
                 sha.as_str().unwrap(),
@@ -159,7 +183,10 @@ mod tests {
             );
         }
         assert_eq!(m["game"]["size"], json!([2, 2]));
-        assert_eq!(fs::read(world.join("game/biome.u8")).unwrap(), [0, 1, 2, 3]);
+        assert_eq!(
+            fs::read(world.join("game/biome-a.u8")).unwrap(),
+            [0, 1, 2, 3]
+        );
         let surface: Vec<f32> = fs::read(world.join("water-surface.f32"))
             .unwrap()
             .chunks(4)

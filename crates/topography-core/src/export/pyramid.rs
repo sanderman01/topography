@@ -1,4 +1,4 @@
-//! Streaming LOD pyramid: area mean for continuous layers, weighted mode for classes.
+//! Streaming LOD pyramid: area mean for continuous layers and for class shares.
 
 use crate::acquisition::Result;
 
@@ -36,44 +36,69 @@ impl Reduce for Mean {
     }
 }
 
-/// Weighted majority class over the same footprint, weights 1, 2, 4 (`W` · `W` · 16).
-pub(super) struct Mode;
+/// Class shares kept per texel, heaviest first; unused slots have weight 0.
+pub(super) const SHARES: usize = 4;
+pub(super) type Shares = [(u8, f32); SHARES];
 
-const MODE_W: [u32; 3] = [1, 2, 1];
+/// Shares of a top-two class texel: `a` with `weight`/255, `b` with the rest.
+pub(super) fn shares(a: u8, b: u8, weight: u8) -> Shares {
+    let mut s = [(0, 0.0); SHARES];
+    let wa = f32::from(weight) / 255.0;
+    if a == b || weight == 255 {
+        s[0] = (a, 1.0);
+    } else {
+        s[0] = (a, wa);
+        s[1] = (b, 1.0 - wa);
+    }
+    s
+}
 
-impl Reduce for Mode {
-    type Row = Vec<u8>;
-    fn reduce(&self, [a, b, c]: [&Vec<u8>; 3]) -> Vec<u8> {
+/// The two heaviest classes and a's weight within a + b (128..=255): `[a, b, weight]`.
+pub(super) fn top_two(s: &Shares) -> [u8; 3] {
+    let (a, wa) = s[0];
+    let (b, wb) = s[1];
+    if wb <= 0.0 {
+        return [a, a, 255];
+    }
+    [
+        a,
+        b,
+        (255.0 * wa / (wa + wb)).round().clamp(128.0, 255.0) as u8,
+    ]
+}
+
+/// Area mean of class shares over the same footprint; the heaviest `SHARES` classes are kept.
+pub(super) struct ClassMean;
+
+impl Reduce for ClassMean {
+    type Row = Vec<Shares>;
+    fn reduce(&self, [a, b, c]: [&Vec<Shares>; 3]) -> Vec<Shares> {
         debug_assert!(a.len() == b.len() && c.len() == b.len() && b.len() % 2 == 0);
-        let mut weight = [0u32; 256];
         (0..b.len() / 2)
             .map(|i| {
                 let t = taps(i);
-                let (mut seen, mut n) = ([0u8; 9], 0);
-                for (r, wy) in [a, b, c].iter().zip(MODE_W) {
-                    for (&x, wx) in t.iter().zip(MODE_W) {
-                        let class = r[x];
-                        if weight[usize::from(class)] == 0 {
-                            seen[n] = class;
-                            n += 1;
+                let (mut sum, mut n) = ([(0u8, 0f32); 9 * SHARES], 0);
+                for (r, wy) in [a, b, c].iter().zip(W) {
+                    for (&x, wx) in t.iter().zip(W) {
+                        for &(class, w) in r[x].iter().filter(|e| e.1 > 0.0) {
+                            match sum[..n].iter_mut().find(|e| e.0 == class) {
+                                Some(e) => e.1 += wy * wx * w,
+                                None => {
+                                    sum[n] = (class, wy * wx * w);
+                                    n += 1;
+                                }
+                            }
                         }
-                        weight[usize::from(class)] += wy * wx;
                     }
                 }
-                let seen = &seen[..n];
-                // Heaviest class; the centre keeps a tie it is part of, else the lowest id.
-                let centre = b[2 * i];
-                let mut class = centre;
-                for &k in seen {
-                    let (wk, wc) = (weight[usize::from(k)], weight[usize::from(class)]);
-                    if wk > wc || (wk == wc && class != centre && k < class) {
-                        class = k;
-                    }
+                let sum = &mut sum[..n];
+                // Heaviest first, ties to the lowest id.
+                sum.sort_by(|p, q| q.1.total_cmp(&p.1).then(p.0.cmp(&q.0)));
+                let mut out = [(0, 0.0); SHARES];
+                for (o, s) in out.iter_mut().zip(sum.iter()) {
+                    *o = *s;
                 }
-                for &k in seen {
-                    weight[usize::from(k)] = 0;
-                }
-                class
+                out
             })
             .collect()
     }
@@ -186,23 +211,33 @@ mod tests {
         assert_eq!(l[1][4][3], 0.0);
     }
     #[test]
-    fn mode_takes_weighted_majority_and_centre_on_ties() {
-        // Coarse 0 (taps 0, 0, 1): class 1 outweighs class 2.
-        let (a, c) = (vec![1u8, 2, 2, 0], vec![1u8, 1, 2, 0]);
-        assert_eq!(Mode.reduce([&a, &a, &c])[0], 1);
-        // Coarse 1 (taps 1, 2, 3): 4 and 7 weigh the same, so the centre's 7 wins.
-        let t = vec![0u8, 4, 7, 4];
-        assert_eq!(Mode.reduce([&t, &t, &t])[1], 7);
-        // A tie the centre is not part of goes to the lowest id.
-        let (u, m, v) = (vec![0u8, 9, 9, 9], vec![0u8, 9, 1, 3], vec![0u8, 3, 3, 3]);
-        assert_eq!(Mode.reduce([&u, &m, &v])[1], 3);
+    fn class_shares_are_area_means_with_top_two_re_picked() {
+        // Coarse 0 (taps 0, 0, 1 per axis): class 1 everywhere except fine column 1, class 2.
+        let row = vec![
+            shares(1, 1, 255),
+            shares(2, 2, 255),
+            shares(1, 1, 255),
+            shares(1, 1, 255),
+        ];
+        let out = ClassMean.reduce([&row, &row, &row]);
+        // Column weights 0.25 + 0.5 for class 1, 0.25 for class 2.
+        assert_eq!(top_two(&out[0]), [1, 2, 191]);
+        // Coarse 1 (taps 1, 2, 3): class 2 has 0.25, class 1 0.75.
+        assert_eq!(top_two(&out[1]), [1, 2, 191]);
+        // A blended texel keeps its blend; one class is a = b, weight 255.
+        let mixed = vec![shares(5, 7, 192); 4];
+        assert_eq!(
+            top_two(&ClassMean.reduce([&mixed, &mixed, &mixed])[0]),
+            [5, 7, 192]
+        );
+        assert_eq!(top_two(&shares(3, 3, 200)), [3, 3, 255]);
     }
     #[test]
     fn sink_sees_rows_in_order_from_first_level() {
         let mut seen = Vec::new();
-        let mut p = Pyramid::new(Mode, 2, 4);
+        let mut p = Pyramid::new(Mean, 2, 4);
         for _ in 0..8 {
-            p.push(vec![1u8; 8], &mut |l, y, r| {
+            p.push(vec![1.0f32; 8], &mut |l, y, r| {
                 seen.push((l, y, r.len()));
                 Ok(())
             })

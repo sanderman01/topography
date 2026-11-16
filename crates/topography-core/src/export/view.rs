@@ -58,8 +58,8 @@ impl Export {
             "not a heightmap export manifest",
         )?;
         ensure(
-            manifest["schema_version"] == 2,
-            "export manifest is not schema version 2: re-export with this version to view",
+            manifest["schema_version"] == 2 || manifest["schema_version"] == 3,
+            "export manifest is not schema version 2 or 3: re-export with this version to view",
         )?;
         let number = |v: &Value, what: &str| {
             v.as_f64()
@@ -152,10 +152,11 @@ impl Export {
                 for (dy, &sy) in ys.iter().enumerate().filter(|(_, s)| tile(**s) == ty) {
                     for (dx, &sx) in xs.iter().enumerate().filter(|(_, s)| tile(**s) == tx) {
                         let i = (sy - oy + a) * tw + sx - ox + a;
-                        out[dy * w + dx] = if bytes == 2 {
-                            u16::from_be_bytes([pixels[2 * i], pixels[2 * i + 1]])
-                        } else {
-                            u16::from(pixels[i])
+                        // RGB class tiles: the dominant class (R).
+                        out[dy * w + dx] = match bytes {
+                            2 => u16::from_be_bytes([pixels[2 * i], pixels[2 * i + 1]]),
+                            3 => u16::from(pixels[3 * i]),
+                            _ => u16::from(pixels[i]),
                         };
                     }
                 }
