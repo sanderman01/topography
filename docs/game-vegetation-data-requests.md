@@ -3,7 +3,7 @@
 The airship game now places trees, shades ground and draws distant forests from the export's
 biome, land-cover and vegetation layers (`airshipgame` branch `feat/landscape-visuals`,
 `docs/design/landscape.md`, `docs/art-style.md`). This note lists what it would use from the next
-export, most useful first. It complements the water contract in
+export, most useful first. Export flaws are tracked in
 [export-data-flaws.md](export-data-flaws.md); where both touch the manifest, one schema should
 cover both.
 

@@ -193,8 +193,8 @@ is build 54 with the canyon plateau as class 19: identical heights and report.
 ## 4. Export
 
 Manifest `schema_version` 2. Height tiles do not change: 1 m, 16-bit, 257 squared,
-`shared_edge`. Every other layer gets a 4-texel apron, per the game's water contract in
-[export-data-flaws.md](../export-data-flaws.md). Every level comes from a global pyramid before
+`shared_edge`. Every other layer gets a 4-texel apron, per the game's water contract (once in
+[export-data-flaws.md](../export-data-flaws.md), now in its Git history). Every level comes from a global pyramid before
 tiles are cut: area mean for heights and continuous layers, mode for classes. Nothing is
 decimated.
 
