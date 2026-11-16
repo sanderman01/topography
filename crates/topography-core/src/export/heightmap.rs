@@ -340,22 +340,15 @@ impl<'a> TerrainOutput<'a> {
                 .map(|&v| ((v * 255.0).round().clamp(0.0, 255.0) as u8).max(u8::from(v > 0.0)))
                 .collect();
             let w = cb.len() / h;
-            // Coarse mixed river texels (a canyon stream under a high mean ground) are
-            // written within the unwrap limit of their ground; they are still counted.
+            // Coarse mixed texels (a canyon stream or the sea under a high mean ground) are
+            // written within the unwrap limit of their ground, so every texel decodes to the
+            // right wrap; they are still counted, and level_m stays authoritative.
             let limit = WATER_UNWRAP_LIMIT_M as f32;
             let codes: Vec<u16> = (0..s.len())
-                .map(|i| {
-                    let (v, id) = (s[i], b[i]);
-                    if id == 0 {
-                        return 0;
-                    }
-                    let river = self.bodies.kind[usize::from(id)] == Kind::River;
-                    let v = if level > 0 && river {
-                        v.clamp(gr[i] - limit, gr[i] + limit)
-                    } else {
-                        v
-                    };
-                    water_code(v)
+                .map(|i| match b[i] {
+                    0 => 0,
+                    _ if level > 0 => water_code(s[i].clamp(gr[i] - limit, gr[i] + limit)),
+                    _ => water_code(s[i]),
                 })
                 .collect();
             let tile = WaterTile {
@@ -363,7 +356,6 @@ impl<'a> TerrainOutput<'a> {
                 tile: (tx, ty),
                 w,
                 surface: &s,
-                codes: &codes,
                 coverage: &c,
                 coverage_codes: &cb,
                 body: &b,
@@ -381,12 +373,13 @@ impl<'a> TerrainOutput<'a> {
         Ok(())
     }
 
-    /// Records lake and sea surface codes of a water tile; checks over its interior that the
-    /// surface can be unwrapped against the ground, that coverage > 0 has a body and, at
-    /// level 0, that coverage is 255 exactly where the texel is wet.
+    /// Records lake and sea surface codes of a water tile (before the coarse clamp); checks
+    /// over its interior that the surface can be unwrapped against the ground, that coverage
+    /// > 0 has a body and, at level 0, that coverage is 255 exactly where the texel is wet.
     fn check_tile(&self, ctx: &mut Ctx, t: &WaterTile) {
         let mut last = (0u16, 0u16);
-        for (&id, &code) in t.body.iter().zip(t.codes) {
+        for (&id, &s) in t.body.iter().zip(t.surface) {
+            let code = water_code(s);
             if id > 0 && (id, code) != last {
                 last = (id, code);
                 if self.bodies.kind[usize::from(id)] != Kind::River {
@@ -447,7 +440,6 @@ struct WaterTile<'a> {
     tile: (usize, usize),
     w: usize,
     surface: &'a [f32],
-    codes: &'a [u16],
     coverage: &'a [f32],
     coverage_codes: &'a [u8],
     body: &'a [u16],
@@ -751,7 +743,8 @@ fn group_report_keys(group: &str) -> (&'static [&'static str], &'static [&'stati
 /// changes, so partial exports never reuse tiles of older code.
 fn group_version(group: &str) -> u32 {
     match group {
-        TERRAIN => 1,
+        // 2: coarse flat-body texels clamped to the unwrap limit.
+        TERRAIN => 2,
         DESCRIPTION => 1,
         NORMALS => 1,
         MOISTURE_GROUP => 1,
@@ -765,6 +758,8 @@ fn group_version(group: &str) -> u32 {
 struct Previous {
     dir: PathBuf,
     manifest: Value,
+    /// Location-free identity for the new manifest: directory name and manifest SHA-256.
+    id: Value,
     /// Groups reused from it.
     reused: Vec<String>,
 }
@@ -836,6 +831,10 @@ fn previous(
     }
     Ok((
         Previous {
+            id: json!({
+                "name": dir.file_name().map(|n| n.to_string_lossy().into_owned()),
+                "manifest_sha256": digest(&read_small(&dir.join("manifest.json"))?),
+            }),
             dir,
             manifest,
             reused,
@@ -1324,7 +1323,7 @@ fn export(
             if GAME_CLASSES.iter().any(|s| s.name == group) {
                 legends[group.as_str()] = prev.manifest["legends"][group.as_str()].clone();
             }
-            reused_layers.insert(group.clone(), json!(prev.dir.display().to_string()));
+            reused_layers.insert(group.clone(), prev.id.clone());
         }
         let sums = io_context(
             "read previous checksums",
@@ -1362,7 +1361,7 @@ fn export(
                 }
             }
         }
-        validation["reused_from"] = json!({"export": prev.dir.display().to_string(),
+        validation["reused_from"] = json!({"export": prev.id,
             "groups": prev.reused, "passed": prev_passed, "copied": copied});
         validation["passed"] = json!(ctx.checks.passed() && prev_passed);
     }
@@ -1632,9 +1631,10 @@ mod tests {
         let second = dir.path().join("c");
         let m = manifest(&second);
         assert_eq!(m["validation"]["passed"], true);
+        let sha = digest(&fs::read(first.join("manifest.json")).unwrap());
         assert_eq!(
             m["reused_layers"]["terrain"],
-            json!(first.canonicalize().unwrap().display().to_string())
+            json!({"name": "a", "manifest_sha256": sha})
         );
         assert!(m["reused_layers"].get("vegetation-density").is_none());
         assert_eq!(m["layers"]["height"], manifest(&first)["layers"]["height"]);

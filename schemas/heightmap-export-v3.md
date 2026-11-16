@@ -69,7 +69,7 @@ manifest (levels and legends cut short); v3 adds the fields above.
 | `checksums` | `checksums.txt` holds the SHA-256 of every tile; `sha256sum -c checksums.txt` |
 | `masters` | Full-world COGs written with `--masters`: only `elevation.tif` (Float32) |
 | `input_digests` | Per layer group (below): the SHA-256 of each world file it reads (from the world manifest) and the settings that shape its tiles |
-| `reused_layers` | Partial exports only: layer group → the export its files were hardlinked from |
+| `reused_layers` | Partial exports only: layer group → the export its files were hardlinked from, as `name` (its directory name) and `manifest_sha256`, so the record survives copying |
 | `world_output`, `world_output_manifest_sha256` | The world exported and its manifest digest |
 | `attribution` | The world input's base and cover attribution, null when the input has none |
 
@@ -88,7 +88,9 @@ world.
 - **Apron.** Tiles of every layer except `height` add `apron_texels` (A = 4) on every side:
   texel (A, A) is level sample (x·N, y·N), so a full tile is N + 1 + 2A = 265 texels per side
   and the last one 264. Apron texels past the world edge repeat the edge texel. Height tiles
-  have no apron: 257² at 16 bits, as in v1.
+  have no apron: 257² at 16 bits, as in v1. Past the world edge there are no height texels:
+  the last tile of each row and column ends at the world's last sample (256 texels with
+  `shared_edge`) and no tile exists beyond it; clamp lookups to the last sample.
 - **Decode.** `value = offset + code · scale`, with `offset` and `scale` from the layer.
   Heights: `height_m = h_min_m + code · step_m`; `step_m = (h_max_m − h_min_m) / 65535`, with
   `h_min_m` = −*k*·`step_m` for an integer *k*, so 0 m is code *k*. The range covers ground,
@@ -151,7 +153,12 @@ class layers, `legend`.
   with weight B/255. At every level the exporter area-means the class shares under the
   footprint and picks the top two again, so a border keeps its width and mix at every level
   of detail. A class is `present` in the legend when it is *a*, or *b* with B < 255, at the
-  finest level.
+  finest level. Class and density bytes describe the ground of every texel and ignore the
+  water layers: on water-extension texels (coverage 0, body set) and on coarse mixed shore
+  texels they are the share-weighted land cover under that footprint, so `water` (80)
+  appears only where the game layers' wet share reached 0.25 at the finest level and keeps
+  its area share at coarser levels. Apron texels past the world edge repeat the edge texel,
+  as in every apron layer.
 - `vegetation-density` is the canopy share of the texel: 1.0 is continuous canopy over the
   whole texel. Closed forest reads lower (about 0.65) because forest covers only its layout
   share of a region and fades at its edges.
@@ -234,9 +241,11 @@ longer reads it).
   655 m. The export fails when a level-0 wet texel is 600 m or more from its ground
   (`surface_far_from_ground`), and drops such extension texels. On coarse levels mixed shore
   texels can be that far from the mean ground (`coarse_surface_far_from_ground` per level,
-  split into flat bodies and rivers): river texels are written clamped to ground ± 600 m so
-  they decode to the right wrap; sea, lake and ice texels keep their level, so take their
-  surfaces from `water_bodies[].level_m` by id.
+  split into flat bodies and rivers). Those texels, rivers and flat bodies alike, are written
+  clamped to ground ± 600 m, so every texel of the layer decodes to the right wrap and the
+  layer is self-contained. A clamped sea, lake or ice texel is not at its level, so
+  `water_bodies[].level_m` stays authoritative for flat bodies; elsewhere their texels hold
+  the level exactly (one code per body per level, checked before the clamp).
 - **Files.** The three water tiles of a tile exist only where a texel of the tile or its apron
   has `water-body` > 0 (water or its extension). A missing file means coverage 0, body 0 and
   no surface.
