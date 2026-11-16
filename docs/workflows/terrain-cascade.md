@@ -1094,9 +1094,10 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   it slopes over the whole lake) from its own spill: the lowest lake's from a terminus 40 m
   down its outlet (a closed lake: past its col), a joined lake's from its exit. The ice
   flattens toward a ceiling a few tens of metres above the lake level and stays under any
-  divide to another basin; a lake with under 3 m of room stays ice. Flow stripes,
-  slope-capped crevasses and seracs at the terminus give it relief; a pit fill (at most 1 %
-  of its cells) guarantees the ice holds no water. `elevation.f32` is the ice surface, the
+  divide to another basin; a lake with under 3 m of room stays ice. Water routes over this
+  smooth surface (box-blurred, pit-filled; m3, flow, discharge and the checks use it); the
+  published `elevation.f32` adds the rough relief on the ice only (hummocks, crevasse
+  fields, seracs at the terminus), which holds no water. The
   lakes and covered river ends lose their water, `glacier.u8` (255) marks the ice, and
   `bodies.json` lists the lakes as kind `glacier` (no `level_m`; `lake_level_m`, figures on
   the lowest). A glacier that would dam another lake is skipped. m3 runs again on the iced

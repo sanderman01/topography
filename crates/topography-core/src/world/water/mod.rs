@@ -1297,7 +1297,12 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let (report, passed) = checks::report(tiles, extra, figures);
 
     let mut stage = grid::Stage::new(&o.out)?;
-    stage.copy("elevation.f32", &final_ground)?;
+    // Glaciers publish their rough surface; routing and checks used the smooth one.
+    let published = match &glacier_dir {
+        Some(d) => d.join("rough.f32"),
+        None => final_ground.clone(),
+    };
+    stage.copy("elevation.f32", &published)?;
     // Ice keeps its cells and flat surface at the lake's level; only its kind changes.
     // Glaciers have no water cells.
     stage.copy("water-body.u32", &body_path)?;
@@ -1330,7 +1335,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             "glacier".into(),
             json!({
                 "file": "glacier.u8",
-                "value": "255 glacier ice (elevation.f32 is its surface), 0 none",
+                "value": "255 glacier ice (elevation.f32 is its rough surface), 0 none",
+                "routing": "flow, discharge and the checks use the smooth ice surface (the work directory's glacier ground); crevasses and hummocks hold no water",
                 "bed": "the work directory's ground under the ice",
                 "method": glacier::VERSION,
             }),

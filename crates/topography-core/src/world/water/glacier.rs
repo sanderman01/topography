@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::path::Path;
 
 /// Bump on any change to the construction: it keys the cached glacier ground.
-pub(crate) const VERSION: &str = "glacier v3";
+pub(crate) const VERSION: &str = "glacier v4";
 /// Basal yield stress of plastic ice (kPa; 50 over 90 by hillshade: a steadier slope with
 /// crevasses across the ice, where 90 flattens the interior), ice density, gravity.
 const YIELD_KPA: f64 = 50.0;
@@ -39,10 +39,15 @@ const ROOM_MIN_M: f64 = 3.0;
 /// A glacier leaving more of its lakes' cells bare than this is skipped (stays lake ice).
 const UNCOVERED_MAX_SHARE: f64 = 0.05;
 const CREST_MARGIN_M: f64 = 0.5;
-/// Flow stripes: noise of this scale averaged this far up the flow line, at most this high.
-const STREAK_M: f64 = 25.0;
-const STREAK_L_M: f64 = 200.0;
-const UNDULATE_M: f64 = 2.5;
+/// Rough relief fades in over this distance from the ice margin.
+const EDGE_M: f64 = 8.0;
+/// Rough relief (published only): hummocks of this height and scale, a fine texture,
+/// crevasses this deep (and densest within OUTLET_CREVASSE_M of the terminus).
+const HUMMOCK_M: f64 = 2.0;
+const HUMMOCK_CELL_M: f64 = 40.0;
+const TEXTURE_M: f64 = 0.15;
+const CREVASSE_DEPTH_M: f64 = 3.0;
+const OUTLET_CREVASSE_M: f64 = 150.0;
 /// Marginal crevasses within this distance of the ice edge.
 const MARGIN_M: f64 = 25.0;
 /// Seracs within TONGUE_M plus this times √(lake area) (10-40 m) of the terminus: blocks
@@ -70,7 +75,8 @@ pub(crate) fn params() -> Value {
     json!({"version": VERSION, "yield_kpa": YIELD_KPA, "tongue_m": TONGUE_M,
            "envelope_m": ENVELOPE_M, "ice_min_m": ICE_MIN_M, "crevasse_m": CREVASSE_M,
            "rise": [RISE_PER_M, RISE_MIN_M, RISE_MAX_M], "crest_margin_m": CREST_MARGIN_M, "room_min_m": ROOM_MIN_M, "outlet_m": OUTLET_M,
-           "streak": [STREAK_M, STREAK_L_M, UNDULATE_M], "margin_m": MARGIN_M,
+           "edge_m": EDGE_M, "margin_m": MARGIN_M,
+           "relief": [HUMMOCK_M, HUMMOCK_CELL_M, TEXTURE_M, CREVASSE_DEPTH_M, OUTLET_CREVASSE_M],
            "serac": [SERAC_PER_M, SERAC_BLOCK_M, SERAC_M],
            "rough_max_m": ROUGH_MAX_M, "rough_fade_m": ROUGH_FADE_M,
            "rough_slope_share": ROUGH_SLOPE_SHARE, "patch_m": PATCH_M, "window_m": WINDOW_M})
@@ -162,6 +168,8 @@ pub(crate) struct Outputs {
     pub body: Layer<u32>,
     pub surface: Layer<f32>,
     pub mask: Layer<u8>,
+    /// The published ground: `ground` plus the ice's roughness.
+    pub rough: Layer<f32>,
     /// Cells a built glacier owns (its catchment and the ring around it): later glaciers
     /// leave them as they are, so each glacier's drainage stays valid.
     pub claimed: Layer<u8>,
@@ -485,16 +493,6 @@ fn noise(x: f64, y: f64, cell_m: f64, seed: u64) -> f64 {
     let top = hash(ix, iy) * (1.0 - tx) + hash(ix + 1, iy) * tx;
     let bottom = hash(ix, iy + 1) * (1.0 - tx) + hash(ix + 1, iy + 1) * tx;
     top * (1.0 - ty) + bottom * ty
-}
-
-/// The crevasse profile over one spacing: a sharp rise (the downstream step) and a long fall.
-fn profile(u: f64) -> f64 {
-    let f = u - u.floor();
-    if f < 0.2 {
-        -0.5 + f / 0.2
-    } else {
-        0.5 - (f - 0.2) / 0.8
-    }
 }
 
 /// Builds every glacier (the lowest lakes first; a lake whose outlet drains into a glacier's
@@ -981,99 +979,25 @@ fn one(
     let serac_r =
         TONGUE_M + (SERAC_PER_M * (group[0].cells as f64 * sp * sp).sqrt()).clamp(10.0, 40.0);
     let mut serac = vec![false; n];
-    let mut elev = win.z.clone();
-    let mut und = vec![0.0; n];
     let smooth = |t: f64| {
         let t = t.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
-    // Flow stripes: noise averaged up the flow line over STREAK_L_M, so it changes slowly
-    // along flow (under the surface's fall) and freely across it.
-    let streak_base: Vec<f64> = (0..n)
-        .map(|j| {
-            if !ice[j] {
-                return 0.0;
-            }
-            let (x, y) = win.r.world_xy(j);
-            2.0 * noise(x as f64 * sp, y as f64 * sp, STREAK_M, seed_noise ^ 0x5151) - 1.0
-        })
-        .collect();
-    for j in 0..n {
-        if !ice[j] {
-            continue;
-        }
-        let s = s_at[j];
-        let p = parent[j] as usize;
-        let (jx, jy) = win.r.world_xy(j);
-        let (ps, step) = if parent[j] == u32::MAX {
-            (s, sp)
-        } else {
-            let (px, py) = win.r.world_xy(p);
-            (
-                s_at[p],
-                (px as f64 - jx as f64).hypot(py as f64 - jy as f64) * sp,
-            )
-        };
-        let slope = ((s - ps) / step).max(0.0);
-        let (xm, ym) = (jx as f64 * sp, jy as f64 * sp);
-        let fade = smooth((s - win.z[j]) / ROUGH_FADE_M);
-        let (mut sum, mut cnt, mut len, mut c) = (0.0, 0.0, 0.0, j);
-        while ice[c] && len < STREAK_L_M {
-            sum += streak_base[c];
-            cnt += 1.0;
-            let q = parent[c];
-            if q == u32::MAX {
-                break;
-            }
-            let (cx, cy) = win.r.world_xy(c);
-            let (qx, qy) = win.r.world_xy(q as usize);
-            len += (cx as f64 - qx as f64).hypot(cy as f64 - qy as f64) * sp;
-            c = q as usize;
-        }
-        let undulation = UNDULATE_M.min(0.6 * slope * STREAK_L_M)
-            * fade
-            * if cnt > 0.0 { sum / cnt } else { 0.0 };
-        // Crevasses where the ice steepens (transverse) or near its margins (oblique),
-        // patchy, capped by the slope so the surface keeps falling along flow.
-        let rough = if dist[j].is_finite() {
-            let steep = smooth((slope - 0.01) / 0.05);
-            let marginal = smooth(1.0 - margin[j] / MARGIN_M);
-            let patch = 0.6 + 0.4 * noise(xm, ym, PATCH_M, seed_noise);
-            let a = (ROUGH_SLOPE_SHARE * slope * CREVASSE_M).min(ROUGH_MAX_M)
-                * steep.max(marginal)
-                * patch
-                * fade;
-            let phase = 0.5 * noise(xm, ym, PATCH_M / 2.0, seed_noise ^ 0xA5A5);
-            a * profile(dist[j] / CREVASSE_M + phase)
-        } else {
-            0.0
-        };
-        // Seracs: broken blocks near the terminus (the pit fill flattens their gaps).
-        let mut blocks = 0.0;
-        if dist[j] < serac_r {
-            serac[j] = true;
-            // Blocks on a rotated, warped lattice (not grid squares).
-            let (rx, ry) = (0.8 * xm - 0.6 * ym, 0.6 * xm + 0.8 * ym);
-            let wx = rx + 8.0 * (noise(xm, ym, 11.0, seed_noise ^ 0x77) - 0.5);
-            let wy = ry + 8.0 * (noise(xm, ym, 11.0, seed_noise ^ 0x99) - 0.5);
-            let (bx, by) = (
-                (wx / SERAC_BLOCK_M).floor() as i64,
-                (wy / SERAC_BLOCK_M).floor() as i64,
-            );
-            let h = noise(bx as f64 + 0.5, by as f64 + 0.5, 1.0, seed_noise ^ 0x3131);
-            blocks = SERAC_M * h * (1.0 - dist[j] / serac_r) * fade;
-        }
-        // Relief never cuts the ice below half its thickness.
-        let floor = -0.5 * (s - win.z[j]);
-        elev[j] = s + (rough + blocks).max(floor);
-        und[j] = undulation.max(floor - (rough + blocks).min(0.0));
-    }
-    // Soften the stripes across the label tree's straight rays (box blur over the ice).
-    for _ in 0..2 {
-        und = blur(&win, &ice, &und, 4);
-    }
+    // The smooth surface water routes over (owner 2026-11-16: roughness after routing):
+    // the plastic surface softened over the ice (box blur of the surface: no label rays,
+    // no sawtooth where the margin's labels meet, and a blur keeps a falling surface
+    // falling), never under 5 cm of ice.
+    let mut surf_s = vec![0.0; n];
     for j in (0..n).filter(|&j| ice[j]) {
-        elev[j] = win.z[j].max(elev[j] + und[j]);
+        surf_s[j] = s_at[j];
+    }
+    for _ in 0..2 {
+        surf_s = blur(&win, &ice, &surf_s, 3);
+    }
+    let mut elev = win.z.clone();
+    for j in (0..n).filter(|&j| ice[j]) {
+        elev[j] = surf_s[j].max(win.z[j] + 0.05);
+        serac[j] = dist[j] < serac_r;
     }
     // Pit fill over the window from its edge, on the iced and on the old ground. A
     // depression the ice made or deepened (inside its catchment or beside it), or one
@@ -1147,6 +1071,82 @@ fn one(
             ice[j] = true;
         }
     }
+    // The rough surface on the ice only (owner 2026-11-16): crevasses and hummocks hold no
+    // water, so it is published but neither routed nor pit-checked. Hummocks (tens of
+    // metres), crevasse fields (a few metres deep, 1-3 m wide, transverse to flow, oblique
+    // near the margins), seracs at the terminus and a fine texture; all fade in with the
+    // thickness and toward the margin, and never cut into the bed.
+    let mut rough_e = elev.clone();
+    for j in (0..n).filter(|&j| ice[j]) {
+        let (jx, jy) = win.r.world_xy(j);
+        let (xm, ym) = (jx as f64 * sp, jy as f64 * sp);
+        let s = s_at[j];
+        let (ps, step) = match parent[j] {
+            u32::MAX => (s, sp),
+            p => {
+                let (px, py) = win.r.world_xy(p as usize);
+                (
+                    s_at[p as usize],
+                    (px as f64 - jx as f64).hypot(py as f64 - jy as f64) * sp,
+                )
+            }
+        };
+        let slope = ((s - ps) / step).max(0.0);
+        let h = elev[j] - win.z[j];
+        let fade = smooth(h / ROUGH_FADE_M) * smooth(margin[j] / EDGE_M);
+        let n2 = |cell: f64, salt: u64| 2.0 * noise(xm, ym, cell, seed_noise ^ salt) - 1.0;
+        let hummock = HUMMOCK_M * (0.65 * n2(HUMMOCK_CELL_M, 0x11) + 0.35 * n2(17.0, 0x22));
+        let texture = TEXTURE_M * n2(5.0, 0x33);
+        // Crevasses: densest where the ice steepens, near the margins and at the outlet.
+        let d = if dist[j].is_finite() { dist[j] } else { 0.0 };
+        let steep = smooth((slope - 0.02) / 0.08);
+        let marginal = smooth(1.0 - margin[j] / MARGIN_M);
+        let outlet = if dist[j].is_finite() {
+            smooth(1.0 - d / OUTLET_CREVASSE_M)
+        } else {
+            0.0
+        };
+        let field = smooth((noise(xm, ym, PATCH_M, seed_noise) - 0.35) / 0.3);
+        let strain = steep.max(marginal).max(outlet).max(0.25 * field);
+        let u = (d + marginal * margin[j]) / CREVASSE_M
+            + 0.6 * noise(xm, ym, 20.0, seed_noise ^ 0xA5A5);
+        let f = u - u.floor();
+        let width = 1.0 + 2.0 * noise(xm, ym, 8.0, seed_noise ^ 0x44);
+        let wf = width / CREVASSE_M;
+        let segment = smooth((noise(xm, ym, 12.0, seed_noise ^ 0x4242) - 0.3) / 0.3);
+        let trough = if f < wf {
+            (CREVASSE_DEPTH_M
+                * strain
+                * field.max(0.4)
+                * segment
+                * (std::f64::consts::PI * f / wf).sin())
+            .min(0.7 * h)
+        } else {
+            0.0
+        };
+        // Seracs: blocks on a rotated, warped lattice, split by gaps.
+        let mut blocks = 0.0;
+        if serac[j] {
+            let (rx, ry) = (0.8 * xm - 0.6 * ym, 0.6 * xm + 0.8 * ym);
+            let wx = rx + 8.0 * (noise(xm, ym, 11.0, seed_noise ^ 0x77) - 0.5);
+            let wy = ry + 8.0 * (noise(xm, ym, 11.0, seed_noise ^ 0x99) - 0.5);
+            let (fx, fy) = (wx / SERAC_BLOCK_M, wy / SERAC_BLOCK_M);
+            let (bx, by) = (fx.floor(), fy.floor());
+            let hb = noise(bx + 0.5, by + 0.5, 1.0, seed_noise ^ 0x3131);
+            let gap = (fx - bx)
+                .min(1.0 - (fx - bx))
+                .min((fy - by).min(1.0 - (fy - by)))
+                < 0.12;
+            let near = 1.0 - d / serac_r;
+            blocks = if gap {
+                -0.5 * SERAC_M * near
+            } else {
+                SERAC_M * hb * near
+            };
+        }
+        let relief = (hummock + texture + blocks) * fade - trough;
+        rough_e[j] = (elev[j] + relief).max(win.z[j] + 0.05);
+    }
     // Lakes draining into the catchment keep their spill: no ice above their level on
     // their outlet path.
     let mut guarded = Vec::new();
@@ -1198,6 +1198,7 @@ fn one(
     let mut surf = win.surf.clone();
     let mut mask = win.mask.clone();
     let mut ground = Vec::with_capacity(n);
+    let mut rough_out = Vec::with_capacity(n);
     let (mut cells, mut thick_sum, mut thick_max, mut top, mut captured) =
         (0u64, 0.0f64, 0.0f64, f64::NEG_INFINITY, 0u64);
     let mut uncovered = 0u64;
@@ -1241,13 +1242,11 @@ fn one(
             body[j] = 0;
             surf[j] = f32::NAN;
         }
-        ground.push(if ice[j] {
-            elev[j] as f32
-        } else {
-            win.z[j] as f32
-        });
+        ground.push(if ice[j] { elev[j] } else { win.z[j] } as f32);
+        rough_out.push(if ice[j] { rough_e[j] } else { win.z[j] } as f32);
     }
     out.ground.write(r, &ground)?;
+    out.rough.write(r, &rough_out)?;
     out.body.write(r, &body)?;
     out.surface.write(r, &surf)?;
     out.mask.write(r, &mask)?;
@@ -1430,6 +1429,7 @@ pub(crate) fn cached(
         )?;
         for (src, name) in [
             (ground, "ground.f32"),
+            (ground, "rough.f32"),
             (body, "body.u32"),
             (surface, "surface.f32"),
         ] {
@@ -1451,6 +1451,7 @@ pub(crate) fn cached(
             body: Layer::open(w, &tmp.join("body.u32"))?,
             surface: Layer::open(w, &tmp.join("surface.f32"))?,
             mask: Layer::open(w, &tmp.join("mask.u8"))?,
+            rough: Layer::open(w, &tmp.join("rough.f32"))?,
             claimed: Layer::open(w, &tmp.join("claimed.u8"))?,
         };
         let built = build(inp, cands, &out)?;
@@ -1645,6 +1646,7 @@ mod tests {
                 body: Layer::memory(w, self.body.clone()),
                 surface: Layer::memory(w, self.surf.clone()),
                 mask: Layer::memory(w, vec![0; (w.w * w.h) as usize]),
+                rough: Layer::memory(w, self.z.clone()),
                 claimed: Layer::memory(w, vec![0; (w.w * w.h) as usize]),
             };
             (build(&inp, cands, &out).expect("build"), out)
@@ -1720,6 +1722,14 @@ mod tests {
             out.mask.to_vec().unwrap(),
         );
         assert!(pits(t.world, &z).is_empty(), "no depression is left");
+        // The rough surface is the smooth one plus relief on the ice only, above the bed.
+        let rough = out.rough.to_vec().unwrap();
+        let m = out.mask.to_vec().unwrap();
+        assert!((0..z.len()).all(|c| if m[c] == 0 {
+            rough[c] == z[c]
+        } else {
+            rough[c] > t.z[c]
+        }));
         for c in 0..z.len() {
             assert!(z[c] >= t.z[c], "never below the bed");
             if t.body[c] != 0 {
