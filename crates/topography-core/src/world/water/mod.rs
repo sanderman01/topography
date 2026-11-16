@@ -14,6 +14,7 @@ mod erosion;
 mod flats;
 mod flow;
 mod geom;
+mod glacier;
 pub(crate) mod grid;
 mod hierarchy;
 mod hydraulic;
@@ -34,7 +35,7 @@ mod watershed;
 
 use crate::acquisition::{AcquisitionError, Result, digest, ensure, io_context, read_small};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -528,13 +529,13 @@ fn other_settles(work: &store::Work, keep: &str) -> Result<Vec<PathBuf>> {
 /// Removes the final-routing sets (13 B per cell: level, node, discharge, flow; plus their
 /// pass caches) of other ground revisions once a finish on `keep` is published. A later
 /// finish on such a ground recomputes them.
-fn drop_other_finals(work: &store::Work, keep: &str) -> Result<()> {
+fn drop_other_finals(work: &store::Work, keep: &[&str]) -> Result<()> {
     let dir = work.path("");
     for e in io_context("list the work directory", fs::read_dir(&dir))? {
         let e = io_context("list the work directory", e)?;
         let name = e.file_name().to_string_lossy().to_string();
         let tag = name.split(['-', '.']).take(2).collect::<Vec<_>>().join("-");
-        if !name.starts_with("m3-") || tag == keep {
+        if !name.starts_with("m3-") || keep.contains(&tag.as_str()) {
             continue;
         }
         let path = e.path();
@@ -797,6 +798,9 @@ pub struct FinishOptions {
     /// Review spots (east, north in metres) for the `dam_drops_at_spots` figure; checks only,
     /// never part of the work stamp.
     pub spots: Vec<[f64; 2]>,
+    /// The world's L0 layout (its `snowline.f32`): ice lakes at or above the snowline become
+    /// glaciers. Finish only, never part of the work stamp; None: no glaciers.
+    pub layout: Option<PathBuf>,
 }
 
 pub struct Outcome {
@@ -930,7 +934,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     // bodies.json as the export reads it: lake and sea levels (f64 → f32) and the water body
     // ids (the sea is id 1 even when unlisted).
     let id_of = |b: &Value| u32::try_from(b["id"].as_u64()?).ok();
-    let listed = checks::Listed {
+    let mut listed = checks::Listed {
         levels: list
             .iter()
             .filter(|b| b["kind"] == "lake" || b["kind"] == "sea")
@@ -947,7 +951,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             .collect(),
     };
     let mut lakes = checks::LakeInfo::new();
-    let mut lake_short = 0u64;
+    let mut short_lakes: Vec<u32> = Vec::new();
     for b in list.iter().filter(|b| b["kind"] == "lake") {
         let id = u32::try_from(b["id"].as_u64().unwrap_or(0))
             .map_err(|_| AcquisitionError::Invalid("a lake id exceeds u32".into()))?;
@@ -964,7 +968,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         // Its labelled cells against the balance's need.
         let area = b["area_km2"].as_f64().unwrap_or(0.0);
         if n.need > 0 && ((area / s.cell_km2()).round() as u64) < n.need {
-            lake_short += 1;
+            short_lakes.push(id);
         }
     }
     // Every full node's exit (lakes, R26 pools, ponds) for the dam figures, by tile.
@@ -1001,7 +1005,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let (m2_trickles, m2_capped) =
         bodies::trickles(&s, &m2.water.nodes, |o| m2.water.nodes.at(o).lake, &rasters)?;
     // The full lakes, for m3's flow below.
-    let full_lakes = nodes::Nodes(
+    let mut full_lakes = nodes::Nodes(
         m2.water
             .nodes
             .0
@@ -1029,20 +1033,156 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         &m3_tag,
         Some(&pipeline::Rasters::files(s.world, &work.path(""), &m3_tag)?),
     )?;
-    let ponds = m3.water.nodes.0.iter().filter(|n| !n.lake).count();
-    let m3_lake: Vec<bool> = m3.water.nodes.0.iter().map(|n| n.lake).collect();
+    let mut ponds = m3.water.nodes.0.iter().filter(|n| !n.lake).count();
+    let mut m3_lake: Vec<bool> = m3.water.nodes.0.iter().map(|n| n.lake).collect();
     drop(m3);
-    let finals = pipeline::Rasters::open(s.world, &work.path(""), &m3_tag)?;
+    let mut finals = pipeline::Rasters::open(s.world, &work.path(""), &m3_tag)?;
+    // Standing water mostly on or ringed by snow/ice or glacier is ice (I1), the checks keep
+    // the liquid model; also each lake's extent for the glaciers.
+    let (ice, extents) = match s.params.climate {
+        Some(c) if s.classes.is_some() || s.snow.is_some() => {
+            let body = layers::Layer::open(s.world, &work.path("water-body.u32"))?;
+            ice::frozen(
+                &s.tiles(),
+                s.threads,
+                &body,
+                |r| s.cold(r),
+                &bodies,
+                c.ice_share,
+            )?
+        }
+        _ => Default::default(),
+    };
+    // Glacier ice at the snowline (PLAN-export-v10 item 16): ice lakes at or above the
+    // layout's snowline fill their bowls with ice; m3 then runs again on the iced ground.
+    let candidates = match o.layout.as_deref() {
+        Some(dir) => {
+            let line = glacier::Snowline::open(dir)?;
+            let c = glacier::select(&bodies, &ice, &extents, &line, s.world, |x, y| {
+                (s.nw_m[0] + x * s.spacing_m, s.nw_m[1] - y * s.spacing_m)
+            });
+            Some((c, line.sha256))
+        }
+        None => None,
+    };
+    let mut glacier_dir = None;
+    let mut built: Vec<glacier::Built> = Vec::new();
+    let mut final_tag = m3_tag.clone();
+    let mut final_ground = o.ground.clone();
+    if let Some((cands, line_sha)) = candidates.as_ref().filter(|(c, _)| !c.is_empty()) {
+        let ground_sha = if same(&o.ground, &carved) {
+            carved_sha.clone()
+        } else {
+            sha256(&o.ground)?
+        };
+        let gtag = stage_tag(
+            "glacier",
+            &json!({"params": glacier::params(), "ground": ground_sha, "m3": m3_tag,
+                    "snowline": line_sha,
+                    "lakes": cands.iter().map(|c| json!([c.id, c.level, c.exit])).collect::<Vec<_>>()}),
+        );
+        let lakes_at: BTreeMap<u32, (f32, Option<u64>)> = bodies["bodies"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|b| b["kind"] == "lake" || b["kind"] == "sea")
+            .filter_map(|b| {
+                let id = u32::try_from(b["id"].as_u64()?).ok()?;
+                let exit = b["exit_cell"]
+                    .as_array()
+                    .and_then(|a| Some(s.world.index(a.first()?.as_u64()?, a.get(1)?.as_u64()?)));
+                Some((id, (b["level_m"].as_f64()? as f32, exit)))
+            })
+            .collect();
+        let rivers: BTreeSet<u32> = list
+            .iter()
+            .filter(|b| b["kind"] == "river")
+            .filter_map(id_of)
+            .collect();
+        let inp = glacier::Inputs {
+            world: s.world,
+            spacing_m: s.spacing_m,
+            flow: &finals.flow,
+            lakes: &lakes_at,
+            rivers: &rivers,
+        };
+        let dir = work.path(&gtag);
+        built = glacier::cached(
+            &dir,
+            &o.ground,
+            &work.path("water-body.u32"),
+            &work.path("water-surface.f32"),
+            &inp,
+            cands,
+        )?;
+        if built.iter().any(|b| b.skipped.is_none()) {
+            let iced = layers::Layer::open(s.world, &dir.join("ground.f32"))?;
+            final_tag = Tags::m3(&m1_tag, &gtag, &pre_sha);
+            let m3 = pipeline::model_on(
+                &s,
+                &iced,
+                Some(&pre),
+                Some(&work),
+                &final_tag,
+                Some(&pipeline::Rasters::files(
+                    s.world,
+                    &work.path(""),
+                    &final_tag,
+                )?),
+            )?;
+            ponds = m3.water.nodes.0.iter().filter(|n| !n.lake).count();
+            m3_lake = m3.water.nodes.0.iter().map(|n| n.lake).collect();
+            drop(m3);
+            finals = pipeline::Rasters::open(s.world, &work.path(""), &final_tag)?;
+            final_ground = dir.join("ground.f32");
+            glacier_dir = Some(dir);
+        }
+    }
+    // The built glaciers' lakes leave the liquid checks.
+    let iced: BTreeSet<u32> = built
+        .iter()
+        .filter(|b| b.skipped.is_none())
+        .flat_map(|b| b.ids.iter().copied())
+        .collect();
+    let iced_nodes: HashSet<u64> = list
+        .iter()
+        .filter(|b| id_of(b).is_some_and(|id| iced.contains(&id)))
+        .filter_map(|b| b["node"].as_u64())
+        .collect();
+    lakes.retain(|id, _| !iced.contains(id));
+    listed.levels.retain(|id, _| !iced.contains(id));
+    listed.ids.retain(|id| !iced.contains(id));
+    for e in exits.iter_mut() {
+        e.retain(|x| x.lake.is_none_or(|l| !iced.contains(&l)) && !iced_nodes.contains(&x.key));
+    }
+    full_lakes.0.retain(|n| !iced_nodes.contains(&n.key));
+    let lake_short = short_lakes.iter().filter(|id| !iced.contains(id)).count() as u64;
+    let ground = layers::Layer::open(s.world, &final_ground)?;
     // The same outflow rivers on m3's routing, so label agreement compares like with like.
     let (m3_trickles, m3_capped) =
         bodies::trickles(&s, &full_lakes, |o| m3_lake[o as usize], &finals)?;
     bodies::mark_trickles(&m3_trickles, &finals)?;
     drop(full_lakes);
+    let (surface_path, body_path) = match &glacier_dir {
+        Some(d) => (d.join("surface.f32"), d.join("body.u32")),
+        None => (work.path("water-surface.f32"), work.path("water-body.u32")),
+    };
+    let glacier_check = match &glacier_dir {
+        Some(d) => Some(checks::GlacierLayers {
+            bed: layers::Layer::open(s.world, &o.ground)?,
+            mask: layers::Layer::open(s.world, &d.join("mask.u8"))?,
+            guarded: built
+                .iter()
+                .flat_map(|b| b.guarded.iter().copied())
+                .collect(),
+        }),
+        None => None,
+    };
     let layers = checks::CheckLayers {
         raw,
         ground,
-        surface: layers::Layer::open(s.world, &work.path("water-surface.f32"))?,
-        body: layers::Layer::open(s.world, &work.path("water-body.u32"))?,
+        surface: layers::Layer::open(s.world, &surface_path)?,
+        body: layers::Layer::open(s.world, &body_path)?,
         level: finals.level.clone(),
         node: finals.node.clone(),
         flow: finals.flow.clone(),
@@ -1053,6 +1193,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         breached,
         pre_channel: pre,
         blend_far: blend_far(&o.grid, &s)?,
+        glacier: glacier_check,
     };
     let spots: Vec<checks::Spot> = o
         .spots
@@ -1072,7 +1213,11 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     let tiles = store::for_tiles(&s.tiles(), s.threads, "checks", |i, core| {
         checks::check_tile(&s, &layers, core, &lakes, &listed, &exits[i], &spots)
     })?;
-    let of = |kind: &'static str| list.iter().filter(move |e| e["kind"] == kind);
+    let gone = &iced;
+    let of = |kind: &'static str| {
+        list.iter()
+            .filter(move |e| e["kind"] == kind && !id_of(e).is_some_and(|id| gone.contains(&id)))
+    };
     let sum = |kind: &'static str, field: &str| {
         // From +0.0: an empty float sum is −0.0.
         of(kind)
@@ -1094,22 +1239,29 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         json!({"cells": m2_trickles.len(), "capped": m2_capped,
                "m3_cells": m3_trickles.len(), "m3_capped": m3_capped}),
     );
-    // Standing water mostly on or ringed by snow/ice or glacier is ice (I1), the checks keep
-    // the liquid model.
-    let ice = match s.params.climate {
-        Some(c) if s.classes.is_some() || s.snow.is_some() => {
-            let body = layers::Layer::open(s.world, &work.path("water-body.u32"))?;
-            ice::frozen(
-                &s.tiles(),
-                s.threads,
-                &body,
-                |r| s.cold(r),
-                &bodies,
-                c.ice_share,
-            )?
-        }
-        _ => Default::default(),
-    };
+    if let Some((cands, _)) = &candidates {
+        glacier::relabel(&mut bodies, &built, cands);
+        let g: Vec<&glacier::Built> = built.iter().filter(|b| b.skipped.is_none()).collect();
+        let km2: f64 = g
+            .iter()
+            .filter_map(|b| b.figures["area_km2"].as_f64())
+            .sum();
+        figures.insert(
+            "glacier".into(),
+            json!({
+                "candidates": cands.len(),
+                "glaciers": g.len(),
+                "lakes": iced.len(),
+                "km2": km2,
+                "filled_max_share": glacier::FILLED_MAX_SHARE,
+                "params": glacier::params(),
+                "skipped": built.iter().filter(|b| b.skipped.is_some())
+                    .map(|b| json!({"lakes": b.ids, "reason": b.skipped})).collect::<Vec<_>>(),
+                "built": g.iter().map(|b| b.figures.clone()).collect::<Vec<_>>(),
+            }),
+        );
+    }
+    let ice: BTreeSet<u32> = ice.into_iter().filter(|id| !iced.contains(id)).collect();
     ice::relabel(&mut bodies, &ice);
     let ice_km2: f64 = bodies["bodies"]
         .as_array()
@@ -1127,19 +1279,32 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         lakes,
         cell_km2: s.cell_km2(),
         spots,
+        glacier: glacier_dir.is_some(),
+        // Glaciers whose pit fill raised more than its share of their ice.
+        glacier_filled: built
+            .iter()
+            .filter(|b| {
+                b.skipped.is_none()
+                    && b.filled_ice as f64 > glacier::FILLED_MAX_SHARE * b.ice_cells as f64
+            })
+            .count() as u64,
     };
     let (report, passed) = checks::report(tiles, extra, figures);
 
     let mut stage = grid::Stage::new(&o.out)?;
-    stage.copy("elevation.f32", &o.ground)?;
+    stage.copy("elevation.f32", &final_ground)?;
     // Ice keeps its cells and flat surface at the lake's level; only its kind changes.
-    stage.copy("water-body.u32", &work.path("water-body.u32"))?;
-    stage.copy("water-surface.f32", &work.path("water-surface.f32"))?;
+    // Glaciers have no water cells.
+    stage.copy("water-body.u32", &body_path)?;
+    stage.copy("water-surface.f32", &surface_path)?;
+    if let Some(d) = &glacier_dir {
+        stage.copy("glacier.u8", &d.join("mask.u8"))?;
+    }
     stage.copy(
         "discharge.f32",
-        &work.path(&format!("{m3_tag}-discharge.f32")),
+        &work.path(&format!("{final_tag}-discharge.f32")),
     )?;
-    stage.copy("flow.u8", &work.path(&format!("{m3_tag}-flow.u8")))?;
+    stage.copy("flow.u8", &work.path(&format!("{final_tag}-flow.u8")))?;
     // The rain the finer levels reuse (ruling B12).
     let moisture = s.rain.entry.get("file").and_then(Value::as_str);
     if let Some(file) = moisture {
@@ -1155,6 +1320,17 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         m.insert("file".into(), json!("moisture.f32"));
     }
     manifest.insert("water_model".into(), json!("hydrology v3"));
+    if glacier_dir.is_some() {
+        manifest.insert(
+            "glacier".into(),
+            json!({
+                "file": "glacier.u8",
+                "value": "255 glacier ice (elevation.f32 is its surface), 0 none",
+                "bed": "the work directory's ground under the ice",
+                "method": glacier::VERSION,
+            }),
+        );
+    }
     manifest.insert(
         "discharge".into(),
         json!({
@@ -1181,7 +1357,8 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
     );
     stage.json("grid.json", &Value::Object(manifest))?;
     let out = stage.publish()?;
-    drop_other_finals(&work, &m3_tag)?;
+    // The ground's m3 stays with the glaciers' (it rebuilds them).
+    drop_other_finals(&work, &[&m3_tag, &final_tag])?;
     let summary = format!(
         "{}\nwater {}: {n_lakes} lakes, {n_rivers} rivers{}",
         out.display(),
@@ -1490,6 +1667,7 @@ mod tests {
                 water: Some(grid.join("water.toml")),
                 river_km2: Some(1e-5),
                 spots: Vec::new(),
+                layout: None,
             })
         };
         let mut stale = stages.clone();
@@ -1620,6 +1798,7 @@ mod tests {
                 water: o.water.clone(),
                 river_km2: o.river_km2,
                 spots: Vec::new(),
+                layout: None,
             })
             .expect("finish");
             let read =
@@ -1787,6 +1966,7 @@ mod tests {
             water: water.clone(),
             river_km2: Some(0.05),
             spots: Vec::new(),
+            layout: None,
         })
         .expect("finish on a coarse run");
         assert!(f.out.join("report.json").exists());
@@ -2009,6 +2189,7 @@ mod tests {
             water: None,
             river_km2: None,
             spots: Vec::new(),
+            layout: None,
         };
         let started = std::time::Instant::now();
         let outcome = finish(&f).expect("finish");

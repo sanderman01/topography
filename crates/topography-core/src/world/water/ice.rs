@@ -15,9 +15,36 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Per lake: (cells, cold cells, shore ring cells, cold ring cells).
 type Tally = BTreeMap<u32, [u64; 4]>;
 
+/// A lake's cells: bounding box [x0, y0, x1, y1] (inclusive), count and coordinate sums.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Extent {
+    pub bbox: [u64; 4],
+    pub cells: u64,
+    pub sum: [u64; 2],
+}
+
+impl Extent {
+    fn add(&mut self, o: &Extent) {
+        let b = &mut self.bbox;
+        *b = [
+            b[0].min(o.bbox[0]),
+            b[1].min(o.bbox[1]),
+            b[2].max(o.bbox[2]),
+            b[3].max(o.bbox[3]),
+        ];
+        self.cells += o.cells;
+        self.sum = [self.sum[0] + o.sum[0], self.sum[1] + o.sum[1]];
+    }
+    /// The centroid cell's centre (x, y), in cells.
+    pub fn centroid(&self) -> (f64, f64) {
+        let n = self.cells.max(1) as f64;
+        (self.sum[0] as f64 / n + 0.5, self.sum[1] as f64 / n + 0.5)
+    }
+}
+
 /// The ids of lakes in `bodies` whose cells in `body`, or whose shore ring (the cells
 /// 8-adjacent to the lake but not in it), are more than `share` cold. `cold` gives the cold
-/// cells of a window.
+/// cells of a window. Also each lake's extent (one pass over the body raster).
 pub(crate) fn frozen(
     tiles: &[Rect],
     threads: usize,
@@ -25,13 +52,14 @@ pub(crate) fn frozen(
     cold: impl Fn(Rect) -> Result<Vec<bool>> + Sync,
     bodies: &Value,
     share: f64,
-) -> Result<BTreeSet<u32>> {
+) -> Result<(BTreeSet<u32>, BTreeMap<u32, Extent>)> {
     let lakes: BTreeSet<u32> = listed(bodies, "lake").collect();
     let world = body.world();
     let per_tile = for_tiles(tiles, threads, "ice", |_, core| {
         let halo = core.grow(1, world);
         let (b, c) = (body.read(halo)?, cold(core)?);
         let mut n = Tally::new();
+        let mut ext: BTreeMap<u32, Extent> = BTreeMap::new();
         let mut near = Vec::with_capacity(8);
         for (k, &cold) in c.iter().enumerate() {
             let (x, y) = core.world_xy(k);
@@ -40,6 +68,12 @@ pub(crate) fn frozen(
                 let e = n.entry(id).or_default();
                 e[0] += 1;
                 e[1] += u64::from(cold);
+                let one = Extent {
+                    bbox: [x, y, x, y],
+                    cells: 1,
+                    sum: [x, y],
+                };
+                ext.entry(id).and_modify(|e| e.add(&one)).or_insert(one);
             }
             // Each ring cell counts once per lake it borders.
             near.clear();
@@ -57,10 +91,14 @@ pub(crate) fn frozen(
                 e[3] += u64::from(cold);
             }
         }
-        Ok(n)
+        Ok((n, ext))
     })?;
     let mut n = Tally::new();
-    for t in per_tile {
+    let mut extents: BTreeMap<u32, Extent> = BTreeMap::new();
+    for (t, ext) in per_tile {
+        for (id, e) in ext {
+            extents.entry(id).and_modify(|a| a.add(&e)).or_insert(e);
+        }
         for (id, v) in t {
             let e = n.entry(id).or_default();
             for (a, b) in e.iter_mut().zip(v) {
@@ -69,10 +107,12 @@ pub(crate) fn frozen(
         }
     }
     let over = |part: u64, all: u64| all > 0 && part as f64 > share * all as f64;
-    Ok(n.into_iter()
+    let ice = n
+        .into_iter()
         .filter(|&(_, [a, ac, r, rc])| over(ac, a) || over(rc, r))
         .map(|(id, _)| id)
-        .collect())
+        .collect();
+    Ok((ice, extents))
 }
 
 /// Relabel the frozen lakes `ice` (their other fields kept).
@@ -125,7 +165,8 @@ mod tests {
                     &bodies,
                     0.5,
                 )
-                .expect("frozen");
+                .expect("frozen")
+                .0;
                 assert_eq!(got.contains(&7), want, "{n} cold ring cells, tile {size}");
             }
         }
@@ -163,11 +204,14 @@ mod tests {
             {"id": 4, "kind": "river"}]});
         let all = tiles(world, 2);
         let cold = mask(world, cold);
-        let ice = frozen(&all, 2, &body, &cold, &bodies, 0.5).expect("frozen");
+        let (ice, ext) = frozen(&all, 2, &body, &cold, &bodies, 0.5).expect("frozen");
         assert_eq!(ice, BTreeSet::from([2]));
+        assert_eq!(ext[&2].bbox, [0, 0, 1, 3]);
+        assert_eq!((ext[&3].cells, ext[&3].centroid()), (8, (3.0, 2.0)));
         assert!(
             frozen(&all, 2, &body, &cold, &bodies, 0.7)
                 .expect("frozen")
+                .0
                 .is_empty()
         );
         relabel(&mut bodies, &ice);

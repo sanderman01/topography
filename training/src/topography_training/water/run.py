@@ -409,9 +409,21 @@ class Progress:
         cascade.save_json(self.path, self.state)
 
 
+def _layout(src: Path) -> Path | None:
+    """The L0 layout of a source world (its manifest's, else its source world's), whose
+    snowline turns ice lakes into glaciers in `water-finish`; None without one."""
+    m = _json(src / "manifest.json")
+    for m in (m, _json(Path(m["source_world"]) / "manifest.json") if m.get("source_world") else {}):
+        path = m.get("layout") or (m.get("cover") or {}).get("layout")
+        if path and (Path(path) / "snowline.f32").exists():
+            return Path(path)
+    return None
+
+
 def _water(progress: Progress, binary: Path, grid: Path, work: Path, out1m: Path, tile: int, threads: int,
-           river_km2: float | None = None) -> int:
+           river_km2: float | None = None, layout: Path | None = None) -> int:
     """`world water` then `world water-finish` on the carved ground, each skipped when done.
+    `layout` (finish only, outside the work's key) gives the snowline for glaciers.
     Returns finish's 0 (passed) or 1 (checks failed); a failed command raises Refused."""
     flags = ["--grid", str(grid), "--work", str(work), "--tile", str(tile), "--threads", str(threads)]
     if river_km2 is not None:
@@ -425,8 +437,9 @@ def _water(progress: Progress, binary: Path, grid: Path, work: Path, out1m: Path
         if out1m.exists():
             shutil.rmtree(out1m)
         started = time.time()
+        glaciers = ["--layout", str(layout)] if layout is not None else []
         code = _rust([str(binary), "world", "water-finish", *flags, "--ground", str(work / "carved.f32"),
-                      "--out", str(out1m), "--spots", _spots_arg()])
+                      "--out", str(out1m), "--spots", _spots_arg(), *glaciers])
         if code not in (0, 1) or not (out1m / "report.json").exists():
             raise Refused(f"world water-finish failed (exit {code})")
         step = {"code": code, "seconds": round(time.time() - started, 1), "peak_mb": _child_peak_mb()}
@@ -491,6 +504,13 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
     for name in names:
         _reflink(out1m / name, out / name, replace=True)
     digests = {name: published[name] for name in names}
+    # Glacier ice (game layers read it as snow/ice); elevation.f32 is its surface.
+    glacier = out1m / "glacier.u8"
+    if glacier.exists():
+        _reflink(glacier, out / "glacier.u8", replace=True)
+        digests["glacier.u8"] = published["glacier.u8"]
+    else:
+        (out / "glacier.u8").unlink(missing_ok=True)
     digests["water.u8"] = _water_u8(out / "water-surface.f32", out / "water-body.u32", out / "bodies.json",
                                     out / "water.u8", n)
     for name in ("snow-ice.u8", "vegetation.u8"):
@@ -525,6 +545,8 @@ def _assemble(src: Path, out: Path, m: dict, out1m: Path, moisture: tuple[Path, 
         "spacing_m": 1.0, "size": [n, n], "class_id": m.get("class_id"),
         "method": "hydrology v3 1 m water over the kept L4 raw surface of the source world",
         "water_fill": hydrology.WATER_FILL, "moisture": entry, **extra,
+        **({"glacier": {"file": "glacier.u8", "value": "255 glacier ice (elevation.f32 is its surface), 0 none",
+                        "bodies": "bodies.json kind glacier"}} if glacier.exists() else {}),
         **{k: m[k] for k in ("layout",) if k in m},
         "source_world": m["source_world"], "hydrology_source": str(src.resolve()),
         "hydrology_input": {"file": RAW, "sha256": raw_sha256,
@@ -629,7 +651,7 @@ def _run_world(src: Path, out: Path, tile: int, threads: int) -> int:
     binary, digest = _pin(out / "hydrology" / "bin")
     progress.key(digest, tile, grid, work)
     out1m = out / "hydrology" / "1m"
-    _water(progress, binary, grid, work, out1m, tile, threads)
+    _water(progress, binary, grid, work, out1m, tile, threads, layout=_layout(src))
     if not (step := progress.done("world")):
         started = time.time()
         code = _assemble(src, out, m, out1m, moisture, binary, digest, raw["sha256"], tile, threads)
@@ -648,7 +670,8 @@ def _run_window(src: Path, level: int, centre: tuple[float, float], size: int, o
     grid = build_window_grid(src, level, centre, size, out / "grid")
     binary, digest = _pin(out / "bin")
     progress.key(digest, tile, grid, work)
-    code = _water(progress, binary, grid, work, out / "out", tile, threads)
+    code = _water(progress, binary, grid, work, out / "out", tile, threads,
+                  layout=_layout(src) if level == 1 else None)
     m = _json(src / "manifest.json")
     coarse = Path(m["source_world"]) / "hydrology" / "4m" if level == 1 and m.get("source_world") else None
     # A test window's guide is a figure: its exit code is the water's own.

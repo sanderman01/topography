@@ -697,11 +697,13 @@ The Rust commands, by hand:
 target/release/topography world rain --grid <grid-dir> [--wind-deg 225]
 target/release/topography world water --grid <grid-dir> --work <work-dir> [--tile 4096] [--threads 4] [--water water.toml] [--river-km2 0.05]
 target/release/topography world water-finish --grid <grid-dir> --work <work-dir> --ground <work-dir>/carved.f32 \
-    --out <new-out-dir> [--tile 4096] [--threads 4] [--spots E,N;E,N]
+    --out <new-out-dir> [--tile 4096] [--threads 4] [--spots E,N;E,N] [--layout <layout-dir>]
 ```
 
 `--spots` (metres; the driver passes the review spots) only feeds the `dam_drops_at_spots`
-figure; it is not part of the work stamp.
+figure; it is not part of the work stamp. `--layout` (the world's L0 layout; the driver
+passes the source world's) turns ice lakes at or above its snowline into glaciers (below);
+it is not part of the stamp or the driver's key either.
 
 ### Rain (`world rain`)
 
@@ -1086,6 +1088,16 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   cover 255). The export writes it as kind `ice`, a flat surface at `level_m` like a lake.
   The ground is kept as is. Routing is unchanged: water leaves by the lake's exit. The
   checks run on the liquid model; `report.json` figures `ice` count the bodies and km².
+- With `--layout`, an ice lake at or above the layout snowline (at its centroid) becomes a
+  glacier (`world/water/glacier.rs`, PLAN-export-v10 item 16). From a terminus 40 m down
+  its outlet (a closed lake: past its spill col), a plastic ice surface (Nye,
+  √(2τ/ρg · d)) rises toward a ceiling over the cells that drain to the lake; lakes that
+  drain into each other form one glacier. Crevasses are capped by the local slope; a pit
+  fill guarantees the ice holds no water. `elevation.f32` is the ice surface, the lakes and
+  covered river ends lose their water, `glacier.u8` (255) marks the ice, and `bodies.json`
+  lists the lakes as kind `glacier` (no `level_m`; `lake_level_m`, figures on the lowest).
+  A glacier that would dam another lake is skipped and stays ice. m3 runs again on the iced
+  ground; the work keeps `glacier-<tag>/` and both m3s. Checks `glacier_*` hold it.
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a
 memory cap (`MemoryMax=10G` for 16,384² windows and the world). The work directory takes
@@ -1129,7 +1141,7 @@ kept stage then silently holds the old code's output. Go by
 | `erosion` | e |
 | `bodies` | l |
 | `channel` (channels or settle), or in `checks` the `SILL_M` that channels use | c |
-| any other part of `checks` | none: rerun `water-finish` |
+| any other part of `checks`, or `glacier` (bump `glacier::VERSION`) | none: rerun `water-finish` (step 3 keeps `water`; step 4 deletes nothing) |
 
 Settle rewrites the channels' rasters, so rerunning settle or m3 means rerunning from the
 channels too. `world water` refuses to settle surfaces that are already settled.

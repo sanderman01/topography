@@ -103,6 +103,15 @@ pub(crate) struct CheckLayers {
     /// 1 where a cell lies at least BLEND_FAR_M from a collage region border (`region.u8`);
     /// None without regions.
     pub blend_far: Option<Classes>,
+    /// Glaciers (PLAN-export-v10 item 16), when finish built any.
+    pub glacier: Option<GlacierLayers>,
+}
+
+/// The ground under the glaciers, their mask, and the lakes their catchments border.
+pub(crate) struct GlacierLayers {
+    pub bed: Layer<f32>,
+    pub mask: Layer<u8>,
+    pub guarded: BTreeSet<u32>,
 }
 
 /// Lakes by id: level, full, outlet [inside, outside], cells needed (closed).
@@ -495,6 +504,12 @@ pub(crate) fn check_tile(
     // Breach-only ground; levels with erosion get the coarse checks (B4, B9, B33).
     let bo = l.breached.read(win)?;
     let coarse = s.params.erosion.is_some();
+    // Ice is no change to the ground: the budget reads the bed under it.
+    let (gmask, gbed) = match &l.glacier {
+        Some(g) => (g.mask.read(win)?, g.bed.read(win)?),
+        None => (vec![0u8; win.cells()], Vec::new()),
+    };
+    let zb = |j: usize| if gmask[j] != 0 { gbed[j] } else { z[j] };
     let far = match (&l.blend_far, coarse) {
         (Some(f), true) => f.read(win)?,
         _ => vec![0; win.cells()],
@@ -868,17 +883,31 @@ pub(crate) fn check_tile(
         *t.class_cells.entry(class).or_insert(0) += 1;
         t.max_q = t.max_q.max(q[j]);
         // Change budget.
-        let delta = (z[j] - raw[j]).abs();
+        let delta = (zb(j) - raw[j]).abs();
         let bin = ((delta * 100.0).round() as usize).min(BINS - 1);
         t.hist[bin] += 1;
         if delta > CHANGED_M {
             t.hist_changed[bin] += 1;
         }
-        t.max_change = t.max_change.max(raw[j] - z[j]);
-        t.max_rise = t.max_rise.max(z[j] - raw[j]);
+        t.max_change = t.max_change.max(raw[j] - zb(j));
+        t.max_rise = t.max_rise.max(zb(j) - raw[j]);
         // One-sided (review M1): a cap bug cuts too deep; rises are deposition, a figure.
-        if raw[j] - z[j] > s.params.change_max_m() {
+        if raw[j] - zb(j) > s.params.change_max_m() {
             t.fail("change_max", x, y);
+        }
+        // Glaciers hold no water, lie on their bed, and leave other ground as it was.
+        if l.glacier.is_some() {
+            if gmask[j] != 0 {
+                if node[j] >= 2 {
+                    t.fail("glacier_pits", x, y);
+                }
+                if body[j] != 0 || surf[j].is_finite() {
+                    t.fail("glacier_water", x, y);
+                }
+            }
+            if z[j] < gbed[j] || (gmask[j] == 0 && z[j] != gbed[j]) {
+                t.fail("glacier_bed", x, y);
+            }
         }
         // B26: (a) a dry cell cut into an m3 node that m2 lacks: a pond only the cutting made;
         // (b) a one-cell pit the cutting deepened by over SILL_M, wet or dry (Task 13 ruling 1).
@@ -1042,6 +1071,13 @@ pub(crate) fn check_tile(
                 t.fail("lake_below_sea", x, y);
             }
             // A figure (gate 1 ruling): the lake stays at its label, m3 may balance higher.
+            // A lake beside a glacier keeps its level on the iced ground.
+            if let Some(g) = &l.glacier
+                && g.guarded.contains(&body[j])
+                && (level[j] - lv).abs() > SILL_M
+            {
+                t.fail("glacier_dams_lake", x, y);
+            }
             if !full && level[j].is_finite() {
                 t.lake_m3_gap = wider_gap(t.lake_m3_gap, Some(((level[j] - lv).abs(), body[j])));
             }
@@ -1558,6 +1594,10 @@ pub(crate) struct CheckExtra {
     pub cell_km2: f64,
     /// The review spots of `dam_drops_at_spots`.
     pub spots: Vec<Spot>,
+    /// Whether finish built glaciers (their checks are reported only then).
+    pub glacier: bool,
+    /// Glaciers whose pit fill raised over `glacier::FILLED_MAX_SHARE` of their ice.
+    pub glacier_filled: u64,
 }
 
 /// The largest `n` falls by reach `i` (0: 5 m, 1: 10 m, 2: 50 m), as JSON.
@@ -1606,6 +1646,18 @@ pub(crate) fn report(
         "wet_unknown_body",
     ]
     .into_iter()
+    .chain(
+        extra
+            .glacier
+            .then_some([
+                "glacier_pits",
+                "glacier_water",
+                "glacier_bed",
+                "glacier_dams_lake",
+            ])
+            .into_iter()
+            .flatten(),
+    )
     .map(|k| (k, 0))
     .collect();
     let mut examples: BTreeMap<&str, Vec<[u64; 2]>> = BTreeMap::new();
@@ -1723,6 +1775,9 @@ pub(crate) fn report(
     let p99 = p99_m(&hist);
     fails.insert("drainage_cycles", extra.cycles);
     fails.insert("lake_balance", extra.lake_short);
+    if extra.glacier {
+        fails.insert("glacier_filled", extra.glacier_filled);
+    }
     fails.insert(
         "straight_share",
         u64::from(river > 0.0 && straight / river > STRAIGHT_SHARE),
@@ -2235,6 +2290,8 @@ mod tests {
                 lakes: self.lakes.clone(),
                 cell_km2: 1e-6,
                 spots: self.spots.clone(),
+                glacier: false,
+                glacier_filled: 0,
             }
         }
         fn layers(&self) -> CheckLayers {
@@ -2257,6 +2314,7 @@ mod tests {
                     .far
                     .clone()
                     .map(|f| Classes::new(Layer::memory(w, f), 1, w).expect("blend far")),
+                glacier: None,
             }
         }
         fn report(&self) -> Value {
@@ -4002,6 +4060,7 @@ mod tests {
             water: Some(grid.join("water.toml")),
             river_km2: Some(1e-5),
             spots: Vec::new(),
+            layout: None,
         };
         let outcome = finish(&f).expect("finish");
         let report = read_json(&dir.path().join("out/report.json"));
