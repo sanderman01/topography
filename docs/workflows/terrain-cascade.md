@@ -500,14 +500,15 @@ and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
   settles 3–20 m below the nearby rock height (40 m gaussian), on slopes under the angle of
   repose (33–40°), most in hollows and gullies (discharge 0.001–0.03 km²), none in channels
   (0.5–2 km²) or on crests.
-- A riparian band 10 to 40 m wide (by river discharge from 2 km², or lake area) lines lakes
-  (not ice, glacier, dry or sea) and rivers, fading out 2 to 6 m above the nearest water
-  surface and on banks steeper than 20–35°. It sets `vegetation-density` to at least 0.25
+- A riparian band 10 to 40 m wide (by the body's size) lines every wet cell of lakes (not
+  ice, glacier, dry or sea) and of rivers whose `drainage_km2` reaches 2 km², fading out 2 to
+  6 m above the nearest water surface, on banks steeper than 20–35°, across the tree-line
+  ecotone and below about 2 °C (0–4 °C ramp). It sets `vegetation-density` to at least 0.25
   and land cover 21 where the forest is thinner, which matters in the dry biomes.
 - `temperature` is the region's sea-level temperature from `climate.toml` beside the
   collage's source layout (`[temperature_c]` by region id, default 12 °C; kept out of the
   layout so the collage hash stays valid; its sha256 is in `game.inputs`), blended over 1.5 km
-  across region borders, minus 6.5 °C per km of height, plus up to 1 °C at the coast fading
+  across region borders, minus 6.5 °C per km of surface height (water or ice where present), plus up to 1 °C at the coast fading
   over 5 km. `moisture` is the 128 m hydrology field times a local wetness of 0.7 to 1.3
   from ln(catchment / tan slope), ± 0.1 by aspect, at least 0.6 in the riparian band and 1
   on water.
@@ -1173,39 +1174,59 @@ target/release/topography export view data/exports/fujion-v3-chain-14-l4
 ```
 
 Run `game_layers` first (above); without `game/` the export has height, water and moisture
-only. Worlds without the water layers (`water-surface.f32`, `water-body.u32`,
-`bodies.json`) are refused: regenerate them with hydrology v3. A world whose manifest names a 4 m hydrology
-that is missing or does not overlap the export fails; a world without a `moisture` entry
-exports without moisture and prints a line. The contract is
-[heightmap export v2](../../schemas/heightmap-export-v2.md).
+only, and worlds whose game layers are the dithered v1 `biome`/`land-cover` are refused.
+Worlds without the water layers (`water-surface.f32`, `water-body.u32`, `bodies.json`) are
+refused: regenerate them with hydrology v3. River lines come from the world's own
+`hydrology/1m` (the folder of `water.report`), whose `bodies.json` must be the world's; a
+named hydrology that is missing or does not overlap the export fails. A world without
+moisture exports without it and prints a line. The contract is
+[heightmap export v3](../../schemas/heightmap-export-v3.md).
+
+To rebuild only some layers, name the previous export and the layer groups:
+
+```sh
+target/release/topography export heightmap data/worlds/<world> data/exports/<new> \
+  --from data/exports/<previous> --layers biome,land-cover,moisture
+```
+
+Groups: `terrain` (height, water and description), `description`, `normals`, each game
+layer (`biome`, `land-cover`, `vegetation-density`, `snow-cover`, `talus-density`,
+`temperature`) and `moisture`. Every other group is hardlinked from the previous export,
+whose recorded input digests must match the world; otherwise the export fails naming the
+group to add. Exports before schema 3 (such as `fujix-55-l4v9`) have no digests: run a full
+export once.
 
 Tiles are written as `{layer}/L{level}/{prefix}_L{level}_{tx}_{ty}.png`, for example
 `height/L0/height_L0_0_0.png` and `land-cover/L1/landcover_L1_0_0.png`. Layers (prefix =
 layer name unless noted):
 
 - `height`: 16-bit, 257² `shared_edge` tiles from level 0, no apron;
-- `water-surface` (16-bit, the height encoding), `water-coverage` (8-bit fraction) and
-  `water-body` (16-bit export ids matching `description.json`): from level 0, written only
-  for tiles that hold water; a missing file means no water. Beyond 4 texels past the shore
-  `water-surface` is code 0 (no surface);
-- `biome`, `land-cover` (prefix `landcover`), `vegetation-density`, `snow-cover`,
-  `talus-density`: from 2 m, from the world's `game/`;
-- `moisture`: from about 128 m (on small test worlds the coarsest level only);
-- `normal` (BC5) and `roughness` (BC4): KTX2 tiles (`normal/L2/normal_L2_0_0.ktx2`) from
-  level 2 (4 m), cell-centred, 256² per tile with no apron by default. Options:
-  `--no-normals`, `--no-roughness`, `--normals-level L`, `--normals-apron A` (even). The
-  manifest records the measured BC error per level (`validation.figures.bc_error_budget`);
-  a texel more than 30° off fails the export. Normals add about 4% to the export time
-  and 0.13 B per level-0 sample (about 540 MB at 64 km).
+- `water-surface` (16-bit, 2 cm steps wrapped every 1,310.72 m, unwrapped against the
+  height), `water-coverage` (8-bit fraction; wet ⇔ coverage > 0) and `water-body` (16-bit
+  export ids matching `description.json`, also on the 4-texel extension past the shore):
+  from level 0, written only for tiles that hold water or its extension; a missing file
+  means no water;
+- `biome`, `land-cover` (prefix `landcover`): RGB tiles of the two strongest classes and a
+  weight; `vegetation-density`, `snow-cover`, `talus-density`, `temperature`: from 2 m, from
+  the world's `game/`;
+- `moisture`: from 2 m when `game/` has it, else from 16 m, bilinear from the 128 m grid;
+- `normal` (BC5) and, with `--roughness`, `roughness` (BC4): KTX2 tiles
+  (`normal/L2/normal_L2_0_0.ktx2`) from level 2 (4 m), cell-centred, 260² per tile with a
+  2-texel apron by default. Options: `--no-normals`, `--roughness`, `--normals-level L`,
+  `--normals-apron A` (even). The manifest records the measured BC error per level
+  (`validation.figures.bc_error_budget`); a texel more than 30° off fails the export.
+  Normals add about 4% to the export time and 0.13 B per level-0 sample (about 540 MB at
+  64 km).
 
-Every level comes from a global area-mean pyramid (mode for classes), and every layer but
-height has a 4-texel apron. The last tile of a row or column is one sample short (256²
+Every level comes from a global area-mean pyramid (class shares for the class layers, top
+two re-picked per level), and every layer but height has a 4-texel apron. The last tile of a row or column is one sample short (256²
 heights at the far corner). The manifest carries per-layer metadata, the `biome` and
 `land-cover` legends with `present` flags, and `validation`: surface at or above ground where
-wet, one level per lake, coverage matching surface over ground and identical shared edges
-and aprons; a failing check stops the export before it is published. `description.json`
-adds water bodies, river lines and lake outlines ([world description
-v1](../../schemas/world-description-v1.md)).
+wet, one level per lake, coverage matching wetness, surfaces that unwrap against the ground
+and identical shared edges and aprons; a failing check stops the export before it is
+published. `description.json` adds water bodies (rivers with drainage, gradient and
+`steep`/`falls` flags), river lines, lake outlines and glaciers, each line checked inside its
+body's bounds ([world description v1](../../schemas/world-description-v1.md)).
 
 The export holds the tiles, `manifest.json`, `description.json` and `.md`, and
 `checksums.txt` (SHA-256 of every tile; verify with `sha256sum -c checksums.txt` in the

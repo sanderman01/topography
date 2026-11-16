@@ -55,13 +55,14 @@ TALUS_CHANNEL_KM2 = (0.5, 2.0)  # none in stream channels
 TALUS_GAIN = 1.5  # overall scale: canyon test mean near the old slope band's (0.16)
 # Riparian band along lakes and larger rivers, where vegetation is otherwise thinner.
 RIPARIAN = 21  # land-cover extension code (not WorldCover)
-RIPARIAN_Q_KM2 = 2.0  # rivers from this discharge
+RIPARIAN_Q_KM2 = 2.0  # rivers whose drainage (bodies.json, at the mouth) reaches this
 RIPARIAN_WIDTH_M = (10.0, 40.0)  # band width: small sources to large
-RIPARIAN_WIDE_KM2 = (2.0, 200.0)  # river discharge over which the band widens (log ramp)
+RIPARIAN_WIDE_KM2 = (2.0, 200.0)  # river drainage over which the band widens (log ramp)
 RIPARIAN_WIDE_LAKE_KM2 = (0.01, 1.0)  # lake area over which the band widens (log ramp)
 RIPARIAN_DENSITY = 0.25  # vegetation density inside the band
 RIPARIAN_ABOVE_M = (2.0, 6.0)  # fades out at this height above the nearest water surface
 RIPARIAN_SLOPE_DEG = (20.0, 35.0)  # fades out on steep banks
+RIPARIAN_COLD_C = (0.0, 4.0)  # fades out below about 2 °C mean annual temperature
 # Temperature (°C): region sea-level value, lapse with height, milder at the coast.
 TEMPERATURE_DEFAULT_C = 12.0  # regions missing from the climate file, and layouts without regions
 CLIMATE_FILE = "climate.toml"  # beside the layout: [temperature_c] <region id> = °C
@@ -81,6 +82,7 @@ ALPINE_BAND_M = 400.0  # grass gives way to bare ground over this band above the
 TREELINE_EDGE_M = 100.0  # open cover turns alpine over ± this around the tree line (ecotone)
 ROCK_RAMP_DEG = (30.0, 40.0)  # bare rock ramps in around 35 degrees
 BARE_CLASS_DEG = (10.0, 20.0)  # bare classes are bare from gentle slopes up
+SECOND_MIN = 1e-4  # a runner-up class share at or below this is none (b = a)
 WATER_WET = 0.25  # land-cover water (and no snow) at this wet share: keeps 1 m rivers whole at 2 m
 TREE, SHRUB, GRASS, BARE, SNOW, WATER = 10, 20, 30, 60, 70, 80  # ESA WorldCover codes
 COVER_CODES = (TREE, SHRUB, GRASS, BARE, SNOW, WATER, RIPARIAN)
@@ -167,17 +169,18 @@ def _moisture(world: Path, manifest: dict, origin, rows: np.ndarray, cols: np.nd
 
 
 def _bodies(world: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Lookup tables by world body id: kind code (KINDS, 0 none) and lake area (km²)."""
+    """Lookup tables by world body id: kind code (KINDS, 0 none) and size (km²): a lake's area,
+    a river's drainage at its mouth (its largest; bodies.json `drainage_km2`)."""
     path = world / "bodies.json"
     if not path.exists():
         return np.zeros(1, np.uint8), np.zeros(1, np.float32)
     bodies = json.loads(path.read_text())["bodies"]
     n = max((b["id"] for b in bodies), default=0) + 1
-    kind, area = np.zeros(n, np.uint8), np.zeros(n, np.float32)
+    kind, size = np.zeros(n, np.uint8), np.zeros(n, np.float32)
     for b in bodies:
         kind[b["id"]] = KINDS.get(b.get("kind"), 0)
-        area[b["id"]] = b.get("area_km2", 0.0)
-    return kind, area
+        size[b["id"]] = b.get("drainage_km2" if b.get("kind") == "river" else "area_km2", 0.0)
+    return kind, size
 
 
 def _climate_path(layout_dir: Path) -> Path:
@@ -211,6 +214,13 @@ def _temperature_grid(layout_dir: Path) -> tuple[np.ndarray, float, dict, dict]:
     e = json.loads(meta.read_text())["region32"]
     w, h = e["size"]
     region = np.fromfile(layout_dir / e["file"], np.uint8).reshape(h, w)
+    if climate["file"] is None:
+        print(f"warning: no {_climate_path(layout_dir)}; every region at {TEMPERATURE_DEFAULT_C:g} °C", file=sys.stderr)
+    else:
+        missing = [r for r in e["legend"] if r not in temps]
+        if missing:
+            print(f"warning: {climate['file']} has no temperature for {', '.join(missing)}; "
+                  f"{TEMPERATURE_DEFAULT_C:g} °C", file=sys.stderr)
     lut = np.array([TEMPERATURE_DEFAULT_C] + [temps.get(r, TEMPERATURE_DEFAULT_C) for r in e["legend"]], np.float32)
     idx = ndimage.distance_transform_edt(region == 0, return_distances=False, return_indices=True)
     t = lut[region[idx[0], idx[1]]]
@@ -261,7 +271,7 @@ def riparian(h, slope2, src, width, surf, s):
     return z.astype(np.float32)
 
 
-def _fields(sampler, h, wet, ice, moist, glacier, q, src, width, surf, y0_m, x0_m, s):
+def _fields(sampler, h, wet, ice, moist, glacier, q, src, width, surf, temp, y0_m, x0_m, s):
     """`glacier` is the smoothed glacier class share at the texels; `ice` frozen lakes and glaciers."""
     ramp = cover._ramp
     f = sampler.fields(h, y0_m, x0_m, s)
@@ -271,7 +281,9 @@ def _fields(sampler, h, wet, ice, moist, glacier, q, src, width, surf, y0_m, x0_
     snow *= (h >= 0) & (wet < WATER_WET)  # no snow where land cover is water
     snow = np.maximum(snow, ice)  # frozen lakes and glaciers are snow/ice whatever the ground's height
     forest = f["share"] * ramp(moist, MOIST_DRY, MOIST_WET) * (1 - snow) * (1 - wet)
-    zone = riparian(h, slope2, src, width, surf, s) * (1 - snow) * (wet < WATER_WET)
+    # Climatic gate, not by class: none above the tree line (its ecotone ramp) or in the cold.
+    warm = (1 - ramp(h - f["treeline"], -TREELINE_EDGE_M, TREELINE_EDGE_M)) * ramp(temp, *RIPARIAN_COLD_C)
+    zone = riparian(h, slope2, src, width, surf, s) * warm * (1 - snow) * (wet < WATER_WET)
     rip = RIPARIAN_DENSITY * zone
     # Riparian land cover where the band is denser than the forest, fading as forest reaches it.
     rip_lc = np.minimum(zone * np.clip(1 - forest / RIPARIAN_DENSITY, 0, 1), 1 - forest - snow)
@@ -335,10 +347,14 @@ def top2(shares: np.ndarray, codes) -> tuple[np.ndarray, np.ndarray, np.ndarray]
     np.put_along_axis(rest, i1[None], -1.0, 0)
     i2 = np.argmax(rest, 0)
     s2 = np.maximum(np.take_along_axis(rest, i2[None], 0)[0], 0)
+    w = np.round(255 * s1 / np.maximum(s1 + s2, 1e-9)).astype(np.uint8)
     a, b = codes[i1], codes[i2]
-    b = np.where(s2 > 0, b, a)
-    w = s1 / np.maximum(s1 + s2, 1e-9)
-    return a, b, np.round(255 * w).astype(np.uint8)
+    return a, _single(a, b, s2, w), w
+
+
+def _single(a, b, s2, w):
+    """b = a where the runner-up has no visible share."""
+    return np.where((s2 <= SECOND_MIN) | (w == 255), a, b).astype(np.uint8)
 
 
 def _lerp_index(pos: np.ndarray, n: int):
@@ -358,7 +374,7 @@ def _share_at(share: np.ndarray, rows: np.ndarray, cols) -> np.ndarray:
 
 def _biome_top2(shares, rows: np.ndarray, cols) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Two largest biome shares at game texel rows, holding one class's share at a time:
-    (a, b, share of a, share of b), b = a where only one class is present."""
+    (a, b, share of a, share of b); callers set b = a with `_single`."""
     shape = (len(rows), len(cols[0]))
     s1, s2 = np.zeros(shape, np.float32), np.zeros(shape, np.float32)
     a, b = np.zeros(shape, np.uint8), np.zeros(shape, np.uint8)
@@ -370,7 +386,6 @@ def _biome_top2(shares, rows: np.ndarray, cols) -> tuple[np.ndarray, np.ndarray,
         b = np.where(first, a, np.where(second, k, b))
         s1 = np.where(first, s, s1)
         a = np.where(first, k, a).astype(np.uint8)
-    b = np.where(s2 > 0, b, a).astype(np.uint8)
     return a, b, s1, s2
 
 
@@ -401,7 +416,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     discharge = np.memmap(q_path, "<f4", "r", shape=(n, n))
     glacier_path = world / "glacier.u8"
     glacier_mask = np.memmap(glacier_path, np.uint8, "r", shape=(n, n)) if glacier_path.exists() else None
-    kind_lut, area_lut = _bodies(world)
+    kind_lut, size_lut = _bodies(world)
     t_grid, t_cell, t_info, climate = _temperature_grid(Path(layout_dir))
     (world / "game").mkdir(exist_ok=True)
     # New files replaced into place: world copies may hard-link the original's layers.
@@ -442,46 +457,55 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         # Ice is a frozen lake's surface and glaciers are ground: snow/ice cover, not land-cover water.
         wet1 = (sf > g) & ~ice1
         q1 = np.asarray(discharge[r0 : step * g1], np.float32)
+        top1 = np.fmax(g, sf)  # water or ice surface where there is one, else ground
+        # Every wet cell of a lake or of a river whose drainage qualifies is a riparian source.
+        size = size_lut[bid]
         lake = wet1 & (kind == KINDS["lake"])
-        river = wet1 & (kind == KINDS["river"]) & (q1 >= RIPARIAN_Q_KM2)
+        river = wet1 & (kind == KINDS["river"]) & (size >= RIPARIAN_Q_KM2)
         src1 = lake | river
-        # Band width by river discharge or lake area, on source cells only (few).
+        # Band width by the body's size, on source cells only (few).
         at = np.nonzero(src1)
-        big = np.where(river[at], cover._ramp(np.log10(np.maximum(q1[at], 1e-9)), *np.log10(RIPARIAN_WIDE_KM2)),
-                       cover._ramp(np.log10(np.maximum(area_lut[bid[at]], 1e-9)), *np.log10(RIPARIAN_WIDE_LAKE_KM2)))
+        lsz = np.log10(np.maximum(size[at], 1e-9))
+        big = np.where(river[at], cover._ramp(lsz, *np.log10(RIPARIAN_WIDE_KM2)),
+                       cover._ramp(lsz, *np.log10(RIPARIAN_WIDE_LAKE_KM2)))
         lo_w, hi_w = RIPARIAN_WIDTH_M
         width1 = np.zeros(src1.shape, np.float32)
         width1[at] = lo_w + (hi_w - lo_w) * big
         surf1 = np.full(src1.shape, -np.inf, np.float32)
         surf1[at] = sf[at]
-        del bid, kind, lake, river, big, sf, at
+        del bid, kind, size, lake, river, big, lsz, sf, at
         if level:
             k = step * g0 - r0  # 1 when there is a row above
 
             def dn(a, f=tent_down):
                 return f(a[k:], a[0] if k else None)
 
-            h, wet, ice = dn(g), dn(wet1.astype(np.float32)), dn(ice1.astype(np.float32))
+            h, wet, ice, top = dn(g), dn(wet1.astype(np.float32)), dn(ice1.astype(np.float32)), dn(top1)
             q, src, width, surf = dn(q1, max_down), dn(src1, max_down), dn(width1, max_down), dn(surf1, max_down)
         else:
-            h, wet, ice, q, src, width, surf = g, wet1.astype(np.float32), ice1.astype(np.float32), q1, src1, width1, surf1
-        del g, wet1, ice1, q1, src1, width1, surf1
+            h, wet, ice, top, q, src, width, surf = (g, wet1.astype(np.float32), ice1.astype(np.float32), top1, q1,
+                                                     src1, width1, surf1)
+        del g, wet1, ice1, top1, q1, src1, width1, surf1
+        # Temperature lapses with the surface: a lake's water, not its bed.
+        ym = oy + (np.arange(g0, g1) * step + 0.5) * c0
+        temp = (_at_layout(t_grid, t_cell, ym, xm) - LAPSE_C_PER_M * np.maximum(top, 0)
+                + COAST_WARM_C * (1 - cover._ramp(_at_layout(l0.coast, l0.cell_m, ym, xm), 0.0, COAST_FADE_M)))
+        del top
         moist = _moisture(world, manifest, origin, np.arange(g0, g1), cols, step, c0)
         glacier = _share_at(glacier32, to32(np.arange(g0, g1)), lerp_cols)
-        f = _fields(sampler, h, wet, ice, moist, glacier, q, src, width, surf, oy + g0 * s, ox, s)
+        f = _fields(sampler, h, wet, ice, moist, glacier, q, src, width, surf, temp, oy + g0 * s, ox, s)
         del moist, glacier, q, src, width, surf
         sl = slice(y - g0, b - g0)
         for name in DENSITIES + ("moisture",):
             outs[name][y:b] = np.round(255 * np.clip(f[name][sl], 0, 1)).astype(np.uint8)
-        ym = oy + (np.arange(y, b) * step + 0.5) * c0
         hb = h[sl]
-        temp = (_at_layout(t_grid, t_cell, ym, xm) - LAPSE_C_PER_M * np.maximum(hb, 0)
-                + COAST_WARM_C * (1 - cover._ramp(_at_layout(l0.coast, l0.cell_m, ym, xm), 0.0, COAST_FADE_M)))
-        outs["temperature"][y:b] = np.clip(np.round((temp - TEMPERATURE_OFFSET_C) / TEMPERATURE_STEP_C), 0, 255)
+        outs["temperature"][y:b] = np.clip(np.round((temp[sl] - TEMPERATURE_OFFSET_C) / TEMPERATURE_STEP_C), 0, 255)
+        del temp
         ba, bb, sa, sb = _biome_top2(shares, to32(np.arange(y, b)), lerp_cols)
         wa = sa / np.maximum(sa + sb, 1e-9)
-        outs["biome-a"][y:b], outs["biome-b"][y:b] = ba, bb
-        outs["biome-weight"][y:b] = np.round(255 * wa)
+        bw = np.round(255 * wa).astype(np.uint8)
+        bb = _single(ba, bb, sb, bw)
+        outs["biome-a"][y:b], outs["biome-b"][y:b], outs["biome-weight"][y:b] = ba, bb, bw
         args = (hb, f["slope2"][sl], f["treeline"][sl], f["forest"][sl], f["riparian"][sl],
                 f["snow-cover"][sl], wet[sl])
         mix = wa * cover_shares(ba, *args) + (1 - wa) * cover_shares(bb, *args)
@@ -512,7 +536,8 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
                    "riparian": {"code": RIPARIAN, "q_km2": RIPARIAN_Q_KM2, "width_m": list(RIPARIAN_WIDTH_M),
                                 "wide_km2": list(RIPARIAN_WIDE_KM2), "wide_lake_km2": list(RIPARIAN_WIDE_LAKE_KM2),
                                 "density": RIPARIAN_DENSITY, "above_m": list(RIPARIAN_ABOVE_M),
-                                "slope_deg": list(RIPARIAN_SLOPE_DEG)},
+                                "slope_deg": list(RIPARIAN_SLOPE_DEG), "cold_c": list(RIPARIAN_COLD_C),
+                                "river_size": "bodies.json drainage_km2", "treeline_edge_m": TREELINE_EDGE_M},
                    "temperature": {**t_info, "lapse_c_per_m": LAPSE_C_PER_M, "coast_warm_c": COAST_WARM_C,
                                    "coast_fade_m": COAST_FADE_M, "region_blend_m": REGION_BLEND_M},
                    "moisture": {"twi": list(MOIST_TWI), "local": list(MOIST_LOCAL), "pole": MOIST_POLE,
