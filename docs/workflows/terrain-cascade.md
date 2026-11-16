@@ -467,7 +467,7 @@ the world records. The world's place on the layout comes from its `world-input/w
 origin, so off-centre squares (`--centre`, `--l3-centre`) get their own cover. It refuses
 worlds without a `moisture` entry or that leave the layout. `--rows` (default 256)
 bounds memory, about 5 GB at 64 km (extrapolated from 4 and 8 km crops: 1.8 and 2.0 GB,
-26 s and 101 s; so roughly 1.8 h for the whole map); `--png out.png` also writes area-mean
+21 s and 73 s CPU; so roughly 80 min for the whole map); `--png out.png` also writes area-mean
 previews (snow, vegetation, talus as RGB, and `out-landcover.png`). On the 8 km chain test
 and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
 
@@ -504,8 +504,9 @@ and the 4 km L4 test it took 10 to 12 s and 1.3 GB each.
   (not ice, glacier, dry or sea) and rivers, fading out 2 to 6 m above the nearest water
   surface and on banks steeper than 20–35°. It sets `vegetation-density` to at least 0.25
   and land cover 21 where the forest is thinner, which matters in the dry biomes.
-- `temperature` is the region's sea-level `temperature_c` (layout region key, default 12 °C;
-  read from the collage's source layout when the snapshot lacks it), blended over 1.5 km
+- `temperature` is the region's sea-level temperature from `climate.toml` beside the
+  collage's source layout (`[temperature_c]` by region id, default 12 °C; kept out of the
+  layout so the collage hash stays valid; its sha256 is in `game.inputs`), blended over 1.5 km
   across region borders, minus 6.5 °C per km of height, plus up to 1 °C at the coast fading
   over 5 km. `moisture` is the 128 m hydrology field times a local wetness of 0.7 to 1.3
   from ln(catchment / tan slope), ± 0.1 by aspect, at least 0.6 in the riparian band and 1

@@ -21,6 +21,7 @@ milder at the coast; moisture is the 128 m hydrology field times local wetness.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -62,7 +63,8 @@ RIPARIAN_DENSITY = 0.25  # vegetation density inside the band
 RIPARIAN_ABOVE_M = (2.0, 6.0)  # fades out at this height above the nearest water surface
 RIPARIAN_SLOPE_DEG = (20.0, 35.0)  # fades out on steep banks
 # Temperature (°C): region sea-level value, lapse with height, milder at the coast.
-TEMPERATURE_DEFAULT_C = 12.0  # regions without `temperature_c`, and layouts without regions
+TEMPERATURE_DEFAULT_C = 12.0  # regions missing from the climate file, and layouts without regions
+CLIMATE_FILE = "climate.toml"  # beside the layout: [temperature_c] <region id> = °C
 LAPSE_C_PER_M = 0.0065
 COAST_WARM_C = 1.0  # added at the coast, fading inland
 COAST_FADE_M = 5000.0
@@ -178,33 +180,34 @@ def _bodies(world: Path) -> tuple[np.ndarray, np.ndarray]:
     return kind, area
 
 
-def _region_temperatures(layout_dir: Path, spec: dict) -> tuple[dict, str]:
-    """Sea-level temperature (°C) by region id: the layout snapshot's `temperature_c`, else the
-    collage's source layout file's (a game-only key, so adding it needs no collage rebuild)."""
-    temps = {r["id"]: float(r["temperature_c"]) for r in spec.get("regions", []) if "temperature_c" in r}
-    source = "layout snapshot"
+def _climate_path(layout_dir: Path) -> Path:
+    """`climate.toml` beside the collage's source layout, else in the layout directory."""
     meta = layout_dir / "collage.json"
     if meta.exists():
-        src = Path(json.loads(meta.read_text())["layout"])
-        if src.exists():
-            live = tomllib.loads(src.read_text())
-            extra = {r["id"]: float(r["temperature_c"]) for r in live.get("regions", [])
-                     if "temperature_c" in r and r["id"] not in temps}
-            if extra:
-                temps.update(extra)
-                source = str(src.resolve())
-    return temps, source
+        return Path(json.loads(meta.read_text())["layout"]).parent / CLIMATE_FILE
+    return layout_dir / CLIMATE_FILE
 
 
-def _temperature_grid(layout_dir: Path, spec: dict) -> tuple[np.ndarray, float, dict]:
+def _region_temperatures(layout_dir: Path) -> tuple[dict, dict]:
+    """Sea-level temperature (°C) by region id from the climate file (kept out of the layout so
+    collage hashes stay valid), and the file's provenance for the manifest."""
+    path = _climate_path(layout_dir)
+    if not path.exists():
+        return {}, {"file": None}
+    text = path.read_text()
+    temps = {k: float(v) for k, v in tomllib.loads(text).get("temperature_c", {}).items()}
+    return temps, {"file": str(path.resolve()), "sha256": hashlib.sha256(text.encode()).hexdigest()}
+
+
+def _temperature_grid(layout_dir: Path) -> tuple[np.ndarray, float, dict, dict]:
     """Sea-level temperature on the collage's region grid (layout coordinates), blended across
     region borders; sea cells take the nearest region's. Uniform default without a region map."""
-    temps, source = _region_temperatures(layout_dir, spec)
+    temps, climate = _region_temperatures(layout_dir)
     meta = layout_dir / "collage.json"
-    info = {"default_c": TEMPERATURE_DEFAULT_C, "source": source}
+    info = {"default_c": TEMPERATURE_DEFAULT_C}
     if not meta.exists():
         info["regions"] = {}
-        return np.full((2, 2), TEMPERATURE_DEFAULT_C, np.float32), float("inf"), info
+        return np.full((2, 2), TEMPERATURE_DEFAULT_C, np.float32), float("inf"), info, climate
     e = json.loads(meta.read_text())["region32"]
     w, h = e["size"]
     region = np.fromfile(layout_dir / e["file"], np.uint8).reshape(h, w)
@@ -214,16 +217,15 @@ def _temperature_grid(layout_dir: Path, spec: dict) -> tuple[np.ndarray, float, 
     del idx
     cell = float(e["cell_m"])
     info["regions"] = {r: float(lut[i + 1]) for i, r in enumerate(e["legend"])}
-    return ndimage.gaussian_filter(t, REGION_BLEND_M / cell), cell, info
+    return ndimage.gaussian_filter(t, REGION_BLEND_M / cell), cell, info, climate
 
 
 def _at_layout(grid: np.ndarray, cell_m: float, ym: np.ndarray, xm: np.ndarray) -> np.ndarray:
     """A layout-aligned grid read bilinearly at layout metres (rows ym, columns xm)."""
     if not np.isfinite(cell_m):
         return np.full((len(ym), len(xm)), grid.flat[0], np.float32)
-    fy = np.broadcast_to((ym / cell_m - 0.5)[:, None], (len(ym), len(xm)))
-    fx = np.broadcast_to((xm / cell_m - 0.5)[None, :], (len(ym), len(xm)))
-    return ndimage.map_coordinates(grid, [fy, fx], order=1, mode="nearest").astype(np.float32)
+    cols = _lerp_index(xm / cell_m - 0.5, grid.shape[1])
+    return _share_at(grid, ym / cell_m - 0.5, cols).astype(np.float32)  # separable bilinear
 
 
 def talus(h, slope2, q, s):
@@ -400,7 +402,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
     glacier_path = world / "glacier.u8"
     glacier_mask = np.memmap(glacier_path, np.uint8, "r", shape=(n, n)) if glacier_path.exists() else None
     kind_lut, area_lut = _bodies(world)
-    t_grid, t_cell, t_info = _temperature_grid(Path(layout_dir), l0.spec)
+    t_grid, t_cell, t_info, climate = _temperature_grid(Path(layout_dir))
     (world / "game").mkdir(exist_ok=True)
     # New files replaced into place: world copies may hard-link the original's layers.
     tmps = {k: world / "game" / f"{k}.u8.tmp" for k in NAMES}
@@ -442,14 +444,17 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         q1 = np.asarray(discharge[r0 : step * g1], np.float32)
         lake = wet1 & (kind == KINDS["lake"])
         river = wet1 & (kind == KINDS["river"]) & (q1 >= RIPARIAN_Q_KM2)
-        # Band width by river discharge or lake area.
-        big = np.where(river, cover._ramp(np.log10(np.maximum(q1, 1e-9)), *np.log10(RIPARIAN_WIDE_KM2)),
-                       cover._ramp(np.log10(np.maximum(area_lut[bid], 1e-9)), *np.log10(RIPARIAN_WIDE_LAKE_KM2)))
-        lo_w, hi_w = RIPARIAN_WIDTH_M
         src1 = lake | river
-        width1 = np.where(src1, lo_w + (hi_w - lo_w) * big, 0).astype(np.float32)
-        surf1 = np.where(src1, sf, -np.inf).astype(np.float32)
-        del bid, kind, lake, river, big, sf
+        # Band width by river discharge or lake area, on source cells only (few).
+        at = np.nonzero(src1)
+        big = np.where(river[at], cover._ramp(np.log10(np.maximum(q1[at], 1e-9)), *np.log10(RIPARIAN_WIDE_KM2)),
+                       cover._ramp(np.log10(np.maximum(area_lut[bid[at]], 1e-9)), *np.log10(RIPARIAN_WIDE_LAKE_KM2)))
+        lo_w, hi_w = RIPARIAN_WIDTH_M
+        width1 = np.zeros(src1.shape, np.float32)
+        width1[at] = lo_w + (hi_w - lo_w) * big
+        surf1 = np.full(src1.shape, -np.inf, np.float32)
+        surf1[at] = sf[at]
+        del bid, kind, lake, river, big, sf, at
         if level:
             k = step * g0 - r0  # 1 when there is a row above
 
@@ -496,7 +501,7 @@ def write(world: Path, layout_dir: Path | None = None, rows: int = ROWS) -> dict
         "spacing_m": s, "size": [mg, mg], "level": level, "lattice": LATTICE, "method": METHOD,
         "encodings": ENCODINGS,
         "inputs": {"discharge": str(q_path.relative_to(world)),
-                   "glacier": glacier_path.name if glacier_mask is not None else None},
+                   "glacier": glacier_path.name if glacier_mask is not None else None, "climate": climate},
         "params": {"layout": str(Path(layout_dir).resolve()), "moist_dry": MOIST_DRY, "moist_wet": MOIST_WET,
                    "snow_soft_m": SNOW_SOFT_M, "snow_shed_deg": list(SNOW_SHED_DEG),
                    "talus": {"source_deg": list(TALUS_SOURCE_DEG), "reach_m": TALUS_REACH_M, "supply": TALUS_SUPPLY,
