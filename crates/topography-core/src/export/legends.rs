@@ -6,19 +6,30 @@ use serde_json::{Value, json};
 
 const TERRAIN: &str = include_str!("../../../../catalog/labels/terrain-v3.toml");
 
-/// ESA WorldCover v200 codes.
-const WORLD_COVER: [(u8, &str, &str); 11] = [
-    (10, "tree_cover", "Tree cover"),
-    (20, "shrubland", "Shrubland"),
-    (30, "grassland", "Grassland"),
-    (40, "cropland", "Cropland"),
-    (50, "built_up", "Built-up"),
-    (60, "bare_sparse", "Bare / sparse vegetation"),
-    (70, "snow_ice", "Snow and ice"),
-    (80, "water", "Permanent water bodies"),
-    (90, "herbaceous_wetland", "Herbaceous wetland"),
-    (95, "mangroves", "Mangroves"),
-    (100, "moss_lichen", "Moss and lichen"),
+/// ESA WorldCover v200 codes and colours, plus topography extension classes.
+const WORLD_COVER: [(u8, &str, &str, &str); 12] = [
+    (10, "tree_cover", "Tree cover", "#006400"),
+    (20, "shrubland", "Shrubland", "#ffbb22"),
+    (21, "riparian", "Riparian vegetation", "#6fbf3f"),
+    (30, "grassland", "Grassland", "#ffff4c"),
+    (40, "cropland", "Cropland", "#f096ff"),
+    (50, "built_up", "Built-up", "#fa0000"),
+    (60, "bare_sparse", "Bare / sparse vegetation", "#b4b4b4"),
+    (70, "snow_ice", "Snow and ice", "#f0f0f0"),
+    (80, "water", "Permanent water bodies", "#0064c8"),
+    (90, "herbaceous_wetland", "Herbaceous wetland", "#0096a0"),
+    (95, "mangroves", "Mangroves", "#00cf75"),
+    (100, "moss_lichen", "Moss and lichen", "#fae6a0"),
+];
+
+/// Classes that are not in ESA WorldCover v200.
+const EXTENSIONS: [u8; 1] = [21];
+
+/// Land-cover classes drawn from a fraction layer: the layer is the better source for them.
+const DERIVED: [(u8, &str); 3] = [
+    (10, "vegetation-density (its forest part)"),
+    (21, "vegetation-density (riparian band, density 0.25)"),
+    (70, "snow-cover"),
 ];
 
 #[derive(Deserialize)]
@@ -61,9 +72,28 @@ pub(super) fn legends(biome: &[u64; 256], land_cover: &[u64; 256]) -> Result<Val
             }
         }
     }
+    let mut cover = classes(
+        land_cover,
+        WORLD_COVER
+            .iter()
+            .map(|&(id, key, name, _)| (id, key, name)),
+    );
+    for c in &mut cover {
+        let id = c["id"].as_u64().unwrap_or(0) as u8;
+        if let Some((_, _, _, colour)) = WORLD_COVER.iter().find(|e| e.0 == id) {
+            c["color"] = json!(colour);
+        }
+        if EXTENSIONS.contains(&id) {
+            c["extension"] = json!(true);
+        }
+        if let Some((_, layer)) = DERIVED.iter().find(|e| e.0 == id) {
+            c["derived_from"] = json!(layer);
+        }
+    }
     Ok(json!({
         "biome": {"legend": "topography terrain-v3", "classes": classes(biome, entries.into_iter())},
-        "land-cover": {"legend": "ESA WorldCover v200", "classes": classes(land_cover, WORLD_COVER.into_iter())},
+        "land-cover": {"legend": "ESA WorldCover v200 with topography extensions (extension: true)",
+            "classes": cover},
     }))
 }
 
@@ -98,5 +128,13 @@ mod tests {
             .find(|c| c["id"] == 10)
             .unwrap();
         assert_eq!(tree["key"], "tree_cover");
+        assert_eq!(tree["derived_from"], "vegetation-density (its forest part)");
+        let cover = v["land-cover"]["classes"].as_array().unwrap();
+        let riparian = cover.iter().find(|c| c["id"] == 21).unwrap();
+        assert_eq!(
+            (riparian["key"].as_str(), riparian["extension"].as_bool()),
+            (Some("riparian"), Some(true))
+        );
+        assert!(cover.iter().skip(1).all(|c| c["color"].is_string()));
     }
 }
