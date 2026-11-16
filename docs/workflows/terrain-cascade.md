@@ -1089,15 +1089,17 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   The ground is kept as is. Routing is unchanged: water leaves by the lake's exit. The
   checks run on the liquid model; `report.json` figures `ice` count the bodies and km².
 - With `--layout`, an ice lake at or above the layout snowline (at its centroid) becomes a
-  glacier (`world/water/glacier.rs`, PLAN-export-v10 item 16). From a terminus 40 m down
-  its outlet (a closed lake: past its spill col), perfectly plastic ice (slope × thickness =
-  τ/ρg, 50 kPa: Nye's profile over a flat bed, a thin apron on walls) rises over the cells
-  that drain to the lake and flattens toward a rise set by the lake's size; lakes that drain
-  into each other form one glacier. Crevasse fields are capped by the local slope; a pit
-  fill guarantees the ice holds no water. `elevation.f32` is the ice surface, the lakes and
-  covered river ends lose their water, `glacier.u8` (255) marks the ice, and `bodies.json`
-  lists the lakes as kind `glacier` (no `level_m`; `lake_level_m`, figures on the lowest).
-  A glacier that would dam another lake is skipped and stays ice. m3 runs again on the iced
+  glacier (`world/water/glacier.rs`, PLAN-export-v10 item 16). Each lake's bowl (the cells
+  draining to it) takes perfectly plastic ice (slope × thickness = τ/ρg, softer per lake so
+  it slopes over the whole lake) from its own spill: the lowest lake's from a terminus 40 m
+  down its outlet (a closed lake: past its col), a joined lake's from its exit. The ice
+  flattens toward a ceiling a few tens of metres above the lake level and stays under any
+  divide to another basin; a lake with under 3 m of room stays ice. Flow stripes,
+  slope-capped crevasses and seracs at the terminus give it relief; a pit fill (at most 1 %
+  of its cells) guarantees the ice holds no water. `elevation.f32` is the ice surface, the
+  lakes and covered river ends lose their water, `glacier.u8` (255) marks the ice, and
+  `bodies.json` lists the lakes as kind `glacier` (no `level_m`; `lake_level_m`, figures on
+  the lowest). A glacier that would dam another lake is skipped. m3 runs again on the iced
   ground; the work keeps `glacier-<tag>/` and both m3s. Checks `glacier_*` hold it.
 
 Kill and rerun the same command to resume: finished stages and tiles are kept. Run under a

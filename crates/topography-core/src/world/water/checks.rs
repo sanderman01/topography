@@ -1599,6 +1599,8 @@ pub(crate) struct CheckExtra {
     pub glacier: bool,
     /// Glaciers whose pit fill raised over `glacier::FILLED_MAX_SHARE` of their ice.
     pub glacier_filled: u64,
+    /// Glaciers whose ice stands above ground draining into another basin.
+    pub glacier_captured: u64,
 }
 
 /// The largest `n` falls by reach `i` (0: 5 m, 1: 10 m, 2: 50 m), as JSON.
@@ -1778,6 +1780,7 @@ pub(crate) fn report(
     fails.insert("lake_balance", extra.lake_short);
     if extra.glacier {
         fails.insert("glacier_filled", extra.glacier_filled);
+        fails.insert("glacier_captured", extra.glacier_captured);
     }
     fails.insert(
         "straight_share",
@@ -2293,6 +2296,7 @@ mod tests {
                 spots: self.spots.clone(),
                 glacier: false,
                 glacier_filled: 0,
+                glacier_captured: 0,
             }
         }
         fn layers(&self) -> CheckLayers {

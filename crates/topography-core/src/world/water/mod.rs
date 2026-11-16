@@ -1289,6 +1289,10 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
                     && b.filled_ice as f64 > glacier::FILLED_MAX_SHARE * b.ice_cells as f64
             })
             .count() as u64,
+        glacier_captured: built
+            .iter()
+            .filter(|b| b.figures["captured_km2"].as_f64().is_some_and(|v| v > 0.0))
+            .count() as u64,
     };
     let (report, passed) = checks::report(tiles, extra, figures);
 
