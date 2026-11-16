@@ -94,6 +94,8 @@ impl Bodies {
                     water.push((id, Kind::River, f32::NAN, parent, drainage));
                 }
                 // Glaciers are ice on raised ground: no water cells, listed in the description.
+                // A glacier grown from several lakes: the others name its lowest id.
+                Some("glacier") if e["glacier"].as_u64().is_some_and(|g| g != u64::from(id)) => {}
                 Some("glacier") => glaciers.push(Glacier {
                     world_id: id,
                     area_km2: e["area_km2"].as_f64(),
@@ -306,16 +308,17 @@ pub(super) fn level0(
 
 /// Fills the dry corner between two texels of one river that touch only diagonally (rows
 /// `upper` and `lower` = y, y + 1), so streams are 4-connected: the corner with the lower
-/// ground takes the body, coverage 1 and the mean of the two surfaces; ground is unchanged.
-/// Returns the number of filled texels.
+/// ground takes the body, coverage 1 and the mean of the two surfaces, raised to 5 cm above
+/// its ground; ground is unchanged (no carving). A corner whose surface would then sit more
+/// than 0.6 m above both diagonal surfaces stays dry. Returns [filled, skipped].
 pub(super) fn fill_diagonals(
     upper: &mut TerrainRow,
     lower: &mut TerrainRow,
     bodies: &Bodies,
-) -> u64 {
+) -> [u64; 2] {
     let n = upper.body.len();
     let river = |b: u16| b > 0 && bodies.kind[usize::from(b)] == Kind::River;
-    let mut filled = 0;
+    let (mut filled, mut skipped) = (0, 0);
     for x in 0..n.saturating_sub(1) {
         // (upper x, lower x) of the diagonal pair; the corners are the other two.
         for (ux, lx) in [(x, x + 1), (x + 1, x)] {
@@ -323,20 +326,31 @@ pub(super) fn fill_diagonals(
             if !river(b) || lower.body[lx] != b || upper.body[lx] != 0 || lower.body[ux] != 0 {
                 continue;
             }
-            let surface = 0.5 * (upper.surface[ux] + lower.surface[lx]);
+            let (su, sl) = (upper.surface[ux], lower.surface[lx]);
             let (row, c) = if upper.ground[lx] <= lower.ground[ux] {
                 (&mut *upper, lx)
             } else {
                 (&mut *lower, ux)
             };
+            // Shown above the corner's ground, unless that lifts it far above the stream.
+            let surface = (0.5 * (su + sl)).max(row.ground[c] + FILL_ABOVE_GROUND_M);
+            if surface > su.max(sl) + FILL_MAX_LIFT_M {
+                skipped += 1;
+                continue;
+            }
             row.body[c] = b;
             row.coverage[c] = 1.0;
             row.surface[c] = surface;
             filled += 1;
         }
     }
-    filled
+    [filled, skipped]
 }
+
+/// A filled corner's surface sits at least this far above its ground.
+const FILL_ABOVE_GROUND_M: f32 = 0.05;
+/// A corner is not filled when that lifts its surface more than this above the stream.
+const FILL_MAX_LIFT_M: f32 = 0.6;
 
 /// Extension of a window of rows (rows y0..y0+n): wet texels keep their surface and body; a
 /// dry texel within `reach` (Chebyshev) of water takes the body of the nearest wet texel
@@ -700,13 +714,27 @@ mod tests {
                 .collect(),
             body: (0..8).map(|x| if x == wet { 2 } else { 0 }).collect(),
         };
-        // (3, 0) and (4, 1): corner (4, 0) has ground 12, corner (3, 1) ground 11.
-        let (mut a, mut b) = (row(3, 10.0, [9.0, 12.0]), row(4, 9.0, [11.0, 8.0]));
-        assert_eq!(fill_diagonals(&mut a, &mut b, &bodies), 1);
-        assert_eq!((b.body[3], b.coverage[3], b.surface[3]), (2, 1.0, 9.5));
-        assert_eq!((a.body[4], b.ground[3]), (0, 11.0));
-        // Already 4-connected: nothing to fill.
-        assert_eq!(fill_diagonals(&mut a, &mut b, &bodies), 0);
+        // (3, 0) at 10 m and (4, 1) at 9 m: corner (4, 0) has ground 12, corner (3, 1) the
+        // lower ground, which takes the mean 9.5 m, raised to 5 cm above its ground.
+        for (corner, surface) in [(9.2, Some(9.5)), (9.7, Some(9.75)), (10.7, None)] {
+            let (mut a, mut b) = (row(3, 10.0, [9.0, 12.0]), row(4, 9.0, [corner, 8.0]));
+            let filled = fill_diagonals(&mut a, &mut b, &bodies);
+            assert_eq!(
+                filled,
+                [u64::from(surface.is_some()), u64::from(surface.is_none())]
+            );
+            assert_eq!(a.body[4], 0);
+            assert_eq!(b.ground[3], corner);
+            match surface {
+                Some(s) => {
+                    assert_eq!((b.body[3], b.coverage[3]), (2, 1.0));
+                    assert!((b.surface[3] - s).abs() < 1e-5, "{}", b.surface[3]);
+                }
+                None => assert_eq!(b.body[3], 0),
+            }
+            // Already handled: nothing more to fill.
+            assert_eq!(fill_diagonals(&mut a, &mut b, &bodies)[0], 0);
+        }
     }
 
     #[test]

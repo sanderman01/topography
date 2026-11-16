@@ -26,7 +26,7 @@ description is planned ([fujix v1](../docs/plans/fujix-v1.md), sub-project 5).
 | `river_flags` | Export only. The rules of `steep` (gradient_mean ≥ 0.1: rills and torrents on faces) and `falls` (a reach of about 16 m falling ≥ 0.3 per metre) |
 | `rivers[]` | Export only. One per river body with a centreline in the export: `body` (export id), `length_km` (the whole river's), `source_m` (head of its longest path), `mouth_m` (null when off the map), `paths_m` (polylines of nodes [x, y, width_m, surface_m, discharge_km2, gradient], a node about every 16 m plus the ends; gradient is the fall per metre to the next node, 0 at the last) |
 | `lakes[]` | Export only. One per lake or ice body with cells in the export: `body` (export id), `kind` (`lake` or `ice`), `level_m`, `area_km2`, `outline_m` (closed rings of [x, y], cell edges of the world's `water-body` simplified by one cell) |
-| `glaciers[]` | Export only. Bodies of kind `glacier` (ice on raised ground, no water cells, no export id): `world_id`, `area_km2`, `bounds_m` (from `bodies.json` `bbox`, null when absent) |
+| `glaciers[]` | Export only. Bodies of kind `glacier` (ice on raised ground, no water cells, no export id): `world_id`, `area_km2`, `bounds_m` (from `bodies.json` `bbox`, cells of the hydrology grid, null when absent). A glacier grown from several lakes is listed once: entries whose `glacier` field names another id are skipped |
 
 Notes on the fields:
 

@@ -642,15 +642,19 @@ fn body_table(
 }
 
 /// Glaciers of `bodies.json`: no water cells, listed for the game with their bounds.
-fn glacier_table(bodies: &Bodies, frame: &Frame) -> Vec<Value> {
+/// `cells` maps cell corners to export metres: (offset of cell (0, 0), cell size).
+fn glacier_table(bodies: &Bodies, ([ox, oy], s): ([f64; 2], f64)) -> Vec<Value> {
     bodies
         .glaciers
         .iter()
         .map(|g| {
+            let bounds = g
+                .bounds_cell
+                .map(|[x0, y0, x1, y1]| [ox + x0 * s, oy + y0 * s, ox + x1 * s, oy + y1 * s]);
             json!({
                 "world_id": g.world_id,
                 "area_km2": g.area_km2,
-                "bounds_m": g.bounds_cell.map(|b| b.map(|v| v * frame.spacing_m)),
+                "bounds_m": bounds,
             })
         })
         .collect()
@@ -794,6 +798,19 @@ pub(super) fn write(
         }
     };
     let lakes = lakes(world, frame, bodies, stats)?;
+    // `bodies.json` cells are on the hydrology grid, whose corner can differ from the export's.
+    let cells = match &hydrology {
+        Some(dir) => {
+            let m: Map<String, Value> =
+                serde_json::from_slice(&read_small(&dir.join("grid.json"))?)?;
+            let g = grid::shape(&m)?;
+            (
+                [g.nw_m[0] - frame.origin[0], frame.origin[1] - g.nw_m[1]],
+                g.spacing_m,
+            )
+        }
+        None => ([0.0, 0.0], frame.spacing_m),
+    };
     let flags = json!({
         "steep": format!("gradient_mean (fall per metre along the longest path) ≥ {STEEP_GRADIENT}"),
         "falls": format!("a node-to-node reach (about {NODE_SPACING_M} m) falls ≥ {FALLS_GRADIENT} per metre"),
@@ -813,7 +830,7 @@ pub(super) fn write(
         ("river_flags", flags),
         ("rivers", json!(rivers)),
         ("lakes", json!(lakes)),
-        ("glaciers", json!(glacier_table(bodies, frame))),
+        ("glaciers", json!(glacier_table(bodies, cells))),
     ] {
         d.insert(key.into(), value);
     }
@@ -1075,7 +1092,13 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(json!({"id": 459, "kind": "glacier",
-            "area_km2": 0.25, "bounds_cell": [10, 12, 30, 40], "parent": 0}));
+            "area_km2": 0.25, "bbox": [10, 12, 30, 40], "parent": 0}));
+        // A second lake of the same glacier names it and is not listed again.
+        b["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": 470, "kind": "glacier",
+            "glacier": 459, "parent": 0}));
         let bytes = serde_json::to_vec(&b).unwrap();
         fs::write(&path, &bytes).unwrap();
         let mpath = world.join("manifest.json");
@@ -1088,6 +1111,8 @@ mod tests {
             d["glaciers"],
             json!([{"world_id": 459, "area_km2": 0.25, "bounds_m": [10.0, 12.0, 30.0, 40.0]}])
         );
+        let md = fs::read_to_string(dir.path().join("x/description.md")).unwrap();
+        assert!(md.contains("glaciers 1."), "{md}");
     }
 
     #[test]

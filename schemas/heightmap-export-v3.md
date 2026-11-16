@@ -114,8 +114,12 @@ same `intervals`, `layout`, `size`, `spacing_m` and origin; exports made before 
 no input digests and cannot be reused (run a full export). The new manifest copies the reused
 groups' `layers` entries, legends, `encoding` (when `terrain` is reused) and `description`
 (when `description` is reused); `checksums.txt` keeps the reused files' lines; the report's
-`reused_from` names the previous export, its groups and whether it passed, and `passed` is
-true only when both did. Shared-edge checks run per rebuilt layer.
+`reused_from` names the previous export, its groups, whether it passed and the checks and
+figures it `copied` (the reused groups' checks and figures, such as `diagonal_fills` or
+`bc_error_budget`, are the previous export's), and `passed` is true only when both did.
+Shared-edge checks run per rebuilt layer. Each group's digest includes an
+`exporter_version`, bumped whenever the code changes that group's output, so tiles of older
+exporter code are never reused.
 
 ## Layers
 
@@ -211,8 +215,10 @@ longer reads it).
   draw ice, not water.
 - **Diagonal fill.** Where two level-0 texels of one river touch only at a corner and both
   other corners are dry, the corner with the lower ground becomes wet: the river's body,
-  coverage 255 and the mean of the two surfaces, ground unchanged (that texel's surface can
-  sit below its ground). `validation.figures.diagonal_fills` counts them.
+  coverage 255 and the mean of the two surfaces, raised to at least 5 cm above that texel's
+  ground (ground is never carved). Where that would put the surface more than 0.6 m above
+  both diagonal surfaces the corner stays dry. `validation.figures.diagonal_fills` and
+  `diagonal_fills_skipped` count them.
 - **Coarser levels.** `water-body` is sampled: the centre sample's body when that sample is
   wet, else the wet body with the largest footprint weight. Ids are never averaged. River
   surfaces are the weighted mean over footprint samples of the same body.
@@ -226,9 +232,11 @@ longer reads it).
   `surface_m = s0 + n · 1310.72` with `n = round((ground_m − s0) / 1310.72)`, `ground_m` the
   decoded `height` of the same texel and level. This is exact while |surface − ground| <
   655 m. The export fails when a level-0 wet texel is 600 m or more from its ground
-  (`surface_far_from_ground`), and drops such extension texels; on coarse levels mixed shore
-  texels can exceed it (`coarse_surface_far_from_ground` per level, split into flat bodies and
-  rivers), so take sea, lake and ice surfaces from `water_bodies[].level_m` by id.
+  (`surface_far_from_ground`), and drops such extension texels. On coarse levels mixed shore
+  texels can be that far from the mean ground (`coarse_surface_far_from_ground` per level,
+  split into flat bodies and rivers): river texels are written clamped to ground ± 600 m so
+  they decode to the right wrap; sea, lake and ice texels keep their level, so take their
+  surfaces from `water_bodies[].level_m` by id.
 - **Files.** The three water tiles of a tile exist only where a texel of the tile or its apron
   has `water-body` > 0 (water or its extension). A missing file means coverage 0, body 0 and
   no surface.

@@ -26,6 +26,8 @@ pub(super) struct Checks {
     pub coarse_far_from_ground: Vec<[u64; 2]>,
     /// Level 0: dry corners filled between diagonal river texels.
     pub diagonal_fills: u64,
+    /// Level 0: diagonal corners left dry: their ground stands too far above the stream.
+    pub diagonal_fills_skipped: u64,
     pub shared_edge_mismatches: u64,
     /// Index level − 1: texels with coverage ≥ 0.5 and surface below the mean ground.
     pub coarse_wet_below_ground: Vec<u64>,
@@ -135,6 +137,7 @@ impl Checks {
             "coarse_surface_far_from_ground": far,
             "lake_levels_checked": self.lake_levels.len(),
             "diagonal_fills": self.diagonal_fills,
+            "diagonal_fills_skipped": self.diagonal_fills_skipped,
         });
         if let Some(budget) = &self.bc_budget {
             figures["bc_error_budget"] = budget.clone();

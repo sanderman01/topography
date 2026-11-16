@@ -340,10 +340,23 @@ impl<'a> TerrainOutput<'a> {
                 .map(|&v| ((v * 255.0).round().clamp(0.0, 255.0) as u8).max(u8::from(v > 0.0)))
                 .collect();
             let w = cb.len() / h;
-            let codes: Vec<u16> = s
-                .iter()
-                .zip(&b)
-                .map(|(&v, &id)| if id > 0 { water_code(v) } else { 0 })
+            // Coarse mixed river texels (a canyon stream under a high mean ground) are
+            // written within the unwrap limit of their ground; they are still counted.
+            let limit = WATER_UNWRAP_LIMIT_M as f32;
+            let codes: Vec<u16> = (0..s.len())
+                .map(|i| {
+                    let (v, id) = (s[i], b[i]);
+                    if id == 0 {
+                        return 0;
+                    }
+                    let river = self.bodies.kind[usize::from(id)] == Kind::River;
+                    let v = if level > 0 && river {
+                        v.clamp(gr[i] - limit, gr[i] + limit)
+                    } else {
+                        v
+                    };
+                    water_code(v)
+                })
                 .collect();
             let tile = WaterTile {
                 level,
@@ -701,7 +714,51 @@ fn input_digests(
             json!({"files": files(&[file]), "export": common, "start_m": MOISTURE_START_M}),
         );
     }
+    for (group, entry) in &mut out {
+        entry["exporter_version"] = json!(group_version(group));
+    }
     out
+}
+
+/// Report checks and figures that a group's pass measures; shared-edge checks are per
+/// rebuilt layer and stay this export's.
+fn group_report_keys(group: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    match group {
+        TERRAIN => (
+            &[
+                "wet_not_above_ground",
+                "wet_without_surface",
+                "surface_without_body",
+                "lake_levels_off",
+                "lake_levels",
+                "coverage_mismatch",
+                "surface_far_from_ground",
+            ],
+            &[
+                "coarse_wet_below_ground",
+                "coarse_surface_far_from_ground",
+                "lake_levels_checked",
+                "diagonal_fills",
+                "diagonal_fills_skipped",
+            ],
+        ),
+        NORMALS => (&["bc_gross_errors"], &["bc_error_budget"]),
+        _ => (&[], &[]),
+    }
+}
+
+/// Version of the code that writes a layer group: bump it whenever that group's output
+/// changes, so partial exports never reuse tiles of older code.
+fn group_version(group: &str) -> u32 {
+    match group {
+        TERRAIN => 1,
+        DESCRIPTION => 1,
+        NORMALS => 1,
+        MOISTURE_GROUP => 1,
+        // Class layers (share mean) and density-like game layers.
+        _ if GAME_CLASSES.iter().any(|s| s.name == group) => 1,
+        _ => 1,
+    }
 }
 
 /// The previous export of a partial run, checked against this one.
@@ -791,7 +848,8 @@ fn previous(
 struct Filler<'a> {
     bodies: &'a Bodies,
     pending: Option<(usize, TerrainRow)>,
-    fills: u64,
+    /// Filled and skipped corners.
+    fills: [u64; 2],
 }
 
 impl<'a> Filler<'a> {
@@ -799,13 +857,15 @@ impl<'a> Filler<'a> {
         Self {
             bodies,
             pending: None,
-            fills: 0,
+            fills: [0; 2],
         }
     }
 
     fn push(&mut self, y: usize, mut row: TerrainRow) -> Option<(usize, TerrainRow)> {
         let out = self.pending.take().map(|(py, mut prev)| {
-            self.fills += fill_diagonals(&mut prev, &mut row, self.bodies);
+            let [f, s] = fill_diagonals(&mut prev, &mut row, self.bodies);
+            self.fills[0] += f;
+            self.fills[1] += s;
             (py, prev)
         });
         self.pending = Some((y, row));
@@ -1181,7 +1241,7 @@ fn export(
         if let Some((_, row)) = filler.finish() {
             p.push(row, &mut |l, y, row| out.row(&mut ctx, l, y, row))?;
         }
-        ctx.checks.diagonal_fills = filler.fills;
+        [ctx.checks.diagonal_fills, ctx.checks.diagonal_fills_skipped] = filler.fills;
     }
 
     let mut layer_meta = Map::new();
@@ -1288,8 +1348,22 @@ fn export(
             description_entry = prev.manifest["description"].clone();
         }
         let prev_passed = prev.manifest["validation"]["passed"] == true;
+        // Checks and figures of reused groups come from the export that measured them.
+        let old = &prev.manifest["validation"];
+        let mut copied = Vec::new();
+        for group in &prev.reused {
+            let (checks, figures) = group_report_keys(group);
+            for (section, keys) in [("checks", checks), ("figures", figures)] {
+                for &key in keys {
+                    if let Some(v) = old[section].get(key) {
+                        validation[section][key] = v.clone();
+                        copied.push(format!("{section}.{key}"));
+                    }
+                }
+            }
+        }
         validation["reused_from"] = json!({"export": prev.dir.display().to_string(),
-            "groups": prev.reused, "passed": prev_passed});
+            "groups": prev.reused, "passed": prev_passed, "copied": copied});
         validation["passed"] = json!(ctx.checks.passed() && prev_passed);
     }
     crate::acquisition::write_new(
