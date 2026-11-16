@@ -1150,6 +1150,9 @@ kept stage then silently holds the old code's output. Go by
 Settle rewrites the channels' rasters, so rerunning settle or m3 means rerunning from the
 channels too. `world water` refuses to settle surfaces that are already settled.
 
+The driver refuses to delete a work directory over 10 GB when the pinned binary, tile or
+grid changed; it names the pin swap below, and `--wipe-work` allows starting fresh.
+
 Steps, with the run stopped (its background job has exited and written its `exit_code`);
 `$W` is the run directory and `$H` is `$W/hydrology` for a world or `$W` for a window or a
 level:

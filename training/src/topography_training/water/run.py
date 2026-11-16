@@ -39,6 +39,10 @@ DISK_BYTES = 54
 DISK_MARGIN = 1.1
 DISK_SPARE = 10e9
 # A launcher's own files in a fresh run directory (AGENTS.md long jobs).
+# Progress.key deletes a changed run's work directory only below this size, or with
+# --wipe-work (main sets ALLOW_WIPE).
+WIPE_LIMIT_BYTES = 10 * 10**9
+ALLOW_WIPE = False
 LAUNCH_FILES = {"run.log", "run.pid", "exit_code"}
 MOISTURE_KEYS =("file", "size", "spacing_m", "nw_m", "scale_mm_h")
 
@@ -392,6 +396,14 @@ class Progress:
         key = {"binary": digest, "tile": tile, "grid": hydrology.sha256(grid / "grid.json")}
         if {k: self.state.get(k) for k in key} != key:
             if work.exists():
+                # A large work directory holds hours of stages (a world's is ~200 GB): never
+                # delete it by surprise (owner rule: keep expensive intermediates).
+                size = _used(work)
+                if size > WIPE_LIMIT_BYTES and not ALLOW_WIPE:
+                    raise Refused(f"inputs, settings or the pinned binary changed, and {work} holds "
+                                  f"{size / 1e9:.0f} GB: swap the pin by hand to keep it "
+                                  "(docs/workflows/terrain-cascade.md, 'Rerunning from a stage'), "
+                                  "or pass --wipe-work to start fresh")
                 print(f"inputs or settings changed: removing {work}", flush=True)
                 shutil.rmtree(work)
             self.state["steps"] = {k: v for k, v in self.state["steps"].items() if k == "raw"}
@@ -758,7 +770,12 @@ def main(argv=None) -> int:
     lv.add_argument("--tile", type=int, default=2048)
     lv.add_argument("--threads", type=int, default=4)
     lv.add_argument("--river-km2", type=float)
+    for sp_ in (w, v, lv):
+        sp_.add_argument("--wipe-work", action="store_true",
+                         help="allow deleting a work directory over 10 GB when the binary or inputs changed")
     a = p.parse_args(argv)
+    global ALLOW_WIPE
+    ALLOW_WIPE = a.wipe_work
     started = time.time()
     try:
         if a.mode == "world":

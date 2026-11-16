@@ -1077,7 +1077,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         };
         let gtag = stage_tag(
             "glacier",
-            &json!({"params": glacier::params(), "ground": ground_sha, "m3": m3_tag,
+            &json!({"params": glacier::params(), "code": code_identity()?, "ground": ground_sha, "m3": m3_tag,
                     "snowline": line_sha,
                     "lakes": cands.iter().map(|c| json!([c.id, c.level, c.exit])).collect::<Vec<_>>()}),
         );
@@ -1107,6 +1107,14 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             rivers: &rivers,
         };
         let dir = work.path(&gtag);
+        // Older glacier builds go (each holds world-sized layers); this one is kept.
+        for e in io_context("list the work directory", fs::read_dir(work.path("")))? {
+            let e = io_context("list the work directory", e)?;
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with("glacier-") && name != gtag && e.path().is_dir() {
+                io_context(format!("remove {name}"), fs::remove_dir_all(e.path()))?;
+            }
+        }
         built = glacier::cached(
             &dir,
             &o.ground,
@@ -1172,6 +1180,7 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
         Some(d) => Some(checks::GlacierLayers {
             bed: layers::Layer::open(s.world, &o.ground)?,
             mask: layers::Layer::open(s.world, &d.join("mask.u8"))?,
+            rough: layers::Layer::open(s.world, &d.join("rough.f32"))?,
             guarded: built
                 .iter()
                 .flat_map(|b| b.guarded.iter().copied())
@@ -1287,6 +1296,14 @@ pub fn finish(o: &FinishOptions) -> Result<Outcome> {
             .filter(|b| {
                 b.skipped.is_none()
                     && b.filled_ice as f64 > glacier::FILLED_MAX_SHARE * b.ice_cells as f64
+            })
+            .count() as u64,
+        glacier_flat_relief: built
+            .iter()
+            .filter(|b| {
+                b.figures["flat_relief_share"]
+                    .as_f64()
+                    .is_some_and(|v| v > glacier::FLAT_RELIEF_MAX_SHARE)
             })
             .count() as u64,
         glacier_captured: built

@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::path::Path;
 
 /// Bump on any change to the construction: it keys the cached glacier ground.
-pub(crate) const VERSION: &str = "glacier v4";
+pub(crate) const VERSION: &str = "glacier v5";
 /// Basal yield stress of plastic ice (kPa; 50 over 90 by hillshade: a steadier slope with
 /// crevasses across the ice, where 90 flattens the interior), ice density, gravity.
 const YIELD_KPA: f64 = 50.0;
@@ -56,17 +56,17 @@ const SERAC_PER_M: f64 = 0.06;
 const SERAC_BLOCK_M: f64 = 6.0;
 const SERAC_M: f64 = 3.5;
 const ICE_MIN_M: f64 = 0.3;
-/// Crevasse spacing along flow, the largest crevasse relief, the thickness over which it
-/// fades in, and the share of `slope · spacing` it may reach (keeps the surface descending
-/// along flow; the profile's back slope is 1.25 / spacing).
+/// Crevasse spacing, and the thickness over which the relief fades in.
 const CREVASSE_M: f64 = 12.0;
-const ROUGH_MAX_M: f64 = 1.5;
 const ROUGH_FADE_M: f64 = 6.0;
-const ROUGH_SLOPE_SHARE: f64 = 0.5;
 /// Scale of the noise that breaks crevasses up across flow and patches their relief.
 const PATCH_M: f64 = 40.0;
 /// Margin around the lakes searched for the glacier's catchment.
 const WINDOW_M: f64 = 1000.0;
+/// Larger windows are skipped: about 170 B per cell must stay inside finish's memory cap.
+const WINDOW_CELLS_MAX: usize = 24_000_000;
+/// A glacier whose ice keeps the smooth surface on more than this share fails a check.
+pub(crate) const FLAT_RELIEF_MAX_SHARE: f64 = 0.05;
 /// Ice cells the pit fill may raise (a failing check above it).
 pub(crate) const FILLED_MAX_SHARE: f64 = 0.01;
 
@@ -78,8 +78,8 @@ pub(crate) fn params() -> Value {
            "edge_m": EDGE_M, "margin_m": MARGIN_M,
            "relief": [HUMMOCK_M, HUMMOCK_CELL_M, TEXTURE_M, CREVASSE_DEPTH_M, OUTLET_CREVASSE_M],
            "serac": [SERAC_PER_M, SERAC_BLOCK_M, SERAC_M],
-           "rough_max_m": ROUGH_MAX_M, "rough_fade_m": ROUGH_FADE_M,
-           "rough_slope_share": ROUGH_SLOPE_SHARE, "patch_m": PATCH_M, "window_m": WINDOW_M})
+           "rough_fade_m": ROUGH_FADE_M, "patch_m": PATCH_M, "window_m": WINDOW_M,
+           "window_cells_max": WINDOW_CELLS_MAX})
 }
 
 /// The layout's snowline grid (`layout.json` + `snowline.f32`, rows north to south, its
@@ -218,6 +218,8 @@ struct Win {
     flow: Vec<u8>,
     mask: Vec<u8>,
     claimed: Vec<u8>,
+    /// The published surface so far (earlier glaciers' relief).
+    rough: Vec<f32>,
 }
 
 impl Win {
@@ -231,6 +233,7 @@ impl Win {
             flow: inp.flow.read(r)?.into_iter().map(|f| f & 15).collect(),
             mask: out.mask.read(r)?,
             claimed: out.claimed.read(r)?,
+            rough: out.rough.read(r)?,
         })
     }
     fn local(&self, world: World, i: u64) -> Option<usize> {
@@ -507,6 +510,7 @@ pub(crate) fn build(inp: &Inputs, cands: &[Candidate], out: &Outputs) -> Result<
             continue;
         }
         let mut group = vec![(*seed).clone()];
+        let started = std::time::Instant::now();
         let b = loop {
             let b = one(inp, &group, cands, out, &done, &glaciers)?;
             match b {
@@ -530,9 +534,59 @@ pub(crate) fn build(inp: &Inputs, cands: &[Candidate], out: &Outputs) -> Result<
         if b.skipped.is_none() {
             glaciers.extend(group.iter().map(|c| c.id));
         }
+        eprintln!(
+            "glacier {:?}: {} in {:.1} s{}",
+            b.ids,
+            b.skipped.as_deref().unwrap_or("built"),
+            started.elapsed().as_secs_f64(),
+            peak_rss()
+        );
         built.push(b);
     }
+    // After every glacier: the share of each one's ice that kept the smooth surface (a
+    // later glacier must not erase an earlier one's relief).
+    for b in built.iter_mut().filter(|b| b.skipped.is_none()) {
+        let bb = &b.figures["bbox"];
+        let v = |i: usize| bb[i].as_u64().unwrap_or(0);
+        let r = Rect {
+            x0: v(0),
+            y0: v(1),
+            w: (v(2) - v(0)) as usize,
+            h: (v(3) - v(1)) as usize,
+        };
+        let (m, g, ro) = (out.mask.read(r)?, out.ground.read(r)?, out.rough.read(r)?);
+        // Interior ice only (3 cells in from its edge): thin edge ice may clamp to smooth.
+        let inner = |k: usize| {
+            let (x, y) = ((k % r.w) as i64, (k / r.w) as i64);
+            (-3..=3i64).all(|dy| {
+                (-3..=3i64).all(|dx| {
+                    let (nx, ny) = (x + dx, y + dy);
+                    nx >= 0
+                        && ny >= 0
+                        && nx < r.w as i64
+                        && ny < r.h as i64
+                        && m[ny as usize * r.w + nx as usize] != 0
+                })
+            })
+        };
+        let cells: Vec<usize> = (0..m.len()).filter(|&k| inner(k)).collect();
+        let ice = cells.len().max(1);
+        let flat = cells.iter().filter(|&&k| ro[k] == g[k]).count();
+        b.figures["flat_relief_share"] = json!((flat as f64 / ice as f64 * 1e4).round() / 1e4);
+    }
     Ok(built)
+}
+
+/// Peak resident memory (Linux), for the log.
+fn peak_rss() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("VmHWM:"))
+                .map(|l| format!(", peak {}", l[6..].trim()))
+        })
+        .unwrap_or_default()
 }
 
 /// A surface label: (S, cell, source height, path length, lake (bowl) it may enter, parent,
@@ -570,6 +624,12 @@ fn one(
         }))
     };
     let r = window(world, sp, group.iter().map(|c| c.bbox));
+    if r.cells() > WINDOW_CELLS_MAX {
+        return skip(format!(
+            "window of {} cells over {WINDOW_CELLS_MAX}",
+            r.cells()
+        ));
+    }
     let win = Win::read(inp, out, r)?;
     let n = win.z.len();
     let member = |b: u32| ids.contains(&b);
@@ -1108,12 +1168,17 @@ fn one(
         };
         let field = smooth((noise(xm, ym, PATCH_M, seed_noise) - 0.35) / 0.3);
         let strain = steep.max(marginal).max(outlet).max(0.25 * field);
-        let u = (d + marginal * margin[j]) / CREVASSE_M
+        // Near the margin the phase follows flow distance minus margin distance: crevasses
+        // run at about 45 deg from the margin, up-glacier (moving inward, d grows).
+        let u = (d - marginal * margin[j]) / CREVASSE_M
             + 0.6 * noise(xm, ym, 20.0, seed_noise ^ 0xA5A5);
         let f = u - u.floor();
         let width = 1.0 + 2.0 * noise(xm, ym, 8.0, seed_noise ^ 0x44);
         let wf = width / CREVASSE_M;
-        let segment = smooth((noise(xm, ym, 12.0, seed_noise ^ 0x4242) - 0.3) / 0.3);
+        // Segments: en échelon, shorter near the margin (no continuous rim lines).
+        let seg_cell = 12.0 - 7.0 * marginal;
+        let segment =
+            smooth((noise(xm, ym, seg_cell, seed_noise ^ 0x4242) - 0.3 - 0.2 * marginal) / 0.3);
         let trough = if f < wf {
             (CREVASSE_DEPTH_M
                 * strain
@@ -1243,7 +1308,13 @@ fn one(
             surf[j] = f32::NAN;
         }
         ground.push(if ice[j] { elev[j] } else { win.z[j] } as f32);
-        rough_out.push(if ice[j] { rough_e[j] } else { win.z[j] } as f32);
+        // Off this glacier's ice the published surface stays as it was (earlier glaciers'
+        // relief included).
+        rough_out.push(if ice[j] {
+            rough_e[j] as f32
+        } else {
+            win.rough[j]
+        });
     }
     out.ground.write(r, &ground)?;
     out.rough.write(r, &rough_out)?;
@@ -1455,6 +1526,12 @@ pub(crate) fn cached(
             claimed: Layer::open(w, &tmp.join("claimed.u8"))?,
         };
         let built = build(inp, cands, &out)?;
+        drop(out);
+        // Only the build needs the claims.
+        io_context(
+            "remove claimed.u8",
+            std::fs::remove_file(tmp.join("claimed.u8")),
+        )?;
         let v: Vec<Value> = built.iter().map(Built::to_json).collect();
         io_context(
             "write glaciers.json",
@@ -1792,6 +1869,46 @@ mod tests {
         );
         let tx = built[0].figures["terminus_cell"][0].as_u64().unwrap();
         assert!(tx < 85, "spills west, over the lowest col");
+    }
+
+    /// Two closed bowls whose windows overlap: the later glacier keeps the earlier one's
+    /// relief (review R1), and both hold no water.
+    #[test]
+    fn a_later_glacier_keeps_an_earlier_ones_relief() {
+        let bowl = |x: u64, y: u64| {
+            let (cx, cy) = if x < 130 { (70.0, 80.0) } else { (190.0, 80.0) };
+            let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+            let r = (dx * dx + dy * dy).sqrt();
+            let rim = if r < 12.0 {
+                0.05 * r * r
+            } else if r < 20.0 {
+                7.2 + 0.4 * (r - 12.0)
+            } else {
+                10.4 - 0.5 * (r - 20.0)
+            };
+            // A notch to the north: the col.
+            let a = dy.atan2(dx) + std::f32::consts::FRAC_PI_2;
+            let notch = 3.0 * (-a * a / 0.05).exp() * (r / 12.0).min(1.0);
+            100.0 + rim - notch + 0.01 * y as f32
+        };
+        let t = make(
+            260,
+            160,
+            bowl,
+            &[(5, 104.0, (70, 80)), (6, 104.0, (190, 80))],
+        );
+        let (built, out) = t.run(&t.candidates());
+        let ok: Vec<&Built> = built.iter().filter(|b| b.skipped.is_none()).collect();
+        assert_eq!(ok.len(), 2, "{built:?}");
+        for b in ok {
+            let share = b.figures["flat_relief_share"].as_f64().unwrap();
+            assert!(
+                share < FLAT_RELIEF_MAX_SHARE,
+                "{:?} keeps relief: {share}",
+                b.ids
+            );
+        }
+        assert!(pits(t.world, &out.ground.to_vec().unwrap()).is_empty());
     }
 
     /// Only ice lakes at or above the snowline are candidates.

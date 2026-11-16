@@ -111,6 +111,8 @@ pub(crate) struct CheckLayers {
 pub(crate) struct GlacierLayers {
     pub bed: Layer<f32>,
     pub mask: Layer<u8>,
+    /// The published (rough) surface: the smooth one plus relief on the ice only.
+    pub rough: Layer<f32>,
     pub guarded: BTreeSet<u32>,
 }
 
@@ -505,9 +507,9 @@ pub(crate) fn check_tile(
     let bo = l.breached.read(win)?;
     let coarse = s.params.erosion.is_some();
     // Ice is no change to the ground: the budget reads the bed under it.
-    let (gmask, gbed) = match &l.glacier {
-        Some(g) => (g.mask.read(win)?, g.bed.read(win)?),
-        None => (vec![0u8; win.cells()], Vec::new()),
+    let (gmask, gbed, grough) = match &l.glacier {
+        Some(g) => (g.mask.read(win)?, g.bed.read(win)?, g.rough.read(win)?),
+        None => (vec![0u8; win.cells()], Vec::new(), Vec::new()),
     };
     let zb = |j: usize| if gmask[j] != 0 { gbed[j] } else { z[j] };
     let far = match (&l.blend_far, coarse) {
@@ -908,6 +910,10 @@ pub(crate) fn check_tile(
             }
             if z[j] < gbed[j] || (gmask[j] == 0 && z[j] != gbed[j]) {
                 t.fail("glacier_bed", x, y);
+            }
+            // The published surface: never under the bed, the smooth one off the ice.
+            if grough[j] < gbed[j] || (gmask[j] == 0 && grough[j] != z[j]) {
+                t.fail("glacier_rough", x, y);
             }
         }
         // B26: (a) a dry cell cut into an m3 node that m2 lacks: a pond only the cutting made;
@@ -1601,6 +1607,8 @@ pub(crate) struct CheckExtra {
     pub glacier_filled: u64,
     /// Glaciers whose ice stands above ground draining into another basin.
     pub glacier_captured: u64,
+    /// Glaciers whose ice kept the smooth surface on over `FLAT_RELIEF_MAX_SHARE`.
+    pub glacier_flat_relief: u64,
 }
 
 /// The largest `n` falls by reach `i` (0: 5 m, 1: 10 m, 2: 50 m), as JSON.
@@ -1657,6 +1665,7 @@ pub(crate) fn report(
                 "glacier_water",
                 "glacier_bed",
                 "glacier_dams_lake",
+                "glacier_rough",
             ])
             .into_iter()
             .flatten(),
@@ -1781,6 +1790,7 @@ pub(crate) fn report(
     if extra.glacier {
         fails.insert("glacier_filled", extra.glacier_filled);
         fails.insert("glacier_captured", extra.glacier_captured);
+        fails.insert("glacier_flat_relief", extra.glacier_flat_relief);
     }
     fails.insert(
         "straight_share",
@@ -2297,6 +2307,7 @@ mod tests {
                 glacier: false,
                 glacier_filled: 0,
                 glacier_captured: 0,
+                glacier_flat_relief: 0,
             }
         }
         fn layers(&self) -> CheckLayers {
