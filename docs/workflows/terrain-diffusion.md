@@ -92,12 +92,12 @@ plans real-data levels above 1 m instead.
 
 `world preview` interpolates any world input's 32 m surface to a few metres and
 samples its masks. It has no water layers (hydrology v3 makes them), so heightmap
-export v2 refuses it.
+export refuses it.
 
 ## 5. Export and viewing
 
 ```sh
-topography export heightmap <world-output-dir> <new-export-dir> [256] [shared_edge] [--no-normals]
+topography export heightmap <world-output-dir> <new-export-dir> [256] [shared_edge] [--no-normals] [--from <previous-export> --layers <group,...>]
 topography export view <export-dir> [port]
 ```
 
@@ -105,5 +105,5 @@ topography export view <export-dir> [port]
 the exported tiles: an overview from the finest LOD level of at most 1,025
 samples per side, with double-click loading 1 or 2 km of level 0 around the
 picked point. Colours come from the land-cover, water-coverage and snow-cover
-layers, or the biome layer. The viewer reads only
-[export v2](../../schemas/heightmap-export-v2.md).
+layers, or the biome layer (the dominant class of the RGB class tiles). The viewer reads
+[export v2 and v3](../../schemas/heightmap-export-v3.md).

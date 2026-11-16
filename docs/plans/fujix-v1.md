@@ -7,7 +7,7 @@ Sub-project 2 (hydrology v2) is done: `topography world hydrology` gives water a
 and 1 m, and the cascade chain and the L4 bands use it (verified on a Fujion 8 km crop and a
 synthetic 64 km grid); a full world is not yet generated with it. Sub-project 4 (export
 v2) is done: `game_layers` and `topography export heightmap` write the layers of section 4
-([heightmap export v2](../../schemas/heightmap-export-v2.md)), checked on 8 km and 4 km test
+([heightmap export v3](../../schemas/heightmap-export-v3.md)), checked on 8 km and 4 km test
 worlds. Sub-project 5: the chain runs from the collage and the central and Grand Canyon
 checks pass (section 5); L3 runs in bands and both levels skip deep-sea windows, so the
 full run fits this machine and waits for the owner's go. Fujix is a new
@@ -192,32 +192,34 @@ is build 54 with the canyon plateau as class 19: identical heights and report.
 
 ## 4. Export
 
-Manifest `schema_version` 2. Height tiles do not change: 1 m, 16-bit, 257 squared,
-`shared_edge`. Every other layer gets a 4-texel apron, per the game's water contract (once in
-[export-data-flaws.md](../export-data-flaws.md), now in its Git history). Every level comes from a global pyramid before
-tiles are cut: area mean for heights and continuous layers, mode for classes. Nothing is
-decimated.
+Manifest `schema_version` 3 (v2 until export v10, 2026-11-16). Height tiles do not change:
+1 m, 16-bit, 257 squared, `shared_edge`, with `h_min_m` on the step lattice so 0 m is a code.
+Every other layer gets a 4-texel apron, per the game's water contract (once in
+[export-data-flaws.md](../export-data-flaws.md), now in its Git history). Every level comes
+from a global pyramid before tiles are cut: area mean for heights and continuous layers, and
+for class shares, with the top two classes re-picked per level. Nothing is decimated.
 
 | Layer | Encoding | Finest level | Coarse filter | Notes |
 | --- | --- | --- | --- | --- |
-| `height` | 16-bit, as now | 1 m | Mean | |
-| `water-surface` | 16-bit, the height encoding | 1 m | Mean within one body | Sea at 0, extended 4 texels past the shore |
-| `water-coverage` | 8-bit area fraction | 1 m | Mean | Streams narrower than a texel keep their share |
-| `water-body` | 16-bit id | 1 m | None, sampled | Ids match `description.json`, which gives each body's type: sea, lake or river |
-| `biome` | 8-bit ids, dithered borders | 2 m | Mode | |
-| `land-cover` | ESA WorldCover codes, dithered borders | 2 m | Mode | |
-| `vegetation-density` | 8-bit, 0 to 1 | 2 m | Mean | Procedural, from moisture, treeline and slope |
+| `height` | 16-bit, as now | 1 m | Mean | 0 m is a code |
+| `water-surface` | 16-bit, 2 cm wrapped every 1,310.72 m | 1 m | Mean within one body | Sea at 0; unwrapped against the height; extended 4 texels past the shore with the body's weighted mean |
+| `water-coverage` | 8-bit area fraction | 1 m | Mean | Wet ⇔ coverage > 0; streams narrower than a texel keep their share |
+| `water-body` | 16-bit id | 1 m | None, sampled | Also on the extension; ids match `description.json`, which gives each body's type: sea, lake, ice or river |
+| `biome` | RGB: ids a, b and weight of a | 2 m | Share mean, top two | Replaces the dithered ids |
+| `land-cover` | RGB: WorldCover codes (+ 21 riparian) a, b and weight | 2 m | Share mean, top two | Replaces the dithered codes |
+| `vegetation-density` | 8-bit, 0 to 1 | 2 m | Mean | 1.0 is continuous canopy |
 | `snow-cover` | 8-bit, 0 to 1 | 2 m | Mean | Soft edges |
-| `talus-density` | 8-bit, 0 to 1 | 2 m | Mean | Procedural, scree fans below steep rock |
-| `moisture` | 8-bit, 0 to 1 | About 128 m | Mean | Coarse levels only |
+| `talus-density` | 8-bit, 0 to 1 | 2 m | Mean | Procedural, shed from steep rock and settled below it |
+| `temperature` | 8-bit, °C = code / 4 − 30 | 2 m | Mean | Mean annual |
+| `moisture` | 8-bit, 0 to 1 | 2 m (16 m from the old 128 m grid) | Mean | |
 
-- Land cover is dithered like the biome layer. Each hard rule in `landcover.py` becomes a ramp:
-  forest from `vegetation-density`, snow from `snow-cover`, bare rock over a slope band around
-  35 degrees, grass to bare ground over a band above the tree line. A blue-noise value per
-  texel picks the class, so forest edges, snow lines and scree margins read as a fine mix
-  instead of a line. The blue noise is the collage's, moved to a shared helper.
-- Water files exist only for tiles that hold water. The manifest states that a missing water
-  file means no water in that tile.
+- `game_layers` writes the top two classes and a weight per 2 m texel; the dithered class
+  layers are gone, and the exporter refuses worlds that still have them.
+- Normals have a 2-texel apron by default; roughness is opt-in (`--roughness`).
+- Water files exist only for tiles that hold water or its extension. The manifest states that
+  a missing water file means no water in that tile.
+- `topography export heightmap ... --from <previous> --layers a,b` rebuilds only the named
+  layer groups and hardlinks the rest, guarded by per-group input digests.
 - `manifest.json` gains `legends` in the shape the game asked for in
   [game-vegetation-data-requests.md](../game-vegetation-data-requests.md), with stable keys and
   id 0 named `unknown`. Each layer gets metadata: prefix, format, scale, offset, unit, finest

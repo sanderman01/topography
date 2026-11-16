@@ -1,7 +1,7 @@
 # Terrain export
 
 Applies to the `export` module and delivery manifests
-([heightmap export v2](../../schemas/heightmap-export-v2.md)). Export is a
+([heightmap export v3](../../schemas/heightmap-export-v3.md)). Export is a
 conversion from authoritative physical terrain to a documented consumer format.
 The [master plan](../plans/terrain-design-master-plan.md), sections 5 and 10,
 defines these requirements; the game's Bevy quadtree renderer remains outside scope.
@@ -29,7 +29,8 @@ defines these requirements; the game's Bevy quadtree renderer remains outside sc
 - Build every level from one global pyramid before cutting tiles, so tiles of a
   level agree across seams. Heights and continuous layers take the area mean
   (weights ¼, ½, ¼ per axis over the coarse texel's footprint), class layers the
-  weighted mode, and ids are sampled, never averaged. Do not decimate: a
+  same mean of class shares with the top two re-picked (a mode drops sparse classes
+  and narrows blends), and ids are sampled, never averaged. Do not decimate: a
   decimated level aliases thin ridges and rivers.
 - Give every non-height layer a small apron (4 texels) repeated from its
   neighbours, so the game can filter and blend across tile borders; aprons past
