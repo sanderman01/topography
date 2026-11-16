@@ -1,0 +1,19 @@
+configs/layouts/fujix/climate.toml
+  s_dd823cc4be7cf6::t_9bd02de757b6e6 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aaa3ff8ac12626624450c4cad4fe1a9909200c0c",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
