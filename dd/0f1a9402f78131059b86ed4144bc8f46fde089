@@ -1,0 +1,25 @@
+crates/topography-core/src/export/legends.rs
+  s_dd823cc4be7cf6::t_7cfef77e7ca4f7 13
+  s_dd823cc4be7cf6::t_3edaa064323345 29-32
+  s_dd823cc4be7cf6::t_3727d30d68d69e 132-138
+  s_dd823cc4be7cf6::t_1514e99cd9c71d 9-12,14-28
+  s_dd823cc4be7cf6::t_5d2b899431dffb 75-76,80-92,95-96
+  s_dd823cc4be7cf6::t_6684f5cf148735 131
+  s_dd823cc4be7cf6::t_9414750c73a0ae 77-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd0f1a9402f78131059b86ed4144bc8f46fde089",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
