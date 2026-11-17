@@ -390,10 +390,15 @@ fn col(win: &Win, id: u32, fill: &[f64]) -> Option<[usize; 2]> {
 
 /// A lake's spill: its exit unless that lies in a closed hollow deeper than PIT_M, else its
 /// col (`col`).
-fn spill_of(win: &Win, c: &Candidate, fill: &[f64]) -> std::result::Result<Vec<usize>, String> {
+fn spill_of(
+    win: &Win,
+    c: &Candidate,
+    fill: &[f64],
+    deep: &[bool],
+) -> std::result::Result<Vec<usize>, String> {
     match c.exit.map(|e| win.local(win.world, e)) {
         Some(None) => Err("exit outside its window".into()),
-        Some(Some(e)) if fill[e] <= win.top(e) + PIT_M => Ok(vec![e]),
+        Some(Some(e)) if !deep[e] => Ok(vec![e]),
         _ => col(win, c.id, fill)
             .map(|v| v.to_vec())
             .ok_or_else(|| "no spill col inside its window".into()),
@@ -710,7 +715,7 @@ fn one(
         }
     }
     let in_pit = |j: usize| deep[j];
-    let start = match spill_of(&win, seed, &fill) {
+    let start = match spill_of(&win, seed, &fill, &deep) {
         Ok(v) => v,
         Err(why) => return skip(why),
     };
@@ -778,13 +783,24 @@ fn one(
     let level: Vec<f64> = group.iter().map(|c| f64::from(c.level)).collect();
     let spills: Vec<Option<Vec<usize>>> = group
         .iter()
-        .map(|c| spill_of(&win, c, &fill).ok())
+        .map(|c| spill_of(&win, c, &fill, &deep).ok())
         .collect();
-    let exits: Vec<Option<usize>> = spills.iter().map(|v| v.as_ref().map(|v| v[0])).collect();
-    // Lakes spilling over a col (closed, or exit into a closed hollow).
+    // Lakes spilling over a col above their level (closed, or exit into a closed hollow).
     let by_col: Vec<bool> = spills
         .iter()
-        .map(|v| v.as_ref().is_some_and(|v| v.len() > 1))
+        .zip(&level)
+        .map(|(v, &l)| {
+            v.as_ref()
+                .is_some_and(|v| v.len() > 1 && win.top(v[0]) > l + 0.05)
+        })
+        .collect();
+    // A col at the lake's own level is a second way out at its level: the lake keeps feeding
+    // its ice from its exit, where its bowl drains.
+    let exits: Vec<Option<usize>> = (0..group.len())
+        .map(|m| match (&spills[m], group[m].exit) {
+            (Some(v), Some(e)) if v.len() > 1 && !by_col[m] => win.local(world, e).or(Some(v[0])),
+            (v, _) => v.as_ref().map(|v| v[0]),
+        })
         .collect();
     // Ice stands above its lake's spill: a closed lake's col lies above its level.
     let mut base: Vec<f64> = (0..group.len())
@@ -833,7 +849,7 @@ fn one(
         .filter(|c| !member(c.id) && !done.contains(&c.id))
         .filter(|c| {
             (c.exit.is_some() || win.body.contains(&c.id))
-                && spill_of(&win, c, &fill).is_ok_and(|e| e.iter().any(|&k| state[k] == IN))
+                && spill_of(&win, c, &fill, &deep).is_ok_and(|e| e.iter().any(|&k| state[k] == IN))
         })
         .cloned()
         .collect();
@@ -956,19 +972,28 @@ fn one(
             }
             true
         };
-        if beside.iter().any(|&k| low(k)) && win.body[j] == 0 && leaves() {
-            allowed_src[j] = true;
+        // A spill only for the lakes whose bowl is low beside it; the others keep the cap.
+        let spills_for: Vec<usize> =
+            if win.body[j] == 0 && beside.iter().any(|&k| low(k)) && leaves() {
+                beside
+                    .iter()
+                    .filter(|&&k| low(k))
+                    .map(|&k| owner[k])
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        for &m in &spills_for {
             side[j] = true;
-            for &k in &beside {
-                if !side_spill.contains(&(j, owner[k])) {
-                    side_spill.push((j, owner[k]));
-                }
+            if !side_spill.contains(&(j, m)) {
+                side_spill.push((j, m));
             }
-            continue;
         }
         for k in beside {
             let m = owner[k];
-            ceil[m] = ceil[m].min(win.z[k] - CREST_MARGIN_M);
+            if !spills_for.contains(&m) {
+                ceil[m] = ceil[m].min(win.z[k] - CREST_MARGIN_M);
+            }
         }
     }
     // Too little room under a divide gives flat lake-like ice: such a lake stays ice.
@@ -1076,9 +1101,10 @@ fn one(
                 force,
             )));
         }
-        // A joined lake's second spills (phase 0 has them among its sources).
-        for &(j, _) in side_spill.iter().filter(|&&(_, m)| m == phase && m > 0) {
-            let h = win.top(j);
+        // This lake's second spills, never below its floor: the ice leaves mainly by its own
+        // spill, not down a knife-edge's far side.
+        for &(j, _) in side_spill.iter().filter(|&&(_, m)| m == phase) {
+            let h = win.top(j).max(floor[phase]);
             if h < ceil[phase] {
                 heap.push(Reverse((
                     Key(h),
@@ -1093,11 +1119,12 @@ fn one(
             }
         }
         // And the ice of the lakes below where it meets this bowl: routing through a closed
-        // depression can leave the bowl away from its col (it never sinks under its sill).
+        // depression can leave the bowl away from its col. Only ice between its spill and its
+        // ceiling: the bowl never drains below its sill.
         if phase > 0 && by_col[phase] {
             for j in 0..n {
                 if ice[j]
-                    && s_at[j] < ceil[phase]
+                    && (floor[phase]..ceil[phase]).contains(&s_at[j])
                     && win.around(j).any(|(k, _)| omega[k] && owner[k] == phase)
                 {
                     heap.push(Reverse((
@@ -1426,14 +1453,18 @@ fn one(
             thick_max = thick_max.max(t);
             top = top.max(elev[j]);
             // Ice above a neighbour that drains into another basin would capture its water.
-            let over = win
-                .around(j)
-                .any(|(k, _)| !omega[k] && !allowed_src[k] && win.top(k) < elev[j]);
-            // Plastic ice may not; a depression the ice dammed and the fill raised spills
-            // where it can (a figure).
-            if before[j] {
-                captured += u64::from(over);
-            } else {
+            // A second spill is allowed ground only for the lakes it spills; ice the fill made
+            // is no other basin's ground.
+            let over = win.around(j).any(|(k, _)| {
+                !omega[k]
+                    && !ice[k]
+                    && !allowed_src[k]
+                    && !(side[k] && side_spill.contains(&(k, owner[j])))
+                    && win.top(k) < elev[j]
+            });
+            // No ice may, fill-made ice included (`dammed_spill_cells` is that part).
+            captured += u64::from(over);
+            if !before[j] {
                 dammed_spill += u64::from(over);
             }
             if win.body[j] != 0 && !lake {
