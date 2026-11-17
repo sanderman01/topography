@@ -1487,6 +1487,57 @@ fn one(
             win.rough[j]
         });
     }
+    // The world's per-glacier checks, on what would be written: a glacier failing one stays
+    // lake ice (no single glacier fails the world). The m3 ones (pits as m3 routes them,
+    // water on the ice, a guarded lake's level) follow after the routing.
+    let km2 = sp * sp / 1e6;
+    if captured > 0 {
+        return skip(format!("captures {:.6} km²", captured as f64 * km2));
+    }
+    if filled_ice as f64 > FILLED_MAX_SHARE * cells as f64 {
+        return skip(format!(
+            "the pit fill raises {filled_ice} of {cells} ice cells"
+        ));
+    }
+    if (0..n).any(|j| ice[j] && (ground[j] < win.z[j] as f32 || rough_out[j] < win.z[j] as f32)) {
+        return skip("ice under its bed".into());
+    }
+    {
+        // Interior ice (3 cells in) keeping the smooth surface.
+        let (w, h) = (win.r.w as i64, win.r.h as i64);
+        let inner = |j: usize| {
+            let (x, y) = ((j % win.r.w) as i64, (j / win.r.w) as i64);
+            (-3..=3i64).all(|dy| {
+                (-3..=3i64).all(|dx| {
+                    let (nx, ny) = (x + dx, y + dy);
+                    nx >= 0 && ny >= 0 && nx < w && ny < h && ice[(ny * w + nx) as usize]
+                })
+            })
+        };
+        let cells_in: Vec<usize> = (0..n).filter(|&j| ice[j] && inner(j)).collect();
+        let flat = cells_in
+            .iter()
+            .filter(|&&j| rough_out[j] == ground[j])
+            .count();
+        let share = flat as f64 / cells_in.len().max(1) as f64;
+        if share > FLAT_RELIEF_MAX_SHARE {
+            return skip(format!(
+                "{:.1} % of its ice keeps the smooth surface",
+                100.0 * share
+            ));
+        }
+    }
+    {
+        // No ice cell under the window's fill of the new ground (deeper than the checks' sill).
+        let g: Vec<f64> = ground.iter().map(|&v| f64::from(v)).collect();
+        let lev = flood(&win, &g);
+        let pits = (0..n)
+            .filter(|&j| ice[j] && lev[j] - g[j] > f64::from(super::checks::SILL_M))
+            .count();
+        if pits > 0 {
+            return skip(format!("leaves {pits} ice cells in pits"));
+        }
+    }
     out.ground.write(r, &ground)?;
     out.rough.write(r, &rough_out)?;
     out.body.write(r, &body)?;
@@ -1502,7 +1553,6 @@ fn one(
         }
     }
     out.claimed.write(r, &claimed)?;
-    let km2 = sp * sp / 1e6;
     let round = |v: f64, k: f64| (v * k).round() / k;
     let tw = win.r.world_xy(terminus);
     let figures = json!({
