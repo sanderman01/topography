@@ -1,0 +1,20 @@
+crates/topography-core/src/world/water/glacier.rs
+  s_dd823cc4be7cf6::t_03642d2ad640a1 1490-1501,1503-1517,1522-1523,1528-1540
+  s_dd823cc4be7cf6::t_92c78057ff89d9 1502,1518-1521,1524-1527
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37d4bf1453e6d4f7e0878c9a15ffcf69e45a774e",
+  "prompts": {},
+  "sessions": {
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
