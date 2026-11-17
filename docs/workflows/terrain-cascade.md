@@ -1092,9 +1092,14 @@ relative to the mean land rain is moisture × `scale_mm_h` / `mean_land_mm_h`):
   glacier (`world/water/glacier.rs`, PLAN-export-v10 item 16). Each lake's bowl (the cells
   draining to it) takes perfectly plastic ice (slope × thickness = τ/ρg, softer per lake so
   it slopes over the whole lake) from its own spill: the lowest lake's from a terminus 40 m
-  down its outlet (a closed lake: past its col), a joined lake's from its exit. The ice
-  flattens toward a ceiling a few tens of metres above the lake level and stays under any
-  divide to another basin; a lake with under 3 m of room stays ice. Water routes over this
+  down its outlet, a joined lake's from its exit and the ice below it. A closed lake (or one
+  whose exit drains into a closed hollow) spills at the col of the whole depression it lies
+  in, and its ice stands above that col; the tongue ends before any deeper closed
+  depression. The ice flattens toward a ceiling a few tens of metres above the lake level
+  and stays under any divide to another basin; a divide less than 3.5 m above the spill is a
+  second spill instead (a lake on a col overflows both ways), unless it drains into a nearby
+  closed lake. A lake with under 3 m of room stays ice, as does one whose ice would bury
+  another lake. Water routes over this
   smooth surface (box-blurred, pit-filled; m3, flow, discharge and the checks use it); the
   published `elevation.f32` adds the rough relief on the ice only (hummocks, crevasse
   fields, seracs at the terminus), which holds no water. The

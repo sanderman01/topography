@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::path::Path;
 
 /// Bump on any change to the construction: it keys the cached glacier ground.
-pub(crate) const VERSION: &str = "glacier v5";
+pub(crate) const VERSION: &str = "glacier v6";
 /// Basal yield stress of plastic ice (kPa; 50 over 90 by hillshade: a steadier slope with
 /// crevasses across the ice, where 90 flattens the interior), ice density, gravity.
 const YIELD_KPA: f64 = 50.0;
@@ -33,6 +33,8 @@ const RISE_MIN_M: f64 = 4.0;
 const RISE_MAX_M: f64 = 30.0;
 /// Ground this close to the outlet path counts as the outlet (a broad col spills there).
 const OUTLET_M: f64 = 15.0;
+/// A closed depression deeper than this is a basin the ice must not end in or spill into.
+const PIT_M: f64 = 0.5;
 /// A lake needs this much room between its level and its ceiling for sloping ice.
 const ROOM_MIN_M: f64 = 3.0;
 /// The ceiling stays this far under a divide to another basin.
@@ -74,7 +76,7 @@ pub(crate) const FILLED_MAX_SHARE: f64 = 0.01;
 pub(crate) fn params() -> Value {
     json!({"version": VERSION, "yield_kpa": YIELD_KPA, "tongue_m": TONGUE_M,
            "envelope_m": ENVELOPE_M, "ice_min_m": ICE_MIN_M, "crevasse_m": CREVASSE_M,
-           "rise": [RISE_PER_M, RISE_MIN_M, RISE_MAX_M], "crest_margin_m": CREST_MARGIN_M, "room_min_m": ROOM_MIN_M, "outlet_m": OUTLET_M,
+           "rise": [RISE_PER_M, RISE_MIN_M, RISE_MAX_M], "crest_margin_m": CREST_MARGIN_M, "room_min_m": ROOM_MIN_M, "outlet_m": OUTLET_M, "pit_m": PIT_M,
            "edge_m": EDGE_M, "margin_m": MARGIN_M,
            "relief": [HUMMOCK_M, HUMMOCK_CELL_M, TEXTURE_M, CREVASSE_DEPTH_M, OUTLET_CREVASSE_M],
            "serac": [SERAC_PER_M, SERAC_BLOCK_M, SERAC_M],
@@ -328,19 +330,47 @@ fn window(world: World, spacing_m: f64, boxes: impl Iterator<Item = [u64; 4]>) -
     }
 }
 
-/// The col of a closed lake: [col, first cell beyond it], the lowest pass out of its basin
-/// on the ground (a priority flood from its cells); None if not inside the window.
-fn col(win: &Win, id: u32) -> Option<[usize; 2]> {
+/// Priority flood of `h` from the window's edge: each cell's fill level (above `h` inside a
+/// depression).
+fn flood(win: &Win, h: &[f64]) -> Vec<f64> {
+    let n = h.len();
+    let mut lev = h.to_vec();
+    let mut seen = vec![false; n];
+    let mut q: BinaryHeap<Reverse<(Key, usize)>> = BinaryHeap::new();
+    for j in 0..n {
+        if win.on_ring(j) {
+            seen[j] = true;
+            q.push(Reverse((Key(h[j]), j)));
+        }
+    }
+    while let Some(Reverse((Key(v), j))) = q.pop() {
+        for (k, _) in win.around(j) {
+            if !seen[k] {
+                seen[k] = true;
+                lev[k] = h[k].max(v);
+                q.push(Reverse((Key(lev[k]), k)));
+            }
+        }
+    }
+    lev
+}
+
+/// Where a lake spills: [col, first cell beyond it]. A closed lake's col (or an exit inside a
+/// closed depression: an evaporating lake, a dry pit below) is the pass out of the whole
+/// depression it lies in, on the water's top: a priority flood from its cells that stops
+/// at the first cell draining below the flood (`fill`, the window's fill levels). None if
+/// not inside the window.
+fn col(win: &Win, id: u32, fill: &[f64]) -> Option<[usize; 2]> {
     let n = win.z.len();
     let mut seen: Vec<bool> = win.body.iter().map(|&b| b == id).collect();
     let mut from = vec![u32::MAX; n];
     let mut heap: BinaryHeap<_> = (0..n)
         .filter(|&j| seen[j])
-        .map(|j| Reverse((Key(win.z[j]), j)))
+        .map(|j| Reverse((Key(win.top(j)), j)))
         .collect();
     let mut level = f64::NEG_INFINITY;
     while let Some(Reverse((Key(h), j))) = heap.pop() {
-        if h < level {
+        if fill[j] < level - 1e-3 {
             return Some([from[j] as usize, j]);
         }
         level = level.max(h);
@@ -351,11 +381,23 @@ fn col(win: &Win, id: u32) -> Option<[usize; 2]> {
             if !seen[k] {
                 seen[k] = true;
                 from[k] = j as u32;
-                heap.push(Reverse((Key(win.z[k]), k)));
+                heap.push(Reverse((Key(win.top(k)), k)));
             }
         }
     }
     None
+}
+
+/// A lake's spill: its exit unless that lies in a closed hollow deeper than PIT_M, else its
+/// col (`col`).
+fn spill_of(win: &Win, c: &Candidate, fill: &[f64]) -> std::result::Result<Vec<usize>, String> {
+    match c.exit.map(|e| win.local(win.world, e)) {
+        Some(None) => Err("exit outside its window".into()),
+        Some(Some(e)) if fill[e] <= win.top(e) + PIT_M => Ok(vec![e]),
+        _ => col(win, c.id, fill)
+            .map(|v| v.to_vec())
+            .ok_or_else(|| "no spill col inside its window".into()),
+    }
 }
 
 /// Where each cell's receiver chain ends: IN (at the target cell `pit`), OUT, or POND (at
@@ -520,7 +562,7 @@ pub(crate) fn build(inp: &Inputs, cands: &[Candidate], out: &Outputs) -> Result<
                     done.extend(gone.iter().copied());
                     built.push(Built {
                         ids: gone,
-                        skipped: Some(format!("a divide lies within {ROOM_MIN_M} m of its level")),
+                        skipped: Some(format!("a divide lies within {ROOM_MIN_M} m of its spill")),
                         figures: Value::Null,
                         ice_cells: 0,
                         filled_ice: 0,
@@ -635,15 +677,42 @@ fn one(
     let member = |b: u32| ids.contains(&b);
     // The exit path: [exit, (closed: beyond the col)], then the receivers for TONGUE_M.
     let seed = &group[0];
-    let start = match seed.exit {
-        Some(e) => match win.local(world, e) {
-            Some(j) => vec![j],
-            None => return skip("exit outside its window".into()),
-        },
-        None => match col(&win, seed.id) {
-            Some([c, b]) => vec![c, b],
-            None => return skip("no spill col inside its window".into()),
-        },
+    // Fill levels on the water's top: closed lakes' basins and dry pits stay depressions.
+    let fill = flood(&win, &(0..n).map(|j| win.top(j)).collect::<Vec<_>>());
+    // Cells of a depression deeper than PIT_M somewhere (a closed lake's basin, a dry
+    // hollow); shallower dimples are left to the pit fill.
+    let mut deep = vec![false; n];
+    {
+        let mut seen = vec![false; n];
+        let mut cells = Vec::new();
+        for j0 in 0..n {
+            if seen[j0] || fill[j0] <= win.top(j0) + 1e-3 {
+                continue;
+            }
+            let (mut depth, mut stack) = (0.0f64, vec![j0]);
+            seen[j0] = true;
+            cells.clear();
+            while let Some(j) = stack.pop() {
+                cells.push(j);
+                depth = depth.max(fill[j] - win.top(j));
+                for (k, _) in win.around(j) {
+                    if !seen[k] && fill[k] == fill[j0] && fill[k] > win.top(k) + 1e-3 {
+                        seen[k] = true;
+                        stack.push(k);
+                    }
+                }
+            }
+            if depth > PIT_M {
+                for &j in &cells {
+                    deep[j] = true;
+                }
+            }
+        }
+    }
+    let in_pit = |j: usize| deep[j];
+    let start = match spill_of(&win, seed, &fill) {
+        Ok(v) => v,
+        Err(why) => return skip(why),
     };
     let foreign = |j: usize| {
         let b = win.body[j];
@@ -662,7 +731,9 @@ fn one(
             Some(Some(nx)) => nx,
             _ => break path.pop().expect("path"),
         };
-        if foreign(next) || member(win.body[next]) {
+        // The tongue ends before another basin or a closed depression (ice there would
+        // fill it).
+        if foreign(next) || member(win.body[next]) || in_pit(next) {
             break path.pop().expect("path");
         }
         let (a, b) = (win.r.world_xy(cur), win.r.world_xy(next));
@@ -688,24 +759,6 @@ fn one(
     stop[terminus] = true;
     target[terminus] = false;
     let (mut state, pit) = resolve(&win, &target, &stop);
-    // Lakes whose outlet drains into this catchment join the glacier.
-    let joins: Vec<Candidate> = all
-        .iter()
-        .filter(|c| !member(c.id) && !done.contains(&c.id))
-        .filter(|c| {
-            let e = match c.exit {
-                Some(e) => win.local(world, e),
-                // A closed lake inside the window joins through its col.
-                None if win.body.contains(&c.id) => col(&win, c.id).map(|[k, _]| k),
-                None => None,
-            };
-            e.is_some_and(|e| state[e] == IN)
-        })
-        .cloned()
-        .collect();
-    if !joins.is_empty() {
-        return Ok(Grown::Join(joins));
-    }
     let k_m = 2.0 * YIELD_KPA * 1e3 / (ICE_DENSITY * GRAVITY);
     let zt = win.top(terminus);
     // Each lake's own bowl: the cells whose chain ends in it (the outlet path is the
@@ -723,14 +776,29 @@ fn one(
         .map(|c| (RISE_PER_M * (c.cells as f64 * sp * sp).sqrt()).clamp(RISE_MIN_M, RISE_MAX_M))
         .collect();
     let level: Vec<f64> = group.iter().map(|c| f64::from(c.level)).collect();
-    let mut base: Vec<f64> = level.clone();
+    let spills: Vec<Option<Vec<usize>>> = group
+        .iter()
+        .map(|c| spill_of(&win, c, &fill).ok())
+        .collect();
+    let exits: Vec<Option<usize>> = spills.iter().map(|v| v.as_ref().map(|v| v[0])).collect();
+    // Lakes spilling over a col (closed, or exit into a closed hollow).
+    let by_col: Vec<bool> = spills
+        .iter()
+        .map(|v| v.as_ref().is_some_and(|v| v.len() > 1))
+        .collect();
+    // Ice stands above its lake's spill: a closed lake's col lies above its level.
+    let mut base: Vec<f64> = (0..group.len())
+        .map(|m| level[m].max(exits[m].map_or(f64::NEG_INFINITY, |e| win.top(e))))
+        .collect();
     base[0] = zt.max(win.top(start[0]));
     let mut ceil: Vec<f64> = (0..group.len())
         .map(|m| base[m].max(level[m]) + rise[m])
         .collect();
-    // Pits draining into a lake's bowl below its ceiling join it (where the ice dams them,
-    // they fill with ice). Those at or below the terminus take no plastic ice and set no
-    // divide (they lie by the outlet): only the pit fill reaches them.
+    // Pits beside a lake's bowl that spill below its ceiling join it (the ice dams them, they
+    // fill with ice); a deeper pit, spilling above the ice, is left alone. Those at or below
+    // the terminus take no plastic ice and set no divide (they lie by the outlet): only the
+    // pit fill reaches them. A pit spilling at the lake's col (inside a closed lake's basin)
+    // is the bowl's own and takes plastic ice.
     let mut low_pond = vec![false; n];
     for _ in 0..8 {
         let mut pits: BTreeMap<u32, usize> = BTreeMap::new();
@@ -738,9 +806,8 @@ fn one(
             if state[j] != POND {
                 continue;
             }
-            let low = win.z[pit[j] as usize];
             if let Some((k, _)) = win.around(j).find(|&(k, _)| state[k] == IN)
-                && low < ceil[owner[k]]
+                && fill[pit[j] as usize] < ceil[owner[k]]
             {
                 pits.insert(pit[j], owner[k]);
             }
@@ -754,9 +821,24 @@ fn one(
             {
                 state[j] = IN;
                 owner[j] = m;
-                low_pond[j] = win.z[pit[j] as usize] <= zt;
+                let p = pit[j] as usize;
+                low_pond[j] = win.z[p] <= zt && fill[p] < base[m].max(level[m]) - 1e-3;
             }
         }
+    }
+    // Lakes whose outlet drains into this catchment (its joined pits included) join the
+    // glacier; a closed lake inside the window joins through its col.
+    let joins: Vec<Candidate> = all
+        .iter()
+        .filter(|c| !member(c.id) && !done.contains(&c.id))
+        .filter(|c| {
+            (c.exit.is_some() || win.body.contains(&c.id))
+                && spill_of(&win, c, &fill).is_ok_and(|e| e.iter().any(|&k| state[k] == IN))
+        })
+        .cloned()
+        .collect();
+    if !joins.is_empty() {
+        return Ok(Grown::Join(joins));
     }
     let omega: Vec<bool> = state.iter().map(|&s| s == IN).collect();
     // The terminus and its receivers below it: cells draining there keep the catchment.
@@ -830,8 +912,14 @@ fn one(
         v
     };
     // No ice over a divide (review 5): a lake's ceiling stays under the lowest cell of its
-    // bowl beside ground that drains into another basin.
+    // bowl beside ground that drains into another basin. A divide lower than ROOM_MIN_M
+    // (plus the margin) over the lake's spill is a second spill: the ice overflows there
+    // too (a lake on a col, a broad col), so that ground is a source, not a cap.
+    let floor: Vec<f64> = (0..group.len()).map(|m| base[m].max(level[m])).collect();
     let mut allowed_src = vec![false; n];
+    let mut side_spill: Vec<(usize, usize)> = Vec::new();
+    let mut side = vec![false; n];
+    let reach_ceiling = ceil.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     for j in 0..n {
         if omega[j] {
             continue;
@@ -847,28 +935,56 @@ fn one(
         // A pond or another glacier beside it is no other basin's ground.
         let ok = j == terminus || state[j] == POND || win.claimed[j] != 0 || reaches_below(j);
         allowed_src[j] = ok;
-        if !ok {
-            for k in beside.into_iter().filter(|&k| !low_pond[k]) {
-                let m = owner[k];
-                ceil[m] = ceil[m].min(win.z[k] - CREST_MARGIN_M);
+        if ok {
+            continue;
+        }
+        let beside: Vec<usize> = beside.into_iter().filter(|&k| !low_pond[k]).collect();
+        let low = |k: usize| win.z[k] < floor[owner[k]] + ROOM_MIN_M + CREST_MARGIN_M;
+        // A lake's or river's ground is never a spill (no ice above a shore), nor is ground
+        // draining into a closed lake close by that spills under the ice (the ice would dam
+        // it). Water reaching a dry hollow leaves where it spills (routing runs through it).
+        let leaves = || {
+            let mut c = j;
+            for _ in 0..(2.0 * OUTLET_M / sp).ceil() as usize {
+                if in_pit(c) && win.body[c] != 0 && fill[c] < reach_ceiling {
+                    return false;
+                }
+                match win.receiver(c) {
+                    Some(Some(nx)) => c = nx,
+                    _ => break,
+                }
             }
+            true
+        };
+        if beside.iter().any(|&k| low(k)) && win.body[j] == 0 && leaves() {
+            allowed_src[j] = true;
+            side[j] = true;
+            for &k in &beside {
+                if !side_spill.contains(&(j, owner[k])) {
+                    side_spill.push((j, owner[k]));
+                }
+            }
+            continue;
+        }
+        for k in beside {
+            let m = owner[k];
+            ceil[m] = ceil[m].min(win.z[k] - CREST_MARGIN_M);
         }
     }
     // Too little room under a divide gives flat lake-like ice: such a lake stays ice.
-    if ceil[0] < level[0] + ROOM_MIN_M {
+    if ceil[0] < floor[0] + ROOM_MIN_M {
         return skip(format!(
-            "a divide of lake {} lies within {ROOM_MIN_M} m of its level",
+            "a divide of lake {} lies within {ROOM_MIN_M} m of its spill",
             ids[0]
         ));
     }
     let gone: Vec<u32> = (1..group.len())
-        .filter(|&m| ceil[m] < level[m] + ROOM_MIN_M)
+        .filter(|&m| ceil[m] < floor[m] + ROOM_MIN_M)
         .map(|m| ids[m])
         .collect();
     if !gone.is_empty() {
         return Ok(Grown::Drop(gone));
     }
-    let top_ceiling = ceil.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     // A label's surface from its raw plastic height, flattening toward the cell's lake
     // ceiling (hyperbolic: it never quite levels off).
     let flatten = |m: usize, zs: f64, v: f64| {
@@ -887,13 +1003,6 @@ fn one(
     // (S − S_parent)(S − z) = (τ/ρg)·step: Nye's √(2τ/ρg · d) over a flat bed, (τ/ρg)/slope
     // up a wall. A label keeps under the Nye envelope from its source plus ENVELOPE_M, and
     // every cell stands above its parent.
-    let exits: Vec<Option<usize>> = group
-        .iter()
-        .map(|c| match c.exit {
-            Some(e) => win.local(world, e),
-            None => col(&win, c.id).map(|[k, _]| k),
-        })
-        .collect();
     // Per lake, the ice is softer than the yield stress allows where its bowl is wide for
     // its rise: the plastic profile from the spill reaches twice the rise (flattened to two
     // thirds of it) at the lake's far side, so the surface keeps sloping over the lake.
@@ -921,17 +1030,21 @@ fn one(
     let mut parent = vec![u32::MAX; n];
     let mut ice = vec![false; n];
     let mut fixed = vec![false; n];
-    let mut spill = vec![false; n];
+    // The terminus and the second spills feed ice both ways: over a closed lake's col the
+    // bowl lies below them.
+    let mut spill = side.clone();
+    spill[terminus] = true;
     let mut heap: BinaryHeap<Reverse<Label>> = BinaryHeap::new();
     // Each lake's bowl takes ice only from its own spill: the lowest lake's from the
     // terminus and the ground around it, a joined lake's from its exit (on the ice below
-    // when there is some), so every lake's ice stands above its own spill.
+    // when there is some), so every lake's ice stands above its own spill. Sources above a
+    // lake's ceiling feed it none (no ice over a divide), except its exit on the ice below.
     let mut order: Vec<usize> = (1..group.len()).collect();
     order.sort_by(|&a, &b| level[a].total_cmp(&level[b]));
     for phase in std::iter::once(0).chain(order) {
         if phase == 0 {
             for j in (0..n).filter(|&j| allowed_src[j]) {
-                if win.top(j) < top_ceiling {
+                if win.top(j) < ceil[0] {
                     let h = win.top(j);
                     heap.push(Reverse((
                         Key(h),
@@ -963,6 +1076,43 @@ fn one(
                 force,
             )));
         }
+        // A joined lake's second spills (phase 0 has them among its sources).
+        for &(j, _) in side_spill.iter().filter(|&&(_, m)| m == phase && m > 0) {
+            let h = win.top(j);
+            if h < ceil[phase] {
+                heap.push(Reverse((
+                    Key(h),
+                    j,
+                    Key(h),
+                    Key(0.0),
+                    phase as u32,
+                    u32::MAX,
+                    Key(h),
+                    true,
+                )));
+            }
+        }
+        // And the ice of the lakes below where it meets this bowl: routing through a closed
+        // depression can leave the bowl away from its col (it never sinks under its sill).
+        if phase > 0 && by_col[phase] {
+            for j in 0..n {
+                if ice[j]
+                    && s_at[j] < ceil[phase]
+                    && win.around(j).any(|(k, _)| omega[k] && owner[k] == phase)
+                {
+                    heap.push(Reverse((
+                        Key(s_at[j]),
+                        j,
+                        Key(s_at[j]),
+                        Key(0.0),
+                        phase as u32,
+                        u32::MAX,
+                        Key(s_at[j]),
+                        true,
+                    )));
+                }
+            }
+        }
         while let Some(Reverse((Key(s), j, Key(zs), Key(d), root, p, Key(raw), force))) = heap.pop()
         {
             if !force {
@@ -991,9 +1141,12 @@ fn one(
                 let m = owner[k];
                 let rk = step_up(m, raw, win.z[k], step * sp);
                 let sk = flatten(m, zs, rk);
+                // Ice in a closed depression (or over a lake) stands above its sill: it comes
+                // over the col, never by a knight step past it.
                 let ok = sk - win.z[k] >= ICE_MIN_M
                     && sk > s
-                    && rk <= zs + (2.0 * a_of[m] * dd).sqrt() + ENVELOPE_M;
+                    && rk <= zs + (2.0 * a_of[m] * dd).sqrt() + ENVELOPE_M
+                    && (fill[k] <= win.z[k] + 1e-3 || sk >= fill[k] + 0.05);
                 if ok && sk < best[k] {
                     best[k] = sk;
                     heap.push(Reverse((
@@ -1014,35 +1167,6 @@ fn one(
     if (0..n).any(|j| ice[j] && win.on_ring(j)) {
         return skip("ice reaches the window edge".into());
     }
-    // Path length through the ice from the terminus and the spill exits (the crevasse
-    // phase, review 8), and distance to the ice margin (marginal crevasses).
-    let mut dist = vec![f64::INFINITY; n];
-    let mut h2: BinaryHeap<Reverse<(Key, usize)>> = BinaryHeap::new();
-    for j in (0..n).filter(|&j| j == terminus || spill[j]) {
-        dist[j] = 0.0;
-        h2.push(Reverse((Key(0.0), j)));
-    }
-    while let Some(Reverse((Key(d), j))) = h2.pop() {
-        if d > dist[j] {
-            continue;
-        }
-        for (k, step) in win.around16(j) {
-            let dk = d + step * sp;
-            if ice[k] && dk < dist[k] {
-                dist[k] = dk;
-                h2.push(Reverse((Key(dk), k)));
-            }
-        }
-    }
-    let margin = chamfer(&win, &ice, sp);
-    let seed_noise = u64::from(seed.id);
-    let serac_r =
-        TONGUE_M + (SERAC_PER_M * (group[0].cells as f64 * sp * sp).sqrt()).clamp(10.0, 40.0);
-    let mut serac = vec![false; n];
-    let smooth = |t: f64| {
-        let t = t.clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    };
     // The smooth surface water routes over (owner 2026-11-16: roughness after routing):
     // the plastic surface softened over the ice (box blur of the surface: no label rays,
     // no sawtooth where the margin's labels meet, and a blur keeps a falling surface
@@ -1057,35 +1181,13 @@ fn one(
     let mut elev = win.z.clone();
     for j in (0..n).filter(|&j| ice[j]) {
         elev[j] = surf_s[j].max(win.z[j] + 0.05);
-        serac[j] = dist[j] < serac_r;
     }
     // Pit fill over the window from its edge, on the iced and on the old ground. A
     // depression the ice made or deepened (inside its catchment or beside it), or one
     // holding ice, fills and becomes ice; a pond the ice leaves alone stays as it was.
     let before: Vec<bool> = ice.clone();
-    let flood = |h: &[f64]| -> Vec<f64> {
-        let mut lev = h.to_vec();
-        let mut seen = vec![false; n];
-        let mut q: BinaryHeap<Reverse<(Key, usize)>> = BinaryHeap::new();
-        for j in 0..n {
-            if win.on_ring(j) {
-                seen[j] = true;
-                q.push(Reverse((Key(h[j]), j)));
-            }
-        }
-        while let Some(Reverse((Key(v), j))) = q.pop() {
-            for (k, _) in win.around(j) {
-                if !seen[k] {
-                    seen[k] = true;
-                    lev[k] = h[k].max(v);
-                    q.push(Reverse((Key(lev[k]), k)));
-                }
-            }
-        }
-        lev
-    };
-    let lev1 = flood(&elev);
-    let lev0 = flood(&win.z);
+    let lev1 = flood(&win, &elev);
+    let lev0 = flood(&win, &win.z);
     // Depressions: 8-connected cells under the same fill level.
     let mut comp = vec![u32::MAX; n];
     let mut keep: Vec<bool> = Vec::new();
@@ -1116,21 +1218,59 @@ fn one(
             (got as f64 / all as f64 * 1000.0).round() / 1000.0
         })
         .collect();
-    let (mut filled_ice, mut filled_other, mut filled_serac) = (0u64, 0u64, 0u64);
+    let mut raised = vec![false; n];
+    let mut filled_other = 0u64;
     for j in 0..n {
         if comp[j] == u32::MAX || !keep[comp[j] as usize] {
             continue;
         }
         elev[j] = lev1[j];
-        if before[j] && serac[j] {
-            filled_serac += 1;
-        } else if before[j] {
-            filled_ice += 1;
+        if before[j] {
+            raised[j] = true;
         } else {
+            // A depression the ice dams holding another lake: the glacier would bury it.
+            let b = win.body[j];
+            if b != 0 && !member(b) && !inp.rivers.contains(&b) {
+                return skip(format!("would bury lake {b}"));
+            }
             filled_other += 1;
             ice[j] = true;
+            s_at[j] = elev[j];
         }
     }
+    // Path length through the ice (the fill's included) from the terminus and the spills
+    // (the crevasse phase, review 8), and distance to the ice margin (marginal crevasses).
+    let mut dist = vec![f64::INFINITY; n];
+    let mut h2: BinaryHeap<Reverse<(Key, usize)>> = BinaryHeap::new();
+    for j in 0..n {
+        if j == terminus || spill[j] || side[j] {
+            dist[j] = 0.0;
+            h2.push(Reverse((Key(0.0), j)));
+        }
+    }
+    while let Some(Reverse((Key(d), j))) = h2.pop() {
+        if d > dist[j] {
+            continue;
+        }
+        for (k, step) in win.around16(j) {
+            let dk = d + step * sp;
+            if ice[k] && dk < dist[k] {
+                dist[k] = dk;
+                h2.push(Reverse((Key(dk), k)));
+            }
+        }
+    }
+    let margin = chamfer(&win, &ice, sp);
+    let seed_noise = u64::from(seed.id);
+    let serac_r =
+        TONGUE_M + (SERAC_PER_M * (group[0].cells as f64 * sp * sp).sqrt()).clamp(10.0, 40.0);
+    let serac: Vec<bool> = (0..n).map(|j| ice[j] && dist[j] < serac_r).collect();
+    let filled_serac = (0..n).filter(|&j| raised[j] && serac[j]).count() as u64;
+    let filled_ice = (0..n).filter(|&j| raised[j] && !serac[j]).count() as u64;
+    let smooth = |t: f64| {
+        let t = t.clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
     // The rough surface on the ice only (owner 2026-11-16): crevasses and hummocks hold no
     // water, so it is published but neither routed nor pit-checked. Hummocks (tens of
     // metres), crevasse fields (a few metres deep, 1-3 m wide, transverse to flow, oblique
