@@ -6,6 +6,34 @@ coordinates are metres east and south of the map's north-west corner. Entries fo
 (`fujion-v3-chain-14-l4`) and the water data contract they led to are in Git history; the
 contract is implemented since `fujix-55-l4v9`.
 
+## Status in export `fujix-55-l4v10` (schema 3, 2026-11-17)
+
+`fujix-55-l4v10` is exported from the same world as l4v9 after a new water finish (glaciers)
+and new game layers; see `schemas/heightmap-export-v3.md`. Of the entries below:
+
+- **Fixed:**
+  - `lakes[].outline_m` and `rivers[]` are now written from the world's own hydrology, and all
+    lie inside their body's `bounds_m`.
+  - Class layers are top-2 ids plus a weight, area-meaned per level.
+  - 0 m is a height code. `water-surface` has its own wrapped 2 cm encoding.
+  - The surface extension carries the body id.
+  - Diagonal streams are filled to 4-connected (1.22 M texels).
+  - Normals have a 2-texel apron. `roughness` is opt-in.
+  - Legends say which classes derive from a fraction, and what `vegetation-density` 1.0 means.
+  - Rivers carry `drainage_km2`, gradient, and `steep`/`falls` flags.
+  - Talus comes from a source and a sink.
+  - Dry biomes have a riparian band, with land-cover class 21.
+  - New `temperature` layer, and `moisture` at 2 m.
+  - Ice lakes at snow altitude, the caldera among them, are rough glaciers (35, 4.3 km²) in
+    `glaciers[]` and not water.
+- **Waits for the next world (water or raw rerun):**
+  - The axis-aligned notch at the main river mouth.
+  - Steep final reaches.
+  - Rills are tagged, not pruned.
+  - Channels narrower than two texels outside the diagonal fill.
+- **Unchanged:** `coarse_wet_below_ground` is still non-zero (249k texels at L1); it is
+  expected from area means.
+
 ## Export `fujix-55-l4v9`
 
 Observed on 2026-11-15 while moving the game to `fujix-55-l4v9` (65.5 km at 1 m, schema 2). The
