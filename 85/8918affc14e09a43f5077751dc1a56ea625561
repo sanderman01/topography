@@ -1,0 +1,65 @@
+crates/topography-core/src/world/water/glacier.rs
+  s_dd823cc4be7cf6::t_c8f96b1d537c99 829-842
+  s_dd823cc4be7cf6::t_0152f1f9a2d290 1144-1145
+  s_dd823cc4be7cf6::t_e07bc2fa2fff2b 1095-1096,1098,1103-1115
+  s_dd823cc4be7cf6::t_ce3a145c9d1b71 391-392
+  s_dd823cc4be7cf6::t_3234a0cc635665 824-825
+  s_dd823cc4be7cf6::t_1cda2300c21631 396,1097
+  s_dd823cc4be7cf6::t_86d985bb445e13 1189-1190
+  s_dd823cc4be7cf6::t_77ba43dc7e20b9 1079-1081,1083-1094
+  s_dd823cc4be7cf6::t_c22f7739677955 1148
+  s_dd823cc4be7cf6::t_51358d86923bd3 938-942,960,962-965,967-971,975,977,982
+  s_dd823cc4be7cf6::t_af51331db1fe86 333-363,369,373,384,393-395,397-401
+  s_dd823cc4be7cf6::t_fa6bad64856bc3 948
+  s_dd823cc4be7cf6::t_de3fdb3259ab0c 79
+  s_dd823cc4be7cf6::t_015187e16c3a90 1231-1235
+  s_dd823cc4be7cf6::t_5955ad557dd542 734-736
+  s_dd823cc4be7cf6::t_19aefc9a246417 943
+  s_dd823cc4be7cf6::t_474733cf232bac 1033-1036
+  s_dd823cc4be7cf6::t_db8a3c3a5eb603 780,788-792
+  s_dd823cc4be7cf6::t_9f864c53e0c4fc 921
+  s_dd823cc4be7cf6::t_4fcb2bb3c76150 922
+  s_dd823cc4be7cf6::t_4431dfe083851a 798-801
+  s_dd823cc4be7cf6::t_3954610191f968 946-947,950-959
+  s_dd823cc4be7cf6::t_e2b138ff799980 1221-1222,1228-1229,1238,1241-1245,1247-1273
+  s_dd823cc4be7cf6::t_5ff59a3868a86a 944-945,949
+  s_dd823cc4be7cf6::t_8507ac3a32a63a 1047,1082,1099-1102
+  s_dd823cc4be7cf6::t_4057303581d058 1040-1041
+  s_dd823cc4be7cf6::t_0bd682ee47904e 682-712
+  s_dd823cc4be7cf6::t_4d44cc7209c591 779,781-787
+  s_dd823cc4be7cf6::t_7918eab02d6a87 1246
+  s_dd823cc4be7cf6::t_484ed9631b7f7a 680-681,713-715
+  s_dd823cc4be7cf6::t_9cd919c353d2dd 36-37
+  s_dd823cc4be7cf6::t_9389c33a92d091 961
+  s_dd823cc4be7cf6::t_355bab2d2584a0 797,810
+  s_dd823cc4be7cf6::t_85b7a28ed7e4b2 1149
+  s_dd823cc4be7cf6::t_338ba5ccd43c27 915-918,920
+  s_dd823cc4be7cf6::t_e76003651f4246 402
+  s_b5401b4b71fb9c::t_52eaa412a6198e 18,565
+docs/workflows/terrain-cascade.md
+  s_dd823cc4be7cf6::t_fab47b29f62a8f 1095-1102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "858918affc14e09a43f5077751dc1a56ea625561",
+  "prompts": {},
+  "sessions": {
+    "s_b5401b4b71fb9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a06ee62dec6fad71c",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    },
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
