@@ -1,0 +1,39 @@
+crates/topography-core/src/world/water/glacier.rs
+  s_dd823cc4be7cf6::t_9b71f9b6cc3e50 788,791-792
+  s_dd823cc4be7cf6::t_3c870793ac37ee 1462-1464
+  s_dd823cc4be7cf6::t_11187632b62be8 1457
+  s_dd823cc4be7cf6::t_d59e9cee1aea00 793-801,852
+  s_dd823cc4be7cf6::t_f39337ee1cfd81 718,786
+  s_dd823cc4be7cf6::t_94344aed16ab99 393-398,401
+  s_dd823cc4be7cf6::t_69ea2b16aad0b3 975-986
+  s_dd823cc4be7cf6::t_f9afc0528f4d5f 1456,1458-1461
+  s_dd823cc4be7cf6::t_7a6121198e7ab5 1104
+  s_dd823cc4be7cf6::t_fcfc7a970ad4e4 802-803
+  s_dd823cc4be7cf6::t_5ea2f769a3acb6 1105-1107
+  s_dd823cc4be7cf6::t_af2925c4fe59fd 1465-1467
+  s_b5401b4b71fb9c::t_306d04a3c2f9a6 988-989,994-996,1122-1123,1127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f9b2aa9f6cdde945fa1b12a4391906336a80623a",
+  "prompts": {},
+  "sessions": {
+    "s_b5401b4b71fb9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a06ee62dec6fad71c",
+        "model": "unknown"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    },
+    "s_dd823cc4be7cf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a46c1d14-909c-41db-a8c6-47b6bd20725c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Alexander Verbeek <sanderman@gmail.com>"
+    }
+  }
+}
